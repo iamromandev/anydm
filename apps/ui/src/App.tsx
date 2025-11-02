@@ -1,6 +1,4 @@
-import React from "react";
-
-export default function App() {
+ function App() {
   return (
     <div className="app">
       <h1>AnyDM UI</h1>
@@ -9,3 +7,5 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
