@@ -1,0 +1,13 @@
+{
+  "name": "anydm",
+  "type": "module",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "clean:ui": "bun --cwd apps/ui run clean",
+    "dev:ui": "bun --cwd apps/ui run dev"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
