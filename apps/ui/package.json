@@ -4,7 +4,7 @@
     "private": true,
     "scripts": {
       "clean": "rm -rf dist",
-      "dev": "bun run clean && bun build src/main.tsx --outdir dist && bun run index.html",
+      "dev": "bun run clean && bun build src/main.tsx --outdir dist && bun run src/index.html",
       "build": "bun build src/main.tsx --outdir dist --public-path /"
     },
     "dependencies": {
