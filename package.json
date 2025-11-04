@@ -8,7 +8,7 @@
     "apps/*"
   ],
   "scripts": {
-    "fmt": "prettier --write .",
+    "ui:fmt": "cd apps/ui && bun run fmt",
     "ui:dev": "cd apps/ui && bun run dev",
     "ui:build": "cd apps/ui && bun run build",
     "clean": "rm -rf node_modules apps/*/node_modules bun.lock",

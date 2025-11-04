@@ -5,6 +5,7 @@
   "description": "AnyDM UI",
   "type": "module",
   "scripts": {
+    "fmt": "prettier --write .",
     "dev": "bunx vite",
     "build": "bunx vite build"
   },
