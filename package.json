@@ -10,15 +10,11 @@
   "scripts": {
     "clean": "rm -rf node_modules bun.lock && bun run ui:clean",
     "reinstall": "bun run clean && bun install",
-    "fmt": "prettier --write .",
     "ui:clean": "cd apps/ui && rm -rf node_modules",
     "ui:fmt": "cd apps/ui && bun run fmt",
     "ui:chk": "cd apps/ui && bun run chk",
     "ui:dev": "bun run ui:fmt && bun run ui:chk && cd apps/ui && bun run dev",
     "ui:build": "cd apps/ui && bun run build",
     "ui:restart": "bun run reinstall && bun run ui:dev"
-  },
-  "devDependencies": {
-    "prettier": "^3.6.2"
   }
 }

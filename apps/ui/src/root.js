@@ -1,5 +1,5 @@
-import { jsx as _jsx, jsxs as _jsxs } from '@builder.io/qwik/jsx-runtime';
-import { component$ } from '@builder.io/qwik';
+import { jsx as _jsx, jsxs as _jsxs } from '@builder.io/qwik/jsx-runtime'
+import { component$ } from '@builder.io/qwik'
 export default component$(() => {
   return _jsxs('div', {
     style: {
@@ -32,5 +32,5 @@ export default component$(() => {
         ],
       }),
     ],
-  });
-});
+  })
+})
