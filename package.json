@@ -8,11 +8,13 @@
     "apps/*"
   ],
   "scripts": {
+    "clean": "rm -rf node_modules bun.lock && bun run ui:clean",
+    "reinstall": "bun run clean && bun install",
+    "fmt": "prettier --write .",
+    "ui:clean": "cd apps/ui && rm -rf node_modules",
     "ui:fmt": "cd apps/ui && bun run fmt",
     "ui:dev": "cd apps/ui && bun run dev",
     "ui:build": "cd apps/ui && bun run build",
-    "clean": "rm -rf node_modules apps/*/node_modules bun.lock",
-    "reinstall": "bun run clean && bun install",
     "ui:restart": "bun run reinstall && bun run ui:dev"
   },
   "devDependencies": {
