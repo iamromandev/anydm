@@ -1,19 +1,17 @@
 {
-    "name": "@anydm/ui",
-    "type": "module",
-    "private": true,
-    "scripts": {
-        "clean": "rm -rf dist",
-        "dev": "bun run clean && bun build src/main.tsx --outdir dist --hot && bun run src/index.html",
-        "build": "bun build src/main.tsx --outdir dist --public-path /"
-    },
-    "dependencies": {
-        "react": "^18.3.1",
-        "react-dom": "^18.3.1"
-    },
-    "devDependencies": {
-        "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.2",
-        "typescript": "^5.9.3"
-    }
+  "name": "ui",
+  "private": true,
+  "version": "0.0.1",
+  "description": "AnyDM UI",
+  "type": "module",
+  "scripts": {
+    "dev": "bunx vite",
+    "build": "bunx vite build"
+  },
+  "dependencies": {
+    "@builder.io/qwik": "^1.17.2"
+  },
+  "devDependencies": {
+    "vite": "^7.1.12"
+  }
 }

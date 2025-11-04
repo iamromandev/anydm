@@ -1,13 +1,21 @@
 {
   "name": "anydm",
-  "type": "module",
   "private": true,
-  "workspaces": ["apps/*"],
+  "version": "0.0.1",
+  "description": "AnyDM",
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
-    "clean:ui": "bun --cwd apps/ui run clean",
-    "dev:ui": "bun --cwd apps/ui run dev"
+    "fmt": "prettier --write .",
+    "ui:dev": "cd apps/ui && bun run dev",
+    "ui:build": "cd apps/ui && bun run build",
+    "clean": "rm -rf node_modules apps/*/node_modules bun.lock",
+    "reinstall": "bun run clean && bun install",
+    "ui:restart": "bun run reinstall && bun run ui:dev"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "prettier": "^3.6.2"
   }
 }
