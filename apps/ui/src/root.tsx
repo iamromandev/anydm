@@ -6,6 +6,7 @@ export default component$(() => {
     <QwikRouterProvider>
       <head>
         <meta charset="utf-8" />
+        <title>AnyDM</title>
       </head>
       <body lang="en">
         <RouterOutlet />
