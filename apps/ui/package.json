@@ -5,7 +5,7 @@
   "description": "AnyDM UI",
   "type": "module",
   "scripts": {
-    "clean": "rm -rf node_modules",
+    "clean": "rm -rf dist && rm -rf node_modules",
     "fmt": "bun prettier --write .",
     "chk": "bunx tsc --noEmit",
     "dev": "bunx vite --mode ssr",

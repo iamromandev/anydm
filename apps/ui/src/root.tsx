@@ -1,15 +1,15 @@
 import { component$, isDev } from '@qwik.dev/core'
-import { QwikCityProvider, RouterOutlet } from '@qwik.dev/router'
+import { QwikRouterProvider, RouterOutlet } from '@qwik.dev/router'
 
 export default component$(() => {
   return (
-    <QwikCityProvider>
+    <QwikRouterProvider>
       <head>
         <meta charset="utf-8" />
       </head>
       <body lang="en">
         <RouterOutlet />
       </body>
-    </QwikCityProvider>
+    </QwikRouterProvider>
   )
 })

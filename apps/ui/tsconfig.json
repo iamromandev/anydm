@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "allowJs": true,
     "target": "ESNext",
     "module": "ESNext",
     "lib": ["ESNext", "DOM", "WebWorker", "DOM.Iterable"],
