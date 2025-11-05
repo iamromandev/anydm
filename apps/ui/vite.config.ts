@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
-import { qwikVite } from '@builder.io/qwik/optimizer'
+import { qwikVite } from '@qwik.dev/core/optimizer'
 import tsconfigPaths from 'vite-tsconfig-paths'
-import { qwikCity } from '@builder.io/qwik-city/vite'
+import { qwikCity } from '@qwik.dev/router/vite'
 
 export default defineConfig({
   plugins: [qwikCity(), qwikVite(), tsconfigPaths()],

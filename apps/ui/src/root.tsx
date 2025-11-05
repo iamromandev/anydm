@@ -1,5 +1,5 @@
-import { component$, isDev } from '@builder.io/qwik'
-import { QwikCityProvider, RouterOutlet } from '@builder.io/qwik-city'
+import { component$, isDev } from '@qwik.dev/core'
+import { QwikCityProvider, RouterOutlet } from '@qwik.dev/router'
 
 export default component$(() => {
   return (
