@@ -1,17 +1,24 @@
 {
   "compilerOptions": {
+    "allowJs": true,
     "target": "ESNext",
     "module": "ESNext",
+    "lib": ["ESNext", "DOM", "WebWorker", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "incremental": true,
+    "isolatedModules": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@builder.io/qwik",
-    "baseUrl": ".",
+    "noEmit": true,
+    "outDir": "dist",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "./*.d.ts", "./*.config.ts"]
 }
