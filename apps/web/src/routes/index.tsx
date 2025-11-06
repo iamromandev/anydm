@@ -33,13 +33,11 @@ export default component$(() => {
     });
 
     return (
-        <div class="flex min-h-screen items-center justify-center p-4 bg-custom-gradient">
+        <div class="bg-custom-gradient flex min-h-screen items-center justify-center p-4">
             <div class="w-full max-w-md space-y-8">
                 {/* Header */}
                 <div class="text-center">
-                    <h1 class="mb-2 text-3xl font-bold text-gray-900">
-                        Any Download Manager
-                    </h1>
+                    <h1 class="mb-2 text-3xl font-bold text-gray-900">Any Download Manager</h1>
                     <p class="text-gray-600">Enter a URL to download</p>
                 </div>
 

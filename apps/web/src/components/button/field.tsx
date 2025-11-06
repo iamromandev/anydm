@@ -10,14 +10,7 @@ type ButtonProps = PropsOf<"button"> & {
 };
 
 export const Button = component$<ButtonProps>(
-    ({
-        label,
-        onClick$,
-        variant = "primary",
-        disabled,
-        loading = false,
-        ...props
-    }) => {
+    ({ label, onClick$, variant = "primary", disabled, loading = false, ...props }) => {
         return (
             <button
                 type="button"

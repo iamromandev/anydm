@@ -2,7 +2,12 @@
     "compilerOptions": {
         "target": "ESNext",
         "module": "ESNext",
-        "lib": ["ESNext", "DOM", "WebWorker", "DOM.Iterable"],
+        "lib": [
+            "ESNext",
+            "DOM",
+            "WebWorker",
+            "DOM.Iterable"
+        ],
         "moduleResolution": "bundler",
         "strict": true,
         "forceConsistentCasingInFileNames": true,
@@ -16,8 +21,19 @@
         "noEmit": true,
         "outDir": "dist",
         "paths": {
-            "@/*": ["./src/*"]
-        }
+            "@/*": [
+                "./src/*"
+            ]
+        },
+        "plugins": [
+            {
+                "name": "typescript-plugin-css-modules"
+            }
+        ]
     },
-    "include": ["src", "./*.d.ts", "./*.config.ts"]
+    "include": [
+        "src",
+        "./*.d.ts",
+        "./*.config.ts"
+    ]
 }

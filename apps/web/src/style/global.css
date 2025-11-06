@@ -8,5 +8,9 @@
 
 /* Optional: red-gray gradient */
 .bg-custom-gradient {
-    background: linear-gradient(to bottom right, #f8f0f0, #e8dcdc); /* light → slightly darker red-gray */
+    background: linear-gradient(
+        to bottom right,
+        #f8f0f0,
+        #e8dcdc
+    ); /* light → slightly darker red-gray */
 }

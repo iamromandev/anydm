@@ -1,7 +1,9 @@
 import type { Config } from "tailwindcss";
 
 export default {
-    content: ["./src/**/*.{html,ts,tsx,js,jsx}"],
+    content: [
+        "./src/**/*.{html,ts,tsx,js,jsx}",
+    ],
     theme: {
         extend: {
             colors: {
@@ -11,7 +13,11 @@ export default {
                 },
             },
             fontFamily: {
-                sans: ["Inter", "ui-sans-serif", "system-ui"],
+                sans: [
+                    "Inter",
+                    "ui-sans-serif",
+                    "system-ui",
+                ],
             },
         },
     },

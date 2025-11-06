@@ -19,12 +19,8 @@ export const UrlInput = component$<UrlInputProps>(
                         id={inputId}
                         type="url"
                         value={value}
-                        onInput$={(e) =>
-                            onChange$((e.target as HTMLInputElement).value)
-                        }
-                        onKeyDown$={(e) =>
-                            onKeyPress$(e as unknown as KeyboardEvent)
-                        }
+                        onInput$={(e) => onChange$((e.target as HTMLInputElement).value)}
+                        onKeyDown$={(e) => onKeyPress$(e as unknown as KeyboardEvent)}
                         class="input"
                         aria-invalid={!!error}
                         {...props}

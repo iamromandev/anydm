@@ -5,5 +5,10 @@ import { qwikRouter } from "@qwik.dev/router/vite";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-    plugins: [tailwindcss(), qwikRouter(), qwikVite(), tsconfigPaths()],
+    plugins: [
+        tailwindcss(),
+        qwikRouter(),
+        qwikVite(),
+        tsconfigPaths(),
+    ],
 });
