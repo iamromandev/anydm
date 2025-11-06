@@ -7,7 +7,9 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
     plugins: [
         tailwindcss(),
-        qwikRouter(),
+        qwikRouter({
+            routesDir: "src/route",
+        }),
         qwikVite(),
         tsconfigPaths(),
     ],

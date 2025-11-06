@@ -1,7 +1,7 @@
 import { component$, $, useSignal, useStore } from "@qwik.dev/core";
 import { useNavigate } from "@qwik.dev/router";
-import { Button } from "@/components/button";
-import { UrlInput } from "@/components/input/url";
+import { Button } from "@/component/button";
+import { UrlInput } from "@/component/input/url";
 import "../style/global.css";
 
 export default component$(() => {
