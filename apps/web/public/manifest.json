@@ -1,8 +1,8 @@
 {
-  "name": "anydm",
-  "short_name": "anydm",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#fff",
-  "theme_color": "#000"
+    "name": "anydm",
+    "short_name": "anydm",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#fff",
+    "theme_color": "#000"
 }

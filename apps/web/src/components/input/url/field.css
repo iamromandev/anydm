@@ -1,0 +1,18 @@
+@import "tailwindcss/preflight";
+@import "tailwindcss/utilities";
+
+.container {
+    @apply mb-6 w-full;
+}
+
+.input {
+    @apply w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.input[aria-invalid="true"] {
+    @apply border-red-500 focus-visible:ring-red-500;
+}
+
+.error {
+    @apply mt-1 text-sm text-red-600;
+}
