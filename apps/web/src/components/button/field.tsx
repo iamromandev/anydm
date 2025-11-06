@@ -1,4 +1,5 @@
 import { component$, type PropsOf, Slot } from "@qwik.dev/core";
+import "./field.css";
 
 type ButtonProps = PropsOf<"button"> & {
     label?: string;

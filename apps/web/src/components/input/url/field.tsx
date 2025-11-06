@@ -1,4 +1,5 @@
 import { component$, type PropsOf } from "@qwik.dev/core";
+import "./field.css";
 
 type UrlInputProps = PropsOf<"input"> & {
     value?: string;

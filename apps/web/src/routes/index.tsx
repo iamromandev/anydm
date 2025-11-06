@@ -2,6 +2,7 @@ import { component$, $, useSignal, useStore } from "@qwik.dev/core";
 import { useNavigate } from "@qwik.dev/router";
 import { Button } from "@/components/button";
 import { UrlInput } from "@/components/input/url";
+import "../style/global.css";
 
 export default component$(() => {
     const nav = useNavigate();
@@ -32,16 +33,14 @@ export default component$(() => {
     });
 
     return (
-        <div class="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <div class="flex min-h-screen items-center justify-center p-4 bg-custom-gradient">
             <div class="w-full max-w-md space-y-8">
                 {/* Header */}
                 <div class="text-center">
                     <h1 class="mb-2 text-3xl font-bold text-gray-900">
-                        URL Analyzer
+                        Any Download Manager
                     </h1>
-                    <p class="text-gray-600">
-                        Enter a URL to analyze website performance and SEO
-                    </p>
+                    <p class="text-gray-600">Enter a URL to download</p>
                 </div>
 
                 {/* URL Form */}
@@ -50,16 +49,12 @@ export default component$(() => {
                         value={store.url}
                         onChange$={(value: any) => (store.url = value ?? "")}
                         onKeyPress$={handleKeyPress}
-                        placeholder="Paste your file URL here..."
+                        placeholder="Enter url"
                         error={store.error}
                         required
                     />
 
-                    <Button
-                        type="submit"
-                        disabled={isLoading.value}
-                        class="w-full rounded-lg bg-blue-600 py-3 font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-                    >
+                    <Button type="submit" disabled={isLoading.value}>
                         {isLoading.value ? "Analyzing..." : "Analyze URL"}
                     </Button>
                 </form>

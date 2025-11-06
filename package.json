@@ -16,6 +16,6 @@
     "web:build": "cd apps/web && bun run build",
     "reinstall": "bun run clean && bun install",
     "web:restart": "bun run reinstall && bun run web:dev",
-    "web:start": "bun run web:dev"
+    "web:start": "bun install && bun run web:dev"
   }
 }

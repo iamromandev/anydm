@@ -1,6 +1,6 @@
 {
-    "name": "anydm",
-    "short_name": "anydm",
+    "name": "Any Download Manager",
+    "short_name": "AnyDM",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#fff",

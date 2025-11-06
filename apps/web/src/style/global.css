@@ -1,0 +1,12 @@
+@import "tailwindcss/preflight";
+@import "tailwindcss/utilities";
+
+/* Solid red-gray background */
+.bg-custom {
+    background-color: #f8f0f0; /* very light red-gray */
+}
+
+/* Optional: red-gray gradient */
+.bg-custom-gradient {
+    background: linear-gradient(to bottom right, #f8f0f0, #e8dcdc); /* light → slightly darker red-gray */
+}
