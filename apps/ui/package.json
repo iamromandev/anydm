@@ -12,14 +12,17 @@
     "build": "bunx vite build"
   },
   "devDependencies": {
-    "@qwik-ui/headless": "^0.7.4",
-    "@qwik-ui/utils": "^0.3.3",
-    "@qwik.dev/core": "^2.0.0-beta.11",
-    "@qwik.dev/router": "^2.0.0-beta.11",
-    "@qwikest/icons": "^0.0.13",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
-    "vite": "^7.2.0",
-    "vite-tsconfig-paths": "^5.1.4"
+    "@qwik-ui/headless": "latest",
+    "@qwik-ui/utils": "latest",
+    "@qwik.dev/core": "latest",
+    "@qwik.dev/router": "latest",
+    "@qwikest/icons": "latest",
+    "@tailwindcss/vite": "latest",
+    "class-variance-authority": "latest",
+    "prettier": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vite-tsconfig-paths": "latest"
   }
 }
