@@ -7,7 +7,7 @@
     "scripts": {
         "clean": "rm -rf dist && rm -rf node_modules",
         "fmt": "bunx prettier . --write",
-        "fmt.check": "bunx prettier --check .",
+        "fmt.chk": "bunx prettier --check .",
         "chk": "bunx tsc --noEmit",
         "dev": "bunx vite --mode ssr",
         "build": "bunx vite build"

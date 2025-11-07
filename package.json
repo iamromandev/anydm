@@ -11,7 +11,7 @@
     "web:clean": "cd apps/web && bun run clean",
     "clean": "rm -rf node_modules bun.lockb && bun run web:clean",
     "web:fmt": "cd apps/web && bun run fmt",
-    "web:fmt.check": "cd apps/web && bun run fmt.check",
+    "web:fmt.chk": "cd apps/web && bun run fmt.chk",
     "web:chk": "cd apps/web && bun run chk",
     "web:dev": "bun run web:fmt && bun run web:chk && cd apps/web && bun run dev",
     "web:build": "cd apps/web && bun run build",

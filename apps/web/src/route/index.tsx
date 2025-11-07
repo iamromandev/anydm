@@ -53,7 +53,7 @@ export default component$(() => {
                     />
 
                     <Button type="submit" disabled={isLoading.value}>
-                        {isLoading.value ? "Analyzing..." : "Analyze URL"}
+                        {isLoading.value ? "Downloading..." : "Download"}
                     </Button>
                 </form>
             </div>
