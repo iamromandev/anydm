@@ -1,9 +1,9 @@
 {
-    "name": "ui",
+    "name": "web",
+    "type": "module",
     "private": true,
     "version": "0.0.1",
     "description": "AnyDM UI",
-    "type": "module",
     "scripts": {
         "clean": "rm -rf dist && rm -rf node_modules",
         "fmt": "bunx prettier . --write",
