@@ -2,4 +2,4 @@
 depth = 3
 
 [install]
-saveTextLockfile = false
+saveTextLockfile = true
