@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+.menu {
+    @apply relative flex items-center justify-between;
+}
+
+.menu-toggle {
+    @apply inline-flex items-center justify-center rounded-md p-2 text-gray-700 hover:bg-gray-100 focus:outline-none sm:hidden;
+}
+
+.menu-list {
+    @apply hidden space-x-6 sm:flex;
+}
+
+.menu-list.open {
+    @apply absolute left-0 top-12 flex w-full flex-col space-y-2 bg-white py-4 shadow-md sm:hidden;
+}
+
+.menu-link {
+    @apply font-medium text-gray-700 transition-colors duration-200 hover:text-blue-600;
+}

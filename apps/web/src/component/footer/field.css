@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+.footer {
+    @apply border-t border-gray-700 bg-gray-900 text-gray-300;
+}
+
+.container {
+    @apply mx-auto flex max-w-7xl flex-col items-center justify-between px-6 py-4 sm:flex-row;
+}
+
+.text {
+    @apply text-sm;
+}
+
+.footer-nav {
+    @apply mt-2 flex space-x-4 sm:mt-0;
+}
+
+.footer-link {
+    @apply transition-colors duration-200 hover:text-white;
+}
