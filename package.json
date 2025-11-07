@@ -1,22 +1,22 @@
 {
-  "name": "anydm",
-  "private": true,
-  "version": "0.0.1",
-  "description": "AnyDM",
-  "type": "module",
-  "workspaces": [
-    "apps/*"
-  ],
-  "scripts": {
-    "web:clean": "cd apps/web && bun run clean",
-    "clean": "rm -rf node_modules bun.lockb && bun run web:clean",
-    "web:fmt": "cd apps/web && bun run fmt",
-    "web:fmt.chk": "cd apps/web && bun run fmt.chk",
-    "web:chk": "cd apps/web && bun run chk",
-    "web:dev": "bun run web:fmt && bun run web:chk && cd apps/web && bun run dev",
-    "web:build": "cd apps/web && bun run build",
-    "reinstall": "bun run clean && bun install",
-    "web:restart": "bun run reinstall && bun run web:dev",
-    "web:start": "bun install && bun run web:dev"
-  }
+    "name": "anydm",
+    "private": true,
+    "version": "0.0.1",
+    "description": "AnyDM",
+    "type": "module",
+    "workspaces": [
+        "apps/*"
+    ],
+    "scripts": {
+        "web:clean": "cd apps/web && bun run clean",
+        "clean": "rm -rf node_modules bun.lockb && bun run web:clean",
+        "web:fmt": "cd apps/web && bun run fmt",
+        "web:fmt.chk": "cd apps/web && bun run fmt.chk",
+        "web:chk": "cd apps/web && bun run chk",
+        "web:dev": "bun run web:fmt && bun run web:chk && cd apps/web && bun run dev",
+        "web:build": "cd apps/web && bun run build",
+        "reinstall": "bun run clean && bun install",
+        "web:restart": "bun run reinstall && bun run web:dev",
+        "web:start": "bun install && bun run web:dev"
+    }
 }

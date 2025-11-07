@@ -2,6 +2,12 @@
 .idea
 
 # project
-dist
 node_modules
+dist
+server
 bun.lock
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
