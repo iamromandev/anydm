@@ -35,5 +35,8 @@
         "src",
         "./*.d.ts",
         "./*.config.ts"
+    ],
+    "exclude": [
+        "node_modules"
     ]
 }
