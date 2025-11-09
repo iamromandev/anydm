@@ -1,16 +1,17 @@
 import gc
-from functools import reduce
+import traceback
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import Field
 
 from .base import BaseSchema
 from .constants import EXCEPTION_CODE_MAP, EXCEPTION_ERROR_TYPE_MAP
-from .formats import utc_iso_timestamp
+from .format import utc_iso_timestamp
 from .mixins import BaseMixin
 from .type import Code, ErrorType, Status
 
@@ -30,13 +31,13 @@ class ErrorDetail(BaseSchema):
 class Error(Exception, BaseMixin):
     def __init__(
         self,
-        status: Annotated[Status, Field(...)] = Status.ERROR,
-        code: Annotated[Code, Field(...)] = Code.INTERNAL_SERVER_ERROR,
-        message: Annotated[str | None, Field(...)] = None,
-        type: Annotated[ErrorType | None, Field(...)] = None,
-        details: Annotated[list[ErrorDetail] | None, Field(...)] = None,
-        retry_able: Annotated[bool, Field(...)] = False,
-        timestamp: Annotated[str, Field(...)] = utc_iso_timestamp()
+        status: Status = Status.ERROR,
+        code: Code = Code.INTERNAL_SERVER_ERROR,
+        message: str | None = None,
+        type: ErrorType | None = None,
+        details: list[ErrorDetail] | None = None,
+        retry_able: bool = False,
+        timestamp: str | None = None,
     ) -> None:
         super().__init__()
         self.status = status
@@ -45,7 +46,7 @@ class Error(Exception, BaseMixin):
         self.type = type
         self.details = details
         self.retry_able = retry_able
-        self.timestamp = timestamp
+        self.timestamp = timestamp or utc_iso_timestamp()
 
     def __str__(self) -> str:
         return (
@@ -53,12 +54,23 @@ class Error(Exception, BaseMixin):
             f"type={self.type}, details={self.details}, retry_able={self.retry_able})"
         )
 
-    def to_json(self, exclude_none: bool = True) -> Any:
-        json = jsonable_encoder(
-            self,
-            # exclude={"error": {"code"}},
-            exclude_none=exclude_none
-        )
+    def to_dict(self, exclude_none: bool = True) -> dict[str, Any]:
+        data = {
+            "status": self.status,
+            "code": self.code,
+            "message": self.message,
+            "type": self.type,
+            "details": self.details,
+            "retry_able": self.retry_able,
+            "timestamp": self.timestamp,
+        }
+        if exclude_none:
+            data = {k: v for k, v in data.items() if v is not None}
+        return data
+
+    def to_json(self, exclude_none: bool = True) -> dict[str, Any]:
+        data = self.to_dict(exclude_none=exclude_none)
+        json = jsonable_encoder(data)
         logger.info(f"{self._tag}|to_json: {json}")
         return json
 
@@ -152,6 +164,7 @@ class Error(Exception, BaseMixin):
             ] if details else None
         )
 
+
     @classmethod
     def process_exception(
         cls: type["Error"],
@@ -176,22 +189,74 @@ class Error(Exception, BaseMixin):
             type=error_type,
         )
 
+    @classmethod
+    def process_validation_error(
+        cls: type["Error"],
+        exc: RequestValidationError
+    ) -> "Error":
+        messages = [
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            for err in exc.errors()
+        ]
+        exception_message = "; ".join(messages) if messages else "Validation error"
 
-def config_global_errors(app: FastAPI) -> None:
+        return cls(
+            code=Code.UNPROCESSABLE_ENTITY,  # 422
+            message=exception_message,
+            type=ErrorType.VALIDATION_ERROR,
+        )
+
+
+def init_global_errors(app: FastAPI) -> None:
+    # Keep your existing FastAPI exception handlers for direct Exceptions, ValidationError, and Error instances
     @app.exception_handler(Exception)
     async def catch_exception(request: Request, error: Exception) -> JSONResponse:
-        error_arg_str = reduce(
-            lambda arg_str, arg: arg_str + "\n" + str(arg), error.args, ""
-        )
-        logger.error(
-            f"{type(error).__name__} in {request.url}: {error_arg_str}",
-            exc_info=error.__traceback__,
-        )
+        tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        logger.error(f"FastAPIHandlerError at {request.url}:\n{tb_str}")
         gc.collect()
-
         return Error.process_exception(error).to_resp()
 
+    # Validation error handler
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        logger.warning(f"Validation error at {request.url}: {exc.errors()}")
+        return Error.process_validation_error(exc).to_resp()
+
+    # Direct Error instances
     @app.exception_handler(Error)
-    async def catch_error(request: Request, error: Error) -> JSONResponse:
-        logger.error(f"Global|Error|catch_error(): {str(error)}")
+    async def catch_custom_error(request: Request, error: Error) -> JSONResponse:
+        logger.error(f"CustomError at {request.url}: {str(error)}")
         return error.to_resp()
+
+
+def error_api_responses() -> dict[int, dict[str, Any]]:
+    return {
+        # status.HTTP_200_OK: {
+        #     "description": "Successful response",
+        #     "model": Success[model_success],
+        # },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Bad Request",
+            "model": Error,
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Unauthorized",
+            "model": Error,
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Forbidden",
+            "model": Error,
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Resource Not Found",
+            "model": Error,
+        },
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {
+            "description": "Validation Error",
+            "model": Error,
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "description": "Internal Server Error",
+            "model": Error,
+        },
+    }

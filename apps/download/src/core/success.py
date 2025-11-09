@@ -1,5 +1,4 @@
-from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import Annotated, Any, Generic, TypeVar
 
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -7,9 +6,10 @@ from loguru import logger
 from pydantic import Field
 
 from .base import BaseSchema
-from .formats import utc_iso_timestamp
-from .mixins import BaseMixin
+from .format import utc_iso_timestamp
 from .type import Code, Status
+
+_T = TypeVar("_T")
 
 
 class Meta(BaseSchema):
@@ -19,23 +19,23 @@ class Meta(BaseSchema):
     total_pages: Annotated[int, Field(default=10)] = 10
 
 
-@dataclass
-class Success(BaseMixin):
+class Success(BaseSchema, Generic[_T]):
     status: Annotated[Status, Field(...)] = Status.SUCCESS
     code: Annotated[Code, Field(...)] = Code.OK
     message: Annotated[str | None, Field(...)] = None
-    data: Annotated[Any, Field(...)] = None
+    data: Annotated[_T, Field(...)] = None
     meta: Annotated[Meta | None, Field(...)] = None
-    timestamp: Annotated[str, Field(...)] = field(default_factory=lambda: utc_iso_timestamp())
+    timestamp: Annotated[str, Field(...)] = Field(default_factory=lambda: utc_iso_timestamp())
 
-    def to_json(self, exclude_none: bool = True) -> Any:
+    def to_json(self, exclude_none: bool = True, log: bool = False) -> Any:
         json = jsonable_encoder(self, exclude_none=exclude_none)
-        logger.info(f"{self._tag}|to_json(): {json}")
+        if log:
+            logger.success(f"{self._tag}|to_json(): {json}")
         return json
 
-    def to_resp(self) -> JSONResponse:
+    def to_resp(self, log: bool = False) -> JSONResponse:
         return JSONResponse(
-            content=self.to_json(),
+            content=self.to_json(log=log),
             status_code=self.code.value,
         )
 

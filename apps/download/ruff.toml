@@ -16,17 +16,19 @@ exclude = [
 
 [lint]
 select = [
-    "E",   # pycodestyle
-    "F",   # Pyflakes
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
+    "E", # pycodestyle
+    "F", # Pyflakes
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
     "SIM", # flake8-simplify
-    "I",   # isort
+    "I", # isort
     "YTT", # type checking
 ]
 
 [lint.extend-per-file-ignores]
 "*/__init__.py" = ["F401", "B008"]
+"*/core/*.py" = ["UP046", "UP047"]
 "*/migrations/*" = ["E501"]
 "*/constants.py" = ["E501"]
 "*/base.py" = ["UP046"]
+"*/service/*.py" = ["B904"]

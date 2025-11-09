@@ -11,7 +11,7 @@ import toml
 from pydantic import Field, HttpUrl
 
 from src.client import CacheClient
-from src.core.formats import serialize
+from src.core.format import serialize
 
 K = TypeVar("K")
 V = TypeVar("V")

@@ -5,7 +5,7 @@ import redis.asyncio as redis
 from pydantic import Field, RedisDsn
 
 from src.core.factory import SingletonMeta
-from src.core.formats import serialize
+from src.core.format import serialize
 
 
 class CacheClient(metaclass=SingletonMeta):

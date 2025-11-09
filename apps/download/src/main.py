@@ -5,9 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.common import get_app_version
 from src.core.config import settings
-from src.core.error import config_global_errors
+from src.core.error import init_global_errors
+from src.core.middleware import init_process_time_tracing
 from src.db import init_db, run_migrations
-from src.route.health import health_router
+from src.route.download import router as _download_router
+
+# import routers
+from src.route.health import router as _health_router
 
 
 @asynccontextmanager
@@ -32,7 +36,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-config_global_errors(app)
+init_global_errors(app)
 init_db(app)
+init_process_time_tracing(app)
 
-app.include_router(health_router)
+routers = [
+    _health_router,
+    _download_router
+]
+for router in routers:
+    app.include_router(router)

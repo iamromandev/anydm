@@ -51,6 +51,7 @@ def serialize(obj: Any, instructions: dict[type, type] | None = None) -> Any:
     else:
         raise TypeError(f"Object of type {type(obj)} is not serializable")
 
+
 def clean_url(url: str | HttpUrl) -> HttpUrl:
     # Convert HttpUrl → str if needed
     url = str(url)
@@ -71,3 +72,25 @@ def clean_url(url: str | HttpUrl) -> HttpUrl:
         return HttpUrl(clean)  # Pydantic v2
     except ValidationError as e:
         raise ValueError(f"Invalid URL after cleaning: {clean}") from e
+
+
+def format_duration(seconds: float) -> str:
+    """
+    Format elapsed time into human-readable string.
+    - <1s -> ms
+    - <60s -> seconds
+    - <3600s -> minutes + seconds
+    - >=3600s -> hours + minutes
+    """
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    elif seconds < 60:
+        return f"{seconds:.2f} s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        sec = int(seconds % 60)
+        return f"{minutes} min {sec} s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours} hr {minutes} min"

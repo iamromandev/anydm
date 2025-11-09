@@ -38,7 +38,6 @@ ENV WORK_DIR=$WORK_DIR
 ENV INSTALL_DIR=$INSTALL_DIR
 ENV PW_DIR=$PW_DIR
 
-
 # install uv
 RUN pip install --upgrade pip
 RUN pip install uv
@@ -66,6 +65,9 @@ ENV ENV=$ENV
 ENV WORK_DIR=$WORK_DIR
 ENV INSTALL_DIR=$INSTALL_DIR
 ENV PW_DIR=$PW_DIR
+
+# Install uv and ffmpeg in builder
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR $WORK_DIR
 
