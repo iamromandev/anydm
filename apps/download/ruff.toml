@@ -1,0 +1,32 @@
+target-version = "py312"
+line-length = 120
+
+exclude = [
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+]
+
+[lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+    "YTT", # type checking
+]
+
+[lint.extend-per-file-ignores]
+"*/__init__.py" = ["F401", "B008"]
+"*/migrations/*" = ["E501"]
+"*/constants.py" = ["E501"]
+"*/base.py" = ["UP046"]

@@ -1,0 +1,12 @@
+### ignore ###
+.idea
+.env
+.env.**
+__pycache__
+uv.lock
+
+# ignore generated files
+**/*.pyc
+
+### allow ###
+!.env.example
