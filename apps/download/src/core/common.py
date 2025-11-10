@@ -1,16 +1,15 @@
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
-import redis.asyncio as redis
 import toml
-from pydantic import Field, HttpUrl
+from pydantic import HttpUrl
 
-from src.client import CacheClient
 from src.core.format import serialize
 
 K = TypeVar("K")
@@ -28,17 +27,6 @@ def get_app_version() -> str:
         return "Version information not found"
     except KeyError:
         return "Version key not found in pyproject.toml"
-
-
-async def get_cache_health(
-    cache: Annotated[CacheClient, Field(...)],
-) -> bool:
-    try:
-        await cache.ping()
-        await cache.close()
-        return True
-    except redis.ConnectionError:
-        return False
 
 
 def get_base_url(url: HttpUrl) -> HttpUrl:
@@ -133,3 +121,18 @@ def compute_checksum(content: dict[str, Any]) -> str:
     content_str: str = json.dumps(content, sort_keys=True)
     content_bytes: bytes = content_str.encode('utf-8')
     return hashlib.sha256(content_bytes).hexdigest()
+
+
+def safe_filename(title: str, ext: str = "mp4") -> Path:
+    """
+    Returns a filesystem-safe filename from a video title.
+    Removes illegal characters and trims excessive length.
+    """
+    # Replace invalid characters (Windows, Linux, macOS)
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", title)
+    safe_title = re.sub(r"\s+", " ", safe_title).strip()  # normalize spaces
+
+    # Limit filename length to 150 chars to avoid OS limits
+    safe_title = safe_title[:150]
+
+    return Path(f"{safe_title}.{ext}")

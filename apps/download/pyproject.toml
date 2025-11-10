@@ -31,5 +31,5 @@ package = false
 
 [tool.aerich]
 tortoise_orm = "src.db.DB_CONFIG"
-location = "./src/db/migrations"
+location = "./src/db/migration"
 src_folder = "./."

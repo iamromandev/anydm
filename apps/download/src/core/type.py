@@ -3,6 +3,7 @@ from enum import Enum, StrEnum
 from typing import Any, Self
 
 from fastapi import status
+from fastapi.responses import FileResponse
 
 
 class BaseEnum(Enum):
@@ -503,3 +504,37 @@ class DataSubType(StrEnum):
     # Notes / annotations
     MARKDOWN = "markdown"
     NOTE = "note"
+
+
+class UnicodeFileResponse(FileResponse):
+    def __init__(
+        self,
+        path: str,
+        media_type: str | None = None,
+        filename: str | None = None,
+        headers: dict[str, Any] | None = None,
+        **kwargs
+    ) -> None:
+        headers = headers or {}
+
+        if filename:
+            # Strip non-ASCII characters
+            safe_filename = filename.encode("ascii", "ignore").decode("ascii")
+            headers["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
+
+        super().__init__(path=path, media_type=media_type, headers=headers, **kwargs)
+
+class SafeFileResponse(FileResponse):
+    def __init__(self, *args, headers=None, **kwargs):
+        headers = headers or {}
+        safe_headers = {}
+        for k, v in headers.items():
+            if isinstance(v, str):
+                try:
+                    v.encode("latin-1")
+                    safe_headers[k] = v
+                except UnicodeEncodeError:
+                    safe_headers[k] = v.encode("utf-8", "ignore").decode("utf-8")
+            else:
+                safe_headers[k] = v
+        super().__init__(*args, headers=safe_headers, **kwargs)

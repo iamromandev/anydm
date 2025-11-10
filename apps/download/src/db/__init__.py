@@ -21,8 +21,8 @@ DB_CONFIG = {
         }
     },
     "apps": {
-        "models": {
-            "models": ["src.db.models"],
+        "model": {
+            "models": ["src.db.model"],
             "default_connection": "default",
         },
         "aerich": {
@@ -40,6 +40,8 @@ def init_db(app: FastAPI) -> None:
         generate_schemas=False,  # make a decision using settings Env
         add_exception_handlers=True,
     )
+
+
 
 async def run_migrations() -> None:
     async def run_command(*args):
@@ -65,6 +67,7 @@ async def run_migrations() -> None:
 
     # Step 2: aerich upgrade
     await run_command("aerich", "upgrade")
+
 
 async def get_db_health() -> bool:
     try:
