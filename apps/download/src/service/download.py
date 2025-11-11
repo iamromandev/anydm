@@ -9,6 +9,7 @@ from pydantic import HttpUrl
 from yt_dlp import YoutubeDL
 
 from src.core.base import BaseService
+from src.core.constant import FORMAT_FIELDS, META_FIELDS
 from src.core.format import serialize
 from src.core.type import SafeFileResponse
 
@@ -62,6 +63,40 @@ class DownloadService(BaseService):
             raise HTTPException(status_code=404, detail="Download failed")
 
         return output_path, filename
+
+    async def extract_meta(self, request: Request, url: HttpUrl) -> dict:
+        """Extract video metadata with formats filtered by URL only."""
+        options = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": False,
+            "noplaylist": True,
+        }
+
+        try:
+            with YoutubeDL(options) as ydl:
+                info = ydl.extract_info(str(url), download=False)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"yt-dlp metadata extraction failed: {e}")
+
+        if not info:
+            raise HTTPException(status_code=404, detail="Metadata not found")
+
+        # Keep only formats that have a URL
+        filtered_formats = [
+            {k: v for k, v in f.items() if k in FORMAT_FIELDS}
+            for f in info.get("formats", [])
+            if f.get("url")
+        ]
+
+        filtered_info = {k: v for k, v in info.items() if k in META_FIELDS}
+        filtered_info["formats"] = filtered_formats
+
+        unique_notes = {f.get("format_note") for f in filtered_formats if f.get("format_note")}
+        logger.info(f"Unique format_note values: {unique_notes}")
+
+
+        return filtered_info
 
     async def download(self, request: Request, url: HttpUrl) -> FileResponse:
         """
