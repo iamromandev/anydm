@@ -16,9 +16,9 @@ _ModelT = TypeVar("_ModelT", bound=models.Model)
 
 class Base(models.Model):
     id: uuid.UUID = fields.UUIDField(primary_key=True, default=uuid.uuid4)
-    created_at: datetime = fields.DatetimeField(auto_now_add=True)
-    updated_at: datetime = fields.DatetimeField(auto_now=True)
-    deleted_at: datetime | None = fields.DatetimeField(null=True)
+    created_at: datetime = fields.DatetimeField(auto_now_add=True, db_index=True)
+    updated_at: datetime = fields.DatetimeField(auto_now=True, db_index=True)
+    deleted_at: datetime | None = fields.DatetimeField(null=True, db_index=True)
 
     class Meta:
         abstract = True
@@ -30,6 +30,11 @@ class Base(models.Model):
     @classmethod
     async def get_active(cls: type[_ModelT]) -> queryset.QuerySet[_ModelT]:
         return cls.filter(deleted_at__isnull=True)
+
+    @classmethod
+    def db_fields(cls, excludes: list[str] | None = None) -> list[str]:
+        excludes = excludes or []
+        return [f for f in cls._meta.db_fields if f not in excludes]
 
 
 # repo - operation on the database

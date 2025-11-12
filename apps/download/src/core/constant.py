@@ -87,6 +87,7 @@ FORMAT_FIELDS = [
     "language",          # language code if present
     "quality",
     "has_drm",
+    "http_headers",      # headers needed for downloading
     "fragments",         # for storyboards / segmented formats
     "rows",              # storyboard rows
     "columns",           # storyboard columns
