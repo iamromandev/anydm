@@ -1,9 +1,10 @@
 import json
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Self
 
 from fastapi import status
 from fastapi.responses import FileResponse
+from tortoise.fields.base import StrEnum
 
 
 class BaseEnum(Enum):
@@ -207,111 +208,62 @@ class ErrorType(BaseEnum):
     EMAIL_SEND_FAILED = "email_send_failed"
     NOTIFICATION_ERROR = "notification_error"
 
-
-class ContentType(str, Enum):
-    PDF = "application/pdf"
-    TEXT = "text/plain"
-    MARKDOWN = "text/markdown"
-    HTML = "text/html"
-    JSON = "application/json"
-    CSV = "text/csv"
-    PNG = "image/png"
-    JPEG = "image/jpeg"
-    JPG = "image/jpg"
-    GIF = "image/gif"
-    WEBP = "image/webp"
-    DOC = "application/msword"
-    DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    XLS = "application/vnd.ms-excel"
-    XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    PPT = "application/vnd.ms-powerpoint"
-    PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    ZIP = "application/zip"
-    RTF = "application/rtf"
-
-
-class ModelType(StrEnum):
-    URL = "url"
-    DATA = "data"
-
-    @classmethod
-    def value_of(cls, value: str) -> Self | None:
-        try:
-            return cls(value)
-        except ValueError:
-            return None
-
-
 class Action(StrEnum):
-    CREATE = "create"  # CRUD: create
-    READ = "read"  # CRUD: read
-    UPDATE = "update"  # CRUD: update
-    DELETE = "delete"  # CRUD: delete
+    # --- CRUD / Resource management ---
+    CREATE = "create"
+    READ = "read"
+    UPDATE = "update"
+    DELETE = "delete"
+    UPSERT = "upsert"
+    PATCH = "patch"
 
-    FETCH = "fetch"  # Data pipeline: fetch
-    CRAWL = "crawl"  # Data pipeline: crawl
-    PARSE = "parse"  # Data pipeline: parse
-    EXTRACT = "extract"  # Data pipeline: extract
-    TRANSFORM = "transform"  # Data pipeline: transform
-    LOAD = "load"  # Data pipeline: load
-    VALIDATE = "validate"  # Data pipeline: validate
-    CLEAN = "clean"  # Data pipeline: clean
-    NORMALIZE = "normalize"  # Data pipeline: normalize
-    ENRICH = "enrich"  # Data pipeline: enrich
-    AGGREGATE = "aggregate"  # Data pipeline: aggregate
-    JOIN = "join"  # Data pipeline: join
-    FILTER = "filter"  # Data pipeline: filter
-    SORT = "sort"  # Data pipeline: sort
-    DEDUPLICATE = "deduplicate"  # Data pipeline: deduplicate
-    MERGE = "merge"  # Data pipeline: merge
-    SPLIT = "split"  # Data pipeline: split
+    # --- Data ingestion & processing ---
+    FETCH = "fetch"  # Retrieve data
+    DOWNLOAD = "download"  # Download files/data
+    UPLOAD = "upload"  # Upload files/data
+    PARSE = "parse"  # Parse structured or raw data
+    EXTRACT = "extract"  # Extract content or features
+    TRANSFORM = "transform"  # Transform or clean data
+    LOAD = "load"  # Load data into storage or DB
+    VALIDATE = "validate"  # Validate schema or correctness
+    CLEAN = "clean"  # Data cleaning / preprocessing
 
-    TRAIN = "train"  # ML/AI: train
-    EVALUATE = "evaluate"  # ML/AI: evaluate
-    INFER = "infer"  # ML/AI: infer
-    PREDICT = "predict"  # ML/AI: predict
-    TEST = "test"  # ML/AI: test
-    DEPLOY = "deploy"  # ML/AI: deploy
-    RETRAIN = "retrain"  # ML/AI: retrain
-    TUNE = "tune"  # ML/AI: tune
-    SCORE = "score"  # ML/AI: score
-    FEATURE_ENGINEER = "feature_engineer"  # ML/AI: feature engineering
+    # --- ML / AI operations ---
+    TRAIN = "train"  # Train model
+    EVALUATE = "evaluate"  # Evaluate model performance
+    INFER = "infer"  # Run inference
+    PREDICT = "predict"  # Make predictions
+    DEPLOY = "deploy"  # Deploy model
+    RETRAIN = "retrain"  # Retrain existing model
 
-    START = "start"  # System/workflow: start
-    STOP = "stop"  # System/workflow: stop
-    RESTART = "restart"  # System/workflow: restart
-    RETRY = "retry"  # System/workflow: retry
-    CANCEL = "cancel"  # System/workflow: cancel
-    SCHEDULE = "schedule"  # System/workflow: schedule
-    PAUSE = "pause"  # System/workflow: pause
-    RESUME = "resume"  # System/workflow: resume
-    ABORT = "abort"  # System/workflow: abort
-    WAIT = "wait"  # System/workflow: wait
+    # --- Workflow / System control ---
+    START = "start"  # Begin execution
+    STOP = "stop"  # Stop execution
+    RESTART = "restart"  # Restart task or workflow
+    RETRY = "retry"  # Retry failed task
+    CANCEL = "cancel"  # Cancel pending or running task
+    PAUSE = "pause"  # Temporarily pause task
+    RESUME = "resume"  # Resume paused task
 
-    EXPORT = "export"  # Backup/export/import: export
-    IMPORT = "import"  # Backup/export/import: import
-    BACKUP = "backup"  # Backup/export/import: backup
-    RESTORE = "restore"  # Backup/export/import: restore
-    SNAPSHOT = "snapshot"  # Backup/export/import: snapshot
-    ARCHIVE = "archive"  # Backup/export/import: archive
-    CLEANUP = "cleanup"  # Backup/export/import: cleanup
+    # --- Backup / Archival ---
+    BACKUP = "backup"  # Main backup operation
+    RESTORE = "restore"  # Restore from backup
+    ARCHIVE = "archive"  # Move to long-term storage
 
-    NOTIFY = "notify"  # Notifications/logging/monitoring: notify
-    LOG = "log"  # Notifications/logging/monitoring: log
-    MONITOR = "monitor"  # Notifications/logging/monitoring: monitor
-    ALERT = "alert"  # Notifications/logging/monitoring: alert
-    REPORT = "report"  # Notifications/logging/monitoring: report
-    TRACK = "track"  # Notifications/logging/monitoring: track
-    AUDIT = "audit"  # Notifications/logging/monitoring: audit
-    OBSERVE = "observe"  # Notifications/logging/monitoring: observe
+    # --- Monitoring / Auditing (reduced) ---
+    LOG = "log"
+    ALERT = "alert"
+    MONITOR = "monitor"
+    AUDIT = "audit"
+    REPORT = "report"
 
-    SEND = "send"  # Communication/messaging: send
-    RECEIVE = "receive"  # Communication/messaging: receive
-    PUBLISH = "publish"  # Communication/messaging: publish
-    SUBSCRIBE = "subscribe"  # Communication/messaging: subscribe
-    BROADCAST = "broadcast"  # Communication/messaging: broadcast
-    QUEUE = "queue"  # Communication/messaging: queue
-    DEQUEUE = "dequeue"  # Communication/messaging: dequeue
+    # --- Communication / Messaging (reduced) ---
+    SEND = "send"
+    RECEIVE = "receive"
+    PUBLISH = "publish"
+    SUBSCRIBE = "subscribe"
+    ACK = "ack"
+    NACK = "nack"
 
     @classmethod
     def value_of(cls, value: str) -> Self | None:
@@ -320,38 +272,46 @@ class Action(StrEnum):
         except ValueError:
             return None
 
-
 class State(StrEnum):
-    NEW = "new"  # Just created, not started yet
-    PENDING = "pending"  # Waiting for a resource or dependency
-    QUEUED = "queued"  # In queue, scheduled to be processed
-    SCHEDULED = "scheduled"  # Assigned for future execution
-    INITIALIZING = "initializing"  # Starting up, loading resources
-    STARTING = "starting"  # Beginning execution
-    RUNNING = "running"  # Actively processing
-    PROCESSING = "processing"  # Similar to running, used for data
-    VALIDATING = "validating"  # Checking constraints, formats
-    CHECKING = "checking"  # Generic verification or check
-    TRANSFORMING = "transforming"  # Performing transformation step
-    WAITING = "waiting"  # Paused, waiting for event or signal
-    BLOCKED = "blocked"  # Cannot proceed due to external issue
-    DEFERRED = "deferred"  # Postponed due to unmet conditions
-    SKIPPED = "skipped"  # Intentionally not executed
-    INTERRUPTED = "interrupted"  # Unexpectedly halted
-    RETRY = "retry"  # Scheduled to retry after failure
-    TIMEOUT = "timeout"  # Exceeded allowed time limit
-    FAILED = "failed"  # Failed during execution
-    ERROR = "error"  # Error occurred, similar to failed
-    ABORTED = "aborted"  # Manually stopped or aborted
-    CANCELED = "canceled"  # Manually or automatically canceled
-    COMPLETED = "completed"  # Finished all operations
-    SUCCESS = "success"  # Completed successfully
-    PARTIAL_SUCCESS = "partial_success"  # Some tasks succeeded
-    STALE = "stale"  # Too old or irrelevant to continue
-    ARCHIVED = "archived"  # Marked for long-term storage
-    EXPIRED = "expired"  # Reached its end of validity
-    SUSPENDED = "suspended"  # Temporarily paused
-    RESUMED = "resumed"  # Resumed from suspension
+    # --- Initialization / Scheduling ---
+    NEW = "new"                  # Just created, not started yet
+    PENDING = "pending"          # Waiting for dependency or resource
+    QUEUED = "queued"            # In queue for execution
+    SCHEDULED = "scheduled"      # Planned for future run
+
+    # --- Startup / Preparation ---
+    INITIALIZING = "initializing" # Allocating or loading resources
+    STARTING = "starting"         # Beginning execution
+
+    # --- Execution / Processing ---
+    RUNNING = "running"           # Actively executing
+    VALIDATING = "validating"     # Checking input or results
+    TRANSFORMING = "transforming" # Performing data transformation
+
+    # --- Control / Flow ---
+    WAITING = "waiting"           # Waiting for event, signal, or resource
+    BLOCKED = "blocked"           # Cannot proceed due to external issue
+    DEFERRED = "deferred"         # Postponed due to unmet conditions
+    RETRYING = "retrying"         # Reattempt after failure
+    SUSPENDED = "suspended"       # Paused manually or automatically
+    RESUMED = "resumed"           # Resumed from suspension
+    SKIPPED = "skipped"           # Intentionally not executed
+
+    # --- Failure / Interruption ---
+    TIMEOUT = "timeout"           # Exceeded time limit
+    FAILED = "failed"             # Execution failed
+    ABORTED = "aborted"           # Manually stopped mid-execution
+    CANCELED = "canceled"         # Canceled before starting
+
+    # --- Completion / Terminal ---
+    SUCCESS = "success"           # Completed successfully
+    PARTIAL_SUCCESS = "partial_success" # Some operations succeeded
+    COMPLETED = "completed"       # Finished, regardless of outcome
+
+    # --- Lifecycle / Post-execution ---
+    STALE = "stale"               # Outdated or no longer relevant
+    EXPIRED = "expired"           # Reached end of validity
+    ARCHIVED = "archived"         # Moved to long-term storage
 
     @classmethod
     def value_of(cls, value: str) -> Self | None:
@@ -523,6 +483,7 @@ class UnicodeFileResponse(FileResponse):
             headers["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
 
         super().__init__(path=path, media_type=media_type, headers=headers, **kwargs)
+
 
 class SafeFileResponse(FileResponse):
     def __init__(self, *args, headers=None, **kwargs):

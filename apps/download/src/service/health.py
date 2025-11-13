@@ -4,8 +4,8 @@ from src.client import CacheClient
 from src.core.base import BaseService
 from src.core.common import get_app_version
 from src.core.type import Status
-from src.db import get_db_health
-from src.schema.health import HealthSchema
+from src.data import get_db_health
+from src.data.schema.health import HealthSchema
 
 
 class HealthService(BaseService):

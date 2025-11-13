@@ -31,6 +31,6 @@ dev = [
 package = false
 
 [tool.aerich]
-tortoise_orm = "src.db.DB_CONFIG"
-location = "./src/db/migration"
+tortoise_orm = "src.data.DB_CONFIG"
+location = "./src/data/migration"
 src_folder = "./."

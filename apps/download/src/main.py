@@ -7,7 +7,7 @@ from src.core.common import get_app_version
 from src.core.config import settings
 from src.core.error import init_global_errors
 from src.core.middleware import init_process_time_tracing
-from src.db import init_db, run_migrations
+from src.data import init_db, run_migrations
 from src.route.download import router as _download_router
 
 # import routers
