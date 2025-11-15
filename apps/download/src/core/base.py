@@ -36,6 +36,35 @@ class Base(models.Model):
         excludes = excludes or []
         return [f for f in cls._meta.db_fields if f not in excludes]
 
+    @classmethod
+    def from_query_result(cls, *args, **kwargs) -> _ModelT:
+        """
+        Instantiate a model instance from raw query result.
+        Args:
+            *args: Positional query result values
+            **kwargs: Named query result values
+        Returns:
+            Model instance
+        """
+        instance = cls.__new__(cls)
+
+        # Assign all fields
+        for field in cls._meta.fields_map.values():
+            if field.source_field in kwargs:
+                setattr(instance, field.model_field_name, kwargs[field.source_field])
+            else:
+                setattr(instance, field.model_field_name, None)
+
+        # Assign m2m default as empty list
+        for key in cls._meta.m2m_fields:
+            setattr(instance, key, [])
+
+        # Set internal state
+        instance._saved_in_db = True
+        instance._fetched_values = set(kwargs.keys())
+
+        return instance
+
 
 # repo - operation on the database
 class BaseRepo(Generic[_ModelT]):
@@ -47,6 +76,12 @@ class BaseRepo(Generic[_ModelT]):
     @cached_property
     def _tag(self) -> str:
         return self.__class__.__name__
+
+    async def first_by_raw(self, sql: str) -> _ModelT | None:
+        rows = await self._model.raw(sql)  # type hint to satisfy checker
+        if not rows:
+            return None
+        return rows[0]
 
     async def exists(self, **kwargs: Any) -> bool:
         return await self._model.filter(**kwargs).exists()
@@ -259,17 +294,31 @@ class BaseRepo(Generic[_ModelT]):
 
         return model_instances
 
-    async def update(self, instance: _ModelT, **kwargs: Any) -> _ModelT | None:
+    # async def update(self, instance: _ModelT, **kwargs: Any) -> _ModelT | None:
+    #     for attr, value in kwargs.items():
+    #         setattr(instance, attr, value)
+    #     await instance.save()
+    #     return instance
+    #
+    # async def update_by_id(self, id: uuid.UUID, **kwargs: Any) -> _ModelT | None:
+    #     instance = await self.get_by_id(id)
+    #     if instance:
+    #         return await self.update(instance, **kwargs)
+    #     return None
+
+    async def update(self, target: uuid.UUID | _ModelT, **kwargs: Any) -> _ModelT | None:
+        if isinstance(target, uuid.UUID):
+            instance = await self.get_by_id(target)
+            if instance is None:
+                return None
+        else:
+            instance = target
+
         for attr, value in kwargs.items():
             setattr(instance, attr, value)
+
         await instance.save()
         return instance
-
-    async def update_by_id(self, id: uuid.UUID, **kwargs: Any) -> _ModelT | None:
-        instance = await self.get_by_id(id)
-        if instance:
-            return await self.update(instance, **kwargs)
-        return None
 
     async def delete(self, instance: _ModelT) -> None:
         await instance.delete()

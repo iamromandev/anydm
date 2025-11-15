@@ -73,6 +73,7 @@ FORMAT_FIELDS = [
     "filesize_approx",   # approximate size
     "asr",               # audio sample rate
     "audio_channels",    # number of audio channels
+    "tbr",               # total bitrate
     "abr",               # audio bitrate
     "vbr",               # video bitrate (0 for none)
     "width",             # video width or storyboard thumbnail width
