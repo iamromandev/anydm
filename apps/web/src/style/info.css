@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+.info-panel {
+    @apply mt-6 space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-left;
+}
+
+.info-header {
+    @apply flex flex-col gap-4 sm:flex-row;
+}
+
+.info-thumbnail {
+    @apply w-full rounded-md object-cover sm:max-w-xs;
+}
+
+.info-meta {
+    @apply min-w-0 flex-1 space-y-2;
+}
+
+.info-title {
+    @apply text-lg font-semibold text-gray-900;
+}
+
+.info-author {
+    @apply text-sm text-gray-600;
+}
+
+.info-stats {
+    @apply flex flex-wrap gap-3 text-sm text-gray-500;
+}
+
+.info-live {
+    @apply rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700;
+}
+
+.info-category,
+.info-upload {
+    @apply text-xs text-gray-500;
+}
+
+.info-description {
+    @apply text-sm text-gray-700;
+}
+
+.info-description summary {
+    @apply cursor-pointer font-medium text-gray-900;
+}
+
+.info-description p {
+    @apply mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap;
+}
+
+.info-formats h3 {
+    @apply mb-2 text-sm font-semibold text-gray-900;
+}
+
+.info-formats ul {
+    @apply max-h-48 space-y-2 overflow-y-auto text-sm text-gray-700;
+}
+
+.info-formats li {
+    @apply grid grid-cols-2 gap-2 rounded-md bg-white px-3 py-2 sm:grid-cols-4;
+}
+
+.info-format-quality {
+    @apply font-medium text-gray-900;
+}

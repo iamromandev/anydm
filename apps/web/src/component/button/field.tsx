@@ -16,13 +16,14 @@ export const Button = component$<ButtonProps>(
         variant = "primary",
         disabled,
         loading = false,
+        type = "button",
         ...props
     }) => {
         return (
             <button
-                type="button"
+                type={type}
                 disabled={disabled || loading}
-                onClick$={onClick$ ? (e) => onClick$(e) : undefined} // guard call
+                onClick$={onClick$}
                 class={`btn ${variant} ${loading ? "loading" : ""}`}
                 {...props}
             >

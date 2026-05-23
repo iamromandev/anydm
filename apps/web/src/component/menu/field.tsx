@@ -43,26 +43,6 @@ export const Menu = component$(() => {
                         Home
                     </a>
                 </li>
-                <li>
-                    <a href="/features" class="menu-link">
-                        Features
-                    </a>
-                </li>
-                <li>
-                    <a href="/pricing" class="menu-link">
-                        Pricing
-                    </a>
-                </li>
-                <li>
-                    <a href="/about" class="menu-link">
-                        About
-                    </a>
-                </li>
-                <li>
-                    <a href="/contact" class="menu-link">
-                        Contact
-                    </a>
-                </li>
             </ul>
         </nav>
     );
