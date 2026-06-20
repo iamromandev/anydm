@@ -1,6 +1,6 @@
 # core
-.DS_Store
 .idea
+.ds_store
 
 # project
 node_modules

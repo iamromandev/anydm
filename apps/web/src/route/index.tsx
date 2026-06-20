@@ -105,7 +105,9 @@ export default component$(() => {
                     </Button>
                 </form>
 
-                {store.result && <Info data={store.result} />}
+                {store.result && (
+                    <Info data={store.result} videoUrl={store.url} />
+                )}
             </div>
         </div>
     );

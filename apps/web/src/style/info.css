@@ -64,3 +64,15 @@
 .info-format-quality {
     @apply font-medium text-gray-900;
 }
+
+.info-download-btn {
+    @apply inline-flex items-center justify-center rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white transition-colors duration-150 hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.info-download-btn:disabled {
+    @apply bg-blue-400;
+}
+
+.info-download-error {
+    @apply mt-2 text-sm text-red-600;
+}

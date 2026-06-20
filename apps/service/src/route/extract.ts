@@ -1,5 +1,15 @@
 import { Hono } from "hono";
-import { Innertube } from "youtubei.js";
+import { Innertube, Platform } from "youtubei.js";
+import vm from "node:vm";
+import * as console from "node:console";
+
+Platform.shim.eval = (data, env) => {
+    // The player script ends with a top-level `return ...`, so it must run as
+    // a function body. Wrap it in an IIFE and return the evaluated result.
+    const context = vm.createContext({ ...env });
+    const script = new vm.Script(`(function() {\n${data.output}\n})()`);
+    return script.runInContext(context);
+};
 
 export type YouTubeFormat = {
     itag: number;
@@ -138,6 +148,60 @@ export async function extractYouTubeInfo(url: string): Promise<YouTubeExtractRes
         thumbnails,
         formats,
     };
+}
+
+export async function getYouTubeDownloadUrl(
+    url: string,
+    itag: number,
+): Promise<{ downloadUrl: string; filename: string; mimeType: string }> {
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) {
+        throw new Error("Not a valid YouTube URL");
+    }
+
+    const innertube = await getInnertubeClient();
+    // The default WEB client now requires a PoToken to fetch streams, so its
+    // deciphered URLs return HTTP 403. The ANDROID client returns playable URLs
+    // without a PoToken, so resolve the download URL through it.
+    const info = await innertube.getBasicInfo(videoId, { client: "ANDROID" });
+    const details = info.basic_info;
+
+    const allFormats = [
+        ...(info.streaming_data?.formats ?? []),
+        ...(info.streaming_data?.adaptive_formats ?? []),
+    ];
+
+    const format = allFormats.find((f) => f.itag === itag);
+    if (!format) {
+        throw new Error(`Format with itag ${itag} not found`);
+    }
+
+    let downloadUrl = format.url;
+    if (!downloadUrl && innertube.session.player) {
+        downloadUrl = await format.decipher(innertube.session.player);
+    }
+    if (!downloadUrl) {
+        const cipher = format.signature_cipher || format.cipher;
+        if (cipher) {
+            const parsed = new URLSearchParams(cipher);
+            downloadUrl = parsed.get("url") || undefined;
+        }
+    }
+
+    if (!downloadUrl) {
+        throw new Error(`Download URL not available for format itag ${itag}`);
+    }
+
+    const ext = format.mime_type ? (format.mime_type.split(";")[0]?.split("/")[1] ?? "unknown") : "unknown";
+    const quality = format.quality_label || format.quality || "unknown";
+    const title = details.title ?? "video";
+    const safeTitle = title.replace(/[^\w\s-]/g, "").replace(/\s+/g, "_");
+    const filename = `${safeTitle}_${quality}.${ext}`;
+    const mimeType = format.mime_type
+        ? (format.mime_type.split(";")[0] ?? "application/octet-stream")
+        : "application/octet-stream";
+
+    return { downloadUrl: downloadUrl as string, filename, mimeType };
 }
 
 const extractRouter = new Hono();

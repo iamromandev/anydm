@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import extractRouter from "./route/extract";
+import downloadRouter from "./route/download";
 
 const app = new Hono();
 app.use("*", logger());
@@ -25,15 +26,7 @@ app.get("/", (c) => {
     return c.text("Hello Bun!");
 });
 app.route("/extract", extractRouter);
-
-void import("./route/download")
-    .then(({ default: downloadRouter }) => {
-        app.route("/download", downloadRouter);
-    })
-    .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`Download route unavailable: ${message}`);
-    });
+app.route("/download", downloadRouter);
 
 app.onError((error, context) => {
     console.error(`${error}`);

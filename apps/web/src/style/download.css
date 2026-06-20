@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+.download-page {
+    @apply flex min-h-screen w-full items-start justify-center;
+    background-color: var(--custom-bg);
+}
+
+.download-container {
+    @apply mt-12 w-full max-w-2xl px-4;
+}
+
+.download-title {
+    @apply mb-6 text-center text-2xl font-bold text-gray-900;
+}
+
+.download-loading {
+    @apply text-center text-gray-500;
+}
+
+.download-error {
+    @apply mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700;
+}
+
+.download-empty {
+    @apply rounded-lg bg-white p-8 text-center shadow-md;
+}
+
+.download-empty p {
+    @apply text-gray-600;
+}
+
+.download-empty-link {
+    @apply mt-3 inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-blue-700;
+}
+
+.download-list {
+    @apply space-y-3;
+}
+
+.download-card {
+    @apply rounded-lg bg-white p-4 shadow-md;
+}
+
+.download-card-info {
+    @apply flex items-center justify-between;
+}
+
+.download-card-title {
+    @apply truncate text-sm font-medium text-gray-900;
+}
+
+.download-card-meta {
+    @apply text-xs text-gray-500;
+}
+
+.download-card-status {
+    @apply mt-1;
+}
+
+.download-badge {
+    @apply inline-block rounded-full px-2 py-0.5 text-xs font-medium;
+}
+
+.download-badge--downloading {
+    @apply bg-blue-100 text-blue-700;
+}
+
+.download-badge--complete {
+    @apply bg-green-100 text-green-700;
+}
+
+.download-badge--failed {
+    @apply bg-red-100 text-red-700;
+}
+
+.download-progress-bar {
+    @apply mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200;
+}
+
+.download-progress-fill {
+    @apply h-full rounded-full bg-blue-600 transition-all duration-300;
+}
+
+.download-card-error {
+    @apply mt-2 text-xs text-red-600;
+}

@@ -13,12 +13,10 @@
     },
     "dependencies": {
         "hono": "^4.10.4",
-        "webtorrent": "^2.8.4",
         "youtubei.js": "^17.0.1"
     },
     "devDependencies": {
         "@types/bun": "latest",
-        "@types/webtorrent": "^0.110.1",
         "prettier": "^3.6.2",
         "prettier-plugin-multiline-arrays": "^4.0.3"
     },

@@ -1,4 +1,4 @@
-import { component$ } from "@qwik.dev/core";
+import { component$, $, useSignal } from "@qwik.dev/core";
 import "../style/info.css";
 
 export type VideoInfo = {
@@ -26,6 +26,7 @@ export type VideoInfo = {
 
 type InfoProps = {
     data: VideoInfo;
+    videoUrl?: string;
 };
 
 function formatDuration(seconds: number): string {
@@ -70,7 +71,10 @@ function formatFileSize(bytes: string | null): string {
     return `${(size / 1_000).toFixed(2)} KB`;
 }
 
-export const Info = component$<InfoProps>(({ data }) => {
+export const Info = component$<InfoProps>(({ data, videoUrl }) => {
+    const downloadingItag = useSignal<number | null>(null);
+    const downloadError = useSignal("");
+
     const uniqueFormats = data.formats.filter(
         (format, index, formats) =>
             formats.findIndex(
@@ -81,6 +85,50 @@ export const Info = component$<InfoProps>(({ data }) => {
                     item.hasAudio === format.hasAudio,
             ) === index,
     );
+
+    const handleDownload = $(async (itag: number) => {
+        if (!videoUrl) return;
+
+        downloadingItag.value = itag;
+        downloadError.value = "";
+
+        try {
+            const BASE_URL =
+                import.meta.env.PUBLIC_BASE_URL ||
+                (import.meta.env.DEV ? "http://localhost:3000" : "");
+
+            const response = await fetch(`${BASE_URL}/download/youtube`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ url: videoUrl, itag }),
+            });
+
+            const payload = await response.json();
+
+            if (!response.ok || !payload.success) {
+                downloadError.value =
+                    payload.success === false
+                        ? payload.error
+                        : "Download failed";
+                return;
+            }
+
+            const a = document.createElement("a");
+            a.href = `${BASE_URL}/download/${payload.taskId}/file`;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        } catch (err: unknown) {
+            console.error(err);
+            downloadError.value =
+                err instanceof Error ? err.message : "Download failed";
+        } finally {
+            downloadingItag.value = null;
+        }
+    });
 
     return (
         <section class="info-panel">
@@ -136,9 +184,29 @@ export const Info = component$<InfoProps>(({ data }) => {
                                 <span>
                                     {formatFileSize(format.contentLength)}
                                 </span>
+                                {videoUrl && (
+                                    <button
+                                        type="button"
+                                        class="info-download-btn"
+                                        disabled={
+                                            downloadingItag.value ===
+                                            format.itag
+                                        }
+                                        onClick$={() =>
+                                            handleDownload(format.itag)
+                                        }
+                                    >
+                                        {downloadingItag.value === format.itag
+                                            ? "..."
+                                            : "Download"}
+                                    </button>
+                                )}
                             </li>
                         ))}
                     </ul>
+                    {downloadError.value && (
+                        <p class="info-download-error">{downloadError.value}</p>
+                    )}
                 </div>
             )}
         </section>
