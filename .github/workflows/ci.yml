@@ -2,7 +2,7 @@ name: CI
 
 on:
     push:
-        branches: [main, master]
+        branches: [main]
     pull_request:
 
 jobs:
@@ -12,5 +12,5 @@ jobs:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
             - run: bun install --frozen-lockfile
-            - run: bun run web:fmt.chk && bun run web:chk
-            - run: bun run service:fmt.chk && bun run service:chk
+            - run: bun run ui:fmt.chk && bun run ui:chk
+            - run: bun run api:fmt.chk && bun run api:chk

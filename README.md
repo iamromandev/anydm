@@ -7,8 +7,8 @@ Any Download Manager — a Bun monorepo for extracting and downloading content f
 ```
 anydm/
 ├── apps/
-│   ├── web/       # Qwik 2 + Vite UI
-│   └── service/   # Bun + Hono API
+│   ├── ui/        # Qwik 2 + Vite UI
+│   └── api/       # Bun + Hono API
 ├── bun.lock
 ├── bunfig.toml
 └── package.json
@@ -31,52 +31,63 @@ bun install
 Run each app in a separate terminal from the repo root:
 
 ```bash
-# Web UI (format + typecheck + Vite SSR dev server, typically http://localhost:5173)
-bun run web:dev
+# UI (format + typecheck + Vite SSR dev server, typically http://localhost:5173)
+bun run ui:dev
 
 # API (format + typecheck + Bun hot reload, http://localhost:3000)
-bun run service:dev
+bun run api:dev
 ```
 
 Other root scripts:
 
 | Script | Description |
 |--------|-------------|
-| `bun run web:build` | Production build for the web app |
-| `bun run web:fmt` / `service:fmt` | Format with Prettier |
-| `bun run web:fmt.chk` / `service:fmt.chk` | Check formatting (used in CI) |
-| `bun run web:chk` / `service:chk` | Typecheck with `tsc` |
+| `bun run ui:build` | Production build for the UI app |
+| `bun run ui:fmt` / `api:fmt` | Format with Prettier |
+| `bun run ui:fmt.chk` / `api:fmt.chk` | Check formatting (used in CI) |
+| `bun run ui:chk` / `api:chk` | Typecheck with `tsc` |
 | `bun run clean` | Remove root `node_modules` and web artifacts |
 
 ## Environment variables
 
-### Web (`apps/web`)
+### UI (`apps/ui`)
 
-Copy the example env file before running the web app:
+Copy the example env file before running the UI app:
 
 ```bash
-cp apps/web/.env.example apps/web/.env.local
+cp apps/ui/.env.example apps/ui/.env.local
 ```
 
 | Variable | Description |
 |----------|-------------|
 | `PUBLIC_BASE_URL` | Base URL of the AnyDM API (default in example: `http://localhost:3000`) |
 
-`.env.local` is gitignored; see [apps/web/.env.example](apps/web/.env.example).
+`.env.local` is gitignored; see [apps/ui/.env.example](apps/ui/.env.example).
 
-### Service (`apps/service`)
+### API (`apps/api`)
 
-No env vars required for local dev. The API listens on port **3000** when started with `bun run dev` (Bun serves the default Hono export).
+Copy the example env file before running the API app:
+
+```bash
+cp apps/api/.env.example apps/api/.env.local
+```
+
+| Variable | Description |
+|----------|-------------|
+| `PORT` | Port the API listens on (Bun serves the default Hono export; default `3000`) |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins allowed to call the API (default: `http://localhost:5173,http://127.0.0.1:5173`) |
+
+`.env.local` is gitignored; see [apps/api/.env.example](apps/api/.env.example).
 
 ## Apps
 
-### `apps/web`
+### `apps/ui`
 
 - **Stack:** Qwik 2, Qwik Router, Vite 7, Tailwind 4
 - **Routes:** `/` (home — URL input and Extract button), layout with header/menu/footer
 - **Entry:** `src/entry.ssr.tsx`, `src/entry.csr.tsx`, `src/root.tsx`
 
-### `apps/service`
+### `apps/api`
 
 - **Stack:** Hono, WebTorrent, ytdl-core (not wired yet)
 - **Endpoints:**
@@ -85,7 +96,7 @@ No env vars required for local dev. The API listens on port **3000** when starte
 
 ## Current limitations
 
-- Web UI validates URLs but does not call the API yet (only reads `PUBLIC_BASE_URL`).
+- UI validates URLs but does not call the API yet (only reads `PUBLIC_BASE_URL`).
 - Torrent `POST /download` success response is commented out.
 - YouTube / `ytdl-core` is a dependency only; no routes use it.
 - Navigation menu links beyond Home are placeholders (no routes yet).

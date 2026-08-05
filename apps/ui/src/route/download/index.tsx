@@ -30,7 +30,7 @@ export default component$(() => {
                 const BASE_URL = getBaseUrl();
                 if (!BASE_URL) {
                     loadError.value =
-                        "PUBLIC_BASE_URL is missing. Copy apps/web/.env.example to apps/web/.env.local and restart the dev server.";
+                        "PUBLIC_BASE_URL is missing. Copy apps/ui/.env.example to apps/ui/.env.local and restart the dev server.";
                     return;
                 }
 

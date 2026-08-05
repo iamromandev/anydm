@@ -6,8 +6,7 @@ import "../style/global.css";
 import "../style/home.css";
 
 type ExtractResponse =
-    | { success: true; data: VideoInfo }
-    | { success: false; error: string };
+    { success: true; data: VideoInfo } | { success: false; error: string };
 
 export default component$(() => {
     const isLoading = useSignal(false);
@@ -44,7 +43,7 @@ export default component$(() => {
 
             if (!BASE_URL) {
                 throw new Error(
-                    "PUBLIC_BASE_URL is missing. Copy apps/web/.env.example to apps/web/.env.local and restart the dev server.",
+                    "PUBLIC_BASE_URL is missing. Copy apps/ui/.env.example to apps/ui/.env.local and restart the dev server.",
                 );
             }
 

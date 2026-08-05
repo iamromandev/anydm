@@ -8,22 +8,22 @@
         "apps/*"
     ],
     "scripts": {
-        "web:clean": "cd apps/web && bun run clean",
-        "service:clean": "cd apps/service && bun run clean",
-        "clean": "rm -rf node_modules bun.lockb && bun run web:clean",
-        "web:fmt": "cd apps/web && bun run fmt",
-        "service:fmt": "cd apps/service && bun run fmt",
-        "web:fmt.chk": "cd apps/web && bun run fmt.chk",
-        "service:fmt.chk": "cd apps/service && bun run fmt.chk",
-        "web:chk": "cd apps/web && bun run chk",
-        "service:chk": "cd apps/service && bun run chk",
-        "web:dev": "bun run web:fmt && bun run web:chk && cd apps/web && bun run dev",
-        "service:dev": "bun run service:fmt && bun run service:chk && cd apps/service && bun run dev",
-        "web:build": "cd apps/web && bun run build",
+        "clean": "rm -rf node_modules bun.lock && bun run ui:clean",
         "reinstall": "bun run clean && bun install",
-        "web:restart": "bun run reinstall && bun run web:dev",
-        "service:restart": "bun run reinstall && bun run service:dev",
-        "web:start": "bun install && bun run web:dev",
-        "service:start": "bun install && bun run service:dev"
+        "ui:clean": "cd apps/ui && bun run clean",
+        "api:clean": "cd apps/api && bun run clean",
+        "ui:fmt": "cd apps/ui && bun run fmt",
+        "api:fmt": "cd apps/api && bun run fmt",
+        "ui:fmt.chk": "cd apps/ui && bun run fmt.chk",
+        "api:fmt.chk": "cd apps/api && bun run fmt.chk",
+        "ui:chk": "cd apps/ui && bun run chk",
+        "api:chk": "cd apps/api && bun run chk",
+        "ui:dev": "bun run ui:fmt && bun run ui:chk && cd apps/ui && bun run dev",
+        "api:dev": "bun run api:fmt && bun run api:chk && cd apps/api && bun run dev",
+        "ui:build": "cd apps/ui && bun run build",
+        "ui:restart": "bun run reinstall && bun run ui:dev",
+        "api:restart": "bun run reinstall && bun run api:dev",
+        "ui:start": "bun install && bun run ui:dev",
+        "api:start": "bun install && bun run api:dev"
     }
 }
