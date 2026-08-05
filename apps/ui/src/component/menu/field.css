@@ -1,21 +1,95 @@
-@import "tailwindcss";
-
 .menu {
-    @apply relative flex items-center justify-between;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .menu-toggle {
-    @apply inline-flex items-center justify-center rounded-md p-2 text-gray-700 hover:bg-gray-100 focus:outline-none sm:hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    padding: 0.5rem;
+    color: var(--color-foreground);
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition-property: all;
+    transition-timing-function: ease-in-out;
+    transition-duration: 200ms;
+    cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+    .menu-toggle {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+}
+
+.menu-toggle:hover {
+    background: rgba(255, 255, 255, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+    .menu-toggle:hover {
+        background: rgba(255, 255, 255, 0.12);
+    }
 }
 
 .menu-list {
-    @apply hidden space-x-6 sm:flex;
+    display: none;
+    gap: 1.5rem;
+}
+
+@media (min-width: 640px) {
+    .menu-list {
+        display: flex;
+    }
 }
 
 .menu-list.open {
-    @apply absolute left-0 top-12 flex w-full flex-col space-y-2 bg-white py-4 shadow-md sm:hidden;
+    position: absolute;
+    left: 0;
+    top: 3rem;
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+    .menu-list.open {
+        background: rgba(15, 15, 15, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+}
+
+@media (min-width: 640px) {
+    .menu-list.open {
+        display: none;
+    }
 }
 
 .menu-link {
-    @apply font-medium text-gray-700 transition-colors duration-200 hover:text-blue-600;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    transition-property: color;
+    transition-timing-function: ease-in-out;
+    transition-duration: 200ms;
+}
+
+.menu-link:hover {
+    color: var(--color-foreground);
+    text-decoration: none;
 }

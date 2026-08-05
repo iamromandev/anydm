@@ -23,7 +23,7 @@
         "ui:build": "cd apps/ui && bun run build",
         "ui:restart": "bun run reinstall && bun run ui:dev",
         "api:restart": "bun run reinstall && bun run api:dev",
-        "ui:start": "bun install && bun run ui:dev",
-        "api:start": "bun install && bun run api:dev"
+        "ui:start": "bun install && bun run ui:start",
+        "api:start": "bun install && bun run api:start"
     }
 }

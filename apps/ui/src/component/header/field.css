@@ -1,21 +1,55 @@
-@import "tailwindcss";
-
 .header {
-    @apply bg-gray-900 text-white shadow-md;
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+    .header {
+        background: rgba(10, 10, 10, 0.7);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
 }
 
 .container {
-    @apply mx-auto flex max-w-7xl items-center justify-between px-6 py-4;
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    max-width: 80rem;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    padding-top: 0.875rem;
+    padding-bottom: 0.875rem;
 }
 
 .logo {
-    @apply text-2xl font-bold tracking-tight;
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    background: linear-gradient(135deg, var(--gradient-1), var(--gradient-2));
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .nav {
-    @apply flex space-x-6;
+    display: flex;
+    gap: 1.5rem;
 }
 
 .nav-link {
-    @apply text-gray-300 transition-colors duration-200 hover:text-white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    transition-property: color;
+    transition-timing-function: ease-in-out;
+    transition-duration: 200ms;
+}
+
+.nav-link:hover {
+    color: var(--color-foreground);
+    text-decoration: none;
 }

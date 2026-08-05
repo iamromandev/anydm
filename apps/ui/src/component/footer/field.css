@@ -1,21 +1,63 @@
-@import "tailwindcss";
-
 .footer {
-    @apply border-t border-gray-700 bg-gray-900 text-gray-300;
+    border-top: 1px solid var(--color-border);
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+@media (prefers-color-scheme: dark) {
+    .footer {
+        background: rgba(10, 10, 10, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
 }
 
 .container {
-    @apply mx-auto flex max-w-7xl flex-col items-center justify-between px-6 py-4 sm:flex-row;
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    max-width: 80rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+@media (min-width: 640px) {
+    .container {
+        flex-direction: row;
+    }
 }
 
 .text {
-    @apply text-sm;
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 50%, transparent);
 }
 
 .footer-nav {
-    @apply mt-2 flex space-x-4 sm:mt-0;
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 1rem;
+}
+
+@media (min-width: 640px) {
+    .footer-nav {
+        margin-top: 0;
+    }
 }
 
 .footer-link {
-    @apply transition-colors duration-200 hover:text-white;
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 50%, transparent);
+    transition-property: color;
+    transition-timing-function: ease-in-out;
+    transition-duration: 200ms;
+}
+
+.footer-link:hover {
+    color: var(--color-foreground);
+    text-decoration: none;
 }

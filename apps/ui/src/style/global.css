@@ -1,20 +1,158 @@
-/* global.css */
 @import "tailwindcss";
+@import "./typography.css";
+
+@theme {
+    --color-background: #ffffff;
+    --color-foreground: #0a0a0a;
+    --color-muted: #f5f5f5;
+    --color-card: #ffffff;
+    --color-border: #e5e5e5;
+    --color-input: #f5f5f5;
+    --color-ring: #3b82f6;
+    --color-primary: #3b82f6;
+    --color-primary-foreground: #ffffff;
+    --color-success: #22c55e;
+    --color-warning: #f59e0b;
+    --color-error: #ef4444;
+    --color-info: #3b82f6;
+
+    --gradient-1: #8b5cf6;
+    --gradient-2: #3b82f6;
+    --gradient-3: #ec4899;
+    --gradient-4: #06b6d4;
+
+    --font-sans: "Satoshi", "ui-sans-serif", "system-ui";
+    --font-mono: "JetBrains Mono", "ui-monospace", "monospace";
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-full: 9999px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md:
+        0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+    --shadow-lg:
+        0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+    --shadow-xl:
+        0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+
+    --transition-fast: 150ms ease-in-out;
+    --transition-base: 200ms ease-in-out;
+    --transition-slow: 300ms ease-in-out;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-background: #0a0a0a;
+        --color-foreground: #fafafa;
+        --color-muted: #1a1a1a;
+        --color-card: rgba(15, 15, 15, 0.6);
+        --color-border: rgba(255, 255, 255, 0.1);
+        --color-input: rgba(255, 255, 255, 0.08);
+        --color-ring: #60a5fa;
+        --color-primary: #60a5fa;
+        --color-primary-foreground: #0a0a0a;
+        --color-success: #4ade80;
+        --color-warning: #fbbf24;
+        --color-error: #f87171;
+        --color-info: #60a5fa;
+
+        --gradient-1: #a78bfa;
+        --gradient-2: #60a5fa;
+        --gradient-3: #f472b6;
+        --gradient-4: #22d3ee;
+    }
+}
 
 :root {
-    --custom-bg: #f8f0f0; /* light red-gray */
-    --custom-bg-dark: #e8dcdc; /* slightly darker red-gray */
+    background-color: var(--color-background);
+    color: var(--color-foreground);
 }
 
-/* Keep your utility classes for HTML use */
-.bg-custom {
-    background-color: var(--custom-bg);
+body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    position: relative;
+    overflow-x: hidden;
 }
 
-.bg-custom-gradient {
-    background: linear-gradient(
-        to bottom right,
-        var(--custom-bg),
-        var(--custom-bg-dark)
-    );
+a {
+    color: var(--color-primary);
+}
+
+input {
+    font-family: var(--font-sans);
+}
+
+/* Gradient mesh background */
+.mesh-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+}
+
+.mesh-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.6;
+    animation: meshFloat 20s ease-in-out infinite;
+}
+
+.mesh-blob:nth-child(1) {
+    width: 600px;
+    height: 600px;
+    background: var(--gradient-1);
+    top: -10%;
+    left: -10%;
+    animation-delay: 0s;
+}
+
+.mesh-blob:nth-child(2) {
+    width: 500px;
+    height: 500px;
+    background: var(--gradient-2);
+    top: 50%;
+    right: -15%;
+    animation-delay: -5s;
+}
+
+.mesh-blob:nth-child(3) {
+    width: 450px;
+    height: 450px;
+    background: var(--gradient-3);
+    bottom: -10%;
+    left: 30%;
+    animation-delay: -10s;
+}
+
+.mesh-blob:nth-child(4) {
+    width: 400px;
+    height: 400px;
+    background: var(--gradient-4);
+    top: 20%;
+    left: 50%;
+    animation-delay: -15s;
+}
+
+@keyframes meshFloat {
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    25% {
+        transform: translate(30px, -40px) scale(1.05);
+    }
+
+    50% {
+        transform: translate(-20px, 20px) scale(0.95);
+    }
+
+    75% {
+        transform: translate(40px, 30px) scale(1.02);
+    }
 }

@@ -1,21 +1,21 @@
 import { component$, type PropsOf, Slot } from "@qwik.dev/core";
 import "./field.css";
 
-type ButtonProps = PropsOf<"button"> & {
-    label?: string;
-    onClick$?: (event: MouseEvent) => void; // made optional
+type ButtonProps = Omit<PropsOf<"button">, "children"> & {
+    onClick$?: (event: MouseEvent) => void;
     variant?: "primary" | "secondary" | "outline" | "ghost";
     disabled?: boolean;
     loading?: boolean;
+    loadingText?: string;
 };
 
 export const Button = component$<ButtonProps>(
     ({
-        label,
         onClick$,
         variant = "primary",
         disabled,
         loading = false,
+        loadingText = "Loading...",
         type = "button",
         ...props
     }) => {
@@ -30,10 +30,8 @@ export const Button = component$<ButtonProps>(
                 {loading ? (
                     <span class="flex items-center gap-2">
                         <span class="spinner" />
-                        Loading...
+                        {loadingText}
                     </span>
-                ) : label ? (
-                    label
                 ) : (
                     <Slot />
                 )}

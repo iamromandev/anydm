@@ -1,4 +1,5 @@
 import { component$ } from "@qwik.dev/core";
+import { ThemeToggle } from "@/component/theme-toggle";
 import "./field.css";
 
 export const Header = component$(() => {
@@ -17,6 +18,7 @@ export const Header = component$(() => {
                         Contact
                     </a>
                 </nav>
+                <ThemeToggle />
             </div>
         </header>
     );

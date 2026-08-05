@@ -43,11 +43,6 @@ export const Menu = component$(() => {
                         Home
                     </a>
                 </li>
-                <li>
-                    <a href="/download" class="menu-link">
-                        Downloads
-                    </a>
-                </li>
             </ul>
         </nav>
     );
