@@ -1,0 +1,282 @@
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-panel {
+    width: 90%;
+    max-width: 520px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    overflow: hidden;
+    animation: modalIn 200ms ease-out;
+}
+
+@media (prefers-color-scheme: dark) {
+    .modal-panel {
+        background: rgba(15, 15, 15, 0.95);
+        border-color: rgba(255, 255, 255, 0.06);
+    }
+}
+
+@keyframes modalIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+    .modal-header {
+        border-color: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 50%, transparent);
+    cursor: pointer;
+    padding: 0;
+    transition: color var(--transition-fast) ease;
+}
+
+.modal-close:hover {
+    color: var(--color-error);
+}
+
+.modal-body {
+    padding: 1.25rem;
+}
+
+.modal-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+    .modal-tabs {
+        border-color: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.modal-tab {
+    flex: 1;
+    padding: 0.5rem 0;
+    border: none;
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-align: center;
+    cursor: pointer;
+    transition: color var(--transition-fast) ease;
+    white-space: nowrap;
+}
+
+.modal-tab--active {
+    color: var(--color-foreground);
+    border-bottom: 2px solid var(--gradient-1);
+}
+
+.modal-input-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.magnet-input,
+.file-input,
+.url-input-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.magnet-input-field {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: var(--color-foreground);
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: all var(--transition-fast) ease;
+}
+
+@media (prefers-color-scheme: dark) {
+    .magnet-input-field {
+        border-color: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.magnet-input-field:focus {
+    border-color: var(--gradient-1);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.file-input-field {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
+    color: var(--color-foreground);
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
+    outline: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    .file-input-field {
+        border-color: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.url-input-section {
+    gap: 0.5rem;
+}
+
+.url-preset-select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: var(--color-foreground);
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    transition: all var(--transition-fast) ease;
+}
+
+@media (prefers-color-scheme: dark) {
+    .url-preset-select {
+        border-color: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.url-preset-select:focus {
+    border-color: var(--gradient-1);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 1rem 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+    .modal-footer {
+        border-color: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.modal-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast) ease;
+}
+
+.modal-btn--secondary {
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+.modal-btn--secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--color-foreground);
+}
+
+@media (prefers-color-scheme: dark) {
+    .modal-btn--secondary:hover {
+        background: rgba(255, 255, 255, 0.04);
+    }
+}
+
+.modal-btn--primary {
+    flex: 1;
+    background: linear-gradient(135deg, var(--gradient-1), var(--gradient-2));
+    color: white;
+}
+
+.modal-btn--primary:hover {
+    background-position: 100% 0;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.modal-btn--primary:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+    .modal-panel {
+        width: 95%;
+        margin: 1rem;
+    }
+}

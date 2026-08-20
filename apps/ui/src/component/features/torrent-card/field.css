@@ -1,0 +1,296 @@
+.torrent-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--card-radius);
+    padding: 1rem;
+    transition: all var(--transition-fast) ease;
+}
+
+.torrent-card:hover {
+    border-color: color-mix(in srgb, var(--color-foreground) 18%, transparent);
+    box-shadow: var(--shadow-sm);
+}
+
+.torrent-card--downloading {
+    border-left: 3px solid var(--color-info);
+}
+
+.torrent-card--seeding {
+    border-left: 3px solid var(--color-success);
+}
+
+.torrent-card--paused {
+    border-left: 3px solid var(--color-warning);
+}
+
+.torrent-card--failed {
+    border-left: 3px solid var(--color-error);
+}
+
+.torrent-card--complete {
+    border-left: 3px solid var(--color-success);
+}
+
+.torrent-card-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.torrent-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+}
+
+.torrent-platform {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--color-muted);
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+.torrent-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.torrent-title {
+    margin: 0 0 0.1875rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.torrent-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 45%, transparent);
+}
+
+.torrent-size {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.torrent-hash {
+    font-family: var(--font-mono);
+    opacity: 0.7;
+}
+
+.torrent-status-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: var(--radius-full);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.torrent-status-badge[data-status="downloading"],
+.torrent-status-badge[data-status="verifying"],
+.torrent-status-badge[data-status="checking"] {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+.torrent-status-badge[data-status="downloading"] svg,
+.torrent-status-badge[data-status="verifying"] svg,
+.torrent-status-badge[data-status="checking"] svg {
+    animation: spin 1s linear infinite;
+}
+
+.torrent-status-badge[data-status="seeding"],
+.torrent-status-badge[data-status="complete"] {
+    background: rgba(22, 163, 74, 0.1);
+    color: var(--color-success);
+}
+
+.torrent-status-badge[data-status="paused"] {
+    background: rgba(217, 119, 6, 0.1);
+    color: var(--color-warning);
+}
+
+.torrent-status-badge[data-status="pending"] {
+    background: rgba(217, 119, 6, 0.1);
+    color: var(--color-warning);
+}
+
+.torrent-status-badge[data-status="failed"] {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--color-error);
+}
+
+.torrent-progress-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.progress-track-wrapper {
+    width: 100%;
+}
+
+.progress-track {
+    position: relative;
+    height: 4px;
+    border-radius: var(--radius-full);
+    background: var(--color-muted);
+    overflow: hidden;
+}
+
+.progress-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    transition: width 0.3s ease;
+}
+
+.torrent-card--paused .progress-fill {
+    background: var(--color-warning);
+}
+
+.torrent-card--seeding .progress-fill,
+.torrent-card--complete .progress-fill {
+    background: var(--color-success);
+}
+
+.torrent-card--failed .progress-fill {
+    background: var(--color-error);
+}
+
+.progress-details {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.875rem;
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 50%, transparent);
+}
+
+.progress-percent {
+    font-weight: 600;
+    color: var(--color-foreground);
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-eta,
+.progress-peers,
+.progress-ratio {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+}
+
+.progress-complete {
+    font-weight: 500;
+    color: var(--color-success);
+}
+
+.progress-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--color-error);
+}
+
+.torrent-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--transition-fast) ease;
+}
+
+.torrent-card:hover .torrent-actions,
+.torrent-card:focus-within .torrent-actions {
+    opacity: 1;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--color-muted);
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    cursor: pointer;
+    transition: all var(--transition-fast) ease;
+}
+
+.action-btn:hover {
+    background: var(--color-foreground);
+    color: var(--color-background);
+}
+
+.action-btn--primary {
+    background: var(--color-foreground);
+    color: var(--color-background);
+}
+
+.action-btn--primary:hover {
+    opacity: 0.9;
+}
+
+.action-btn--danger {
+    color: color-mix(in srgb, var(--color-error) 80%, transparent);
+}
+
+.action-btn--danger:hover {
+    background: var(--color-error);
+    color: white;
+}
+
+.action-btn:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (max-width: 640px) {
+    .torrent-card {
+        flex-direction: column;
+        gap: 0.875rem;
+    }
+
+    .torrent-actions {
+        flex-direction: row;
+        opacity: 1;
+        width: 100%;
+    }
+
+    .action-btn--danger {
+        margin-left: auto;
+    }
+}

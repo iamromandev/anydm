@@ -1,0 +1,32 @@
+.speed-display {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.speed-display--compact {
+    gap: 0.25rem;
+}
+
+.speed-down,
+.speed-up {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+}
+
+.speed-down {
+    color: var(--color-info);
+}
+
+.speed-up {
+    color: var(--color-warning);
+}
+
+.speed-sep {
+    color: color-mix(in srgb, var(--color-foreground) 30%, transparent);
+}

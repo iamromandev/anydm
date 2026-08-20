@@ -23,6 +23,18 @@
         "paths": {
             "@/*": [
                 "./src/*"
+            ],
+            "@/component/core/*": [
+                "./src/component/core/*"
+            ],
+            "@/component/shared/*": [
+                "./src/component/shared/*"
+            ],
+            "@/component/layouts/*": [
+                "./src/component/layouts/*"
+            ],
+            "@/component/features/*": [
+                "./src/component/features/*"
             ]
         },
         "plugins": [

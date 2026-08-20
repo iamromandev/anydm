@@ -12,4 +12,17 @@ export default defineConfig({
         }),
         qwikVite(),
     ],
+    build: {
+        rollupOptions: {
+            output: {
+                chunkFileNames: (chunk) => {
+                    const name = (chunk.name ?? "chunk").replace(
+                        /[\\/]+/g,
+                        "_",
+                    );
+                    return `assets/${name}.js`;
+                },
+            },
+        },
+    },
 });

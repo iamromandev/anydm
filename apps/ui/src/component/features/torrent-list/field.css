@@ -1,0 +1,49 @@
+.torrent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.torrent-list-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+}
+
+.torrent-list-item {
+    contain: content;
+}
+
+.torrent-list-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3.5rem 1.5rem;
+    text-align: center;
+    color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+}
+
+.torrent-list-empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-full);
+    background: var(--color-muted);
+    color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+    margin-bottom: 1rem;
+}
+
+.torrent-list-empty p {
+    margin: 0 0 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--color-foreground) 65%, transparent);
+}
+
+.torrent-list-empty span {
+    font-size: 0.8125rem;
+}

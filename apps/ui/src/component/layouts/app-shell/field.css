@@ -1,0 +1,81 @@
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+    position: relative;
+    font-family: var(--font-sans);
+    padding-top: var(--toolbar-height);
+    padding-bottom: var(--statusbar-height);
+    background: var(--color-background);
+}
+
+.app-shell-main {
+    display: grid;
+    grid-template-areas: "sidebar main";
+    grid-template-columns: var(--sidebar-width) 1fr;
+    grid-template-rows: 1fr;
+    height: calc(100vh - var(--toolbar-height) - var(--statusbar-height));
+    width: 100%;
+    overflow: hidden;
+}
+
+.app-shell-main:has(.sidebar.sidebar--collapsed) {
+    grid-template-columns: var(--sidebar-collapsed-width) 1fr;
+}
+
+.app-shell-content {
+    grid-area: main;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    contain: layout;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-shell-list {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 1rem 2.5rem;
+    flex: 1;
+}
+
+.app-shell-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.875rem;
+}
+
+.app-shell-list-title {
+    margin: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: color-mix(in srgb, var(--color-foreground) 45%, transparent);
+}
+
+.app-shell-search-hint {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 45%, transparent);
+}
+
+@media (max-width: 1024px) {
+    .app-shell-main {
+        grid-template-columns: 1fr;
+        grid-template-areas: "main";
+        height: auto;
+        overflow: visible;
+    }
+
+    .app-shell-main:has(.sidebar.sidebar--collapsed) {
+        grid-template-columns: 1fr;
+    }
+
+    .app-shell-list {
+        max-width: 100%;
+    }
+}

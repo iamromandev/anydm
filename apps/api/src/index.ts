@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 
 import extractRouter from "./route/extract";
 import downloadRouter from "./route/download";
+import torrentRouter from "./route/torrent";
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "")
     .split(",")
@@ -41,6 +42,8 @@ app.use(
         allowMethods: [
             "GET",
             "POST",
+            "PATCH",
+            "DELETE",
             "OPTIONS",
         ],
     }),
@@ -51,6 +54,7 @@ app.get("/", (c) => {
 });
 app.route("/extract", extractRouter);
 app.route("/download", downloadRouter);
+app.route("/download/torrent", torrentRouter);
 
 app.onError((error, context) => {
     console.error(`${error}`);

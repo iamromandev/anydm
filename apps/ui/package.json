@@ -13,12 +13,12 @@
         "build": "bunx vite build"
     },
     "dependencies": {
-        "@qwik.dev/core": "^2.0.0-beta.13",
-        "@qwik.dev/router": "^2.0.0-beta.13",
+        "@qwik.dev/core": "^2.0.0-beta.38",
+        "@qwik.dev/router": "^2.0.0-beta.38",
         "@qwik-ui/headless": "^0.7.4",
         "@qwik-ui/utils": "^0.3.3",
-        "@qwikest/icons": "^0.0.13",
-        "class-variance-authority": "^0.7.1"
+        "class-variance-authority": "^0.7.1",
+        "qwikset-icons-v2": "^0.1.0"
     },
     "devDependencies": {
         "@tailwindcss/vite": "4.3.3",

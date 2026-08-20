@@ -510,28 +510,12 @@
     opacity: 0.5;
 }
 
-.dm-progress-shimmer {
+.dm-progress-fill {
     position: absolute;
     inset: 0;
     border-radius: var(--radius-full);
-    background: linear-gradient(
-        90deg,
-        rgba(139, 92, 246, 0.2),
-        var(--gradient-2),
-        rgba(139, 92, 246, 0.2)
-    );
-    background-size: 200% 100%;
-    animation: dmShimmer 1.4s ease-in-out infinite;
-}
-
-@keyframes dmShimmer {
-    0% {
-        background-position: 200% 0;
-    }
-
-    100% {
-        background-position: -200% 0;
-    }
+    background: linear-gradient(90deg, var(--gradient-2), var(--gradient-1));
+    transition: width 0.3s ease;
 }
 
 .dm-progress-label {

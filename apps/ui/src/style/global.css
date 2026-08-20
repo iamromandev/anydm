@@ -2,61 +2,92 @@
 @import "./typography.css";
 
 @theme {
-    --color-background: #ffffff;
+    --color-background: #fafafa;
     --color-foreground: #0a0a0a;
-    --color-muted: #f5f5f5;
+    --color-muted: #f2f2f2;
     --color-card: #ffffff;
-    --color-border: #e5e5e5;
-    --color-input: #f5f5f5;
+    --color-border: #e8e8e8;
+    --color-input: #f2f2f2;
+    --color-ring: #2563eb;
+    --color-primary: #2563eb;
+    --color-primary-foreground: #ffffff;
+    --color-primary-soft: rgba(37, 99, 235, 0.08);
+    --color-success: #16a34a;
+    --color-warning: #d97706;
+    --color-error: #dc2626;
+    --color-info: #2563eb;
+
+    --gradient-1: #7c3aed;
+    --gradient-2: #2563eb;
+    --gradient-3: #db2777;
+    --gradient-4: #0891b2;
+
+    --font-sans: "Satoshi", "ui-sans-serif", "system-ui";
+    --font-mono: "JetBrains Mono", "ui-monospace", "monospace";
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-full: 9999px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md:
+        0 4px 8px -2px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+    --shadow-lg:
+        0 12px 20px -4px rgba(0, 0, 0, 0.08), 0 4px 8px -4px rgba(0, 0, 0, 0.03);
+    --shadow-xl:
+        0 24px 32px -8px rgba(0, 0, 0, 0.1), 0 8px 12px -6px rgba(0, 0, 0, 0.04);
+
+    --transition-fast: 150ms ease-in-out;
+    --transition-base: 200ms ease-in-out;
+    --transition-slow: 300ms ease-in-out;
+
+    --sidebar-width: 220px;
+    --sidebar-collapsed-width: 56px;
+    --toolbar-height: 60px;
+    --statusbar-height: 76px;
+    --card-radius: var(--radius-lg);
+    --torrent-card-gap: 0.75rem;
+}
+
+:root.dark {
+    --color-background: #0a0a0a;
+    --color-foreground: #f5f5f5;
+    --color-muted: #141414;
+    --color-card: #111111;
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-input: rgba(255, 255, 255, 0.04);
     --color-ring: #3b82f6;
     --color-primary: #3b82f6;
-    --color-primary-foreground: #ffffff;
+    --color-primary-foreground: #0a0a0a;
+    --color-primary-soft: rgba(59, 130, 246, 0.12);
     --color-success: #22c55e;
     --color-warning: #f59e0b;
     --color-error: #ef4444;
     --color-info: #3b82f6;
 
-    --gradient-1: #8b5cf6;
-    --gradient-2: #3b82f6;
-    --gradient-3: #ec4899;
-    --gradient-4: #06b6d4;
-
-    --font-sans: "Satoshi", "ui-sans-serif", "system-ui";
-    --font-mono: "JetBrains Mono", "ui-monospace", "monospace";
-
-    --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    --radius-full: 9999px;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow-md:
-        0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-    --shadow-lg:
-        0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
-    --shadow-xl:
-        0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-
-    --transition-fast: 150ms ease-in-out;
-    --transition-base: 200ms ease-in-out;
-    --transition-slow: 300ms ease-in-out;
+    --gradient-1: #a78bfa;
+    --gradient-2: #60a5fa;
+    --gradient-3: #f472b6;
+    --gradient-4: #22d3ee;
 }
 
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not(.light) {
         --color-background: #0a0a0a;
-        --color-foreground: #fafafa;
-        --color-muted: #1a1a1a;
-        --color-card: rgba(15, 15, 15, 0.6);
-        --color-border: rgba(255, 255, 255, 0.1);
-        --color-input: rgba(255, 255, 255, 0.08);
-        --color-ring: #60a5fa;
-        --color-primary: #60a5fa;
+        --color-foreground: #f5f5f5;
+        --color-muted: #141414;
+        --color-card: #111111;
+        --color-border: rgba(255, 255, 255, 0.08);
+        --color-input: rgba(255, 255, 255, 0.04);
+        --color-ring: #3b82f6;
+        --color-primary: #3b82f6;
         --color-primary-foreground: #0a0a0a;
-        --color-success: #4ade80;
-        --color-warning: #fbbf24;
-        --color-error: #f87171;
-        --color-info: #60a5fa;
+        --color-primary-soft: rgba(59, 130, 246, 0.12);
+        --color-success: #22c55e;
+        --color-warning: #f59e0b;
+        --color-error: #ef4444;
+        --color-info: #3b82f6;
 
         --gradient-1: #a78bfa;
         --gradient-2: #60a5fa;
@@ -82,77 +113,26 @@ a {
     color: var(--color-primary);
 }
 
-input {
+input,
+button,
+select {
     font-family: var(--font-sans);
 }
 
-/* Gradient mesh background */
-.mesh-bg {
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    overflow: hidden;
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
 }
 
-.mesh-blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(80px);
-    opacity: 0.6;
-    animation: meshFloat 20s ease-in-out infinite;
+::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-.mesh-blob:nth-child(1) {
-    width: 600px;
-    height: 600px;
-    background: var(--gradient-1);
-    top: -10%;
-    left: -10%;
-    animation-delay: 0s;
+::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+    border-radius: var(--radius-full);
 }
 
-.mesh-blob:nth-child(2) {
-    width: 500px;
-    height: 500px;
-    background: var(--gradient-2);
-    top: 50%;
-    right: -15%;
-    animation-delay: -5s;
-}
-
-.mesh-blob:nth-child(3) {
-    width: 450px;
-    height: 450px;
-    background: var(--gradient-3);
-    bottom: -10%;
-    left: 30%;
-    animation-delay: -10s;
-}
-
-.mesh-blob:nth-child(4) {
-    width: 400px;
-    height: 400px;
-    background: var(--gradient-4);
-    top: 20%;
-    left: 50%;
-    animation-delay: -15s;
-}
-
-@keyframes meshFloat {
-    0%,
-    100% {
-        transform: translate(0, 0) scale(1);
-    }
-
-    25% {
-        transform: translate(30px, -40px) scale(1.05);
-    }
-
-    50% {
-        transform: translate(-20px, 20px) scale(0.95);
-    }
-
-    75% {
-        transform: translate(40px, 30px) scale(1.02);
-    }
+::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-foreground) 20%, transparent);
 }
