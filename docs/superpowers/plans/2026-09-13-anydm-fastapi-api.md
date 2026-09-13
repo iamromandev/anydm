@@ -69,7 +69,7 @@
 
 # Phase 1 — Scaffold
 
-Ends with `curl :8000/health/check` reporting the Postgres version.
+Ends with `curl :8003/health/check` reporting the Postgres version.
 
 ### Task 1: Toolchain and core primitives
 
@@ -778,7 +778,7 @@ def run() -> None:
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8003,
         reload=False,
         loop="uvloop",
     )
@@ -805,7 +805,7 @@ RUN apt-get update \
 
 - [ ] **Step 8: Write `api/docker-compose.yml`**
 
-Copy auth's, renaming every `exa-auth-api` to `anydm-api`, changing the published Postgres port from `5400:5432` to `5401:5432`, dropping the `POSTGRES_DB: ${DB_NAME}` default to `anydm`, and adding a downloads mount plus the compose project name:
+Copy auth's, renaming every `exa-auth-api` to `anydm-fastapi`, changing the published Postgres port from `5400:5432` to `5403:5432`, dropping the `POSTGRES_DB: ${DB_NAME}` default to `anydm`, and adding a downloads mount plus the compose project name:
 
 ```yaml
   server:
@@ -817,12 +817,12 @@ Copy auth's, renaming every `exa-auth-api` to `anydm-api`, changing the publishe
 and under the top-level `volumes:` key:
 ```yaml
   downloads:
-    name: downloads-anydm-api
+    name: downloads-anydm-fastapi
 ```
 
 - [ ] **Step 9: Write `api/makefile`**
 
-Copy auth's makefile and delete every seed target (`seed\:default`, `seed\:service`, `seed\:user`, `setup`, `SEED_*` variables and the `SEED_GUARD` block) — anydm seeds nothing. Change `DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm` and `SERVER_CONTAINER := server-anydm-api`. Keep `clean-system`, `clean-db`, `clean`, `ps`, `build`, `up`, `stop`, `down`, `restart`, `logs`, `install`, `install-dev`, `check`, `test`, `run`, `export`, `add`, `migrate`, `help`. Add:
+Copy auth's makefile and delete every seed target (`seed\:default`, `seed\:service`, `seed\:user`, `setup`, `SEED_*` variables and the `SEED_GUARD` block) — anydm seeds nothing. Change `DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm-fastapi` and `SERVER_CONTAINER := server-anydm-fastapi`. Keep `clean-system`, `clean-db`, `clean`, `ps`, `build`, `up`, `stop`, `down`, `restart`, `logs`, `install`, `install-dev`, `check`, `test`, `run`, `export`, `add`, `migrate`, `help`. Add:
 
 ```makefile
 test-all: # Run every test, integration included
@@ -834,7 +834,7 @@ test-all: # Run every test, integration included
 ```bash
 cd api && cp .env.example .env && make up
 sleep 5
-curl -s localhost:8000/health/check | python3 -m json.tool
+curl -s localhost:8003/health/check | python3 -m json.tool
 ```
 Expected: `status: "success"`, `data.db.status: "success"`, `data.db.version` naming PostgreSQL, `data.environment: "local"`
 
@@ -1745,7 +1745,7 @@ Expected: PASS, all green
 
 ```bash
 cd api && make restart && sleep 6
-curl -s -X POST localhost:8000/extract \
+curl -s -X POST localhost:8003/extract \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' | python3 -m json.tool | head -30
 ```
@@ -2011,11 +2011,11 @@ from .download import Task as Task
 
 ```bash
 cd api && make up && sleep 5
-docker exec server-anydm-api uv run tortoise-cli --config src.data.db.DB_CONFIG migrate makemigrations --name initial
+docker exec server-anydm-fastapi uv run tortoise-cli --config src.data.db.DB_CONFIG migrate makemigrations --name initial
 ```
 If the CLI entrypoint differs in tortoise-orm 1.1.8, run the equivalent from inside the container:
 ```bash
-docker exec server-anydm-api python -c "
+docker exec server-anydm-fastapi python -c "
 import asyncio
 from tortoise.migrations.api import makemigrations
 from src.data.db import DB_CONFIG
@@ -2032,7 +2032,7 @@ Open `api/src/data/db/migration/0001_initial.py` and confirm it creates `downloa
 
 ```bash
 cd api && make migrate
-docker exec db-anydm-api psql -U user -d anydm -c '\d download_task'
+docker exec db-anydm-fastapi psql -U user -d anydm -c '\d download_task'
 ```
 Expected: the table exists with all columns and both indexes
 
@@ -3047,10 +3047,10 @@ Expected: PASS, all green
 
 ```bash
 cd api && make restart && sleep 6
-curl -s -X POST localhost:8000/download/youtube \
+curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ","preset":"720"}' | python3 -m json.tool
-curl -s localhost:8000/download | python3 -m json.tool | head -25
+curl -s localhost:8003/download | python3 -m json.tool | head -25
 ```
 Expected: a 201 carrying a task with `status: "pending"`, then a list containing it. Nothing downloads yet — that is Phase 4.
 
@@ -4412,13 +4412,13 @@ Expected: both green
 
 ```bash
 cd api && make restart && sleep 6
-TASK=$(curl -s -X POST localhost:8000/download/youtube \
+TASK=$(curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ","preset":"720"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
 echo "task $TASK"
 sleep 20
-curl -s "localhost:8000/download/$TASK" | python3 -m json.tool
+curl -s "localhost:8003/download/$TASK" | python3 -m json.tool
 ```
 Expected: `status` progresses to `"complete"` with `progress: 100` and a non-null `file_size`. `preset: "720"` is chosen because YouTube's combined streams top out there; a preset needing a mux correctly fails with the ffmpeg message until Task 18.
 
@@ -4426,12 +4426,12 @@ Expected: `status` progresses to `"complete"` with `progress: 100` and a non-nul
 
 ```bash
 cd api && make restart && sleep 6
-curl -s -X POST localhost:8000/download/youtube \
+curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","preset":"720"}' > /dev/null
 sleep 3
-docker restart server-anydm-api && sleep 8
-curl -s localhost:8000/download | python3 -m json.tool | head -30
+docker restart server-anydm-fastapi && sleep 8
+curl -s localhost:8003/download | python3 -m json.tool | head -30
 ```
 Expected: the log shows `requeued 1 orphaned task(s)`, `downloaded_bytes` continues from where it stopped rather than resetting to 0, and the task reaches `complete`.
 
@@ -4836,21 +4836,21 @@ Expected: both green
 ```bash
 cd api && make restart && sleep 6
 for PRESET in mp3 1080; do
-  curl -s -X POST localhost:8000/download/youtube \
+  curl -s -X POST localhost:8003/download/youtube \
     -H 'content-type: application/json' \
     -d "{\"url\":\"https://www.youtube.com/watch?v=aqz-KE-bpKQ\",\"preset\":\"$PRESET\"}" > /dev/null
 done
 sleep 45
-curl -s localhost:8000/download | python3 -c '
+curl -s localhost:8003/download | python3 -c '
 import json, sys
 for task in json.load(sys.stdin)["data"]:
     print(task["preset"], task["status"], task["progress"], task["file_size"], task["error"])
 '
-docker exec server-anydm-api ls -la /workdir/downloads/*/
+docker exec server-anydm-fastapi ls -la /workdir/downloads/*/
 ```
 Expected: both `complete`, both with a real `file_size`, and the two files present. Copy one out and play it to confirm it is not truncated:
 ```bash
-docker cp server-anydm-api:/workdir/downloads /tmp/anydm-check && open /tmp/anydm-check
+docker cp server-anydm-fastapi:/workdir/downloads /tmp/anydm-check && open /tmp/anydm-check
 ```
 
 - [ ] **Step 8: Lint, typecheck, commit**
@@ -5056,12 +5056,12 @@ Expected: PASS, all green
 
 ```bash
 cd api && make restart && sleep 6
-TASK=$(curl -s -X POST localhost:8000/download/youtube \
+TASK=$(curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","preset":"720"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
 sleep 30
-curl -s -D- -o /dev/null -r 0-99 "localhost:8000/download/$TASK/file" | head -8
+curl -s -D- -o /dev/null -r 0-99 "localhost:8003/download/$TASK/file" | head -8
 ```
 Expected: `HTTP/1.1 206 Partial Content` with `content-range: bytes 0-99/<total>` and `content-length: 100`
 
@@ -5306,18 +5306,18 @@ Expected: PASS, all green
 
 ```bash
 cd api && make restart && sleep 6
-TASK=$(curl -s -X POST localhost:8000/download/youtube \
+TASK=$(curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","preset":"1080"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
 sleep 4
-curl -s -X POST "localhost:8000/download/$TASK/pause" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["status"])'
+curl -s -X POST "localhost:8003/download/$TASK/pause" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["status"])'
 sleep 2
-curl -s -X POST "localhost:8000/download/$TASK/resume" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["status"])'
+curl -s -X POST "localhost:8003/download/$TASK/resume" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["status"])'
 sleep 15
-curl -s "localhost:8000/download/$TASK" | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["status"], d["progress"])'
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE "localhost:8000/download/$TASK"
-docker exec server-anydm-api ls /workdir/downloads/
+curl -s "localhost:8003/download/$TASK" | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["status"], d["progress"])'
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE "localhost:8003/download/$TASK"
+docker exec server-anydm-fastapi ls /workdir/downloads/
 ```
 Expected: `paused`, then `pending`, then the task resumes and progresses (not restarting from 0), then `204`, and the task's directory is gone.
 
@@ -5528,14 +5528,14 @@ Expected: both green
 
 ```bash
 cd api && make restart && sleep 6
-TASK=$(curl -s -X POST localhost:8000/download/url \
+TASK=$(curl -s -X POST localhost:8003/download/url \
   -H 'content-type: application/json' \
   -d '{"url":"https://raw.githubusercontent.com/torvalds/linux/master/README"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
 sleep 5
-curl -s "localhost:8000/download/$TASK" | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["status"], d["filename"], d["file_size"])'
-curl -s "localhost:8000/download/$TASK/file" | head -3
-curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/download/url \
+curl -s "localhost:8003/download/$TASK" | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["status"], d["filename"], d["file_size"])'
+curl -s "localhost:8003/download/$TASK/file" | head -3
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8003/download/url \
   -H 'content-type: application/json' -d '{"url":"file:///etc/passwd"}'
 ```
 Expected: `complete README <size>`, the README's first lines, then `400` for the `file://` attempt.
@@ -5552,7 +5552,7 @@ git add api && git commit -m "feat(api): direct URL downloads"
 
 # Phase 6 — Server-sent events
 
-Ends with `curl -N localhost:8000/download/events` printing live progress.
+Ends with `curl -N localhost:8003/download/events` printing live progress.
 
 ### Task 22: Event hub
 
@@ -5946,10 +5946,10 @@ Expected: both green
 
 ```bash
 cd api && make restart && sleep 6
-curl -N -s localhost:8000/download/events &
+curl -N -s localhost:8003/download/events &
 SSE=$!
 sleep 2
-curl -s -X POST localhost:8000/download/youtube \
+curl -s -X POST localhost:8003/download/youtube \
   -H 'content-type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","preset":"720"}' > /dev/null
 sleep 25
@@ -6530,7 +6530,7 @@ import { unwrap } from "./envelope";
 
 /** The FastAPI service: extract, YouTube and direct downloads. */
 export function apiUrl(path: string): string {
-    const base = import.meta.env.PUBLIC_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "");
+    const base = import.meta.env.PUBLIC_API_URL || (import.meta.env.DEV ? "http://localhost:8003" : "");
     return `${base}${path}`;
 }
 
@@ -6593,7 +6593,7 @@ export * from "./task";
 Append to `ui/apps/web/.env.example`:
 ```
 # FastAPI service (extract, YouTube and direct downloads)
-PUBLIC_API_URL=http://localhost:8000
+PUBLIC_API_URL=http://localhost:8003
 ```
 and leave `PUBLIC_BASE_URL=http://localhost:3000` in place — it now means the Bun torrent service specifically. Say so in a comment above it.
 
