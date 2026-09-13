@@ -1,62 +1,93 @@
 ## core
 # variables
-API_DIR := api
-UI_DIR := ui
+# This file owns no logic. Each target hands off to the stack that does:
+# api/makefile for Python and Docker, ui/package.json for the SPA.
+#
+# Variables typed on the command line reach the sub-make on their own — GNU make
+# forwards command-line overrides through MAKEFLAGS. Run `make -C api help` for
+# the API's own targets.
+API := api
+UI := ui
+BUN := bun
 
-# Every target with a colon in its name is escaped for GNU Make 3.81, which is
-# what ships on macOS. Unescaped, `api:run` is parsed as target `api` with
-# prerequisite `run` and silently does the wrong thing.
-.PHONY: api\:install api\:run api\:test api\:test-all api\:check api\:up api\:down api\:logs api\:migrate ui\:install ui\:dev ui\:build ui\:check check help
+# phony targets
+.PHONY: check help \
+	api-check api-test api-test-all api-run api-up api-down api-build api-restart api-ps api-logs \
+	api-migrate api-install api-export api-clean api-clean-db api-clean-system \
+	ui-install ui-dev ui-restart ui-build ui-check ui-format
 
-## api
-api\:install: # Install Python dependencies
-	$(MAKE) -C $(API_DIR) install
+## both stacks
+check: api-check ui-check # Lint + typecheck both stacks
 
-api\:run: # Run the FastAPI dev server
-	$(MAKE) -C $(API_DIR) run
+## api — delegates to api/makefile
+api-check: # Lint + typecheck the API
+	$(MAKE) -C $(API) check
 
-api\:test: # Run the Python unit tests
-	$(MAKE) -C $(API_DIR) test
+api-test: # Run the API unit tests
+	$(MAKE) -C $(API) test
 
-api\:test-all: # Run every Python test, integration included (needs api:up)
-	$(MAKE) -C $(API_DIR) test-all
+api-test-all: # Run every API test, integration included (needs api-up)
+	$(MAKE) -C $(API) test-all
 
-api\:check: # Lint and typecheck the API
-	$(MAKE) -C $(API_DIR) check
+api-run: # Run the API dev server on the host
+	$(MAKE) -C $(API) run
 
-api\:up: # Start the API stack (Postgres + server)
-	$(MAKE) -C $(API_DIR) up
+api-up: # Start the API and database containers
+	$(MAKE) -C $(API) up
 
-api\:down: # Stop the API stack
-	$(MAKE) -C $(API_DIR) down
+api-down: # Remove the API containers
+	$(MAKE) -C $(API) down
 
-api\:logs: # Follow API logs
-	$(MAKE) -C $(API_DIR) logs
+api-build: # Build the API Docker images
+	$(MAKE) -C $(API) build
 
-api\:migrate: # Apply database migrations
-	$(MAKE) -C $(API_DIR) migrate
+api-restart: # Stop, rebuild, and start the API containers
+	$(MAKE) -C $(API) restart
 
-## ui
-ui\:install: # Install UI dependencies
-	cd $(UI_DIR) && bun install
+api-ps: # List the API containers
+	$(MAKE) -C $(API) ps
 
-ui\:dev: # Run the UI dev server
-	cd $(UI_DIR) && bun run web:dev
+api-logs: # Follow the API container logs
+	$(MAKE) -C $(API) logs
 
-ui\:build: # Production build for the UI
-	cd $(UI_DIR) && bun run web:build
+api-migrate: # Run database migrations
+	$(MAKE) -C $(API) migrate
 
-ui\:check: # Format check and typecheck the UI
-	cd $(UI_DIR) && bun run web:fmt.chk && bun run web:chk
+api-install: # Install API dependencies
+	$(MAKE) -C $(API) install
 
-## both
-check: # Check both halves, the way CI does
-	$(MAKE) api:check
-	$(MAKE) ui:check
+api-export: # Export requirements.txt
+	$(MAKE) -C $(API) export
+
+api-clean: # Stop containers, remove volumes and images
+	$(MAKE) -C $(API) clean
+
+api-clean-db: # Remove the database volume
+	$(MAKE) -C $(API) clean-db
+
+api-clean-system: # Prune all unused Docker data
+	$(MAKE) -C $(API) clean-system
+
+## ui — delegates to ui/package.json
+ui-install: # Install UI dependencies
+	$(BUN) install --cwd $(UI)
+
+ui-dev: # Run the UI dev server (formats and typechecks first)
+	$(BUN) run --cwd $(UI) web:dev
+
+ui-restart: # Wipe node_modules + bun.lock, reinstall, then run the dev server
+	$(BUN) run --cwd $(UI) web:restart
+
+ui-build: # Build the UI for production
+	$(BUN) run --cwd $(UI) web:build
+
+ui-check: # Format check + typecheck the UI
+	$(BUN) run --cwd $(UI) web:fmt.chk
+	$(BUN) run --cwd $(UI) web:chk
+
+ui-format: # Format the UI sources
+	$(BUN) run --cwd $(UI) web:fmt
 
 # help
-# The name class carries `\:` so the escaped targets are listed too: a plain
-# `[a-zA-Z_-]+:` stops dead at the backslash. The backslash is stripped for
-# display, since it is make's escape and not part of the name an operator types.
 help:
-	@grep -E '^[a-zA-Z_-]+(\\:[a-zA-Z_-]+)*:.*#' $(MAKEFILE_LIST) | awk 'match($$0, /^[a-zA-Z_-]+(\\:[a-zA-Z_-]+)*/) { name = substr($$0, 1, RLENGTH); gsub(/\\/, "", name); help = $$0; sub(/^[^#]*#/, "", help); printf "\033[36m%-16s\033[0m %s\n", name, help }'
+	@grep -E '^[a-zA-Z_-]+:.*?#' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?#"}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'

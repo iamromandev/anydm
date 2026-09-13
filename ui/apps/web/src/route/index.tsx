@@ -3,15 +3,10 @@ import "../style/global.css";
 import { AppShell } from "@/component/layouts/app-shell";
 import {
     apiUrl,
-    bunUrl,
     deleteApi,
-    deleteBun,
     getApi,
-    getBun,
     normalizeApiTask,
-    normalizeBunTask,
     postApi,
-    postBun,
     type UiTask,
 } from "@/lib/api";
 
@@ -34,54 +29,20 @@ export default component$(() => {
     });
 
     const syncTask = $(async () => {
-        // Downloads come from FastAPI, torrents from the Bun service. Each is
-        // caught separately so one being down cannot blank the other's rows.
-        //
-        // The Bun list is GET /download, not /download/torrent: that router
-        // registers its list at "/" and, mounted under a prefix, the path is
-        // unreachable — it falls through to /:id and answers "Task not found".
-        // Filtering by kind is what narrows it to torrents now that YouTube
-        // tasks live in FastAPI.
-        const [
-            apiTasks,
-            bunTasks,
-            bunStats,
-        ] = await Promise.all([
-            getApi<any[]>("/download")
-                .then((rows) => rows.map(normalizeApiTask))
-                .catch(() => [] as UiTask[]),
-            getBun<any[]>("/download")
-                .then((rows) =>
-                    rows
-                        .filter((row) => row.kind === "torrent")
-                        .map(normalizeBunTask),
-                )
-                .catch(() => [] as UiTask[]),
-            getBun<any>("/download/torrent/global/stats").catch(() => null),
-        ]);
+        const tasks = await getApi<any[]>("/download")
+            .then((rows) => rows.map(normalizeApiTask))
+            .catch(() => [] as UiTask[]);
 
-        store.tasks = [
-            ...apiTasks,
-            ...bunTasks,
-        ].slice(0, MAX_TASKS);
-
-        // Mapped inline rather than through a $() helper: calling one QRL
-        // from inside another loses the closure capture, and `store` arrives
-        // undefined in the extracted chunk.
-        store.globalStats = {
-            downloadSpeed: bunStats?.downloadSpeed ?? 0,
-            uploadSpeed: bunStats?.uploadSpeed ?? 0,
-            totalDownloaded: bunStats?.totalDownloaded ?? 0,
-            totalPeers: bunStats?.totalPeers ?? 0,
-        };
+        store.tasks = tasks.slice(0, MAX_TASKS);
     });
 
-    /** Replace every task from one service, leaving the other's rows alone. */
-    const mergeTasks = $((rows: UiTask[], source: "api" | "bun") => {
-        const others = store.tasks.filter((t) => t.source !== source);
+    /** Fold rows from an SSE frame into the list, replacing what they match. */
+    const mergeTasks = $((rows: UiTask[]) => {
+        const incoming = new Set(rows.map((row) => row.id));
+        const kept = store.tasks.filter((t) => !incoming.has(t.id));
         store.tasks = [
             ...rows,
-            ...others,
+            ...kept,
         ].slice(0, MAX_TASKS);
     });
 
@@ -111,8 +72,6 @@ export default component$(() => {
             const interval = setInterval(syncTask, 2500);
 
             let apiEvents: EventSource | null = null;
-            let bunEvents: EventSource | null = null;
-
             try {
                 apiEvents = new EventSource(apiUrl("/download/events"));
                 apiEvents.addEventListener("tasks", (event) => {
@@ -120,21 +79,18 @@ export default component$(() => {
                         const rows = JSON.parse(
                             (event as MessageEvent).data,
                         ) as any[];
-                        mergeTasks(rows.map(normalizeApiTask), "api");
+                        mergeTasks(rows.map(normalizeApiTask));
                     } catch {
                         // malformed event
                     }
                 });
                 apiEvents.addEventListener("task", (event) => {
                     try {
-                        mergeTasks(
-                            [
-                                normalizeApiTask(
-                                    JSON.parse((event as MessageEvent).data),
-                                ),
-                            ],
-                            "api",
-                        );
+                        mergeTasks([
+                            normalizeApiTask(
+                                JSON.parse((event as MessageEvent).data),
+                            ),
+                        ]);
                     } catch {
                         // malformed event
                     }
@@ -153,36 +109,9 @@ export default component$(() => {
                 apiEvents = null;
             }
 
-            try {
-                bunEvents = new EventSource(bunUrl("/download/torrent/events"));
-                bunEvents.addEventListener("stats", (event) => {
-                    try {
-                        const data = JSON.parse(
-                            (event as MessageEvent).data,
-                        ) as any;
-                        if (data && typeof data === "object") {
-                            store.globalStats = {
-                                downloadSpeed: data.downloadSpeed ?? 0,
-                                uploadSpeed: data.uploadSpeed ?? 0,
-                                totalDownloaded: data.totalDownloaded ?? 0,
-                                totalPeers: data.totalPeers ?? 0,
-                            };
-                        }
-                    } catch {
-                        // malformed event
-                    }
-                });
-                bunEvents.onerror = () => {
-                    // EventSource reconnects automatically
-                };
-            } catch {
-                bunEvents = null;
-            }
-
             cleanup(() => {
                 clearInterval(interval);
                 apiEvents?.close();
-                bunEvents?.close();
             });
         },
         { strategy: "document-ready" },
@@ -214,23 +143,12 @@ export default component$(() => {
             if (!task) return;
 
             try {
-                // Each task goes back to the service that owns it. The `source`
-                // tag the normalizers set is what makes that a lookup rather
-                // than a guess about kind.
-                const updated =
-                    task.source === "api"
-                        ? await postApi<any>(
-                              `/download/${taskId}/${action}`,
-                              {},
-                          )
-                        : await postBun<any>(
-                              `/download/torrent/${taskId}/${action}`,
-                          );
+                const updated = await postApi<any>(
+                    `/download/${taskId}/${action}`,
+                    {},
+                );
                 if (updated) {
-                    const row =
-                        task.source === "api"
-                            ? normalizeApiTask(updated)
-                            : normalizeBunTask(updated);
+                    const row = normalizeApiTask(updated);
                     store.tasks = store.tasks.map((t) =>
                         t.id === taskId ? row : t,
                     );
@@ -254,11 +172,7 @@ export default component$(() => {
         if (active && !confirm("Stop and remove this download?")) return;
 
         try {
-            if (task.source === "api") {
-                await deleteApi(`/download/${taskId}`);
-            } else {
-                await deleteBun(`/download/torrent/${taskId}`);
-            }
+            await deleteApi(`/download/${taskId}`);
         } catch (err) {
             console.error(err);
         }
@@ -270,9 +184,8 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
-        const path = `/download/${taskId}/file`;
         const a = document.createElement("a");
-        a.href = task.source === "api" ? apiUrl(path) : bunUrl(path);
+        a.href = apiUrl(`/download/${taskId}/file`);
         a.style.display = "none";
         document.body.appendChild(a);
         a.click();
@@ -306,7 +219,10 @@ export default component$(() => {
                           })
                         : postApi("/download/url", { url: input.value }));
                 } else {
-                    await postBun("/download/torrent", {
+                    // Torrents are not ported yet. This route will exist on the
+                    // same service when they are; until then the API answers
+                    // 404 and the modal surfaces it.
+                    await postApi("/download/torrent", {
                         torrent: input.value,
                     });
                 }

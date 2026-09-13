@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { normalizeApiTask, normalizeBunTask } from "./task";
+import { normalizeApiTask } from "./task";
 
 describe("normalizeApiTask", () => {
     const raw = {
@@ -30,10 +30,6 @@ describe("normalizeApiTask", () => {
         expect(task.eta).toBe(11);
     });
 
-    it("marks the task as served by the FastAPI service", () => {
-        expect(normalizeApiTask(raw).source).toBe("api");
-    });
-
     it("tolerates nulls", () => {
         const task = normalizeApiTask({
             ...raw,
@@ -47,39 +43,5 @@ describe("normalizeApiTask", () => {
 
     it("falls back to the filename when there is no title", () => {
         expect(normalizeApiTask({ ...raw, title: "" }).title).toBe("clip.mp4");
-    });
-});
-
-describe("normalizeBunTask", () => {
-    it("keeps the Bun torrent shape and tags its source", () => {
-        const task = normalizeBunTask({
-            id: "t1",
-            title: "ubuntu.iso",
-            kind: "torrent",
-            status: "downloading",
-            progress: 10,
-            progressDetails: {
-                downloadedBytes: 100,
-                totalBytes: 1000,
-                downloadSpeed: 50,
-                uploadSpeed: 5,
-                eta: 18,
-                peersConnected: 3,
-            },
-        });
-        expect(task.source).toBe("bun");
-        expect(task.progressDetails.peersConnected).toBe(3);
-    });
-
-    it("tolerates a torrent with no progress details yet", () => {
-        const task = normalizeBunTask({
-            id: "t2",
-            title: "x",
-            kind: "torrent",
-            status: "pending",
-            progress: 0,
-        });
-        expect(task.progressDetails.downloadedBytes).toBe(0);
-        expect(task.progressDetails.peersConnected).toBe(0);
     });
 });
