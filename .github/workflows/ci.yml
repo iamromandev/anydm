@@ -6,11 +6,47 @@ on:
     pull_request:
 
 jobs:
-    check:
+    api:
         runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: api
+        steps:
+            - uses: actions/checkout@v4
+            - uses: astral-sh/setup-uv@v5
+              with:
+                  enable-cache: true
+            - run: uv python install 3.14.6
+            - run: uv sync --frozen
+            - run: uvx ruff check
+            - run: uv run ty check
+            # Unit tests only. The integration suite needs Postgres and a disk,
+            # and runs locally against `make api:up` with `make api:test-all`.
+            - run: uv run pytest
+
+    ui:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: ui
         steps:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
             - run: bun install --frozen-lockfile
-            - run: bun run ui:fmt.chk && bun run ui:chk
-            - run: bun run api:fmt.chk && bun run api:chk
+            - run: bun run web:fmt.chk
+            - run: bun run web:chk
+            - run: bun run web:build
+
+    # The Bun API still serves torrents until that port lands. Delete this job
+    # with apps/api itself.
+    legacy-api:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: apps/api
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install --frozen-lockfile
+            - run: bun run fmt.chk
+            - run: bun run chk
