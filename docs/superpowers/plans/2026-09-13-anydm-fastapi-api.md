@@ -2040,18 +2040,12 @@ from .download import Task as Task
 
 - [ ] **Step 2: Generate the migration**
 
+tortoise-orm 1.1.8 installs a `tortoise` console script; `tortoise.migrations.api`
+exposes only `migrate`, `plan` and `sqlmigrate`, so generation goes through the CLI.
+
 ```bash
 cd api && make up && sleep 5
-docker exec server-anydm-fastapi uv run tortoise-cli --config src.data.db.DB_CONFIG migrate makemigrations --name initial
-```
-If the CLI entrypoint differs in tortoise-orm 1.1.8, run the equivalent from inside the container:
-```bash
-docker exec server-anydm-fastapi python -c "
-import asyncio
-from tortoise.migrations.api import makemigrations
-from src.data.db import DB_CONFIG
-asyncio.run(makemigrations(config=DB_CONFIG, name='initial'))
-"
+docker exec server-anydm-fastapi tortoise -c src.data.db.DB_CONFIG makemigrations --name initial
 ```
 Expected: `api/src/data/db/migration/0001_initial.py` created
 
