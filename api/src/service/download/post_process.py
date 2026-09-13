@@ -1,0 +1,62 @@
+"""What happens to the downloaded parts once the bytes are on disk.
+
+A Protocol rather than a function so the worker never learns how a file is
+assembled, and so the tests can substitute a spy for the ffmpeg subprocess.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any, Protocol
+
+from src.core.error import Error
+from src.data.type import Kind
+from src.lib import media
+
+Runner = Callable[[list[str]], Awaitable[None]]
+
+
+class PostProcessor(Protocol):
+    async def run(self, task: Any, parts: dict[str, Path], destination: Path) -> None:
+        """Turn ``parts`` into the single file at ``destination``."""
+        ...
+
+
+class FfmpegPostProcessor(PostProcessor):
+    """Turns the downloaded parts into the finished file.
+
+    Three cases, in the order they are checked. An MP3 task is transcoded even
+    though it has only one part, because the stream YouTube serves is AAC or
+    Opus. Any other single part is already the file and is renamed into place —
+    that covers combined streams and every direct download. Two parts are muxed.
+    """
+
+    def __init__(self, ffmpeg: str, runner: Runner = media.run) -> None:
+        self._ffmpeg = ffmpeg
+        self._run = runner
+
+    async def run(self, task: Any, parts: dict[str, Path], destination: Path) -> None:
+        if not parts:
+            raise Error.internal(message="Nothing was downloaded")
+
+        if task.kind == Kind.AUDIO:
+            audio = parts.get("audio")
+            if audio is None:
+                raise Error.internal(message="Audio task has no audio part")
+            await self._run(media.mp3_args(self._ffmpeg, audio, destination))
+            audio.unlink(missing_ok=True)
+            return
+
+        if len(parts) == 1:
+            next(iter(parts.values())).replace(destination)
+            return
+
+        video, audio = parts.get("video"), parts.get("audio")
+        if video is not None and audio is not None:
+            await self._run(media.mux_args(self._ffmpeg, video, audio, destination))
+            video.unlink(missing_ok=True)
+            audio.unlink(missing_ok=True)
+            return
+
+        raise Error.internal(message=f"Cannot combine parts: {sorted(parts)}")
