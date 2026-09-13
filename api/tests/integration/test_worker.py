@@ -228,3 +228,42 @@ async def test_completion_does_not_clobber_the_flushed_byte_counts(db: None, tmp
     assert task.downloaded_bytes == 500
     assert task.total_bytes == 500
     assert task.file_size == 500
+
+
+async def test_cancelling_mid_download_leaves_no_files_behind(db: None, tmp_path: Path) -> None:
+    # The leak this guards: cancel removes the task directory, but the running
+    # download recreates it on its next open, leaving an orphaned .part.
+    task = await _task()
+    control = DownloadControl()
+    control.request_stop(task.id)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=BODY))
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        worker = _worker(tmp_path, control, client)
+        claimed = await TaskDatabaseRepo().claim_next()
+        assert claimed is not None
+        # Cancel wins the race: the row is CANCELED before the worker unwinds.
+        claimed.status = TaskStatus.CANCELED
+        await claimed.save(update_fields=["status"])
+        await worker.run_task(claimed)
+
+    assert not (tmp_path / str(task.id)).exists()
+
+
+async def test_pausing_mid_download_keeps_the_partial_file(db: None, tmp_path: Path) -> None:
+    # The mirror of the above: a pause must NOT sweep the files, since the
+    # whole point is resuming from them.
+    task = await _task()
+    control = DownloadControl()
+    control.request_stop(task.id)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=BODY))
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        worker = _worker(tmp_path, control, client)
+        claimed = await TaskDatabaseRepo().claim_next()
+        assert claimed is not None
+        claimed.status = TaskStatus.PAUSED
+        await claimed.save(update_fields=["status"])
+        await worker.run_task(claimed)
+
+    assert (tmp_path / str(task.id) / "video.part").exists()

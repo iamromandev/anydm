@@ -15,6 +15,10 @@ class YoutubeDownloadRequest(BaseSchema):
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
 
 
+class UrlDownloadRequest(BaseSchema):
+    url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
+
+
 class TaskSchema(BaseSchema):
     id: uuid.UUID
     source_url: str

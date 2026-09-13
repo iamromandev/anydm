@@ -86,10 +86,16 @@ class DownloadWorker:
             await self._post_processor.run(task, parts, destination)
             await self._mark_complete(task, destination)
         except Stopped:
-            # A pause or a cancel already set the row's status; leave it alone
-            # and leave the ``.part`` files where they are.
+            # A pause or a cancel already set the row's status, so it is not
+            # this worker's to change. But cancel deleted the task directory
+            # while this download still held the file open, and the next
+            # ``mkdir``/``open`` recreated it — so a cancelled task must have
+            # its files swept a second time, once the writer has let go.
             logger.info("{}|stopped {}", self._name, task.id)
             self._control.clear_stop(task.id)
+            await task.refresh_from_db()
+            if task.status == TaskStatus.CANCELED:
+                remove_task_files(self._root, task.id)
         except Error as error:
             await self._mark_failed(task, error)
         except asyncio.CancelledError:
