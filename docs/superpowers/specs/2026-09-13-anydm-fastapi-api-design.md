@@ -88,7 +88,7 @@ api/
 │   ├── core/{base,common,constant,error,format,runtime,success,type}.py
 │   ├── data/
 │   │   ├── db/{__init__,migration/,model/download/task.py}
-│   │   ├── repo/download/{interface/,task_repo.py}
+│   │   ├── repo/download/{interface/,task_db.py}
 │   │   ├── schema/{health,extract,download}/
 │   │   └── type/{core,download}/
 │   ├── deps/                    # request-scoped dependencies only
