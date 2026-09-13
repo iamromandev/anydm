@@ -3093,6 +3093,19 @@ git add api && git commit -m "feat(api): download schemas, service and read endp
 
 # Phase 4 — Downloader and worker pool
 
+> **Reordered during execution.** The plan assumed a single combined stream was
+> the common case, so Task 16 shipped a `SingleStreamPostProcessor` and deferred
+> ffmpeg to Task 18. Running Task 13 disproved that: preset `720` on a real
+> video resolves to itags 136 + 251 — video-only plus separate audio — because
+> YouTube no longer serves combined streams above 360p, and no preset below 480
+> exists. Nearly every download therefore needs a mux, which would leave Phase 4
+> refusing its own checkpoint.
+>
+> So **Task 17 (ffmpeg wrapper) and Task 18 (FfmpegPostProcessor) are executed
+> before Task 16 (worker pool)**, and `SingleStreamPostProcessor` is never
+> written — the worker takes `FfmpegPostProcessor` from the start. Task 18's
+> steps that swap one for the other are no-ops; its tests still apply.
+
 Ends with a real 1080p download completing to disk, and resuming after the process is killed mid-transfer.
 
 ### Task 14: Progress tracking
