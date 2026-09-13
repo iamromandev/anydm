@@ -41,6 +41,9 @@
             {
                 "name": "typescript-plugin-css-modules"
             }
+        ],
+        "types": [
+            "bun"
         ]
     },
     "include": [
