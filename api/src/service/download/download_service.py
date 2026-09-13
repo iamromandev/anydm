@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 from src.core.base import BaseService
 from src.core.error import Error
@@ -15,13 +16,22 @@ from src.lib.youtube import (
     safe_filename,
     select_plan,
 )
+from src.service.download.control import DownloadControl
 
 
 class DownloadService(BaseService):
-    def __init__(self, repo: TaskRepo, client: YouTubeClient) -> None:
+    def __init__(
+        self,
+        repo: TaskRepo,
+        client: YouTubeClient,
+        control: DownloadControl,
+        downloads_root: Path,
+    ) -> None:
         super().__init__()
         self._repo = repo
         self._client = client
+        self._control = control
+        self._root = downloads_root
 
     async def enqueue_youtube(self, url: str, preset: Preset) -> TaskSchema:
         """Resolve the plan now, move the bytes later.
@@ -49,9 +59,13 @@ class DownloadService(BaseService):
             mime_type=plan.mime_type,
             video_itag=plan.video_itag,
             audio_itag=plan.audio_itag,
+            total_bytes=plan.expected_bytes,
             status=TaskStatus.PENDING,
             progress=0,
         )
+        # Workers share this process, so a queued task starts in milliseconds
+        # rather than on the next poll tick.
+        self._control.wake()
         return TaskSchema.model_validate(task)
 
     async def list_tasks(self, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:

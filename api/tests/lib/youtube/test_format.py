@@ -100,3 +100,33 @@ def test_safe_filename_truncates_very_long_titles() -> None:
     name = safe_filename("x" * 500, "1080p", "mp4")
     assert len(name) <= 200
     assert name.endswith("_1080p.mp4")
+
+
+def _sized(itag: int, height: int, size: int | None, *, audio: bool = False) -> StreamInfo:
+    return StreamInfo(
+        itag=itag,
+        mime_type="video/mp4",
+        quality=f"{height}p",
+        height=height,
+        has_video=True,
+        has_audio=audio,
+        content_length=size,
+    )
+
+
+def test_expected_bytes_sums_both_parts_of_a_mux() -> None:
+    video = _sized(137, 1080, 80_000_000)
+    audio = StreamInfo(itag=140, mime_type="audio/mp4", bitrate=128000, has_audio=True, content_length=3_000_000)
+    plan = select_plan([video, audio], Preset.P1080)
+    assert plan.expected_bytes == 83_000_000
+
+
+def test_expected_bytes_is_none_when_any_part_size_is_unknown() -> None:
+    video = _sized(137, 1080, 80_000_000)
+    audio = StreamInfo(itag=140, mime_type="audio/mp4", bitrate=128000, has_audio=True, content_length=None)
+    assert select_plan([video, audio], Preset.P1080).expected_bytes is None
+
+
+def test_expected_bytes_for_a_single_combined_stream() -> None:
+    plan = select_plan([_sized(18, 360, 5_000_000, audio=True)], Preset.BEST)
+    assert plan.expected_bytes == 5_000_000

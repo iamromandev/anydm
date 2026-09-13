@@ -35,6 +35,10 @@ class DownloadPlan:
     mime_type: str
     extension: str
     quality: str
+    #: Sum of the chosen streams' content lengths, so a two-part download can
+    #: report one honest percentage instead of two 0-100 sweeps. ``None`` when
+    #: YouTube did not report a size for every chosen stream.
+    expected_bytes: int | None = None
 
 
 def safe_filename(title: str, suffix: str, extension: str) -> str:
@@ -56,6 +60,18 @@ def _extension_of(mime_type: str | None, fallback: str) -> str:
         return fallback
     parts = mime_type.split(";")[0].split("/")
     return parts[1] if len(parts) > 1 and parts[1] else fallback
+
+
+def _total_of(*streams: StreamInfo) -> int | None:
+    """The combined size of the chosen streams, or ``None`` if any is unknown.
+
+    Partial knowledge is worse than none here: reporting a total that omits the
+    audio track would make the percentage overshoot and stall at 100.
+    """
+    sizes = [s.content_length for s in streams]
+    if any(not size for size in sizes):
+        return None
+    return sum(size for size in sizes if size is not None)
 
 
 def _height(stream: StreamInfo) -> int:
@@ -95,6 +111,7 @@ def select_plan(streams: list[StreamInfo], preset: Preset) -> DownloadPlan:
             mime_type="audio/mpeg",
             extension="mp3",
             quality="mp3",
+            expected_bytes=_total_of(audio_only[0]),
         )
 
     target = preset.target_height
@@ -112,6 +129,7 @@ def select_plan(streams: list[StreamInfo], preset: Preset) -> DownloadPlan:
             mime_type=(best_combined.mime_type or "video/mp4").split(";")[0],
             extension=_extension_of(best_combined.mime_type, "mp4"),
             quality=best_combined.quality or preset.value,
+            expected_bytes=_total_of(best_combined),
         )
 
     if best_video is not None and best_audio is not None:
@@ -122,6 +140,7 @@ def select_plan(streams: list[StreamInfo], preset: Preset) -> DownloadPlan:
             mime_type="video/mp4",
             extension="mp4",
             quality=best_video.quality or preset.value,
+            expected_bytes=_total_of(best_video, best_audio),
         )
 
     raise no_format_for_preset(preset.value)

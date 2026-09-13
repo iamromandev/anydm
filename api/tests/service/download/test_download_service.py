@@ -1,10 +1,12 @@
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
 from src.core.error import Error
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.youtube.protocol import StreamInfo, VideoInfo
+from src.service.download.control import DownloadControl
 from src.service.download.download_service import DownloadService
 
 VIDEO_ID = "dQw4w9WgXcQ"
@@ -37,9 +39,15 @@ class FakeRepo:
         return type("Row", (), kwargs)()
 
 
-def _service() -> tuple[DownloadService, FakeRepo]:
+def _service(downloads_dir: Path | None = None) -> tuple[DownloadService, FakeRepo]:
     repo = FakeRepo()
-    return DownloadService(repo=repo, client=FakeClient()), repo  # ty: ignore[invalid-argument-type]
+    service = DownloadService(
+        repo=repo,  # ty: ignore[invalid-argument-type]
+        client=FakeClient(),
+        control=DownloadControl(),
+        downloads_root=downloads_dir or Path("/tmp/anydm-test"),
+    )
+    return service, repo
 
 
 @pytest.mark.asyncio
