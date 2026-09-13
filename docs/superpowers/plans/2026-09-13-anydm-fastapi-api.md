@@ -305,11 +305,13 @@ git commit -m "feat(api): scaffold Python project with core primitives"
 `api/tests/config/test_settings.py`:
 
 ```python
+from typing import Any
+
 from src.config.settings import Settings
 
 
-def _settings(**overrides: object) -> Settings:
-    base = {
+def _settings(**overrides: Any) -> Settings:
+    base: dict[str, Any] = {
         "env": "local",
         "debug": True,
         "db_host": "localhost",
@@ -319,7 +321,7 @@ def _settings(**overrides: object) -> Settings:
         "db_password": "password",
     }
     base.update(overrides)
-    return Settings(**base)  # ty: ignore[missing-argument]
+    return Settings(**base)
 
 
 def test_origins_splits_and_trims() -> None:
@@ -411,7 +413,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # ty: ignore[missing-argument]
+    return Settings()
 ```
 
 - [ ] **Step 4: Write `api/src/config/logging.py` and `api/src/config/__init__.py`**
@@ -3085,13 +3087,15 @@ Pure arithmetic with an injected clock, so the throttle and the smoothing are te
 `api/tests/service/download/test_progress.py`:
 
 ```python
+from typing import Any
+
 from src.service.download.progress import ProgressTracker
 
 
-def _tracker(**overrides: object) -> ProgressTracker:
-    base: dict[str, object] = {"total_bytes": 1000, "flush_interval_ms": 1000, "started_at": 0.0}
+def _tracker(**overrides: Any) -> ProgressTracker:
+    base: dict[str, Any] = {"total_bytes": 1000, "flush_interval_ms": 1000, "started_at": 0.0}
     base.update(overrides)
-    return ProgressTracker(**base)  # ty: ignore[missing-argument]
+    return ProgressTracker(**base)
 
 
 def test_record_returns_nothing_before_the_interval_elapses() -> None:
