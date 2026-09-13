@@ -14,7 +14,7 @@ export interface AddTorrentModalProps {
         type: "magnet" | "file" | "url";
         value: string;
         preset?: string;
-    }) => void;
+    }) => Promise<void> | void;
 }
 
 export const AddTorrentModal = component$<AddTorrentModalProps>(
@@ -33,47 +33,16 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                 return;
             }
 
+            // This modal collects input; the page owns the network call. It
+            // used to POST here *and* call onAdd, which POSTed again — every
+            // URL added created two tasks.
             store.isAdding = true;
             try {
-                const BASE_URL =
-                    import.meta.env.PUBLIC_BASE_URL ||
-                    (import.meta.env.DEV ? "http://localhost:3000" : "");
-                if (!BASE_URL) throw new Error("Missing PUBLIC_BASE_URL");
-
-                let endpoint: string;
-                let body: Record<string, string>;
-
-                if (inputType === "magnet") {
-                    endpoint = `${BASE_URL}/download/torrent`;
-                    body = { torrent: inputValue };
-                } else if (inputType === "file") {
-                    endpoint = `${BASE_URL}/download/torrent`;
-                    body = { torrent: inputValue };
-                } else {
-                    endpoint = `${BASE_URL}/download/youtube`;
-                    body = { url: inputValue, preset: inputPreset };
-                }
-
-                const response = await fetch(endpoint, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                });
-
-                const payload = await response.json();
-
-                if (!response.ok || !payload.success) {
-                    throw new Error(
-                        payload.error || "Failed to start download",
-                    );
-                }
-
-                onAdd({
+                await onAdd({
                     type: inputType,
                     value: inputValue,
                     preset: inputType !== "url" ? undefined : inputPreset,
                 });
-
                 store.isAdding = false;
                 onClose();
             } catch (err) {

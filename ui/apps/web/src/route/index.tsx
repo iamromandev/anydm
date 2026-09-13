@@ -1,15 +1,21 @@
 import { component$, $, useStore, useVisibleTask$ } from "@qwik.dev/core";
 import "../style/global.css";
 import { AppShell } from "@/component/layouts/app-shell";
+import {
+    apiUrl,
+    bunUrl,
+    deleteApi,
+    deleteBun,
+    getApi,
+    getBun,
+    normalizeApiTask,
+    normalizeBunTask,
+    postApi,
+    postBun,
+    type UiTask,
+} from "@/lib/api";
 
 const MAX_TASKS = 50;
-
-function getBaseUrl(): string {
-    return (
-        import.meta.env.PUBLIC_BASE_URL ||
-        (import.meta.env.DEV ? "http://localhost:3000" : "")
-    );
-}
 
 export default component$(() => {
     const store = useStore({
@@ -27,64 +33,76 @@ export default component$(() => {
         addModalOpen: false as boolean,
     });
 
-    const getGlobalStats = $((payload: any) => {
-        const gs = payload.globalStats;
-        return gs
-            ? {
-                  downloadSpeed: gs.downloadSpeed ?? 0,
-                  uploadSpeed: gs.uploadSpeed ?? 0,
-                  totalDownloaded: gs.totalDownloaded ?? 0,
-                  totalPeers: gs.totalPeers ?? 0,
-              }
-            : {
-                  downloadSpeed: 0,
-                  uploadSpeed: 0,
-                  totalDownloaded: 0,
-                  totalPeers: 0,
-              };
+    const syncTask = $(async () => {
+        // Downloads come from FastAPI, torrents from the Bun service. Each is
+        // caught separately so one being down cannot blank the other's rows.
+        //
+        // The Bun list is GET /download, not /download/torrent: that router
+        // registers its list at "/" and, mounted under a prefix, the path is
+        // unreachable — it falls through to /:id and answers "Task not found".
+        // Filtering by kind is what narrows it to torrents now that YouTube
+        // tasks live in FastAPI.
+        const [
+            apiTasks,
+            bunTasks,
+            bunStats,
+        ] = await Promise.all([
+            getApi<any[]>("/download")
+                .then((rows) => rows.map(normalizeApiTask))
+                .catch(() => [] as UiTask[]),
+            getBun<any[]>("/download")
+                .then((rows) =>
+                    rows
+                        .filter((row) => row.kind === "torrent")
+                        .map(normalizeBunTask),
+                )
+                .catch(() => [] as UiTask[]),
+            getBun<any>("/download/torrent/global/stats").catch(() => null),
+        ]);
+
+        store.tasks = [
+            ...apiTasks,
+            ...bunTasks,
+        ].slice(0, MAX_TASKS);
+
+        // Mapped inline rather than through a $() helper: calling one QRL
+        // from inside another loses the closure capture, and `store` arrives
+        // undefined in the extracted chunk.
+        store.globalStats = {
+            downloadSpeed: bunStats?.downloadSpeed ?? 0,
+            uploadSpeed: bunStats?.uploadSpeed ?? 0,
+            totalDownloaded: bunStats?.totalDownloaded ?? 0,
+            totalPeers: bunStats?.totalPeers ?? 0,
+        };
     });
 
-    const syncTask = $(async () => {
-        const BASE_URL = getBaseUrl();
-        if (!BASE_URL) return;
+    /** Replace every task from one service, leaving the other's rows alone. */
+    const mergeTasks = $((rows: UiTask[], source: "api" | "bun") => {
+        const others = store.tasks.filter((t) => t.source !== source);
+        store.tasks = [
+            ...rows,
+            ...others,
+        ].slice(0, MAX_TASKS);
+    });
 
-        try {
-            const response = await fetch(`${BASE_URL}/download`);
-            const payload = await response.json();
-            if (!payload.success) return;
-
-            const serverMap = new Map<string, any>(
-                payload.data.map((t: any) => [
-                    t.id,
-                    t,
-                ]),
-            );
-
-            let changed = false;
-            store.tasks = store.tasks.map((t) => {
-                const server = serverMap.get(t.id);
-                if (
-                    server &&
-                    (server.status !== t.status ||
-                        server.progress !== t.progress ||
-                        server.error !== t.error ||
-                        server.downloadSpeed !== t.downloadSpeed ||
-                        server.uploadSpeed !== t.uploadSpeed)
-                ) {
-                    changed = true;
-                    return { ...t, ...server };
-                }
-                return t;
-            });
-
-            if (!changed) {
-                store.tasks = payload.data.slice(0, MAX_TASKS);
-            }
-
-            store.globalStats = await getGlobalStats(payload);
-        } catch {
-            // poll failures are silent
-        }
+    /** Patch the numbers on one row in place, without a refetch. */
+    const applyProgress = $((data: any) => {
+        store.tasks = store.tasks.map((t) =>
+            t.id === data.id
+                ? {
+                      ...t,
+                      progress: data.progress ?? t.progress,
+                      eta: data.eta_seconds ?? 0,
+                      progressDetails: {
+                          ...t.progressDetails,
+                          downloadedBytes: data.downloaded_bytes ?? 0,
+                          totalBytes: data.total_bytes ?? 0,
+                          downloadSpeed: data.speed_bps ?? 0,
+                          eta: data.eta_seconds ?? 0,
+                      },
+                  }
+                : t,
+        );
     });
 
     useVisibleTask$(
@@ -92,12 +110,52 @@ export default component$(() => {
             syncTask();
             const interval = setInterval(syncTask, 2500);
 
-            let eventSource: EventSource | null = null;
+            let apiEvents: EventSource | null = null;
+            let bunEvents: EventSource | null = null;
+
             try {
-                eventSource = new EventSource(
-                    `${getBaseUrl()}/download/torrent/events`,
-                );
-                eventSource.addEventListener("stats", (event) => {
+                apiEvents = new EventSource(apiUrl("/download/events"));
+                apiEvents.addEventListener("tasks", (event) => {
+                    try {
+                        const rows = JSON.parse(
+                            (event as MessageEvent).data,
+                        ) as any[];
+                        mergeTasks(rows.map(normalizeApiTask), "api");
+                    } catch {
+                        // malformed event
+                    }
+                });
+                apiEvents.addEventListener("task", (event) => {
+                    try {
+                        mergeTasks(
+                            [
+                                normalizeApiTask(
+                                    JSON.parse((event as MessageEvent).data),
+                                ),
+                            ],
+                            "api",
+                        );
+                    } catch {
+                        // malformed event
+                    }
+                });
+                apiEvents.addEventListener("progress", (event) => {
+                    try {
+                        applyProgress(JSON.parse((event as MessageEvent).data));
+                    } catch {
+                        // malformed event
+                    }
+                });
+                apiEvents.onerror = () => {
+                    // EventSource reconnects automatically
+                };
+            } catch {
+                apiEvents = null;
+            }
+
+            try {
+                bunEvents = new EventSource(bunUrl("/download/torrent/events"));
+                bunEvents.addEventListener("stats", (event) => {
                     try {
                         const data = JSON.parse(
                             (event as MessageEvent).data,
@@ -114,16 +172,17 @@ export default component$(() => {
                         // malformed event
                     }
                 });
-                eventSource.onerror = () => {
+                bunEvents.onerror = () => {
                     // EventSource reconnects automatically
                 };
             } catch {
-                eventSource = null;
+                bunEvents = null;
             }
 
             cleanup(() => {
                 clearInterval(interval);
-                eventSource?.close();
+                apiEvents?.close();
+                bunEvents?.close();
             });
         },
         { strategy: "document-ready" },
@@ -149,23 +208,31 @@ export default component$(() => {
         store.addModalOpen = true;
     });
 
-    const handleTorrentAction = $(
+    const handleTaskAction = $(
         async (taskId: string, action: "pause" | "resume") => {
-            const BASE_URL = getBaseUrl();
-            if (!BASE_URL) return;
+            const task = store.tasks.find((t) => t.id === taskId);
+            if (!task) return;
 
             try {
-                const response = await fetch(
-                    `${BASE_URL}/download/torrent/${taskId}/${action}`,
-                    { method: "POST" },
-                );
-                const payload = await response.json();
-                if (!response.ok || !payload.success) {
-                    throw new Error(payload.error || "Torrent action failed");
-                }
-                if (payload.data) {
+                // Each task goes back to the service that owns it. The `source`
+                // tag the normalizers set is what makes that a lookup rather
+                // than a guess about kind.
+                const updated =
+                    task.source === "api"
+                        ? await postApi<any>(
+                              `/download/${taskId}/${action}`,
+                              {},
+                          )
+                        : await postBun<any>(
+                              `/download/torrent/${taskId}/${action}`,
+                          );
+                if (updated) {
+                    const row =
+                        task.source === "api"
+                            ? normalizeApiTask(updated)
+                            : normalizeBunTask(updated);
                     store.tasks = store.tasks.map((t) =>
-                        t.id === taskId ? { ...t, ...payload.data } : t,
+                        t.id === taskId ? row : t,
                     );
                 }
             } catch (err) {
@@ -174,24 +241,23 @@ export default component$(() => {
         },
     );
 
-    const handlePause = $((id: string) => handleTorrentAction(id, "pause"));
+    const handlePause = $((id: string) => handleTaskAction(id, "pause"));
 
-    const handleResume = $((id: string) => handleTorrentAction(id, "resume"));
+    const handleResume = $((id: string) => handleTaskAction(id, "resume"));
 
     const handleRemove = $(async (taskId: string) => {
-        const BASE_URL = getBaseUrl();
-        if (!BASE_URL) return;
-
         const task = store.tasks.find((t) => t.id === taskId);
+        if (!task) return;
+
         const active =
-            task?.status === "downloading" || task?.status === "seeding";
+            task.status === "downloading" || task.status === "seeding";
         if (active && !confirm("Stop and remove this download?")) return;
 
         try {
-            if (task?.kind === "torrent") {
-                await fetch(`${BASE_URL}/download/torrent/${taskId}`, {
-                    method: "DELETE",
-                });
+            if (task.source === "api") {
+                await deleteApi(`/download/${taskId}`);
+            } else {
+                await deleteBun(`/download/torrent/${taskId}`);
             }
         } catch (err) {
             console.error(err);
@@ -201,11 +267,12 @@ export default component$(() => {
     });
 
     const handleDownloadFile = $((taskId: string) => {
-        const BASE_URL = getBaseUrl();
-        if (!BASE_URL) return;
+        const task = store.tasks.find((t) => t.id === taskId);
+        if (!task) return;
 
+        const path = `/download/${taskId}/file`;
         const a = document.createElement("a");
-        a.href = `${BASE_URL}/download/${taskId}/file`;
+        a.href = task.source === "api" ? apiUrl(path) : bunUrl(path);
         a.style.display = "none";
         document.body.appendChild(a);
         a.click();
@@ -222,51 +289,30 @@ export default component$(() => {
             value: string;
             preset?: string;
         }) => {
-            const BASE_URL = getBaseUrl();
-            if (!BASE_URL) {
-                // no-op when running without API
-                store.addModalOpen = false;
-                return;
-            }
+            try {
+                if (input.type === "url") {
+                    const url = input.value.trim().toLowerCase();
+                    const isYouTube =
+                        url.includes("youtube.com") ||
+                        url.includes("youtu.be") ||
+                        url.includes("music.youtube.com");
 
-            if (input.type === "url") {
-                // determine youtube vs generic URL
-                const url = input.value.trim().toLowerCase();
-                const isYouTube =
-                    url.includes("youtube.com") ||
-                    url.includes("youtu.be") ||
-                    url.includes("music.youtube.com");
-
-                const endpoint = isYouTube
-                    ? `${BASE_URL}/download/youtube`
-                    : `${BASE_URL}/download/url`;
-                const body = isYouTube
-                    ? { url: input.value, preset: input.preset || "best" }
-                    : { url: input.value };
-
-                const response = await fetch(endpoint, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                });
-
-                const payload = await response.json();
-                if (!response.ok || !payload.success) {
-                    throw new Error(
-                        payload.error || "Failed to start download",
-                    );
+                    // unwrap() throws with the service's own message on either
+                    // envelope, so there is no response.ok check to write here.
+                    await (isYouTube
+                        ? postApi("/download/youtube", {
+                              url: input.value,
+                              preset: input.preset || "best",
+                          })
+                        : postApi("/download/url", { url: input.value }));
+                } else {
+                    await postBun("/download/torrent", {
+                        torrent: input.value,
+                    });
                 }
-            } else {
-                const response = await fetch(`${BASE_URL}/download/torrent`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ torrent: input.value }),
-                });
-
-                const payload = await response.json();
-                if (!response.ok || !payload.success) {
-                    throw new Error(payload.error || "Failed to start torrent");
-                }
+            } catch (err) {
+                console.error(err);
+                throw err;
             }
 
             store.addModalOpen = false;
