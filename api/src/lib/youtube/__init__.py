@@ -3,6 +3,9 @@ from .error import no_format_for_preset as no_format_for_preset
 from .error import not_a_youtube_url as not_a_youtube_url
 from .error import video_forbidden as video_forbidden
 from .error import video_unavailable as video_unavailable
+from .format import DownloadPlan as DownloadPlan
+from .format import safe_filename as safe_filename
+from .format import select_plan as select_plan
 from .protocol import StreamInfo as StreamInfo
 from .protocol import Thumbnail as Thumbnail
 from .protocol import VideoInfo as VideoInfo

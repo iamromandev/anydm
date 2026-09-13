@@ -2155,7 +2155,9 @@ def test_height_target_never_exceeds_the_request() -> None:
     assert plan.video_itag == 137
 
 
-def test_falls_back_to_the_tallest_when_everything_exceeds_the_target() -> None:
+def test_falls_back_to_the_smallest_when_everything_exceeds_the_target() -> None:
+    # Deliberate deviation from the Bun original, which returned the *tallest*
+    # here — asking for 480p and being handed a 4K file is a bug, not a feature.
     plan = select_plan([_video(313, 2160), _video(137, 1080), _audio(140, 128000)], Preset.P480)
     assert plan.video_itag == 137
 
@@ -2203,11 +2205,17 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'src.lib.youtube.format
 ```python
 """Preset to stream selection. Pure — no network, no pytubefix.
 
-A faithful port of ``resolveYouTubeDownload`` in the Bun API, with one
-difference: that function resolved every stream URL before choosing, because
-YouTube frequently locks adaptive streams. Here the choice is made on metadata
-alone and the URL is resolved once, later, by the worker — so a locked stream
-surfaces as a retryable download failure rather than as a silent downgrade.
+A port of ``resolveYouTubeDownload`` from the Bun API, with two deliberate
+differences.
+
+That function resolved every stream URL before choosing, because YouTube
+frequently locks adaptive streams. Here the choice is made on metadata alone and
+the URL is resolved once, later, by the worker — so a locked stream surfaces as
+a retryable download failure rather than as a silent downgrade.
+
+And when no stream is short enough for the requested preset, that function fell
+back to the tallest available. This falls back to the *shortest*: a request for
+480p that is answered with a 4 GB 4K file has not been answered.
 """
 
 from __future__ import annotations
@@ -2264,16 +2272,17 @@ def _bitrate(stream: StreamInfo) -> int:
 
 
 def _pick_by_height(streams: list[StreamInfo], target: int | None) -> StreamInfo | None:
-    """The tallest stream not exceeding ``target``, else the tallest there is.
+    """The tallest stream not exceeding ``target``, else the shortest there is.
 
     ``streams`` arrives sorted tallest-first. A ``target`` of ``None`` means
-    "best", so the first entry wins outright.
+    "best", so the first entry wins outright. When nothing fits, the last entry
+    — the shortest — is the closest thing to what was asked for.
     """
     if not streams:
         return None
     if target is None:
         return streams[0]
-    return next((s for s in streams if _height(s) <= target), streams[0])
+    return next((s for s in streams if _height(s) <= target), streams[-1])
 
 
 def select_plan(streams: list[StreamInfo], preset: Preset) -> DownloadPlan:
