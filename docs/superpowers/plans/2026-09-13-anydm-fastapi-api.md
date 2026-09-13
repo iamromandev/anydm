@@ -529,20 +529,37 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'src.core.success'`
 
 - [ ] **Step 3: Copy `constant.py`, `success.py` and `error.py` from auth**
 
-Reproduce `/Users/roman/projects/exateks/auth/api/src/core/{constant,success,error}.py` verbatim. All three are domain-agnostic — no deletions. If `Error.create` does not exist with that exact signature in auth's file, add it alongside the other classmethods:
+Reproduce `/Users/roman/projects/exateks/auth/api/src/core/{constant,success,error}.py` verbatim. All three are domain-agnostic — no deletions.
+
+One widening is required. auth's `Error.create` takes only `code`, `message` and `error_type`, but `Error.__init__` already accepts `details` and `retry_able`, and the whole retry policy reads `retry_able`. Extend the classmethod to pass both through:
 
 ```python
-@classmethod
-def create(
-    cls,
-    code: Code = Code.INTERNAL_SERVER_ERROR,
-    message: str | None = None,
-    error_type: ErrorType | None = None,
-    details: list[ErrorDetail] | None = None,
-    retry_able: bool = False,
-) -> Error:
-    return cls(code=code, message=message, error_type=error_type, details=details, retry_able=retry_able)
+    @classmethod
+    def create(
+        cls,
+        code: Code | None = Code.INTERNAL_SERVER_ERROR,
+        message: str | None = None,
+        error_type: ErrorType | None = ErrorType.SERVER_ERROR,
+        details: list[ErrorDetail] | None = None,
+        retry_able: bool = False,
+    ) -> Error:
+        """Build an error, including whether trying again could help.
+
+        ``retry_able`` is the whole of the download worker's retry decision, so
+        it is set here — where the failure is raised, by the code that knows
+        whether the cause is transient. It defaults to ``False``: a failure is
+        permanent unless something says otherwise.
+        """
+        return cls(
+            code=code or Code.INTERNAL_SERVER_ERROR,
+            message=message,
+            error_type=error_type,
+            details=details,
+            retry_able=retry_able,
+        )
 ```
+
+`Success.ok`, `Success.created` and `Success.no_content` all already exist — no change needed there.
 
 - [ ] **Step 4: Copy `base.py` from auth with deletions**
 
@@ -3030,13 +3047,6 @@ for subrouter in _subrouters:
 ```
 
 In `api/src/route/__init__.py`, add `from .download import router as _download_router` and append it to `_subrouters`.
-
-If `Success.created` does not exist in auth's `success.py`, add it beside `ok`:
-```python
-@classmethod
-def created(cls, data: Any = None, message: str | None = None) -> Success[Any]:
-    return cls(code=Code.CREATED, message=message, data=data)
-```
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
