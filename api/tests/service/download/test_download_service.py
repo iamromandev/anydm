@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.lib.event import EventHub
 from src.lib.youtube.protocol import StreamInfo, VideoInfo
 from src.service.download.control import DownloadControl
 from src.service.download.download_service import DownloadService
@@ -88,6 +89,7 @@ def _service(downloads_dir: Path | None = None) -> tuple[DownloadService, FakeRe
         repo=repo,  # ty: ignore[invalid-argument-type]
         client=FakeClient(),
         control=DownloadControl(),
+        hub=EventHub(),
         downloads_root=downloads_dir or Path("/tmp/anydm-test"),
     )
     return service, repo

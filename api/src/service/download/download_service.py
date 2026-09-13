@@ -11,6 +11,7 @@ from src.core.success import Meta
 from src.data.repo.download.interface import TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.lib.event import EventHub
 from src.lib.youtube import (
     YouTubeClient,
     extract_video_id,
@@ -29,12 +30,14 @@ class DownloadService(BaseService):
         repo: TaskRepo,
         client: YouTubeClient,
         control: DownloadControl,
+        hub: EventHub,
         downloads_root: Path,
     ) -> None:
         super().__init__()
         self._repo = repo
         self._client = client
         self._control = control
+        self._hub = hub
         self._root = downloads_root
 
     async def enqueue_youtube(self, url: str, preset: Preset) -> TaskSchema:
@@ -70,7 +73,7 @@ class DownloadService(BaseService):
         # Workers share this process, so a queued task starts in milliseconds
         # rather than on the next poll tick.
         self._control.wake()
-        return TaskSchema.model_validate(task)
+        return self._published(task)
 
     async def enqueue_url(self, url: str) -> TaskSchema:
         """Queue a plain HTTP download — anything that is not a media platform.
@@ -97,7 +100,7 @@ class DownloadService(BaseService):
             progress=0,
         )
         self._control.wake()
-        return TaskSchema.model_validate(task)
+        return self._published(task)
 
     async def list_tasks(self, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
         tasks, meta = await self._repo.list_page(page=page, page_size=page_size)
@@ -140,7 +143,7 @@ class DownloadService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return TaskSchema.model_validate(task)
+        return self._published(task)
 
     async def resume(self, task_id: uuid.UUID) -> TaskSchema:
         """Put a paused or failed task back in the queue, from where its bytes stopped.
@@ -160,7 +163,7 @@ class DownloadService(BaseService):
         task.next_attempt_at = None
         await task.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
         self._control.wake()
-        return TaskSchema.model_validate(task)
+        return self._published(task)
 
     async def cancel(self, task_id: uuid.UUID) -> None:
         """Stop the task, delete its files, and soft-delete the row."""
@@ -172,6 +175,18 @@ class DownloadService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
+        self._published(task)
+
+    def _published(self, task: Any) -> TaskSchema:
+        """Serialise the task, announce it, and hand it back to the caller.
+
+        Publishing here rather than only in the worker is what makes a change
+        made through the API reach every open browser immediately, instead of
+        waiting for the next worker tick.
+        """
+        schema = TaskSchema.model_validate(task)
+        self._hub.publish("task", schema.to_json())
+        return schema
 
     async def _require(self, task_id: uuid.UUID) -> Any:
         task = await self._repo.get_active_by_id(task_id)

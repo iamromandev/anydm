@@ -6,6 +6,7 @@ import pytest
 from src.data.db.model import Task
 from src.data.repo import TaskDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.lib.event import EventHub
 from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker
 from src.service.download.downloader import Downloader
@@ -32,6 +33,7 @@ def _worker(tmp_path: Path, control: DownloadControl, client: httpx.AsyncClient)
         downloader=Downloader(client, chunk_size=64, flush_interval_ms=0),
         post_processor=FfmpegPostProcessor("ffmpeg"),
         control=control,
+        hub=EventHub(),
         downloads_root=tmp_path,
         max_attempts=3,
     )

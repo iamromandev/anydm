@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # downloads
     downloads_dir: Annotated[str, Field(default="./downloads", description="Where completed files land")]
     download_workers: Annotated[int, Field(default=2, ge=1, description="Concurrent download workers")]
-    download_chunk_size: Annotated[int, Field(default=1048576, ge=1024, description="Read chunk size in bytes")]
+    download_chunk_size: Annotated[int, Field(default=65536, ge=1024, description="Read chunk size in bytes")]
     progress_flush_ms: Annotated[int, Field(default=1000, ge=100, description="How often progress reaches the DB")]
     max_attempts: Annotated[int, Field(default=3, ge=1, description="Total tries per task, including the first")]
     ffmpeg_path: Annotated[str, Field(default="ffmpeg", description="ffmpeg executable")]

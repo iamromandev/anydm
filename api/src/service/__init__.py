@@ -5,6 +5,7 @@ import httpx
 
 from src.config import get_settings
 from src.data.repo import TaskDatabaseRepo
+from src.lib.event import get_event_hub
 from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
 from src.service.download.control import DownloadControl
@@ -34,6 +35,7 @@ def get_download_service() -> DownloadService:
         repo=TaskDatabaseRepo(),
         client=get_youtube_client(),
         control=get_download_control(),
+        hub=get_event_hub(),
         downloads_root=Path(settings.downloads_dir),
     )
 
@@ -59,6 +61,7 @@ def build_worker_pool() -> WorkerPool:
             downloader=downloader,
             post_processor=FfmpegPostProcessor(settings.ffmpeg_path),
             control=get_download_control(),
+            hub=get_event_hub(),
             downloads_root=Path(settings.downloads_dir),
             max_attempts=settings.max_attempts,
         )

@@ -1,12 +1,16 @@
+import json
 import uuid
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, Response
+from sse_starlette import EventSourceResponse
 
 from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.download import TaskSchema, UrlDownloadRequest, YoutubeDownloadRequest
+from src.lib.event import EventHub, get_event_hub
 from src.service import DownloadService, get_download_service
 
 router = APIRouter()
@@ -53,6 +57,33 @@ async def list_tasks(
 ) -> Response:
     data, meta = await download_service.list_tasks(page=page, page_size=page_size)
     return Success.ok(data=data, meta=meta).to_resp()
+
+
+@router.get(path="/download/events")
+async def stream_events(
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+    hub: Annotated[EventHub, Depends(get_event_hub)],
+) -> EventSourceResponse:
+    """Live task updates.
+
+    A browser reconnects on its own, so every connection opens with the full
+    list before any incremental event — otherwise a client that reconnected
+    mid-download would show nothing until the next progress tick.
+    """
+    subscription = hub.subscribe()
+    tasks, _ = await download_service.list_tasks(page=1, page_size=200)
+
+    async def publisher() -> AsyncIterator[dict[str, str]]:
+        try:
+            yield {"event": "tasks", "data": json.dumps([task.to_json() for task in tasks])}
+            async for event, data in subscription:
+                yield {"event": event, "data": json.dumps(data)}
+        finally:
+            subscription.close()
+
+    # ``ping`` is sse-starlette's own comment heartbeat, which is what keeps a
+    # proxy from reaping an idle connection.
+    return EventSourceResponse(publisher(), ping=15)
 
 
 @router.get(path="/download/{task_id}/file")

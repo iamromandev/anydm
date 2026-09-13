@@ -20,7 +20,9 @@ from src.core.common import now
 from src.core.error import Error
 from src.data.db.model import Task
 from src.data.repo.download.interface import TaskRepo
+from src.data.schema.download import TaskSchema
 from src.data.type import Platform, TaskStatus
+from src.lib.event import EventHub
 from src.lib.youtube import YouTubeClient
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
@@ -42,6 +44,7 @@ class DownloadWorker:
         downloader: Downloader,
         post_processor: PostProcessor,
         control: DownloadControl,
+        hub: EventHub,
         downloads_root: Path,
         max_attempts: int,
     ) -> None:
@@ -51,6 +54,7 @@ class DownloadWorker:
         self._downloader = downloader
         self._post_processor = post_processor
         self._control = control
+        self._hub = hub
         self._root = downloads_root
         self._max_attempts = max_attempts
 
@@ -96,6 +100,7 @@ class DownloadWorker:
             await task.refresh_from_db()
             if task.status == TaskStatus.CANCELED:
                 remove_task_files(self._root, task.id)
+            self._emit(task)
         except Error as error:
             await self._mark_failed(task, error)
         except asyncio.CancelledError:
@@ -103,6 +108,9 @@ class DownloadWorker:
         except Exception as exc:
             logger.exception("{}|unexpected failure on {}", self._name, task.id)
             await self._mark_failed(task, Error.internal(message=str(exc)))
+
+    def _emit(self, task: Task) -> None:
+        self._hub.publish("task", TaskSchema.model_validate(task).to_json())
 
     async def _download_parts(self, task: Task) -> dict[str, Path]:
         """Fetch every stream the plan names, resuming any ``.part`` already there."""
@@ -171,6 +179,20 @@ class DownloadWorker:
             speed_bps=sample.speed_bps,
             eta_seconds=sample.eta_seconds,
         )
+        # A separate, lighter event than the full task snapshot: this fires
+        # every flush interval per download, and the browser only needs the
+        # numbers that moved.
+        self._hub.publish(
+            "progress",
+            {
+                "id": str(task_id),
+                "downloaded_bytes": downloaded,
+                "total_bytes": grand_total,
+                "progress": progress,
+                "speed_bps": sample.speed_bps,
+                "eta_seconds": sample.eta_seconds,
+            },
+        )
 
     async def _mark_complete(self, task: Task, destination: Path) -> None:
         task.status = TaskStatus.COMPLETE
@@ -192,6 +214,7 @@ class DownloadWorker:
                 "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code",
             ]
         )
+        self._emit(task)
         logger.success("{}|completed {} -> {}", self._name, task.id, task.file_path)
 
     async def _mark_failed(self, task: Task, error: Error) -> None:
@@ -220,6 +243,7 @@ class DownloadWorker:
         await task.save(
             update_fields=["status", "error", "error_code", "speed_bps", "eta_seconds", "next_attempt_at"]
         )
+        self._emit(task)
 
 
 class WorkerPool:
