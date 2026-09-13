@@ -25,6 +25,12 @@
 - **Tortoise models annotate the value type** (`title: str = fields.CharField(...)`) and are covered by a `[[tool.ty.overrides]]` block, exactly as auth does.
 - **TDD, every task:** write the failing test, run it and see it fail, write the minimal implementation, run it and see it pass, commit.
 - **Working directory for all commands is `api/`** unless a step says otherwise.
+- **Package routers carry no prefix; leaf routes carry the full path.** FastAPI raises
+  `Prefix and path cannot be both empty` when a router with `prefix="/x"` includes a
+  sub-router whose route path is `""`, which is what every collection-root endpoint
+  (`POST /extract`, `GET /download`) needs. auth never hits this because its only
+  route is `/check`. So `route/<pkg>/__init__.py` is `APIRouter(tags=[...])` and the
+  operations spell out `/extract`, `/download`, `/download/{task_id}` in full.
 - Phases 1–6 touch only `api/`. Nothing in the running app changes until Phase 7.
 
 ## File Structure
@@ -1726,8 +1732,11 @@ from src.service import ExtractService, get_extract_service
 router = APIRouter()
 
 
+# The path carries the collection segment rather than the package router
+# carrying a prefix: FastAPI refuses a route whose prefix and path are both
+# empty, which is exactly what `prefix="/extract"` plus `path=""` produces.
 @router.post(
-    path="",
+    path="/extract",
     response_model=Success[ExtractSchema],
 )
 async def extract(
@@ -1748,7 +1757,7 @@ _subrouters = [
     _extract_router,
 ]
 
-router = APIRouter(prefix="/extract", tags=["Extract"])
+router = APIRouter(tags=["Extract"])
 
 for subrouter in _subrouters:
     router.include_router(subrouter)
@@ -2997,7 +3006,7 @@ router = APIRouter()
 
 
 @router.post(
-    path="/youtube",
+    path="/download/youtube",
     response_model=Success[TaskSchema],
 )
 async def enqueue_youtube(
@@ -3009,7 +3018,7 @@ async def enqueue_youtube(
 
 
 @router.get(
-    path="",
+    path="/download",
     response_model=Success[list[TaskSchema]],
 )
 async def list_tasks(
@@ -3022,7 +3031,7 @@ async def list_tasks(
 
 
 @router.get(
-    path="/{task_id}",
+    path="/download/{task_id}",
     response_model=Success[TaskSchema],
 )
 async def get_task(
@@ -3043,7 +3052,7 @@ _subrouters = [
     _download_router,
 ]
 
-router = APIRouter(prefix="/download", tags=["Download"])
+router = APIRouter(tags=["Download"])
 
 for subrouter in _subrouters:
     router.include_router(subrouter)
@@ -5046,7 +5055,7 @@ Update `get_download_service()` to pass `downloads_root=Path(get_settings().down
 Append to `api/src/route/download/download.py`:
 
 ```python
-@router.get(path="/{task_id}/file")
+@router.get(path="/download/{task_id}/file")
 async def download_file(
     task_id: uuid.UUID,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
@@ -5283,7 +5292,7 @@ Add the imports `from typing import Any`, `from src.core.common import now`, `fr
 Append to `api/src/route/download/download.py`:
 
 ```python
-@router.post(path="/{task_id}/pause", response_model=Success[TaskSchema])
+@router.post(path="/download/{task_id}/pause", response_model=Success[TaskSchema])
 async def pause_task(
     task_id: uuid.UUID,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
@@ -5291,7 +5300,7 @@ async def pause_task(
     return Success.ok(data=await download_service.pause(task_id)).to_resp()
 
 
-@router.post(path="/{task_id}/resume", response_model=Success[TaskSchema])
+@router.post(path="/download/{task_id}/resume", response_model=Success[TaskSchema])
 async def resume_task(
     task_id: uuid.UUID,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
@@ -5299,7 +5308,7 @@ async def resume_task(
     return Success.ok(data=await download_service.resume(task_id)).to_resp()
 
 
-@router.delete(path="/{task_id}")
+@router.delete(path="/download/{task_id}")
 async def cancel_task(
     task_id: uuid.UUID,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
@@ -5525,7 +5534,7 @@ class UrlDownloadRequest(BaseSchema):
 export it from the package `__init__`, and add the route **above** the `/{task_id}` routes:
 
 ```python
-@router.post(path="/url", response_model=Success[TaskSchema])
+@router.post(path="/download/url", response_model=Success[TaskSchema])
 async def enqueue_url(
     payload: UrlDownloadRequest,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
@@ -5923,7 +5932,7 @@ Add `hub: EventHub` to `DownloadService.__init__` and publish `"task"` at the en
 Append to `api/src/route/download/download.py`, **above** the `/{task_id}` routes:
 
 ```python
-@router.get(path="/events")
+@router.get(path="/download/events")
 async def stream_events(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
     hub: Annotated[EventHub, Depends(get_event_hub)],

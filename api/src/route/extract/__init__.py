@@ -1,14 +1,12 @@
 from fastapi import APIRouter
 
 from .extract import router as _extract_router
-from .health import router as _health_router
 
 _subrouters = [
-    _health_router,
     _extract_router,
 ]
 
-router = APIRouter()
+router = APIRouter(tags=["Extract"])
 
 for subrouter in _subrouters:
     router.include_router(subrouter)
