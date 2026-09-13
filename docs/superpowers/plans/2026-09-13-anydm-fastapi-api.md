@@ -1377,16 +1377,19 @@ def _to_stream_info(raw: Any) -> StreamInfo:
     fields per stream type, and a missing one should narrow the choices rather
     than raise.
     """
-    resolution = getattr(raw, "resolution", None)
     return StreamInfo(
         itag=int(getattr(raw, "itag", 0)),
         mime_type=getattr(raw, "mime_type", None),
-        quality=resolution,
-        height=_height_of(resolution),
+        quality=getattr(raw, "resolution", None),
+        height=_height_of(raw),
         bitrate=getattr(raw, "bitrate", None),
         has_video=bool(getattr(raw, "includes_video_track", False)),
         has_audio=bool(getattr(raw, "includes_audio_track", False)),
-        content_length=getattr(raw, "filesize", None),
+        # ``_filesize`` rather than the public ``filesize``: that property
+        # issues a HEAD request when the cached value is 0, which would be one
+        # network round trip per stream on every extract. The cached value is
+        # YouTube's own contentLength; 0 means it did not say.
+        content_length=getattr(raw, "_filesize", None) or None,
     )
 
 
