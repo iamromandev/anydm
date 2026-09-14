@@ -142,6 +142,12 @@ class SegmentedDownloader:
             count=count,
             min_bytes=self._min_segment_bytes,
         ):
+            # An empty plan matches a part that was never segmented, and fails to
+            # match one that was — whose ``.part`` is preallocated to the full
+            # size and would otherwise resume from past its own end.
+            _, stale = await reconcile([])
+            if stale:
+                dest.unlink(missing_ok=True)
             return await self._single(found.resolved_url, dest, on_sample, should_stop)
 
         total = found.total_bytes or 0

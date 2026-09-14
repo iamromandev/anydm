@@ -19,17 +19,20 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.db.model import Task
-from src.data.repo.download.interface import TaskRepo
+from src.data.repo.download.interface import TaskRepo, TaskSegmentRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Platform, TaskStatus
 from src.lib.event import EventHub
 from src.lib.youtube import YouTubeClient
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
-from src.service.download.downloader import Downloader, Stopped
+from src.service.download.downloader import Stopped
 from src.service.download.paths import final_path, part_path, task_dir
 from src.service.download.post_process import PostProcessor
-from src.service.download.progress import ProgressSample
+from src.service.download.progress import AggregateSample
+from src.service.download.segment import Segment
+from src.service.download.segmented import SegmentedDownloader
+from src.service.download.url_source import UrlProvider, UrlSource
 
 _IDLE_POLL_SECONDS = 5.0
 
@@ -40,23 +43,27 @@ class DownloadWorker:
         *,
         name: str,
         repo: TaskRepo,
+        segment_repo: TaskSegmentRepo,
         client: YouTubeClient,
-        downloader: Downloader,
+        engine: SegmentedDownloader,
         post_processor: PostProcessor,
         control: DownloadControl,
         hub: EventHub,
         downloads_root: Path,
         max_attempts: int,
+        segments: int,
     ) -> None:
         self._name = name
         self._repo = repo
+        self._segment_repo = segment_repo
         self._client = client
-        self._downloader = downloader
+        self._engine = engine
         self._post_processor = post_processor
         self._control = control
         self._hub = hub
         self._root = downloads_root
         self._max_attempts = max_attempts
+        self._segments = segments
 
     async def run_forever(self) -> None:
         while True:
@@ -116,7 +123,12 @@ class DownloadWorker:
         """Fetch every stream the plan names, resuming any ``.part`` already there."""
         if task.platform == Platform.DIRECT:
             destination = part_path(self._root, task.id, "file")
-            await self._fetch(task, task.source_url, destination, offset=0)
+            source_url = task.source_url
+
+            async def direct() -> str:
+                return source_url
+
+            await self._fetch(task, "file", direct, destination, offset=0)
             return {"file": destination}
 
         wanted: list[tuple[str, int]] = []
@@ -131,42 +143,76 @@ class DownloadWorker:
         # Bytes already on disk from earlier parts. Without this the second part
         # would restart the percentage at zero and the UI would run backwards.
         offset = 0
+        video_id = task.video_id or ""
         for name, itag in wanted:
             destination = part_path(self._root, task.id, name)
+
             # Always re-resolved: these URLs expire within hours and bind to the
-            # requesting IP, so a stored one is worthless on a resume.
-            url = await self._client.stream_url(task.video_id or "", itag)
-            await self._fetch(task, url, destination, offset=offset)
+            # requesting IP, so a stored one is worthless on a resume. Bound as
+            # defaults because the loop variables would otherwise be read at call
+            # time, and every part would resolve the last itag.
+            async def resolve(itag: int = itag, video_id: str = video_id) -> str:
+                return await self._client.stream_url(video_id, itag)
+
+            await self._fetch(task, name, resolve, destination, offset=offset)
             parts[name] = destination
             offset += destination.stat().st_size
         return parts
 
-    async def _fetch(self, task: Task, url: str, destination: Path, *, offset: int) -> None:
-        resume_from = destination.stat().st_size if destination.exists() else 0
+    def _segment_count(self, attempts: int) -> int:
+        """Halve the connections on every retry: 4, then 2, then 1.
+
+        Some servers 429 under four connections and are perfectly happy with
+        one. ``attempts`` already counts, so this needs no new column, and it
+        turns a hard failure on a strict server into a slower success.
+        """
+        return max(1, self._segments >> max(0, attempts - 1))
+
+    async def _fetch(
+        self, task: Task, part: str, provider: UrlProvider, destination: Path, *, offset: int
+    ) -> None:
         task_id = task.id
         expected_total = task.total_bytes
-        await self._downloader.fetch(
-            url,
+
+        async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
+            result = await self._segment_repo.reconcile(
+                task_id, part, [(s.index, s.start, s.end) for s in plan]
+            )
+            return result.watermarks, result.fresh
+
+        async def discard() -> None:
+            await self._segment_repo.clear(task_id, part)
+
+        await self._engine.fetch(
+            UrlSource(provider),
             destination,
-            resume_from=resume_from,
-            on_sample=lambda sample: self._flush(task_id, sample, offset=offset, total=expected_total),
+            count=self._segment_count(task.attempts),
+            reconcile=reconcile,
+            on_discard=discard,
+            on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
             should_stop=lambda: self._control.is_stopping(task_id),
         )
 
     async def _flush(
         self,
         task_id: uuid.UUID,
-        sample: ProgressSample,
+        part: str,
+        sample: AggregateSample,
         *,
         offset: int,
         total: int | None,
     ) -> None:
-        """Report progress for the whole task, not for the part in flight.
+        """Report progress for the whole task, and persist the segment watermarks.
 
         ``offset`` is what earlier parts already wrote, and ``total`` is the sum
         the plan recorded at enqueue. When the plan could not know the total,
         this falls back to the part's own — imperfect, but monotonic within the
         part and never wrong about bytes.
+
+        Two statements per tick where there used to be one: the task row, and
+        one ``bulk_update`` covering every segment. The alternative — each
+        segment writing on its own timer — is four staggered writes a second
+        that each carry three stale siblings.
         """
         downloaded = offset + sample.downloaded_bytes
         grand_total = total or (offset + sample.total_bytes if sample.total_bytes else None)
@@ -179,6 +225,10 @@ class DownloadWorker:
             speed_bps=sample.speed_bps,
             eta_seconds=sample.eta_seconds,
         )
+        if sample.segments:
+            await self._segment_repo.flush(
+                task_id, part, {segment.index: segment.downloaded for segment in sample.segments}
+            )
         # A separate, lighter event than the full task snapshot: this fires
         # every flush interval per download, and the browser only needs the
         # numbers that moved.
@@ -214,6 +264,11 @@ class DownloadWorker:
                 "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code",
             ]
         )
+        # Transient state: the file exists now, so the plan that built it is
+        # dead weight. Cleared per task rather than per part — a YouTube task
+        # whose video succeeded and whose audio then failed will retry, and
+        # rebuilding the video plan at zero would re-download a finished part.
+        await self._segment_repo.clear(task.id)
         self._emit(task)
         logger.success("{}|completed {} -> {}", self._name, task.id, task.file_path)
 

@@ -357,3 +357,38 @@ async def test_a_body_shorter_than_its_range_is_retried(tmp_path: Path) -> None:
 
     assert truncate["left"] == 0
     assert dest.read_bytes() == BODY
+
+
+async def test_an_unsegmented_part_still_resumes_normally(tmp_path: Path) -> None:
+    """An empty plan matches a part that was never segmented."""
+    seen_plans: list[int] = []
+
+    async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
+        seen_plans.append(len(plan))
+        return {}, False
+
+    dest = tmp_path / "out.part"
+    dest.write_bytes(BODY[:1000])
+    async with _client(_range_handler()) as client:
+        await _engine(client, min_bytes=1 << 30).fetch(_source(), dest, count=4, reconcile=reconcile)
+
+    assert seen_plans == [0]
+    assert dest.read_bytes() == BODY
+
+
+async def test_a_part_that_was_segmented_is_discarded_when_it_no_longer_is(tmp_path: Path) -> None:
+    """The leftover file is preallocated to the full size, so resuming from its
+    st_size would ask for a range starting past the end of the file."""
+
+    async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
+        return {}, True
+
+    dest = tmp_path / "out.part"
+    dest.write_bytes(bytearray(len(BODY)))  # preallocated, empty, full-size
+    async with _client(_range_handler()) as client:
+        written = await _engine(client, min_bytes=1 << 30).fetch(
+            _source(), dest, count=4, reconcile=reconcile
+        )
+
+    assert written == len(BODY)
+    assert dest.read_bytes() == BODY

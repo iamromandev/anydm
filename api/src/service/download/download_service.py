@@ -8,7 +8,7 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
-from src.data.repo.download.interface import TaskRepo
+from src.data.repo.download.interface import TaskRepo, TaskSegmentRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
@@ -28,6 +28,7 @@ class DownloadService(BaseService):
     def __init__(
         self,
         repo: TaskRepo,
+        segment_repo: TaskSegmentRepo,
         client: YouTubeClient,
         control: DownloadControl,
         hub: EventHub,
@@ -35,6 +36,7 @@ class DownloadService(BaseService):
     ) -> None:
         super().__init__()
         self._repo = repo
+        self._segment_repo = segment_repo
         self._client = client
         self._control = control
         self._hub = hub
@@ -170,6 +172,7 @@ class DownloadService(BaseService):
         task = await self._require(task_id)
         self._control.request_stop(task_id)
         remove_task_files(self._root, task_id)
+        await self._segment_repo.clear(task_id)
         task.status = TaskStatus.CANCELED
         task.deleted_at = now()
         task.speed_bps = 0

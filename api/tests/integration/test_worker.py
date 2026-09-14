@@ -4,13 +4,14 @@ from typing import Any
 import httpx
 import pytest
 from src.data.db.model import Task
-from src.data.repo import TaskDatabaseRepo
+from src.data.repo import TaskDatabaseRepo, TaskSegmentDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker
 from src.service.download.downloader import Downloader
 from src.service.download.post_process import FfmpegPostProcessor
+from src.service.download.segmented import SegmentedDownloader
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -25,17 +26,35 @@ class FakeYouTube:
         return f"https://cdn.test/{video_id}/{itag}"
 
 
-def _worker(tmp_path: Path, control: DownloadControl, client: httpx.AsyncClient) -> DownloadWorker:
+def _worker(
+    tmp_path: Path,
+    control: DownloadControl,
+    client: httpx.AsyncClient,
+    segments: int = 1,
+) -> DownloadWorker:
+    """``segments=1`` by default, so every pre-existing test here still
+    exercises the single-stream path it was written against."""
+    downloader = Downloader(client, chunk_size=64, flush_interval_ms=0)
     return DownloadWorker(
         name="test-worker",
         repo=TaskDatabaseRepo(),
+        segment_repo=TaskSegmentDatabaseRepo(),
         client=FakeYouTube(),
-        downloader=Downloader(client, chunk_size=64, flush_interval_ms=0),
+        engine=SegmentedDownloader(
+            client,
+            downloader,
+            chunk_size=64,
+            flush_interval_ms=0,
+            min_segment_bytes=0,
+            write_buffer_bytes=128,
+            segment_backoff=(0.0, 0.0),
+        ),
         post_processor=FfmpegPostProcessor("ffmpeg"),
         control=control,
         hub=EventHub(),
         downloads_root=tmp_path,
         max_attempts=3,
+        segments=segments,
     )
 
 
@@ -152,7 +171,9 @@ async def test_a_resumed_task_continues_from_the_partial_file(db: None, tmp_path
         assert claimed is not None
         await worker.run_task(claimed)
 
-    assert seen == ["bytes=100-"]
+    # The one-byte probe precedes every transfer; what matters is that the
+    # transfer itself still resumes from the partial file rather than restarting.
+    assert seen == ["bytes=0-0", "bytes=100-"]
     await task.refresh_from_db()
     assert task.status == TaskStatus.COMPLETE
     assert (tmp_path / str(task.id) / "clip.mp4").read_bytes() == BODY
@@ -179,7 +200,9 @@ async def test_a_direct_task_downloads_from_its_source_url(db: None, tmp_path: P
         assert claimed is not None
         await worker.run_task(claimed)
 
-    assert requested == ["https://cdn.test/file.bin"]
+    # Two requests now, not one: every transfer is preceded by a one-byte range
+    # probe, and both must go to the task's own source URL.
+    assert requested == ["https://cdn.test/file.bin", "https://cdn.test/file.bin"]
     await task.refresh_from_db()
     assert task.status == TaskStatus.COMPLETE
 
