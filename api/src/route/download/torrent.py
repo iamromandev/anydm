@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -45,3 +46,15 @@ async def enqueue_torrent(
 ) -> Response:
     data = await torrent_service.enqueue(payload.torrent.strip(), payload.files)
     return Success.created(data=data).to_resp()
+
+
+@router.post(
+    path="/download/{task_id}/seed/stop",
+    response_model=Success[TaskSchema],
+)
+async def stop_seeding(
+    task_id: uuid.UUID,
+    torrent_service: Annotated[TorrentService, Depends(get_torrent_service)],
+) -> Response:
+    """Stop sharing a finished torrent, keeping its files."""
+    return Success.ok(data=await torrent_service.stop_seeding(task_id)).to_resp()

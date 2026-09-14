@@ -42,6 +42,7 @@ def get_download_service() -> DownloadService:
         control=get_download_control(),
         hub=get_event_hub(),
         downloads_root=Path(settings.download_dir),
+        torrents=get_torrent_service(),
     )
 
 

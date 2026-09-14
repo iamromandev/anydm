@@ -7,11 +7,15 @@ verbs. Progress is not its job — ``torrent_monitor.py`` does that.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from src.core.base import BaseService
+from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.interface import TaskRepo, TorrentFileRepo
@@ -144,6 +148,79 @@ class TorrentService(BaseService):
         schema = TaskSchema.model_validate(task)
         self._hub.publish("task", schema.to_json())
         return schema
+
+    async def pause(self, task_id: uuid.UUID) -> TaskSchema:
+        task = await self._require(task_id)
+        if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING):
+            raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
+
+        await self._client.pause(task.info_hash or "")
+        task.status = TaskStatus.PAUSED
+        task.speed_bps = 0
+        task.eta_seconds = None
+        await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
+        return self._published(task)
+
+    async def resume(self, task_id: uuid.UUID) -> TaskSchema:
+        task = await self._require(task_id)
+        if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
+            raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
+
+        await self._client.start(task.info_hash or "")
+        # ``downloading`` rather than ``pending``: there is no queue to wait in,
+        # the engine is moving bytes the moment it is started. The next monitor
+        # tick corrects this to whatever the engine actually reports.
+        task.status = TaskStatus.DOWNLOADING
+        task.error = None
+        task.error_code = None
+        await task.save(update_fields=["status", "error", "error_code"])
+        return self._published(task)
+
+    async def stop_seeding(self, task_id: uuid.UUID) -> TaskSchema:
+        """Stop sharing, keep the files.
+
+        Paused in the engine rather than forgotten, so seeding can be started
+        again later without re-adding the magnet. ``complete`` is the status a
+        torrent can only reach this way.
+        """
+        task = await self._require(task_id)
+        if task.status != TaskStatus.SEEDING:
+            raise Error.conflict(message=f"Task is {task.status.value}, not seeding")
+
+        await self._client.pause(task.info_hash or "")
+        task.status = TaskStatus.COMPLETE
+        task.speed_bps = 0
+        task.eta_seconds = None
+        await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
+        return self._published(task)
+
+    async def cancel(self, task_id: uuid.UUID) -> None:
+        """Remove the torrent, its files, and the row.
+
+        The engine's delete removes the files, which is what cancelling a
+        download already means here. An engine that cannot be reached does not
+        block it: the person asked for this to be gone, and a stranded torrent
+        is a smaller problem than a row that refuses to disappear.
+        """
+        task = await self._require(task_id)
+        try:
+            await self._client.delete(task.info_hash or "")
+        except Error as error:
+            logger.warning("{}|engine delete failed for {}: {}", self._tag, task.id, error.message)
+
+        task.status = TaskStatus.CANCELED
+        task.deleted_at = now()
+        task.speed_bps = 0
+        task.eta_seconds = None
+        await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
+        self._published(task)
+
+    async def _require(self, task_id: uuid.UUID) -> Any:
+        self._require_enabled()
+        task = await self._repo.get_active_by_id(task_id)
+        if task is None:
+            raise Error.not_found(message="Task not found")
+        return task
 
     def _require_enabled(self) -> None:
         if not self._enabled:

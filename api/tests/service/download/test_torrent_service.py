@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.core.type import Code
+from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.torrent.protocol import TorrentDetails, TorrentFileInfo
 from src.service.download.torrent_service import TorrentService
@@ -28,6 +29,9 @@ class FakeTorrentClient:
         self.fail = fail
         self.resolved: list[Any] = []
         self.added: list[dict[str, Any]] = []
+        self.paused: list[str] = []
+        self.started: list[str] = []
+        self.deleted: list[str] = []
 
     async def ping(self) -> bool:
         return self.fail is None
@@ -49,16 +53,26 @@ class FakeTorrentClient:
     async def list_progress(self) -> list[Any]:
         return []
 
-    async def pause(self, info_hash: str) -> None: ...
+    async def pause(self, info_hash: str) -> None:
+        if self.fail:
+            raise self.fail
+        self.paused.append(info_hash)
 
-    async def start(self, info_hash: str) -> None: ...
+    async def start(self, info_hash: str) -> None:
+        if self.fail:
+            raise self.fail
+        self.started.append(info_hash)
 
-    async def delete(self, info_hash: str) -> None: ...
+    async def delete(self, info_hash: str) -> None:
+        if self.fail:
+            raise self.fail
+        self.deleted.append(info_hash)
 
 
 class FakeTaskRepo:
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
+        self.rows: dict[uuid.UUID, Any] = {}
 
     async def create(self, **kwargs: Any) -> Any:
         kwargs.setdefault("id", uuid.uuid4())
@@ -77,6 +91,9 @@ class FakeTaskRepo:
         kwargs.setdefault("completed_at", None)
         self.created.append(kwargs)
         return type("Row", (), kwargs)()
+
+    async def get_active_by_id(self, task_id: uuid.UUID) -> Any:
+        return self.rows.get(task_id)
 
 
 class FakeFileRepo:
@@ -257,3 +274,128 @@ async def test_enqueue_is_unavailable_when_torrents_are_disabled() -> None:
     with pytest.raises(Error) as caught:
         await _service(enabled=False).enqueue(MAGNET, [0])
     assert caught.value.code == Code.SERVICE_UNAVAILABLE
+
+
+def _torrent_row(task_id: uuid.UUID, **overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "id": task_id,
+        "source_url": MAGNET,
+        "platform": Platform.TORRENT,
+        "video_id": None,
+        "preset": Preset.BEST,
+        "kind": Kind.TORRENT,
+        "title": "Some Release",
+        "filename": "Some Release",
+        "mime_type": None,
+        "info_hash": "abc123",
+        "status": TaskStatus.DOWNLOADING,
+        "progress": 40,
+        "downloaded_bytes": 400,
+        "total_bytes": 1000,
+        "speed_bps": 100,
+        "eta_seconds": 10,
+        "uploaded_bytes": 0,
+        "peers_connected": 3,
+        "file_path": "/workdir/download/torrent/Some Release",
+        "file_size": None,
+        "error": None,
+        "error_code": None,
+        "attempts": 0,
+        "next_attempt_at": None,
+        "deleted_at": None,
+        "created_at": None,
+        "started_at": None,
+        "completed_at": None,
+    }
+    fields.update(overrides)
+    row = type("Row", (), fields)()
+
+    async def _save(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    row.save = _save
+    return row
+
+
+@pytest.mark.asyncio
+async def test_pause_pauses_the_engine_and_the_row() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+    client = FakeTorrentClient()
+
+    schema = await _service(client, repo=repo).pause(task_id)
+
+    assert client.paused == ["abc123"]
+    assert schema.status == TaskStatus.PAUSED
+    assert schema.speed_bps == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_starts_the_engine_and_clears_the_error() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.FAILED, error="boom")
+    client = FakeTorrentClient()
+
+    schema = await _service(client, repo=repo).resume(task_id)
+
+    assert client.started == ["abc123"]
+    assert schema.status == TaskStatus.DOWNLOADING
+    assert schema.error is None
+
+
+@pytest.mark.asyncio
+async def test_stop_seeding_pauses_the_engine_and_completes_the_row() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, progress=100)
+    client = FakeTorrentClient()
+
+    schema = await _service(client, repo=repo).stop_seeding(task_id)
+
+    assert client.paused == ["abc123"]
+    assert schema.status == TaskStatus.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_stop_seeding_refuses_a_task_that_is_not_seeding() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo).stop_seeding(task_id)
+    assert caught.value.code == Code.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_cancel_deletes_from_the_engine_and_soft_deletes_the_row() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    row = _torrent_row(task_id, status=TaskStatus.SEEDING)
+    repo.rows[task_id] = row
+    client = FakeTorrentClient()
+
+    await _service(client, repo=repo).cancel(task_id)
+
+    assert client.deleted == ["abc123"]
+    assert row.status == TaskStatus.CANCELED
+    assert row.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_still_soft_deletes_when_the_engine_is_gone() -> None:
+    """The user asked for it gone. An unreachable engine must not block that."""
+    from src.data.type import TaskStatus
+    from src.lib.torrent import error as torrent_error
+
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    row = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+    repo.rows[task_id] = row
+    client = FakeTorrentClient(fail=torrent_error.engine_unavailable("refused"))
+
+    await _service(client, repo=repo).cancel(task_id)
+
+    assert row.status == TaskStatus.CANCELED

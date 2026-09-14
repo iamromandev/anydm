@@ -22,6 +22,7 @@ from src.lib.youtube import (
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.download_worker import remove_task_files
+from src.service.download.torrent_service import TorrentService
 
 
 class DownloadService(BaseService):
@@ -33,6 +34,7 @@ class DownloadService(BaseService):
         control: DownloadControl,
         hub: EventHub,
         downloads_root: Path,
+        torrents: TorrentService,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -41,6 +43,7 @@ class DownloadService(BaseService):
         self._control = control
         self._hub = hub
         self._root = downloads_root
+        self._torrents = torrents
 
     async def enqueue_youtube(self, url: str, preset: Preset) -> TaskSchema:
         """Resolve the plan now, move the bytes later.
@@ -137,6 +140,8 @@ class DownloadService(BaseService):
         mid-chunk.
         """
         task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            return await self._torrents.pause(task_id)
         if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING):
             raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
 
@@ -154,6 +159,8 @@ class DownloadService(BaseService):
         continuation of the automatic retry budget that gave up.
         """
         task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            return await self._torrents.resume(task_id)
         if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
             raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
 
@@ -170,6 +177,8 @@ class DownloadService(BaseService):
     async def cancel(self, task_id: uuid.UUID) -> None:
         """Stop the task, delete its files, and soft-delete the row."""
         task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            return await self._torrents.cancel(task_id)
         self._control.request_stop(task_id)
         remove_task_files(self._root, task_id)
         await self._segment_repo.clear(task_id)
