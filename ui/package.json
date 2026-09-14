@@ -13,6 +13,7 @@
         "web:format": "bun run --cwd apps/web format",
         "web:format.check": "bun run --cwd apps/web format.check",
         "web:check": "bun run --cwd apps/web check",
+        "web:test": "bun run --cwd apps/web test",
         "web:dev": "bun run web:format && bun run web:check && bun run --cwd apps/web dev",
         "web:build": "bun run --cwd apps/web build",
         "reinstall": "bun run clean && bun install",

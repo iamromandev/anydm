@@ -1,4 +1,5 @@
 import { component$, $ } from "@qwik.dev/core";
+import { SegmentBar } from "@/component/shared/segment-bar";
 import { SpeedDisplay } from "@/component/shared/speed-display";
 import {
     LuPause,
@@ -130,6 +131,15 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 />
                             </div>
                         </div>
+
+                        {showProgressDetail &&
+                            task.segments &&
+                            task.segments.length > 0 && (
+                                <SegmentBar
+                                    segments={task.segments}
+                                    label={task.title}
+                                />
+                            )}
                         <div class="progress-details">
                             <span class="progress-percent">
                                 {task.progress.toFixed(0)}%

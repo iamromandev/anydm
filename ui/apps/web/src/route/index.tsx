@@ -7,6 +7,7 @@ import {
     getApi,
     isActive,
     normalizeApiTask,
+    normalizeSegments,
     postApi,
     type UiTask,
 } from "@/lib/api";
@@ -29,20 +30,41 @@ export default component$(() => {
         addModalOpen: false as boolean,
     });
 
+    /**
+     * Keep the segment strip across a refresh.
+     *
+     * Segments ride progress frames only — the task row the REST list and the
+     * `task` event return has no `segments` field at all. Without this, the
+     * 2.5s poll would blank the strip on every tick and the bars would flicker
+     * in and out for the whole download.
+     */
+    const carrySegments = $((rows: UiTask[]) => {
+        const prior = new Map(
+            store.tasks.map((task) => [
+                task.id,
+                task,
+            ]),
+        );
+        return rows.map((row) => {
+            const held = prior.get(row.id)?.segments;
+            return held ? { ...row, segments: held } : row;
+        });
+    });
+
     const syncTask = $(async () => {
         const tasks = await getApi<any[]>("/download")
             .then((rows) => rows.map(normalizeApiTask))
             .catch(() => [] as UiTask[]);
 
-        store.tasks = tasks.slice(0, MAX_TASKS);
+        store.tasks = (await carrySegments(tasks)).slice(0, MAX_TASKS);
     });
 
     /** Fold rows from an SSE frame into the list, replacing what they match. */
-    const mergeTasks = $((rows: UiTask[]) => {
+    const mergeTasks = $(async (rows: UiTask[]) => {
         const incoming = new Set(rows.map((row) => row.id));
         const kept = store.tasks.filter((t) => !incoming.has(t.id));
         store.tasks = [
-            ...rows,
+            ...(await carrySegments(rows)),
             ...kept,
         ].slice(0, MAX_TASKS);
     });
@@ -65,6 +87,7 @@ export default component$(() => {
                           data.downloaded_bytes ?? t.downloadedBytes,
                       totalBytes: data.total_bytes ?? t.totalBytes,
                       downloadSpeed: data.speed_bps ?? t.downloadSpeed,
+                      segments: normalizeSegments(data) ?? t.segments,
                   }
                 : t,
         );

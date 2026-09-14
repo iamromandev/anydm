@@ -31,7 +31,22 @@ class Settings(BaseSettings):
     # download
     download_dir: Annotated[str, Field(default="./download", description="Where completed files land")]
     download_workers: Annotated[int, Field(default=2, ge=1, description="Concurrent download workers")]
-    download_chunk_size: Annotated[int, Field(default=65536, ge=1024, description="Read chunk size in bytes")]
+    download_chunk_size: Annotated[
+        int,
+        Field(default=65536, ge=1024, description="Read chunk size in bytes"),
+    ]
+    download_segments: Annotated[
+        int,
+        Field(default=4, ge=1, description="Concurrent range requests per part"),
+    ]
+    download_segment_min_bytes: Annotated[
+        int,
+        Field(default=16777216, ge=0, description="Smallest file worth splitting"),
+    ]
+    download_write_buffer_bytes: Annotated[
+        int,
+        Field(default=4194304, ge=65536, description="Bytes buffered before a positional write"),
+    ]
     download_progress_flush_ms: Annotated[
         int,
         Field(default=1000, ge=100, description="How often progress reaches the DB"),
@@ -46,6 +61,20 @@ class Settings(BaseSettings):
     @property
     def is_local(self) -> bool:
         return self.env == Env.LOCAL
+
+    @property
+    def http_max_connections(self) -> int:
+        """Every socket the pool can be asked for at once, plus headroom.
+
+        Derived rather than configured: httpx silently queues requests past its
+        limit, so a pool smaller than ``workers x segments`` would serialise the
+        segments it was added to parallelise, and nothing would report an error.
+        """
+        return self.download_workers * self.download_segments + 4
+
+    @property
+    def http_max_keepalive(self) -> int:
+        return self.download_workers * self.download_segments
 
     @property
     def cors_origin_list(self) -> list[str]:

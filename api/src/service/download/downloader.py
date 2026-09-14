@@ -12,6 +12,7 @@ from loguru import logger
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.service.download.progress import ProgressSample, ProgressTracker
+from src.service.download.writer import SegmentWriter
 
 #: Statuses worth trying again. 403 is here because an expired stream URL
 #: presents as one, and re-resolving fixes it.
@@ -46,10 +47,17 @@ def _transport_error(exc: Exception) -> Error:
 
 
 class Downloader:
-    def __init__(self, client: httpx.AsyncClient, chunk_size: int, flush_interval_ms: int) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        chunk_size: int,
+        flush_interval_ms: int,
+        write_buffer_bytes: int = 1 << 20,
+    ) -> None:
         self._client = client
         self._chunk_size = chunk_size
         self._flush_interval_ms = flush_interval_ms
+        self._write_buffer_bytes = write_buffer_bytes
 
     async def fetch(
         self,
@@ -88,14 +96,31 @@ class Downloader:
                     started_at=time.monotonic(),
                 )
 
-                with dest.open("ab" if resuming else "wb") as handle:
+                if not resuming:
+                    dest.write_bytes(b"")
+
+                # ``total_bytes=None`` on purpose: this path resumes from the
+                # file's own size, and a preallocated file would report itself
+                # complete before a byte had arrived.
+                writer = SegmentWriter(
+                    dest,
+                    None,
+                    buffer_bytes=self._write_buffer_bytes,
+                    flush_interval_ms=500,
+                )
+                await writer.open()
+                try:
+                    position = start_bytes
                     async for chunk in response.aiter_bytes(self._chunk_size):
                         if should_stop is not None and should_stop():
                             raise Stopped
-                        handle.write(chunk)
+                        await writer.write(0, position, chunk)
+                        position += len(chunk)
                         sample = tracker.record(len(chunk), at=time.monotonic())
                         if sample is not None and on_sample is not None:
                             await on_sample(sample)
+                finally:
+                    await writer.close()
 
                 if on_sample is not None:
                     await on_sample(tracker.snapshot(at=time.monotonic()))

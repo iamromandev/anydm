@@ -83,10 +83,21 @@ def _row(task_id: uuid.UUID, **overrides: Any) -> Any:
     return row
 
 
+class FakeSegmentRepo:
+    """Cancel clears a task's segment rows; nothing else here touches them."""
+
+    def __init__(self) -> None:
+        self.cleared: list[uuid.UUID] = []
+
+    async def clear(self, task_id: uuid.UUID, part: str | None = None) -> None:
+        self.cleared.append(task_id)
+
+
 def _service(downloads_dir: Path | None = None) -> tuple[DownloadService, FakeRepo]:
     repo = FakeRepo()
     service = DownloadService(
         repo=repo,  # ty: ignore[invalid-argument-type]
+        segment_repo=FakeSegmentRepo(),  # ty: ignore[invalid-argument-type]
         client=FakeClient(),
         control=DownloadControl(),
         hub=EventHub(),

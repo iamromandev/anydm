@@ -32,9 +32,9 @@ from src.core.common import as_list
 class IdBase(models.Model):
     """A UUID primary key and nothing else — no timestamps.
 
-    The bottom of the model ladder: ``IdBase`` → ``StampBase`` → ``Base`` →
-    ``SoftBase``. Each rung adds one column, so a model inherits exactly the
-    bookkeeping it wants rather than carrying a ``deleted_at`` it will never
+    The bottom of the model ladder: ``IdBase`` → ``Base`` → ``SoftBase``. Each
+    rung adds bookkeeping the one below it does without, so a model inherits
+    exactly what it wants rather than carrying a ``deleted_at`` it will never
     set. Everything shared by every row — the Pydantic defaults,
     ``db_fields``, ``from_query_result`` — is declared once, here.
     """
@@ -77,23 +77,10 @@ class IdBase(models.Model):
         return cls.construct(_saved_in_db=True, **mapped)
 
 
-class StampBase(IdBase):
-    """``IdBase`` plus ``created_at``, for rows that are written once and never edited.
-
-    Association rows and append-only records land here: they want to know when
-    they were made, and an ``updated_at`` on a row nothing updates is a column
-    that lies.
-    """
+class Base(IdBase):
+    """``IdBase`` plus ``created_at`` and ``updated_at``. Soft delete is opt-in, via ``SoftBase``."""
 
     created_at: datetime = fields.DatetimeField(auto_now_add=True, db_index=True)
-
-    class Meta:
-        abstract = True
-
-
-class Base(StampBase):
-    """``StampBase`` plus ``updated_at``. Soft delete is opt-in, via ``SoftBase``."""
-
     updated_at: datetime = fields.DatetimeField(
         auto_now=True, db_index=True, db_default=Now()
     )

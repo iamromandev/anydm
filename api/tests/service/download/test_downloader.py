@@ -160,3 +160,21 @@ async def test_a_206_reports_the_whole_file_size_not_the_remainder(tmp_path: Pat
     # download would report 100% at 60 of 100 bytes.
     assert samples[-1].total_bytes == 100
     assert samples[-1].progress == 100
+
+
+@pytest.mark.asyncio
+async def test_fetch_never_preallocates(tmp_path: Path) -> None:
+    """Single-stream resume reads the file's own size, so a preallocated file
+    would report itself complete before a single byte had arrived."""
+    dest = tmp_path / "out.bin"
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sizes.append(dest.stat().st_size if dest.exists() else -1)
+        return httpx.Response(200, content=BODY, headers={"content-length": str(len(BODY))})
+
+    async with _client(handler) as client:
+        await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch("https://cdn.test/f", dest)
+
+    assert sizes == [-1]
+    assert dest.read_bytes() == BODY

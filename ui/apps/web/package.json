@@ -9,6 +9,7 @@
         "format": "bunx prettier . --write",
         "format.check": "bunx prettier --check .",
         "check": "bunx tsc --noEmit",
+        "test": "bun test",
         "dev": "bunx vite --mode ssr",
         "build": "bunx vite build"
     },

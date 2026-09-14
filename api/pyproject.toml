@@ -12,7 +12,7 @@ dependencies = [
     "tortoise-orm[asyncpg, accel]==1.1.8",
     ### media ###
     "pytubefix==11.1.0",
-    "httpx==0.28.1",
+    "httpx[http2]==0.28.1",
     "sse-starlette==3.4.11",
 ]
 
