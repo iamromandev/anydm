@@ -16,7 +16,7 @@ class Reconciled:
     fresh: bool
 
 
-class TaskSegmentRepo(ABC):
+class SegmentRepo(ABC):
     @abstractmethod
     async def reconcile(self, task_id: uuid.UUID, part: str, plan: Sequence[tuple[int, int, int]]) -> Reconciled:
         """Match ``plan`` against the stored rows, replacing them if it differs.

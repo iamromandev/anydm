@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 
 from src.config import get_settings
-from src.data.repo import TaskDatabaseRepo, TaskSegmentDatabaseRepo
+from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo
 from src.lib.event import get_event_hub
 from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
@@ -34,7 +34,7 @@ def get_download_service() -> DownloadService:
     settings = get_settings()
     return DownloadService(
         repo=TaskDatabaseRepo(),
-        segment_repo=TaskSegmentDatabaseRepo(),
+        segment_repo=SegmentDatabaseRepo(),
         client=get_youtube_client(),
         control=get_download_control(),
         hub=get_event_hub(),
@@ -80,7 +80,7 @@ def build_worker_pool() -> WorkerPool:
         DownloadWorker(
             name=f"worker-{index}",
             repo=TaskDatabaseRepo(),
-            segment_repo=TaskSegmentDatabaseRepo(),
+            segment_repo=SegmentDatabaseRepo(),
             client=get_youtube_client(),
             engine=engine,
             post_processor=FfmpegPostProcessor(settings.ffmpeg_path),

@@ -8,7 +8,7 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
-from src.data.repo.download.interface import TaskRepo, TaskSegmentRepo
+from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
@@ -28,7 +28,7 @@ class DownloadService(BaseService):
     def __init__(
         self,
         repo: TaskRepo,
-        segment_repo: TaskSegmentRepo,
+        segment_repo: SegmentRepo,
         client: YouTubeClient,
         control: DownloadControl,
         hub: EventHub,

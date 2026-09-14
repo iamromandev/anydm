@@ -20,7 +20,7 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.db.model import Task
-from src.data.repo.download.interface import TaskRepo, TaskSegmentRepo
+from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Platform, TaskStatus
 from src.lib.event import EventHub
@@ -44,7 +44,7 @@ class DownloadWorker:
         *,
         name: str,
         repo: TaskRepo,
-        segment_repo: TaskSegmentRepo,
+        segment_repo: SegmentRepo,
         client: YouTubeClient,
         engine: SegmentedDownloader,
         post_processor: PostProcessor,

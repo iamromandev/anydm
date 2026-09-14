@@ -4,15 +4,20 @@ from typing import ClassVar
 
 from tortoise import fields
 
-from src.core.base import StampBase
+from src.core.base import Base
 
 
-class TaskSegment(StampBase):
+class Segment(Base):
     """One byte range of one part of one task, and how much of it is on disk.
 
-    ``StampBase`` rather than ``Base``: the flush rewrites ``downloaded`` once a
-    second per segment, and an ``auto_now`` indexed write on every one of those
-    buys nothing that ``Task.heartbeat_at`` does not already say.
+    Not to be confused with ``src.service.download.segment.Segment``, which is
+    the transfer engine's in-memory range and carries no identity or progress.
+    They never meet: the repository takes ``(index, start, end)`` triples so the
+    data layer imports nothing from ``src.service``.
+
+    ``updated_at`` arrives with ``Base`` and tracks the progress flush, which
+    rewrites ``downloaded`` about once a second per segment. Nothing reads it —
+    liveness checks consult ``Task.heartbeat_at``.
 
     ``start_byte``/``end_byte`` rather than ``start``/``end`` because ``END`` is
     a reserved SQL keyword — the ORM would quote it, and the first hand-written
@@ -28,10 +33,10 @@ class TaskSegment(StampBase):
     downloaded: int = fields.BigIntField(default=0)
 
     def __str__(self) -> str:
-        return f"[TaskSegment: task {self.task_id}, part {self.part}, index {self.index}]"
+        return f"[Segment: task {self.task_id}, part {self.part}, index {self.index}]"
 
     class Meta:
-        table: ClassVar[str] = "task_segment"
-        table_description: ClassVar[str] = "Task segment"
+        table: ClassVar[str] = "segment"
+        table_description: ClassVar[str] = "Segment"
         ordering: ClassVar[list[str]] = ["index"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("task", "part", "index"),)

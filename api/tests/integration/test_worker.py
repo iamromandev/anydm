@@ -3,8 +3,8 @@ from typing import Any
 
 import httpx
 import pytest
-from src.data.db.model import Task, TaskSegment
-from src.data.repo import TaskDatabaseRepo, TaskSegmentDatabaseRepo
+from src.data.db.model import Segment, Task
+from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.service.download.control import DownloadControl
@@ -38,7 +38,7 @@ def _worker(
     return DownloadWorker(
         name="test-worker",
         repo=TaskDatabaseRepo(),
-        segment_repo=TaskSegmentDatabaseRepo(),
+        segment_repo=SegmentDatabaseRepo(),
         client=FakeYouTube(),
         engine=SegmentedDownloader(
             client,
@@ -260,7 +260,7 @@ async def test_a_segmented_download_records_its_plan_and_clears_it_when_done(
     assert task.status == TaskStatus.COMPLETE
     assert (tmp_path / str(task.id) / "f.bin").read_bytes() == BIG
     # Transient state: gone once the file exists.
-    assert await TaskSegment.filter(task_id=task.id).count() == 0
+    assert await Segment.filter(task_id=task.id).count() == 0
 
 
 async def test_an_interrupted_download_finishes_from_the_database_alone(
@@ -297,9 +297,9 @@ async def test_an_interrupted_download_finishes_from_the_database_alone(
         await worker.run_task(claimed)
 
     # Mid-flight: a plan exists and at least one segment is partly done.
-    rows = await TaskSegment.filter(task_id=task.id)
+    rows = await Segment.filter(task_id=task.id)
     assert len(rows) == 4
-    assert await TaskSegment.filter(task_id=task.id, downloaded__gt=0).count() > 0
+    assert await Segment.filter(task_id=task.id, downloaded__gt=0).count() > 0
 
     # Whatever a watermark claims must actually be on disk.
     part = tmp_path / str(task.id) / "file.part"
@@ -337,11 +337,11 @@ async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None
     from src.service.download import DownloadService
 
     task = await _direct_task()
-    await TaskSegmentDatabaseRepo().reconcile(task.id, "file", [(0, 0, 99), (1, 100, 199)])
+    await SegmentDatabaseRepo().reconcile(task.id, "file", [(0, 0, 99), (1, 100, 199)])
 
     service = DownloadService(
         repo=TaskDatabaseRepo(),
-        segment_repo=TaskSegmentDatabaseRepo(),
+        segment_repo=SegmentDatabaseRepo(),
         client=FakeYouTube(),
         control=DownloadControl(),
         hub=EventHub(),
@@ -349,7 +349,7 @@ async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None
     )
     await service.cancel(task.id)
 
-    assert await TaskSegment.filter(task_id=task.id).count() == 0
+    assert await Segment.filter(task_id=task.id).count() == 0
 
 
 async def test_progress_is_cumulative_across_a_two_part_download(db: None, tmp_path: Path) -> None:
