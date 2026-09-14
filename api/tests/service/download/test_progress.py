@@ -1,6 +1,7 @@
 from typing import Any
 
-from src.service.download.progress import ProgressTracker
+from src.service.download.progress import ProgressAggregator, ProgressTracker
+from src.service.download.segment import plan_segments
 
 
 def _tracker(**overrides: Any) -> ProgressTracker:
@@ -83,3 +84,63 @@ def test_snapshot_emits_regardless_of_the_interval() -> None:
     sample = tracker.snapshot(at=0.1)
     assert sample is not None
     assert sample.downloaded_bytes == 0
+
+
+def _aggregator(total: int = 1000, count: int = 4, flush_ms: int = 1000) -> ProgressAggregator:
+    return ProgressAggregator(plan_segments(total, count), flush_interval_ms=flush_ms, started_at=0.0)
+
+
+def test_the_throttle_withholds_samples_until_the_interval_passes() -> None:
+    aggregator = _aggregator()
+    assert aggregator.record(0, downloaded=10, speed_bps=5, at=0.5) is None
+    assert aggregator.record(0, downloaded=20, speed_bps=5, at=1.5) is not None
+
+
+def test_bytes_and_speeds_sum_across_segments() -> None:
+    aggregator = _aggregator()
+    aggregator.record(0, downloaded=100, speed_bps=10, at=0.1)
+    aggregator.record(1, downloaded=50, speed_bps=20, at=0.2)
+    sample = aggregator.snapshot(at=1.1)
+    assert sample.downloaded_bytes == 150
+    assert sample.speed_bps == 30
+    assert sample.total_bytes == 1000
+    assert sample.progress == 15
+
+
+def test_a_stale_sibling_still_counts() -> None:
+    """Segments report on their own timers, so the aggregate always mixes a
+    fresh sample with slightly older ones. Dropping the old ones would make the
+    total lurch backwards."""
+    aggregator = _aggregator()
+    aggregator.record(0, downloaded=100, speed_bps=10, at=0.1)
+    sample = aggregator.record(1, downloaded=25, speed_bps=5, at=1.1)
+    assert sample is not None
+    assert sample.downloaded_bytes == 125
+
+
+def test_every_segment_is_reported_even_before_it_starts() -> None:
+    aggregator = _aggregator()
+    sample = aggregator.snapshot(at=1.1)
+    assert [segment.index for segment in sample.segments] == [0, 1, 2, 3]
+    assert sample.segments[0].start == 0
+    assert sample.segments[0].end == 249
+    assert all(segment.downloaded == 0 for segment in sample.segments)
+
+
+def test_eta_is_none_when_nothing_is_moving() -> None:
+    aggregator = _aggregator()
+    assert aggregator.snapshot(at=1.1).eta_seconds is None
+
+
+def test_eta_divides_the_remainder_by_the_combined_speed() -> None:
+    aggregator = _aggregator()
+    aggregator.record(0, downloaded=200, speed_bps=100, at=0.1)
+    aggregator.record(1, downloaded=0, speed_bps=100, at=0.2)
+    assert aggregator.snapshot(at=1.1).eta_seconds == 4
+
+
+def test_progress_never_exceeds_one_hundred() -> None:
+    aggregator = _aggregator(total=100, count=2)
+    aggregator.record(0, downloaded=50, speed_bps=1, at=0.1)
+    aggregator.record(1, downloaded=50, speed_bps=1, at=0.2)
+    assert aggregator.snapshot(at=1.1).progress == 100
