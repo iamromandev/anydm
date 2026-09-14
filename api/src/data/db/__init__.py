@@ -13,7 +13,7 @@ settings = get_settings()
 DB_CONFIG = {
     "connections": {
         "default": {
-            "engine": "tortoise.backends.asyncpg",
+            "engine": settings.db_engine,
             "credentials": {
                 "host": settings.db_host,
                 "port": settings.db_port,

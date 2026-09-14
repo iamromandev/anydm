@@ -11,10 +11,14 @@ do run against the compose stack, whose values come from the real environment.
 
 import os
 
-os.environ.setdefault("ENV", "local")
-os.environ.setdefault("DEBUG", "true")
-os.environ.setdefault("DB_HOST", "localhost")
-os.environ.setdefault("DB_PORT", "5430")
-os.environ.setdefault("DB_NAME", "anydm")
-os.environ.setdefault("DB_USER", "user")
-os.environ.setdefault("DB_PASSWORD", "password")
+for key, value in {
+    "ENV": "local",
+    "DEBUG": "true",
+    "DB_ENGINE": "tortoise.backends.asyncpg",
+    "DB_HOST": "localhost",
+    "DB_PORT": "5430",
+    "DB_NAME": "db-anydm",
+    "DB_USER": "user",
+    "DB_PASSWORD": "password",
+}.items():
+    os.environ.setdefault(key, value)

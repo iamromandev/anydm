@@ -39,7 +39,7 @@ services:
       - "8030:8000"
     volumes:
       - .:/workdir
-      - downloads:/workdir/downloads
+      - download:/workdir/download
     networks:
       - db
       - server
@@ -62,5 +62,5 @@ networks:
 volumes:
   db:
     name: db-anydm-api
-  downloads:
-    name: downloads-anydm-api
+  download:
+    name: download-anydm-api

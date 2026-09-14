@@ -1,6 +1,22 @@
-.venv
+### core ###
+.idea
+.vscode
+.ds_store
+
+### cache ###
 __pycache__
 .pytest_cache
 .ruff_cache
-downloads
+.venv
+
+### generated ###
+**/*.lock
+**/*.pyc
+
+### project ###
 .env
+.env.**
+/download
+
+### allow ###
+!.env.example

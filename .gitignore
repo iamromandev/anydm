@@ -1,17 +1,8 @@
-# core
-.idea
+### core ###
 .ds_store
+.idea
+.claude
+.superpowers
 
-# project
-node_modules
-dist
-server
-downloads
-
-# caches
-.pytest_cache
-.ruff_cache
-__pycache__
-.eslintcache
-.cache
-*.tsbuildinfo
+# docs
+docs/superpowers
