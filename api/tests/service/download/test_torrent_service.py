@@ -99,12 +99,13 @@ class FakeTaskRepo:
 class FakeFileRepo:
     def __init__(self) -> None:
         self.replaced: dict[uuid.UUID, list[tuple[int, str, int, bool]]] = {}
+        self.rows: list[Any] = []
 
     async def replace(self, task_id: uuid.UUID, files: Any) -> None:
         self.replaced[task_id] = list(files)
 
     async def list_for(self, task_id: uuid.UUID) -> list[Any]:
-        return []
+        return self.rows
 
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         return [index for index, _, _, selected in self.replaced.get(task_id, []) if selected]
@@ -399,3 +400,80 @@ async def test_cancel_still_soft_deletes_when_the_engine_is_gone() -> None:
     await _service(client, repo=repo).cancel(task_id)
 
     assert row.status == TaskStatus.CANCELED
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_returns_the_path_for_an_index(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    folder = tmp_path / "Some Release"
+    folder.mkdir()
+    (folder / "video.mkv").write_bytes(b"data")
+
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(
+        task_id, status=TaskStatus.SEEDING, file_path=str(folder)
+    )
+    files = FakeFileRepo()
+    files.rows = [
+        type("F", (), {"index": 0, "path": "video.mkv", "selected": True})(),
+        type("F", (), {"index": 1, "path": "readme.txt", "selected": False})(),
+    ]
+
+    path, filename, media_type = await _service(repo=repo, file_repo=files).resolve_file(task_id, 0)
+
+    assert path == folder / "video.mkv"
+    assert filename == "video.mkv"
+    assert media_type == "video/x-matroska"
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_refuses_a_file_that_was_not_selected(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
+    files = FakeFileRepo()
+    files.rows = [type("F", (), {"index": 1, "path": "readme.txt", "selected": False})()]
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo, file_repo=files).resolve_file(task_id, 1)
+    assert caught.value.code == Code.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_404s_on_an_unknown_index(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
+    files = FakeFileRepo()
+    files.rows = []
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo, file_repo=files).resolve_file(task_id, 9)
+    assert caught.value.code == Code.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_409s_while_the_torrent_is_still_downloading(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(
+        task_id, status=TaskStatus.DOWNLOADING, file_path=str(tmp_path)
+    )
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo).resolve_file(task_id, 0)
+    assert caught.value.code == Code.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_refuses_a_path_escaping_the_output_folder(tmp_path: Path) -> None:
+    """A torrent's file names come from a stranger. They do not get to escape."""
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
+    files = FakeFileRepo()
+    files.rows = [type("F", (), {"index": 0, "path": "../../etc/passwd", "selected": True})()]
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo, file_repo=files).resolve_file(task_id, 0)
+    assert caught.value.code == Code.NOT_FOUND

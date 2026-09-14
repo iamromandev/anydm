@@ -2,7 +2,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
 from src.core.success import Success
 from src.data.schema.download import (
@@ -58,3 +58,18 @@ async def stop_seeding(
 ) -> Response:
     """Stop sharing a finished torrent, keeping its files."""
     return Success.ok(data=await torrent_service.stop_seeding(task_id)).to_resp()
+
+
+@router.get(path="/download/{task_id}/file/{file_index}")
+async def download_torrent_file(
+    task_id: uuid.UUID,
+    file_index: int,
+    torrent_service: Annotated[TorrentService, Depends(get_torrent_service)],
+) -> FileResponse:
+    """Serve one file out of a finished torrent.
+
+    ``FileResponse`` handles Range itself, so a browser download that drops
+    resumes rather than restarting — and so a future streaming player can seek.
+    """
+    path, filename, media_type = await torrent_service.resolve_file(task_id, file_index)
+    return FileResponse(path=path, filename=filename, media_type=media_type)

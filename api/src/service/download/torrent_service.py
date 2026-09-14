@@ -7,6 +7,7 @@ verbs. Progress is not its job — ``torrent_monitor.py`` does that.
 
 from __future__ import annotations
 
+import mimetypes
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -214,6 +215,37 @@ class TorrentService(BaseService):
         task.eta_seconds = None
         await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
         self._published(task)
+
+    async def resolve_file(self, task_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
+        """One finished file out of a torrent, by its index.
+
+        409 rather than 404 while the torrent is still running, for the same
+        reason ``DownloadService.resolve_file`` does it: the resource will
+        exist, just not yet, and a polling client has to tell "wait" from
+        "never".
+        """
+        task = await self._require(task_id)
+        if task.status not in (TaskStatus.SEEDING, TaskStatus.COMPLETE):
+            raise Error.conflict(message=f"Task is {task.status.value}, not complete")
+
+        rows = await self._file_repo.list_for(task_id)
+        row = next((candidate for candidate in rows if candidate.index == index), None)
+        if row is None:
+            raise Error.not_found(message=f"Torrent has no file at index {index}")
+        if not row.selected:
+            raise Error.conflict(message=f"File {index} was not selected for download")
+
+        folder = Path(task.file_path or str(self._root)).resolve()
+        path = (folder / row.path).resolve()
+        # A torrent's file names are written by a stranger. Containment is
+        # checked against the resolved folder, not by inspecting the string.
+        if not path.is_relative_to(folder):
+            raise Error.not_found(message="File is not inside the torrent's folder")
+        if not path.is_file():
+            raise Error.not_found(message="File is no longer on disk")
+
+        media_type, _ = mimetypes.guess_type(path.name)
+        return path, path.name, media_type or "application/octet-stream"
 
     async def _require(self, task_id: uuid.UUID) -> Any:
         self._require_enabled()
