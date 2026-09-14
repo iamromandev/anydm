@@ -11,15 +11,17 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 from src.data.db import DB_CONFIG
-from src.data.db.model import Task
+from src.data.db.model import Task, TaskSegment
 from tortoise import Tortoise
 
 
 @pytest_asyncio.fixture
 async def db() -> AsyncIterator[None]:
     await Tortoise.init(config=DB_CONFIG)
+    await TaskSegment.all().delete()
     await Task.all().delete()
     yield
+    await TaskSegment.all().delete()
     await Task.all().delete()
     await Tortoise.close_connections()
 
