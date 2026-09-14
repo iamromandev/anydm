@@ -60,6 +60,7 @@ Common root targets — run `make help` for the full list, `make -C api help` fo
 | `make api-clean-db` | Drop the database volume |
 | `make ui-build` | Production build for the UI |
 | `make ui-check` / `ui-format` | Typecheck / format the UI |
+| `make ui-test` | UI unit tests (`bun test`) |
 | `make down` | Stop both stacks |
 
 ## Environment variables
@@ -87,7 +88,10 @@ cp api/.env.example api/.env
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:8030` | Public URL of this service (declared in settings; no route reads it yet) |
 | `DOWNLOAD_DIR` | `./download` | Where finished files land; compose mounts a named volume here |
 | `DOWNLOAD_WORKERS` | `2` | Concurrent download workers (min 1) |
-| `DOWNLOAD_CHUNK_SIZE` | `65536` | Read chunk size in bytes (min 1024); progress is sampled once per chunk |
+| `DOWNLOAD_CHUNK_SIZE` | `65536` | Read chunk size in bytes (min 1024); still paces progress updates, because the write buffer's flush timer only gets a chance to fire when a chunk arrives |
+| `DOWNLOAD_SEGMENTS` | `4` | Concurrent range requests per part (min 1). `1` turns segmentation off entirely |
+| `DOWNLOAD_SEGMENT_MIN_BYTES` | `16777216` | Smallest file worth splitting; below this the extra round trips cost more than the concurrency wins |
+| `DOWNLOAD_WRITE_BUFFER_BYTES` | `4194304` | Bytes buffered before a positional write (min 65536), paired with a 500 ms timer |
 | `DOWNLOAD_PROGRESS_FLUSH_MS` | `1000` | How often progress reaches the database (min 100) |
 | `DOWNLOAD_MAX_ATTEMPTS` | `3` | Total tries per task, the first included (min 1) |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; YouTube downloads mux separate video and audio streams with it |
@@ -122,6 +126,9 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
   - `GET /download/{task_id}/file` — serve the finished file
   - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume` · `DELETE /download/{task_id}`
 - **Workers:** a pool started in the app lifespan claims queued tasks, resumes from `.part` files, and requeues orphans left in-flight by a previous process
+- **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `task_segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch.
+
+  How much this wins depends entirely on where the bottleneck is. Against a server that caps each connection it is close to linear (measured 0.12 → 0.49 MB/s, 4.1×, on a test server throttled to 120 KB/s per connection). Against a mirror that does not, it is nearly nothing, because one connection already saturates the link (measured 9.09 → 10.37 MB/s on a Debian mirror, with 8 segments no better than 4).
 - **Migrations:** Tortoise's built-in migrations under `src/data/db/migration`, applied by `python -m scripts.migrate` — the compose command runs it before uvicorn
 
 ### `ui/apps/web`
