@@ -1,3 +1,4 @@
+from .client import RqbitClient as RqbitClient
 from .error import engine_rejected as engine_rejected
 from .error import engine_unavailable as engine_unavailable
 from .error import invalid_source as invalid_source
