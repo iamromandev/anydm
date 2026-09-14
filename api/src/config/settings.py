@@ -55,6 +55,34 @@ class Settings(BaseSettings):
         int,
         Field(default=3, ge=1, description="Total tries per task, including the first"),
     ]
+    # torrent
+    torrent_enabled: Annotated[
+        bool,
+        Field(default=True, description="Enable torrent routes and the monitor"),
+    ]
+    torrent_api_url: Annotated[
+        str,
+        Field(
+            default="http://torrent-anydm-api:3030",
+            description="rqbit control API base URL",
+        ),
+    ]
+    torrent_dir: Annotated[
+        str,
+        Field(default="./download/torrent", description="Output folder handed to rqbit"),
+    ]
+    torrent_poll_ms: Annotated[
+        int,
+        Field(default=1000, ge=250, description="Monitor tick in milliseconds"),
+    ]
+    torrent_metadata_timeout_s: Annotated[
+        int,
+        Field(default=30, ge=1, description="How long resolve waits for peers to supply metadata"),
+    ]
+    torrent_request_timeout_s: Annotated[
+        int,
+        Field(default=10, ge=1, description="Per-call timeout against the control API"),
+    ]
     # media
     ffmpeg_path: Annotated[str, Field(default="ffmpeg", description="ffmpeg executable")]
 

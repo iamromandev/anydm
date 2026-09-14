@@ -26,3 +26,12 @@ def test_create_defaults_to_permanent() -> None:
 
 def test_to_resp_uses_the_code_as_status() -> None:
     assert Error.not_found().to_resp().status_code == 404
+
+
+def test_service_unavailable_is_retry_able() -> None:
+    err = Error.service_unavailable(message="Torrent service is unreachable")
+    assert err.code == Code.SERVICE_UNAVAILABLE
+    assert err.type == ErrorType.SERVICE_UNAVAILABLE
+    assert err.message == "Torrent service is unreachable"
+    assert err.retry_able is True
+    assert err.to_resp().status_code == 503
