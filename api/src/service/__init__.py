@@ -45,9 +45,21 @@ def build_worker_pool() -> WorkerPool:
 
     ``read=None`` disables the read timeout: a large file legitimately takes
     minutes, and httpx's default would abort it mid-transfer.
+
+    The pool limits are derived from the worker and segment counts rather than
+    configured, so they cannot drift below the number of sockets the workers can
+    actually open — a pool that is too small does not error, it just serialises
+    the segments and hides the speedup.
     """
     settings = get_settings()
-    http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
+    http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, read=None),
+        http2=True,
+        limits=httpx.Limits(
+            max_connections=settings.http_max_connections,
+            max_keepalive_connections=settings.http_max_keepalive,
+        ),
+    )
     downloader = Downloader(
         http_client,
         chunk_size=settings.download_chunk_size,

@@ -42,3 +42,28 @@ def test_download_defaults() -> None:
     assert settings.download_progress_flush_ms == 1000
     assert settings.download_max_attempts == 3
     assert settings.ffmpeg_path == "ffmpeg"
+
+
+def test_segment_defaults() -> None:
+    settings = _settings()
+    assert settings.download_segments == 4
+    assert settings.download_segment_min_bytes == 16 * 1024 * 1024
+    assert settings.download_write_buffer_bytes == 4 * 1024 * 1024
+    assert settings.download_chunk_size == 1024 * 1024
+
+
+# The pool must hold every socket the workers can open at once. httpx queues
+# beyond its limit, which serialises segments and makes the whole feature look
+# like it does nothing while reporting no error at all.
+def test_http_pool_covers_every_worker_times_every_segment() -> None:
+    settings = _settings(download_workers=3, download_segments=8)
+    assert settings.http_max_connections == 3 * 8 + 4
+    assert settings.http_max_keepalive == 3 * 8
+
+
+def test_segments_must_be_at_least_one() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _settings(download_segments=0)
