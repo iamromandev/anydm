@@ -3,7 +3,8 @@ from typing import Any
 
 import httpx
 import pytest
-from src.service.download.downloader import Downloader
+from src.core.error import Error
+from src.service.download.downloader import Downloader, Stopped
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
 from src.service.download.segmented import SegmentedDownloader
@@ -48,7 +49,12 @@ def _client(handler: Any) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-def _engine(client: httpx.AsyncClient, *, min_bytes: int = 0) -> SegmentedDownloader:
+def _engine(
+    client: httpx.AsyncClient,
+    *,
+    min_bytes: int = 0,
+    max_segment_attempts: int = 3,
+) -> SegmentedDownloader:
     return SegmentedDownloader(
         client,
         Downloader(client, chunk_size=64, flush_interval_ms=0),
@@ -56,6 +62,8 @@ def _engine(client: httpx.AsyncClient, *, min_bytes: int = 0) -> SegmentedDownlo
         flush_interval_ms=0,
         min_segment_bytes=min_bytes,
         write_buffer_bytes=128,
+        max_segment_attempts=max_segment_attempts,
+        segment_backoff=(0.0, 0.0),
     )
 
 
@@ -63,6 +71,10 @@ def _source(url: str = "https://cdn.test/f") -> UrlSource:
     async def provider() -> str:
         return url
 
+    return UrlSource(provider)
+
+
+def _source_from(provider: Any) -> UrlSource:
     return UrlSource(provider)
 
 
@@ -170,3 +182,178 @@ async def test_the_fallback_path_reports_no_segments(tmp_path: Path) -> None:
 
     assert samples
     assert samples[-1].segments == ()
+
+
+async def test_a_pause_surfaces_as_a_bare_stopped(tmp_path: Path) -> None:
+    """TaskGroup wraps everything in an ExceptionGroup. The worker's
+    `except Stopped:` would miss that and mark a paused task failed."""
+    async with _client(_range_handler()) as client:
+        with pytest.raises(Stopped):
+            await _engine(client).fetch(
+                _source(),
+                tmp_path / "out.part",
+                count=4,
+                reconcile=_fresh,
+                should_stop=lambda: True,
+            )
+
+
+async def test_a_pause_leaves_the_watermarks_matching_the_disk(tmp_path: Path) -> None:
+    samples: list[AggregateSample] = []
+
+    async def collect(sample: AggregateSample) -> None:
+        samples.append(sample)
+
+    # Counted, not timed: the per-segment sample timer is 250 ms, so a 4 KiB
+    # body would finish long before any mid-transfer sample could fire.
+    checks = {"left": 10}
+
+    def should_stop() -> bool:
+        checks["left"] -= 1
+        return checks["left"] <= 0
+
+    dest = tmp_path / "out.part"
+    async with _client(_range_handler()) as client:
+        with pytest.raises(Stopped):
+            await _engine(client).fetch(
+                _source(),
+                dest,
+                count=4,
+                reconcile=_fresh,
+                on_sample=collect,
+                should_stop=should_stop,
+            )
+
+    final = samples[-1]
+    assert 0 < final.downloaded_bytes < len(BODY)
+    # Every byte a watermark claims is really on disk. A watermark that ran
+    # ahead of the writer would resume past data that never landed.
+    written = dest.read_bytes()
+    for segment in final.segments:
+        end = segment.start + segment.downloaded
+        assert written[segment.start : end] == BODY[segment.start : end]
+
+
+async def test_one_flaky_segment_retries_without_disturbing_its_siblings(tmp_path: Path) -> None:
+    failures = {"left": 1}
+    inner = _range_handler()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("range") == "bytes=1024-2047" and failures["left"]:
+            failures["left"] -= 1
+            return httpx.Response(503)
+        return inner(request)
+
+    dest = tmp_path / "out.part"
+    async with _client(handler) as client:
+        await _engine(client).fetch(_source(), dest, count=4, reconcile=_fresh)
+
+    assert failures["left"] == 0
+    assert dest.read_bytes() == BODY
+
+
+async def test_a_segment_that_exhausts_its_attempts_fails_the_part(tmp_path: Path) -> None:
+    inner = _range_handler()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("range") == "bytes=1024-2047":
+            return httpx.Response(503)
+        return inner(request)
+
+    async with _client(handler) as client:
+        with pytest.raises(Error):
+            await _engine(client, max_segment_attempts=2).fetch(
+                _source(), tmp_path / "out.part", count=4, reconcile=_fresh
+            )
+
+
+async def test_an_expired_url_is_refreshed_once_for_every_segment(tmp_path: Path) -> None:
+    """All four segments 403 at the same instant. One resolve, not four."""
+    resolves = {"count": 0}
+
+    async def provider() -> str:
+        resolves["count"] += 1
+        return f"https://cdn.test/v{resolves['count']}"
+
+    inner = _range_handler()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1" and request.headers.get("range") not in (None, "bytes=0-0"):
+            return httpx.Response(403)
+        return inner(request)
+
+    dest = tmp_path / "out.part"
+    async with _client(handler) as client:
+        await _engine(client).fetch(_source_from(provider), dest, count=4, reconcile=_fresh)
+
+    assert dest.read_bytes() == BODY
+    assert resolves["count"] == 2
+
+
+async def test_a_200_answering_a_range_restarts_single_stream(tmp_path: Path) -> None:
+    """Appending a whole body into a positional write is the silent
+    corruption case, so the attempt is torn down instead."""
+    discarded = {"count": 0}
+
+    async def on_discard() -> None:
+        discarded["count"] += 1
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        header = request.headers.get("range")
+        if header == "bytes=0-0":
+            return httpx.Response(206, content=BODY[:1], headers={"content-range": f"bytes 0-0/{len(BODY)}"})
+        return httpx.Response(200, content=BODY, headers={"content-length": str(len(BODY))})
+
+    dest = tmp_path / "out.part"
+    async with _client(handler) as client:
+        written = await _engine(client).fetch(
+            _source(), dest, count=4, reconcile=_fresh, on_discard=on_discard
+        )
+
+    assert written == len(BODY)
+    assert dest.read_bytes() == BODY
+    assert discarded["count"] == 1
+
+
+async def test_a_body_longer_than_its_range_is_truncated(tmp_path: Path) -> None:
+    """One byte past `end` is the next segment's region."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        header = request.headers.get("range")
+        if header == "bytes=0-0":
+            return httpx.Response(206, content=BODY[:1], headers={"content-range": f"bytes 0-0/{len(BODY)}"})
+        spec = header.removeprefix("bytes=")
+        start = int(spec.partition("-")[0])
+        end = int(spec.partition("-")[2])
+        # Deliberately overshoots the requested end by 256 bytes.
+        chunk = BODY[start : end + 257]
+        return httpx.Response(206, content=chunk, headers={"content-range": f"bytes {start}-{end}/{len(BODY)}"})
+
+    dest = tmp_path / "out.part"
+    async with _client(handler) as client:
+        await _engine(client).fetch(_source(), dest, count=4, reconcile=_fresh)
+
+    assert dest.read_bytes() == BODY
+
+
+async def test_a_body_shorter_than_its_range_is_retried(tmp_path: Path) -> None:
+    truncate = {"left": 1}
+    inner = _range_handler()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        header = request.headers.get("range")
+        if header == "bytes=1024-2047" and truncate["left"]:
+            truncate["left"] -= 1
+            return httpx.Response(
+                206,
+                content=BODY[1024:1500],
+                headers={"content-range": f"bytes 1024-2047/{len(BODY)}"},
+            )
+        return inner(request)
+
+    dest = tmp_path / "out.part"
+    async with _client(handler) as client:
+        await _engine(client).fetch(_source(), dest, count=4, reconcile=_fresh)
+
+    assert truncate["left"] == 0
+    assert dest.read_bytes() == BODY

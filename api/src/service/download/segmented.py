@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import httpx
+from loguru import logger
 
 from src.core.error import Error
 from src.core.type import Code, ErrorType
@@ -54,6 +55,49 @@ def _status_error(status: int) -> Error:
     )
 
 
+def _transport_error(exc: Exception) -> Error:
+    return Error.create(
+        code=Code.BAD_GATEWAY,
+        message=f"Transfer failed: {exc}",
+        error_type=ErrorType.DEPENDENCY_FAILURE,
+        retry_able=True,
+    )
+
+
+class _RangeIgnored(Exception):
+    """A server answered a range request with a whole body.
+
+    The probe said ranges worked and this response says otherwise — usually a
+    different CDN node. Not an error: the transfer restarts single-stream.
+    """
+
+
+class _Expired(Exception):
+    """A 403 that a fresh URL will probably fix."""
+
+
+def _flatten(group: BaseException) -> list[BaseException]:
+    if isinstance(group, BaseExceptionGroup):
+        return [leaf for child in group.exceptions for leaf in _flatten(child)]
+    return [group]
+
+
+def _unwrap(group: BaseExceptionGroup) -> BaseException:
+    """The one exception the caller should see.
+
+    ``TaskGroup`` wraps everything, so a pause would reach the worker as an
+    ``ExceptionGroup`` and slip past its ``except Stopped:`` into the generic
+    handler that marks a task failed. Order matters: a stop beats a failure,
+    because a stop is what the user asked for.
+    """
+    leaves = _flatten(group)
+    for kind in (Stopped, _RangeIgnored, Error):
+        for leaf in leaves:
+            if isinstance(leaf, kind):
+                return leaf
+    return leaves[0]
+
+
 class SegmentedDownloader:
     def __init__(
         self,
@@ -64,6 +108,8 @@ class SegmentedDownloader:
         flush_interval_ms: int,
         min_segment_bytes: int,
         write_buffer_bytes: int,
+        max_segment_attempts: int = 3,
+        segment_backoff: tuple[float, ...] = (0.5, 2.0),
     ) -> None:
         self._client = client
         self._fallback = fallback
@@ -71,6 +117,8 @@ class SegmentedDownloader:
         self._flush_interval_ms = flush_interval_ms
         self._min_segment_bytes = min_segment_bytes
         self._write_buffer_bytes = write_buffer_bytes
+        self._max_segment_attempts = max_segment_attempts
+        self._backoff = segment_backoff
 
     async def fetch(
         self,
@@ -80,6 +128,7 @@ class SegmentedDownloader:
         count: int,
         reconcile: Reconcile,
         on_sample: Callable[[AggregateSample], Awaitable[None]] | None = None,
+        on_discard: Callable[[], Awaitable[None]] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> int:
         url = await source.current()
@@ -120,20 +169,28 @@ class SegmentedDownloader:
                 at=time.monotonic(),
             )
 
+        restart = False
         try:
-            async with asyncio.TaskGroup() as group:
-                for segment in plan:
-                    group.create_task(
-                        self._run_segment(
-                            source,
-                            writer,
-                            aggregator,
-                            segment,
-                            watermarks.get(segment.index, 0),
-                            on_sample,
-                            should_stop,
+            try:
+                async with asyncio.TaskGroup() as group:
+                    for segment in plan:
+                        group.create_task(
+                            self._run_segment(
+                                source,
+                                writer,
+                                aggregator,
+                                segment,
+                                watermarks.get(segment.index, 0),
+                                on_sample,
+                                should_stop,
+                            )
                         )
-                    )
+            except BaseExceptionGroup as failures:
+                error = _unwrap(failures)
+                if isinstance(error, _RangeIgnored):
+                    restart = True
+                else:
+                    raise error from None
         finally:
             # Whatever happened — finished, paused, failed — the watermarks the
             # caller persists must match what is actually on disk.
@@ -146,9 +203,16 @@ class SegmentedDownloader:
                     speed_bps=0,
                     at=time.monotonic(),
                 )
-            if on_sample is not None:
+            if on_sample is not None and not restart:
                 await on_sample(aggregator.snapshot(time.monotonic()))
             await writer.close(fsync=True)
+
+        if restart:
+            logger.warning("SegmentedDownloader|{}: range ignored mid-transfer, restarting", dest.name)
+            dest.unlink(missing_ok=True)
+            if on_discard is not None:
+                await on_discard()
+            return await self._single(await source.current(), dest, on_sample, should_stop)
 
         # Not ``dest.stat().st_size``: the file was preallocated, so it has
         # reported the full size since before a byte arrived. Completion has to
@@ -196,17 +260,58 @@ class SegmentedDownloader:
         on_sample: Callable[[AggregateSample], Awaitable[None]] | None,
         should_stop: Callable[[], bool] | None,
     ) -> None:
-        position = segment.start + watermark
+        """Retry this range, and only this range.
+
+        Four sockets meet roughly four times the transient failures of one.
+        Without this tier every blip would restart the whole part and throw away
+        three healthy segments' work.
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            url = await source.current()
+            resume = writer.high_water(segment.index, default=segment.start + watermark)
+            try:
+                await self._transfer(url, writer, aggregator, segment, resume, on_sample, should_stop)
+                return
+            except (Stopped, _RangeIgnored):
+                raise
+            except _Expired:
+                if attempt >= self._max_segment_attempts:
+                    raise _status_error(403) from None
+                # No backoff: the URL was the problem, not the server.
+                await source.refresh(url)
+            except (Error, httpx.HTTPError) as exc:
+                error = exc if isinstance(exc, Error) else _transport_error(exc)
+                if not error.retry_able or attempt >= self._max_segment_attempts:
+                    raise error from None
+                logger.warning(
+                    "SegmentedDownloader|segment {} attempt {}: {}",
+                    segment.index,
+                    attempt,
+                    error.message,
+                )
+                await asyncio.sleep(self._backoff[min(attempt, len(self._backoff)) - 1])
+
+    async def _transfer(
+        self,
+        url: str,
+        writer: SegmentWriter,
+        aggregator: ProgressAggregator,
+        segment: Segment,
+        position: int,
+        on_sample: Callable[[AggregateSample], Awaitable[None]] | None,
+        should_stop: Callable[[], bool] | None,
+    ) -> None:
         if position > segment.end:
             return
 
         tracker = ProgressTracker(
             total_bytes=segment.length,
-            initial_bytes=watermark,
+            initial_bytes=position - segment.start,
             flush_interval_ms=_SEGMENT_SAMPLE_MS,
             started_at=time.monotonic(),
         )
-        url = await source.current()
 
         async with self._client.stream(
             "GET",
@@ -214,6 +319,10 @@ class SegmentedDownloader:
             headers={"Range": f"bytes={position}-{segment.end}"},
             follow_redirects=True,
         ) as response:
+            if response.status_code == 200:
+                raise _RangeIgnored
+            if response.status_code == 403:
+                raise _Expired
             if response.status_code >= 400:
                 raise _status_error(response.status_code)
 
@@ -241,3 +350,13 @@ class SegmentedDownloader:
 
         high = await writer.flush(segment.index)
         aggregator.record(segment.index, downloaded=high - segment.start, speed_bps=0, at=time.monotonic())
+
+        if position <= segment.end:
+            # The body ended before the range did. Retryable: the bytes that did
+            # arrive are on disk and the next attempt resumes from them.
+            raise Error.create(
+                code=Code.BAD_GATEWAY,
+                message=f"Segment {segment.index} ended {segment.end + 1 - position} bytes short",
+                error_type=ErrorType.DEPENDENCY_FAILURE,
+                retry_able=True,
+            )
