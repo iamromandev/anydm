@@ -7,6 +7,7 @@ import {
     getApi,
     isActive,
     normalizeApiTask,
+    normalizeSegments,
     postApi,
     type UiTask,
 } from "@/lib/api";
@@ -65,6 +66,7 @@ export default component$(() => {
                           data.downloaded_bytes ?? t.downloadedBytes,
                       totalBytes: data.total_bytes ?? t.totalBytes,
                       downloadSpeed: data.speed_bps ?? t.downloadSpeed,
+                      segments: normalizeSegments(data) ?? t.segments,
                   }
                 : t,
         );

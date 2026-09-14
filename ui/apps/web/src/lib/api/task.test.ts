@@ -5,6 +5,8 @@ import {
     canResume,
     isActive,
     normalizeApiTask,
+    normalizeSegments,
+    segmentLayout,
     statusView,
 } from "./task";
 
@@ -130,5 +132,63 @@ describe("isActive", () => {
         expect(isActive("paused")).toBe(false);
         expect(isActive("complete")).toBe(false);
         expect(isActive("canceled")).toBe(false);
+    });
+});
+
+describe("normalizeSegments", () => {
+    it("maps snake_case segments onto the UI shape", () => {
+        const segments = normalizeSegments({
+            segments: [
+                {
+                    index: 0,
+                    start: 0,
+                    end: 499,
+                    downloaded: 200,
+                    speed_bps: 60,
+                },
+                {
+                    index: 1,
+                    start: 500,
+                    end: 999,
+                    downloaded: 100,
+                    speed_bps: 40,
+                },
+            ],
+        });
+        expect(segments).toHaveLength(2);
+        expect(segments![1].start).toBe(500);
+        expect(segments![1].downloadSpeed).toBe(40);
+    });
+
+    // Absent means "this transfer is not segmented", which is not the same as
+    // "it has no segments right now".
+    it("returns undefined when the key is absent", () => {
+        expect(normalizeSegments({ progress: 10 })).toBeUndefined();
+    });
+
+    it("returns undefined for a malformed array", () => {
+        expect(normalizeSegments({ segments: "nope" })).toBeUndefined();
+    });
+});
+
+describe("segmentLayout", () => {
+    it("gives each segment a width proportional to its byte range", () => {
+        const layout = segmentLayout([
+            { index: 0, start: 0, end: 749, downloaded: 750, downloadSpeed: 0 },
+            { index: 1, start: 750, end: 999, downloaded: 0, downloadSpeed: 0 },
+        ]);
+        expect(layout[0].widthPercent).toBeCloseTo(75);
+        expect(layout[1].widthPercent).toBeCloseTo(25);
+    });
+
+    it("fills each segment by its own progress, not the file's", () => {
+        const layout = segmentLayout([
+            { index: 0, start: 0, end: 999, downloaded: 250, downloadSpeed: 0 },
+        ]);
+        expect(layout[0].fillPercent).toBeCloseTo(25);
+    });
+
+    it("survives an empty list", () => {
+        expect(segmentLayout([])).toEqual([]);
     });
 });

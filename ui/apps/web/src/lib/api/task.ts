@@ -33,12 +33,66 @@ export type UiTask = {
     downloadSpeed: number;
     uploadSpeed: number;
     peersConnected: number;
+    /** Present only while a segmented transfer is running. */
+    segments?: SegmentView[];
     /** Torrent-only, and absent until torrents are ported. */
     seeders?: number;
     leechers?: number;
     ratio?: number;
     infoHash?: string;
 };
+
+/** One byte range of the file, and how much of it has landed. */
+export type SegmentView = {
+    index: number;
+    start: number;
+    end: number;
+    downloaded: number;
+    downloadSpeed: number;
+};
+
+/**
+ * The segments of a progress frame, or `undefined` when there are none.
+ *
+ * `undefined` rather than `[]` on purpose: the API omits the key for a transfer
+ * it did not segment, and the caller treats a missing key as "unchanged" rather
+ * than "now empty" — the same rule every other field in a progress frame follows.
+ */
+export function normalizeSegments(raw: any): SegmentView[] | undefined {
+    if (!Array.isArray(raw?.segments)) return undefined;
+    return raw.segments.map((segment: any) => ({
+        index: segment.index ?? 0,
+        start: segment.start ?? 0,
+        end: segment.end ?? 0,
+        downloaded: segment.downloaded ?? 0,
+        downloadSpeed: segment.speed_bps ?? 0,
+    }));
+}
+
+/**
+ * Widths and fills for the segment strip.
+ *
+ * The width is proportional to the segment's share of the file, which is what
+ * makes the strip a map of the file rather than a row of equal boxes: a lagging
+ * segment reads as a lagging region.
+ */
+export function segmentLayout(
+    segments: SegmentView[],
+): { index: number; widthPercent: number; fillPercent: number }[] {
+    const total = segments.reduce(
+        (sum, segment) => sum + (segment.end - segment.start + 1),
+        0,
+    );
+    if (total <= 0) return [];
+    return segments.map((segment) => {
+        const length = segment.end - segment.start + 1;
+        return {
+            index: segment.index,
+            widthPercent: (length / total) * 100,
+            fillPercent: Math.min(100, (segment.downloaded / length) * 100),
+        };
+    });
+}
 
 /** A FastAPI task row, flattened into the shape the components read. */
 export function normalizeApiTask(raw: any): UiTask {

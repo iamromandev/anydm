@@ -15,7 +15,7 @@ UI_PORT := 3030
 .PHONY: check down restart help \
 	api-check api-test api-test-all api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-install api-export api-clean api-clean-db api-clean-system \
-	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-format
+	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format
 
 ## both stacks
 check: api-check ui-check # Lint + typecheck both stacks
@@ -91,6 +91,9 @@ ui-build: # Build the UI for production
 
 ui-check: # Typecheck the UI
 	$(BUN) run --cwd $(UI) web:check
+
+ui-test: # Run the UI unit tests
+	$(BUN) run --cwd $(UI) web:test
 
 ui-format: # Format the UI sources
 	$(BUN) run --cwd $(UI) web:format
