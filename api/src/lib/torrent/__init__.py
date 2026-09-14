@@ -3,6 +3,11 @@ from .error import engine_unavailable as engine_unavailable
 from .error import invalid_source as invalid_source
 from .error import metadata_timeout as metadata_timeout
 from .error import torrent_not_found as torrent_not_found
+from .mapping import bps_from_mbps as bps_from_mbps
+from .mapping import eta_from as eta_from
+from .mapping import peers_from as peers_from
+from .mapping import progress_from_stats as progress_from_stats
+from .mapping import progress_percent as progress_percent
 from .protocol import TorrentClient as TorrentClient
 from .protocol import TorrentDetails as TorrentDetails
 from .protocol import TorrentFileInfo as TorrentFileInfo
