@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     download_workers: Annotated[int, Field(default=2, ge=1, description="Concurrent download workers")]
     download_chunk_size: Annotated[
         int,
-        Field(default=1048576, ge=1024, description="Read chunk size in bytes"),
+        Field(default=65536, ge=1024, description="Read chunk size in bytes"),
     ]
     download_segments: Annotated[
         int,

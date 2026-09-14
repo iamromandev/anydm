@@ -49,7 +49,10 @@ def test_segment_defaults() -> None:
     assert settings.download_segments == 4
     assert settings.download_segment_min_bytes == 16 * 1024 * 1024
     assert settings.download_write_buffer_bytes == 4 * 1024 * 1024
-    assert settings.download_chunk_size == 1024 * 1024
+    # Deliberately still 64 KiB: the write buffer coalesces disk writes, but the
+    # chunk is what paces progress updates, because the writer's flush timer
+    # only gets a chance to fire when a chunk arrives.
+    assert settings.download_chunk_size == 64 * 1024
 
 
 # The pool must hold every socket the workers can open at once. httpx queues
