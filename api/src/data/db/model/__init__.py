@@ -1,1 +1,1 @@
-from .download import Task as Task
+from .task import Task as Task

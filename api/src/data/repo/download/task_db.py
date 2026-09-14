@@ -85,4 +85,4 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         return tasks, Meta(**meta)
 
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
-        return await self.get_one(id=task_id, deleted_at__isnull=True)
+        return await self.get_by_id(task_id, deleted_at__isnull=True)

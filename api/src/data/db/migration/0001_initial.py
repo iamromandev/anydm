@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
                 ('heartbeat_at', fields.DatetimeField(null=True, description='Written by the progress flush. Startup recovery does not consult it —', auto_now=False, auto_now_add=False)),
             ],
-            options={'table': 'download_task', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_task_status_created')], 'pk_attr': 'id', 'table_description': 'One download, from the request that created it to the file it produced.'},
+            options={'table': 'task', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_task_status_created')], 'pk_attr': 'id', 'table_description': 'Task'},
             bases=['Base'],
         ),
     ]
