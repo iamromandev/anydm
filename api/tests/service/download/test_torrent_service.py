@@ -159,3 +159,101 @@ async def test_resolve_surfaces_an_engine_failure_unchanged() -> None:
     with pytest.raises(Error) as caught:
         await _service(client).resolve(MAGNET)
     assert caught.value.code == Code.REQUEST_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_enqueue_adds_to_the_engine_and_creates_a_task() -> None:
+    client = FakeTorrentClient()
+    repo = FakeTaskRepo()
+    files = FakeFileRepo()
+
+    task = await _service(client, repo=repo, file_repo=files).enqueue(MAGNET, [0])
+
+    assert client.added[0]["only_files"] == [0]
+    assert client.added[0]["output_folder"] == "/workdir/download/torrent"
+
+    created = repo.created[0]
+    assert created["platform"].value == "torrent"
+    assert created["kind"].value == "torrent"
+    assert created["status"].value == "pending"
+    assert created["info_hash"] == "abc123"
+    assert created["title"] == "Some Release"
+    assert created["source_url"] == MAGNET
+    # Only the selected file counts towards the size the UI shows.
+    assert created["total_bytes"] == 900
+    assert task.info_hash == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_records_which_files_were_chosen() -> None:
+    files = FakeFileRepo()
+    task = await _service(file_repo=files).enqueue(MAGNET, [1])
+
+    rows = files.replaced[task.id]
+    assert rows == [(0, "video.mkv", 900, False), (1, "readme.txt", 100, True)]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_selection_means_every_file() -> None:
+    client = FakeTorrentClient()
+    files = FakeFileRepo()
+
+    task = await _service(client, file_repo=files).enqueue(MAGNET, [])
+
+    assert client.added[0]["only_files"] == []
+    assert [selected for _, _, _, selected in files.replaced[task.id]] == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_a_selection_naming_no_real_file_is_rejected() -> None:
+    client = FakeTorrentClient()
+    with pytest.raises(Error) as caught:
+        await _service(client).enqueue(MAGNET, [7])
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert client.added == []
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None:
+    """A base64 .torrent must not be written into source_url.
+
+    Reconciliation re-adds a lost torrent from this column, and an info-hash
+    magnet is both small and re-addable. The original blob is neither.
+    """
+    import base64
+
+    repo = FakeTaskRepo()
+    encoded = base64.b64encode(b"d8:announce1:xe").decode()
+
+    await _service(repo=repo).enqueue(encoded, [0])
+
+    assert repo.created[0]["source_url"] == "magnet:?xt=urn:btih:abc123"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_publishes_the_new_task() -> None:
+    hub = EventHub()
+    subscription = hub.subscribe()
+    service = TorrentService(
+        repo=FakeTaskRepo(),  # ty: ignore[invalid-argument-type]
+        file_repo=FakeFileRepo(),  # ty: ignore[invalid-argument-type]
+        client=FakeTorrentClient(),
+        hub=hub,
+        torrent_root=Path("/workdir/download/torrent"),
+        enabled=True,
+    )
+
+    await service.enqueue(MAGNET, [0])
+
+    event, data = await anext(aiter(subscription))
+    assert event == "task"
+    assert data["info_hash"] == "abc123"
+    subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_is_unavailable_when_torrents_are_disabled() -> None:
+    with pytest.raises(Error) as caught:
+        await _service(enabled=False).enqueue(MAGNET, [0])
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE

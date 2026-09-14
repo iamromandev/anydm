@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.download import TorrentResolveRequest, TorrentResolveResponse
+from src.data.schema.download import (
+    TaskSchema,
+    TorrentDownloadRequest,
+    TorrentResolveRequest,
+    TorrentResolveResponse,
+)
 from src.service import TorrentService, get_torrent_service
 
 router = APIRouter()
@@ -28,3 +33,15 @@ async def resolve_torrent(
     """
     data = await torrent_service.resolve(payload.torrent.strip())
     return Success.ok(data=data).to_resp()
+
+
+@router.post(
+    path="/download/torrent",
+    response_model=Success[TaskSchema],
+)
+async def enqueue_torrent(
+    payload: TorrentDownloadRequest,
+    torrent_service: Annotated[TorrentService, Depends(get_torrent_service)],
+) -> Response:
+    data = await torrent_service.enqueue(payload.torrent.strip(), payload.files)
+    return Success.created(data=data).to_resp()
