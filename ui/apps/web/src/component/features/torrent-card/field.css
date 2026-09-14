@@ -216,6 +216,35 @@
     color: var(--color-error);
 }
 
+.torrent-file-progress {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.torrent-file-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+.torrent-file-row .torrent-file-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.torrent-file-row .torrent-file-size {
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
 .torrent-actions {
     display: flex;
     flex-direction: column;

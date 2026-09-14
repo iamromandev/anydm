@@ -16,10 +16,12 @@ import {
     LuFileDown,
     LuRotateCcw,
     LuUpload,
+    LuCircle,
 } from "@/component/core/icons";
 import {
     canPause,
     canResume,
+    canStopSeeding,
     isActive,
     statusView,
     type StatusView,
@@ -34,6 +36,7 @@ export interface TorrentCardProps {
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
     onRemove: (id: string) => void;
+    onStopSeeding: (id: string) => void;
 }
 
 /** The card draws whatever the API returns; `@/lib/api` owns that shape. */
@@ -61,7 +64,7 @@ const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
 };
 
 export const TorrentCard = component$<TorrentCardProps>(
-    ({ task, onPause, onResume, onDownloadFile, onRemove }) => {
+    ({ task, onPause, onResume, onDownloadFile, onRemove, onStopSeeding }) => {
         const status = statusView(task.status);
         const PlatformIcon = PLATFORM_ICONS[task.kind] ?? LuMagnet;
         const StatusIcon = STATUS_ICONS[status.key];
@@ -197,6 +200,35 @@ export const TorrentCard = component$<TorrentCardProps>(
                             )}
                         </div>
                     </div>
+
+                    {task.files && task.files.length > 0 && (
+                        <ul class="torrent-file-progress">
+                            {task.files
+                                .filter((file) => file.selected)
+                                .map((file) => (
+                                    <li
+                                        key={file.index}
+                                        class="torrent-file-row"
+                                    >
+                                        <span class="torrent-file-path">
+                                            {file.path}
+                                        </span>
+                                        <span class="torrent-file-size">
+                                            {file.sizeBytes > 0
+                                                ? `${Math.min(
+                                                      100,
+                                                      Math.floor(
+                                                          (file.downloadedBytes /
+                                                              file.sizeBytes) *
+                                                              100,
+                                                      ),
+                                                  )}%`
+                                                : "—"}
+                                        </span>
+                                    </li>
+                                ))}
+                        </ul>
+                    )}
                 </div>
 
                 <div class="torrent-actions">
@@ -245,7 +277,8 @@ export const TorrentCard = component$<TorrentCardProps>(
                         </button>
                     )}
 
-                    {task.status === "complete" && (
+                    {(task.status === "complete" ||
+                        task.status === "seeding") && (
                         <button
                             type="button"
                             class="action-btn action-btn--primary"
@@ -253,6 +286,21 @@ export const TorrentCard = component$<TorrentCardProps>(
                             onClick$={() => onDownloadFile(task.id)}
                         >
                             <LuFileDown
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
+
+                    {canStopSeeding(task.status) && (
+                        <button
+                            type="button"
+                            class="action-btn"
+                            aria-label="Stop seeding"
+                            onClick$={() => onStopSeeding(task.id)}
+                        >
+                            <LuCircle
                                 width="16"
                                 height="16"
                                 aria-hidden="true"

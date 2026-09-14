@@ -4,7 +4,7 @@ import {
     type TorrentTask,
 } from "@/component/features/torrent-card";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
-import { isActive } from "@/lib/api";
+import { isActive, isSeeding } from "@/lib/api";
 import "./field.css";
 
 export interface TorrentListProps {
@@ -15,6 +15,7 @@ export interface TorrentListProps {
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
     onRemove: (id: string) => void;
+    onStopSeeding: (id: string) => void;
 }
 
 export type TorrentFilter =
@@ -34,6 +35,7 @@ export const TorrentList = component$<TorrentListProps>(
         onResume,
         onDownloadFile,
         onRemove,
+        onStopSeeding,
     }) => {
         const filteredTasks = tasks.filter((task) => {
             if (searchQuery) {
@@ -51,10 +53,7 @@ export const TorrentList = component$<TorrentListProps>(
                 case "downloading":
                     return isActive(task.status);
                 case "seeding":
-                    // Nothing seeds until torrents are ported. The filter keeps
-                    // its place in the sidebar rather than matching a status
-                    // the API cannot currently return.
-                    return false;
+                    return isSeeding(task.status);
                 case "completed":
                     return task.status === "complete";
                 case "all":
@@ -122,6 +121,7 @@ export const TorrentList = component$<TorrentListProps>(
                                 onResume={onResume}
                                 onDownloadFile={onDownloadFile}
                                 onRemove={onRemove}
+                                onStopSeeding={onStopSeeding}
                             />
                         </div>
                     ))}
