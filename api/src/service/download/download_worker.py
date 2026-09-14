@@ -12,6 +12,7 @@ import shutil
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -244,17 +245,29 @@ class DownloadWorker:
         # A separate, lighter event than the full task snapshot: this fires
         # every flush interval per download, and the browser only needs the
         # numbers that moved.
-        self._hub.publish(
-            "progress",
-            {
-                "id": str(task_id),
-                "downloaded_bytes": downloaded,
-                "total_bytes": grand_total,
-                "progress": progress,
-                "speed_bps": sample.speed_bps,
-                "eta_seconds": sample.eta_seconds,
-            },
-        )
+        frame: dict[str, Any] = {
+            "id": str(task_id),
+            "downloaded_bytes": downloaded,
+            "total_bytes": grand_total,
+            "progress": progress,
+            "speed_bps": sample.speed_bps,
+            "eta_seconds": sample.eta_seconds,
+        }
+        # Absent rather than empty when the transfer is not segmented: an empty
+        # array is a third case the browser would have to distinguish, and a
+        # small file or a range-less server legitimately has no segments.
+        if sample.segments:
+            frame["segments"] = [
+                {
+                    "index": segment.index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "downloaded": segment.downloaded,
+                    "speed_bps": segment.speed_bps,
+                }
+                for segment in sample.segments
+            ]
+        self._hub.publish("progress", frame)
 
     async def _mark_complete(self, task: Task, destination: Path) -> None:
         task.status = TaskStatus.COMPLETE
