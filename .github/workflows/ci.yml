@@ -33,6 +33,6 @@ jobs:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
             - run: bun install --frozen-lockfile
-            - run: bun run web:fmt.chk
-            - run: bun run web:chk
+            - run: bun run web:format.check
+            - run: bun run web:check
             - run: bun run web:build

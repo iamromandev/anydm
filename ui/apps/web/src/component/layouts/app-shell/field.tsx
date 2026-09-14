@@ -1,4 +1,5 @@
 import { component$, $ } from "@qwik.dev/core";
+import { isActive, type UiTask } from "@/lib/api";
 import { StatusBar } from "@/component/features/status-bar";
 import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
@@ -15,7 +16,7 @@ export interface GlobalStats {
 }
 
 export interface AppShellProps {
-    tasks: any[];
+    tasks: UiTask[];
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
     globalStats: GlobalStats | null;
@@ -71,14 +72,9 @@ export const AppShell = component$<AppShellProps>(
 
         const counts = {
             all: tasks.length,
-            downloading: tasks.filter(
-                (t) =>
-                    t.status === "downloading" ||
-                    t.status === "pending" ||
-                    t.status === "verifying" ||
-                    t.status === "checking",
-            ).length,
-            seeding: tasks.filter((t) => t.status === "seeding").length,
+            downloading: tasks.filter((t) => isActive(t.status)).length,
+            // Seeding arrives with the torrent port; nothing reaches it yet.
+            seeding: 0,
             completed: tasks.filter((t) => t.status === "complete").length,
         };
 

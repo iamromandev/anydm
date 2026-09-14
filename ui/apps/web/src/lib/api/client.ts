@@ -4,7 +4,7 @@ import { unwrap } from "./envelope";
 export function apiUrl(path: string): string {
     const base =
         import.meta.env.PUBLIC_API_URL ||
-        (import.meta.env.DEV ? "http://localhost:8003" : "");
+        (import.meta.env.DEV ? "http://localhost:8030" : "");
     return `${base}${path}`;
 }
 

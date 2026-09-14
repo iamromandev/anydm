@@ -6,9 +6,9 @@
     "description": "AnyDM UI",
     "scripts": {
         "clean": "rm -rf dist && rm -rf node_modules",
-        "fmt": "bunx prettier . --write",
-        "fmt.chk": "bunx prettier --check .",
-        "chk": "bunx tsc --noEmit",
+        "format": "bunx prettier . --write",
+        "format.check": "bunx prettier --check .",
+        "check": "bunx tsc --noEmit",
         "dev": "bunx vite --mode ssr",
         "build": "bunx vite build"
     },

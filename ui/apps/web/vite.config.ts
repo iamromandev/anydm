@@ -5,6 +5,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
     resolve: { tsconfigPaths: true },
+    // Pinned so the root makefile's ui-down/restart (UI_PORT) always find it;
+    // strictPort makes a busy port an error instead of a silent move to 3031.
+    server: { port: 3030, strictPort: true },
     plugins: [
         tailwindcss(),
         qwikRouter({

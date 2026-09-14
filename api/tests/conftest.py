@@ -14,7 +14,7 @@ import os
 os.environ.setdefault("ENV", "local")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("DB_HOST", "localhost")
-os.environ.setdefault("DB_PORT", "5403")
+os.environ.setdefault("DB_PORT", "5430")
 os.environ.setdefault("DB_NAME", "anydm")
 os.environ.setdefault("DB_USER", "user")
 os.environ.setdefault("DB_PASSWORD", "password")

@@ -5,6 +5,7 @@ import {
     apiUrl,
     deleteApi,
     getApi,
+    isActive,
     normalizeApiTask,
     postApi,
     type UiTask,
@@ -14,7 +15,7 @@ const MAX_TASKS = 50;
 
 export default component$(() => {
     const store = useStore({
-        tasks: [] as any[],
+        tasks: [] as UiTask[],
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
         globalStats: null as {
@@ -46,21 +47,24 @@ export default component$(() => {
         ].slice(0, MAX_TASKS);
     });
 
-    /** Patch the numbers on one row in place, without a refetch. */
+    /**
+     * Patch the numbers on one row in place, without a refetch.
+     *
+     * Every field falls back to what the row already holds. The API serialises
+     * progress frames with `exclude_none`, so an absent `total_bytes` means
+     * "unchanged", not "zero" — defaulting to 0 blanked the size mid-download.
+     */
     const applyProgress = $((data: any) => {
         store.tasks = store.tasks.map((t) =>
             t.id === data.id
                 ? {
                       ...t,
                       progress: data.progress ?? t.progress,
-                      eta: data.eta_seconds ?? 0,
-                      progressDetails: {
-                          ...t.progressDetails,
-                          downloadedBytes: data.downloaded_bytes ?? 0,
-                          totalBytes: data.total_bytes ?? 0,
-                          downloadSpeed: data.speed_bps ?? 0,
-                          eta: data.eta_seconds ?? 0,
-                      },
+                      eta: data.eta_seconds ?? t.eta,
+                      downloadedBytes:
+                          data.downloaded_bytes ?? t.downloadedBytes,
+                      totalBytes: data.total_bytes ?? t.totalBytes,
+                      downloadSpeed: data.speed_bps ?? t.downloadSpeed,
                   }
                 : t,
         );
@@ -167,9 +171,8 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
-        const active =
-            task.status === "downloading" || task.status === "seeding";
-        if (active && !confirm("Stop and remove this download?")) return;
+        if (isActive(task.status) && !confirm("Stop and remove this download?"))
+            return;
 
         try {
             await deleteApi(`/download/${taskId}`);

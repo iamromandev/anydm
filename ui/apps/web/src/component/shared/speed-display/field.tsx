@@ -1,4 +1,5 @@
 import { component$ } from "@qwik.dev/core";
+import "./field.css";
 
 interface SpeedDisplayProps {
     downloadSpeed: number;

@@ -8,12 +8,22 @@ import {
     LuCheckCircle,
     LuLoader2,
     LuAlertTriangle,
+    LuXCircle,
     LuMonitorPlay,
     LuMusic2,
     LuGlobe,
     LuFileDown,
     LuRotateCcw,
 } from "@/component/core/icons";
+import {
+    canPause,
+    canResume,
+    isActive,
+    statusView,
+    type StatusView,
+    type TaskKind,
+    type UiTask,
+} from "@/lib/api";
 import "./field.css";
 
 export interface TorrentCardProps {
@@ -24,64 +34,36 @@ export interface TorrentCardProps {
     onRemove: (id: string) => void;
 }
 
-export interface TorrentTask {
-    id: string;
-    title: string;
-    url: string;
-    kind: "video" | "audio" | "torrent" | "url";
-    status: TaskStatus;
-    progress: number;
-    error?: string;
-    downloadSpeed?: number;
-    uploadSpeed?: number;
-    eta?: number;
-    peersConnected?: number;
-    downloadedBytes?: number;
-    totalBytes?: number;
-    seeders?: number;
-    leechers?: number;
-    ratio?: number;
-    infoHash?: string;
-    addedAt?: number;
-    completedAt?: number;
-}
+/** The card draws whatever the API returns; `@/lib/api` owns that shape. */
+export type TorrentTask = UiTask;
 
-type TaskStatus =
-    | "pending"
-    | "downloading"
-    | "verifying"
-    | "checking"
-    | "paused"
-    | "seeding"
-    | "complete"
-    | "failed";
+// Total maps, not switches. A switch with no default returned `undefined` for
+// any status the UI had not been taught, and the render then died on it.
+const PLATFORM_ICONS: Record<TaskKind, typeof LuMagnet> = {
+    video: LuMonitorPlay,
+    audio: LuMusic2,
+    file: LuGlobe,
+    torrent: LuMagnet,
+};
 
-function getPlatformIcon(kind: TorrentTask["kind"]) {
-    switch (kind) {
-        case "video":
-            return LuMonitorPlay;
-        case "audio":
-            return LuMusic2;
-        case "url":
-            return LuGlobe;
-        case "torrent":
-        default:
-            return LuMagnet;
-    }
-}
+const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
+    pending: LuCheckCircle,
+    downloading: LuLoader2,
+    muxing: LuLoader2,
+    paused: LuPause,
+    complete: LuCheckCircle,
+    failed: LuAlertTriangle,
+    canceled: LuXCircle,
+    unknown: LuXCircle,
+};
 
 export const TorrentCard = component$<TorrentCardProps>(
     ({ task, onPause, onResume, onDownloadFile, onRemove }) => {
-        const PlatformIcon = getPlatformIcon(task.kind);
-        const statusConfig = getStatusConfig(task.status);
+        const status = statusView(task.status);
+        const PlatformIcon = PLATFORM_ICONS[task.kind] ?? LuMagnet;
+        const StatusIcon = STATUS_ICONS[status.key];
         const showProgressDetail =
-            task.status === "downloading" ||
-            task.status === "seeding" ||
-            task.status === "paused";
-        const hasTelemetry =
-            task.kind === "torrent" &&
-            (task.downloadSpeed !== undefined ||
-                task.uploadSpeed !== undefined);
+            isActive(task.status) || task.status === "paused";
 
         return (
             <article
@@ -103,14 +85,12 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 {task.title}
                             </h3>
                             <div class="torrent-meta">
-                                {showProgressDetail &&
-                                    task.totalBytes &&
-                                    task.downloadedBytes !== undefined && (
-                                        <span class="torrent-size">
-                                            {formatBytes(task.downloadedBytes)}{" "}
-                                            / {formatBytes(task.totalBytes)}
-                                        </span>
-                                    )}
+                                {showProgressDetail && task.totalBytes > 0 && (
+                                    <span class="torrent-size">
+                                        {formatBytes(task.downloadedBytes)} /{" "}
+                                        {formatBytes(task.totalBytes)}
+                                    </span>
+                                )}
                                 {task.infoHash && (
                                     <span
                                         class="torrent-hash"
@@ -125,12 +105,12 @@ export const TorrentCard = component$<TorrentCardProps>(
                             class="torrent-status-badge"
                             data-status={task.status}
                         >
-                            <statusConfig.icon
+                            <StatusIcon
                                 width="12"
                                 height="12"
                                 aria-hidden="true"
                             />
-                            <span>{statusConfig.label}</span>
+                            <span>{status.label}</span>
                         </div>
                     </div>
 
@@ -155,55 +135,49 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 {task.progress.toFixed(0)}%
                             </span>
 
-                            {showProgressDetail && hasTelemetry && (
+                            {task.status === "downloading" && (
                                 <SpeedDisplay
-                                    downloadSpeed={task.downloadSpeed || 0}
-                                    uploadSpeed={task.uploadSpeed || 0}
+                                    downloadSpeed={task.downloadSpeed}
+                                    uploadSpeed={task.uploadSpeed}
                                     compact
                                 />
                             )}
 
-                            {task.eta &&
-                                task.eta > 0 &&
-                                task.status === "downloading" && (
-                                    <span
-                                        class="progress-eta"
-                                        aria-label={`ETA ${formatTime(task.eta)}`}
-                                    >
-                                        ETA {formatTime(task.eta)}
-                                    </span>
-                                )}
+                            {task.eta > 0 && task.status === "downloading" && (
+                                <span
+                                    class="progress-eta"
+                                    aria-label={`ETA ${formatTime(task.eta)}`}
+                                >
+                                    ETA {formatTime(task.eta)}
+                                </span>
+                            )}
 
-                            {task.peersConnected !== undefined &&
-                                task.peersConnected > 0 && (
-                                    <span
-                                        class="progress-peers"
-                                        aria-label={`${task.peersConnected} peers connected`}
-                                    >
-                                        {task.peersConnected} peers
-                                    </span>
-                                )}
+                            {task.peersConnected > 0 && (
+                                <span
+                                    class="progress-peers"
+                                    aria-label={`${task.peersConnected} peers connected`}
+                                >
+                                    {task.peersConnected} peers
+                                </span>
+                            )}
 
-                            {task.ratio !== undefined &&
-                                task.status === "seeding" && (
-                                    <span
-                                        class="progress-ratio"
-                                        aria-label={`Share ratio ${task.ratio.toFixed(2)}`}
-                                    >
-                                        Ratio {task.ratio.toFixed(2)}
-                                    </span>
-                                )}
+                            {task.ratio !== undefined && task.ratio > 0 && (
+                                <span
+                                    class="progress-ratio"
+                                    aria-label={`Share ratio ${task.ratio.toFixed(2)}`}
+                                >
+                                    Ratio {task.ratio.toFixed(2)}
+                                </span>
+                            )}
 
                             {task.status === "pending" && (
                                 <span class="progress-pending">Queued</span>
                             )}
 
-                            {task.status === "verifying" && (
-                                <span class="progress-pending">Verifying…</span>
-                            )}
-
-                            {task.status === "checking" && (
-                                <span class="progress-pending">Checking…</span>
+                            {task.status === "muxing" && (
+                                <span class="progress-pending">
+                                    Processing…
+                                </span>
                             )}
 
                             {task.status === "failed" && task.error && (
@@ -214,38 +188,52 @@ export const TorrentCard = component$<TorrentCardProps>(
                 </div>
 
                 <div class="torrent-actions">
-                    {task.kind === "torrent" &&
-                        (task.status === "downloading" ||
-                            task.status === "pending" ||
-                            task.status === "verifying" ||
-                            task.status === "checking") && (
-                            <button
-                                type="button"
-                                class="action-btn"
-                                aria-label="Pause torrent"
-                                onClick$={() => onPause(task.id)}
-                            >
-                                <LuPause
+                    {/* Gated on status, not kind. Gating on `kind === "torrent"`
+                        hid both controls from every task the API can currently
+                        produce, which is all of them. */}
+                    {canPause(task.status) && (
+                        <button
+                            type="button"
+                            class="action-btn"
+                            aria-label="Pause download"
+                            onClick$={() => onPause(task.id)}
+                        >
+                            <LuPause
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
+
+                    {canResume(task.status) && (
+                        <button
+                            type="button"
+                            class="action-btn action-btn--primary"
+                            aria-label={
+                                task.status === "failed"
+                                    ? "Retry download"
+                                    : "Resume download"
+                            }
+                            onClick$={() => onResume(task.id)}
+                        >
+                            {task.status === "failed" ? (
+                                <LuRotateCcw
                                     width="16"
                                     height="16"
                                     aria-hidden="true"
                                 />
-                            </button>
-                        )}
-
-                    {task.kind === "torrent" && task.status === "paused" && (
-                        <button
-                            type="button"
-                            class="action-btn action-btn--primary"
-                            aria-label="Resume torrent"
-                            onClick$={() => onResume(task.id)}
-                        >
-                            <LuPlay width="16" height="16" aria-hidden="true" />
+                            ) : (
+                                <LuPlay
+                                    width="16"
+                                    height="16"
+                                    aria-hidden="true"
+                                />
+                            )}
                         </button>
                     )}
 
-                    {(task.status === "complete" ||
-                        task.status === "seeding") && (
+                    {task.status === "complete" && (
                         <button
                             type="button"
                             class="action-btn action-btn--primary"
@@ -260,27 +248,11 @@ export const TorrentCard = component$<TorrentCardProps>(
                         </button>
                     )}
 
-                    {task.status === "failed" && (
-                        <button
-                            type="button"
-                            class="action-btn"
-                            aria-label="Retry download"
-                            onClick$={() => onResume(task.id)}
-                        >
-                            <LuRotateCcw
-                                width="16"
-                                height="16"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
                     <button
                         type="button"
                         class="action-btn action-btn--danger"
                         aria-label={
-                            task.status === "downloading" ||
-                            task.status === "seeding"
+                            isActive(task.status)
                                 ? "Stop and remove download"
                                 : "Remove from list"
                         }
@@ -293,50 +265,6 @@ export const TorrentCard = component$<TorrentCardProps>(
         );
     },
 );
-
-function getStatusConfig(status: TaskStatus) {
-    switch (status) {
-        case "pending":
-            return {
-                icon: LuCheckCircle,
-                label: "Queued",
-                class: "status-pending",
-            };
-        case "downloading":
-            return {
-                icon: LuLoader2,
-                label: "Downloading",
-                class: "status-downloading",
-            };
-        case "verifying":
-        case "checking":
-            return {
-                icon: LuLoader2,
-                label: "Verifying",
-                class: "status-verifying",
-            };
-        case "paused":
-            return { icon: LuPause, label: "Paused", class: "status-paused" };
-        case "seeding":
-            return {
-                icon: LuCheckCircle,
-                label: "Seeding",
-                class: "status-seeding",
-            };
-        case "complete":
-            return {
-                icon: LuCheckCircle,
-                label: "Complete",
-                class: "status-complete",
-            };
-        case "failed":
-            return {
-                icon: LuAlertTriangle,
-                label: "Failed",
-                class: "status-failed",
-            };
-    }
-}
 
 function formatBytes(bytes: number): string {
     if (bytes === 0) return "0 B";

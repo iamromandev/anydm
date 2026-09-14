@@ -3,7 +3,7 @@
 Every test here is marked ``integration`` and excluded from ``make test``. Run
 them with ``make test-all`` while ``make up`` is running: the root
 ``tests/conftest.py`` points ``DB_HOST``/``DB_PORT`` at the published
-``localhost:5403``, which is the same database the container reaches as ``db``.
+``localhost:5430``, which is the same database the container reaches as ``db``.
 """
 
 from collections.abc import AsyncIterator

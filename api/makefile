@@ -1,6 +1,6 @@
 ## core
 # variables
-DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm-fastapi
+DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm
 UV := uv
 UVX := $(UV)x
 SERVER_CONTAINER := server-anydm-fastapi
@@ -66,7 +66,7 @@ test-all: # Run every test, integration included (needs `make up`)
 
 run: # Run FastAPI dev server
 	make check
-	$(UV) run uvicorn src.main:app --reload --loop uvloop --port 8003
+	$(UV) run uvicorn src.main:app --reload --loop uvloop --port 8030
 
 export: # Export requirements.txt
 	$(UV) export --format requirements-txt --output requirements.txt

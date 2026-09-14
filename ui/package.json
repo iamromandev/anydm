@@ -8,14 +8,14 @@
         "apps/*"
     ],
     "scripts": {
-        "clean": "rm -rf node_modules bun.lock && bun run web:clean",
-        "reinstall": "bun run clean && bun install",
         "web:clean": "bun run --cwd apps/web clean",
-        "web:fmt": "bun run --cwd apps/web fmt",
-        "web:fmt.chk": "bun run --cwd apps/web fmt.chk",
-        "web:chk": "bun run --cwd apps/web chk",
-        "web:dev": "bun run web:fmt && bun run web:chk && bun run --cwd apps/web dev",
+        "clean": "rm -rf node_modules bun.lock && bun run web:clean",
+        "web:format": "bun run --cwd apps/web format",
+        "web:format.check": "bun run --cwd apps/web format.check",
+        "web:check": "bun run --cwd apps/web check",
+        "web:dev": "bun run web:format && bun run web:check && bun run --cwd apps/web dev",
         "web:build": "bun run --cwd apps/web build",
+        "reinstall": "bun run clean && bun install",
         "web:restart": "bun run reinstall && bun run web:dev",
         "web:start": "bun install && bun run web:dev"
     }

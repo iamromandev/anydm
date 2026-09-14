@@ -4,6 +4,7 @@ import {
     type TorrentTask,
 } from "@/component/features/torrent-card";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
+import { isActive } from "@/lib/api";
 import "./field.css";
 
 export interface TorrentListProps {
@@ -48,14 +49,12 @@ export const TorrentList = component$<TorrentListProps>(
 
             switch (filter) {
                 case "downloading":
-                    return (
-                        task.status === "downloading" ||
-                        task.status === "pending" ||
-                        task.status === "verifying" ||
-                        task.status === "checking"
-                    );
+                    return isActive(task.status);
                 case "seeding":
-                    return task.status === "seeding";
+                    // Nothing seeds until torrents are ported. The filter keeps
+                    // its place in the sidebar rather than matching a status
+                    // the API cannot currently return.
+                    return false;
                 case "completed":
                     return task.status === "complete";
                 case "all":

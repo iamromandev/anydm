@@ -1,4 +1,5 @@
 import { component$, useStore, useVisibleTask$ } from "@qwik.dev/core";
+import "./field.css";
 
 interface GlobalStats {
     downloadSpeed: number;

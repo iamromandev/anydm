@@ -9,15 +9,20 @@
 API := api
 UI := ui
 BUN := bun
+UI_PORT := 3030
 
 # phony targets
-.PHONY: check help \
+.PHONY: check down restart help \
 	api-check api-test api-test-all api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-install api-export api-clean api-clean-db api-clean-system \
-	ui-install ui-dev ui-restart ui-build ui-check ui-format
+	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-format
 
 ## both stacks
 check: api-check ui-check # Lint + typecheck both stacks
+
+down: api-down ui-down # Stop both stacks: remove the API containers, kill the UI dev server
+
+restart: api-restart ui-down ui-dev # Restart both stacks: rebuild + restart the API containers, then relaunch the UI dev server
 
 ## api — delegates to api/makefile
 api-check: # Lint + typecheck the API
@@ -75,18 +80,20 @@ ui-install: # Install UI dependencies
 ui-dev: # Run the UI dev server (formats and typechecks first)
 	$(BUN) run --cwd $(UI) web:dev
 
+ui-down: # Stop the UI dev server (kill whatever listens on UI_PORT)
+	@pids=$$(lsof -tiTCP:$(UI_PORT) -sTCP:LISTEN); [ -n "$$pids" ] && kill $$pids || true
+
 ui-restart: # Wipe node_modules + bun.lock, reinstall, then run the dev server
 	$(BUN) run --cwd $(UI) web:restart
 
 ui-build: # Build the UI for production
 	$(BUN) run --cwd $(UI) web:build
 
-ui-check: # Format check + typecheck the UI
-	$(BUN) run --cwd $(UI) web:fmt.chk
-	$(BUN) run --cwd $(UI) web:chk
+ui-check: # Typecheck the UI
+	$(BUN) run --cwd $(UI) web:check
 
 ui-format: # Format the UI sources
-	$(BUN) run --cwd $(UI) web:fmt
+	$(BUN) run --cwd $(UI) web:format
 
 # help
 help:

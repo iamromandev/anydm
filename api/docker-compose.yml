@@ -1,15 +1,15 @@
 services:
   db:
     image: postgres:latest
-    hostname: db-anydm-fastapi
-    container_name: db-anydm-fastapi
+    hostname: db-anydm-api
+    container_name: db-anydm-api
     restart: on-failure
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5403:5432"
+      - "5430:5432"
     networks:
       - db
     volumes:
@@ -23,8 +23,8 @@ services:
       retries: 3
 
   server:
-    hostname: server-anydm-fastapi
-    container_name: server-anydm-fastapi
+    hostname: server-anydm-api
+    container_name: server-anydm-api
     restart: unless-stopped
     build:
       context: .
@@ -36,7 +36,7 @@ services:
         INSTALL_DIR: /opt/install
         PW_DIR: /pwdir
     ports:
-      - "8003:8003"
+      - "8030:8000"
     volumes:
       - .:/workdir
       - downloads:/workdir/downloads
@@ -47,20 +47,20 @@ services:
       db:
         condition: service_healthy
     command: >
-      bash -c "python -m scripts.migrate && uvicorn src.main:app --host 0.0.0.0 --port 8003 --reload --loop uvloop"
+      bash -c "python -m scripts.migrate && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --loop uvloop"
 
 
 networks:
   db:
-    name: db-anydm-fastapi
+    name: db-anydm-api
     driver: bridge
   server:
-    name: server-anydm-fastapi
+    name: server-anydm-api
     driver: bridge
 
 
 volumes:
   db:
-    name: db-anydm-fastapi
+    name: db-anydm-api
   downloads:
-    name: downloads-anydm-fastapi
+    name: downloads-anydm-api
