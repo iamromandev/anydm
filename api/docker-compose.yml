@@ -22,6 +22,36 @@ services:
       timeout: 3s
       retries: 3
 
+  torrent:
+    image: ikatson/rqbit:9.0.1
+    hostname: torrent-anydm-api
+    container_name: torrent-anydm-api
+    restart: unless-stopped
+    ports:
+      # rqbit's control API has NO authentication. Loopback only, never
+      # 0.0.0.0. 8031 on the host so `make run` can reach it, beside the API's
+      # own 8030; 3030 is rqbit's default inside the network.
+      - "127.0.0.1:8031:3030"
+      # Incoming peer connections, TCP and uTP. Without these the swarm is
+      # outbound-only and measurably slower.
+      - "4240:4240/tcp"
+      - "4240:4240/udp"
+    networks:
+      - server
+    volumes:
+      # The same named volume the API mounts, at the same path, so a path
+      # rqbit writes resolves unchanged when the API serves that file.
+      - download:/workdir/download
+      - torrent:/session
+    # Global options come before the subcommand; the output folder is
+    # positional. UPnP cannot work from inside a container, so it is off.
+    command: >
+      --http-api-listen-addr 0.0.0.0:3030
+      --disable-upnp-port-forward
+      server start
+      --persistence-location /session
+      /workdir/download/torrent
+
   server:
     hostname: server-anydm-api
     container_name: server-anydm-api
@@ -46,6 +76,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      torrent:
+        condition: service_started
     command: >
       bash -c "python -m scripts.migrate && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --loop uvloop"
 
@@ -64,3 +96,5 @@ volumes:
     name: db-anydm-api
   download:
     name: download-anydm-api
+  torrent:
+    name: torrent-anydm-api
