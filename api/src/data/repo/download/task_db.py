@@ -10,7 +10,7 @@ from src.core.common import now
 from src.core.success import Meta
 from src.data.db.model import Task
 from src.data.repo.download.interface import TaskRepo
-from src.data.type import ACTIVE_STATUSES, TaskStatus
+from src.data.type import ACTIVE_STATUSES, Platform, TaskStatus
 
 
 class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
@@ -28,6 +28,7 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         async with in_transaction() as conn:
             task = await (
                 Task.filter(status=TaskStatus.PENDING, deleted_at__isnull=True)
+                .exclude(platform=Platform.TORRENT)
                 .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
                 .order_by("created_at")
                 .limit(1)
@@ -49,11 +50,20 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
 
         ``downloaded_bytes`` is deliberately left alone: the ``.part`` file on
         disk still holds those bytes, and the next claim resumes from there.
+
+        Torrents are excluded because they were never in this pool. rqbit moved
+        their bytes and rqbit's own session survived the restart; the torrent
+        monitor reconciles them instead. Requeueing one would hand it to a
+        worker that cannot download it.
         """
-        return await Task.filter(status__in=list(ACTIVE_STATUSES), deleted_at__isnull=True).update(
-            status=TaskStatus.PENDING,
-            speed_bps=0,
-            eta_seconds=None,
+        return await (
+            Task.filter(status__in=list(ACTIVE_STATUSES), deleted_at__isnull=True)
+            .exclude(platform=Platform.TORRENT)
+            .update(
+                status=TaskStatus.PENDING,
+                speed_bps=0,
+                eta_seconds=None,
+            )
         )
 
     async def flush_progress(
