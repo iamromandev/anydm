@@ -1,0 +1,51 @@
+[project]
+name = "anydm-api"
+version = "0.0.1"
+description = "AnyDM download API"
+requires-python = "==3.14.6"
+dependencies = [
+    ### core ###
+    "toml==0.10.2",
+    "loguru==0.7.3",
+    "fastapi[all]==0.136.1",
+    ### db ###
+    "tortoise-orm[asyncpg, accel]==1.1.8",
+    ### media ###
+    "pytubefix==11.1.0",
+    "httpx==0.28.1",
+    "sse-starlette==3.4.11",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.16.6",
+    "ty==0.0.80",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+]
+
+[tool.tortoise]
+tortoise_orm = "src.data.db.DB_CONFIG"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not integration'"
+markers = [
+    "integration: needs a live Postgres and disk; excluded from the default run",
+]
+
+# Tortoise's ``Field`` is a typed descriptor: ``fields.CharField(...)`` returns a
+# ``CharField[str]`` while ``__get__`` yields ``str`` on instance access. The
+# models annotate the value type because that documents the column, which ty
+# reads as assigning a descriptor to a ``str``. Tortoise also generates the
+# ``<relation>_id`` attributes at runtime.
+[[tool.ty.overrides]]
+include = ["src/data/db/model/**"]
+rules = { invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+# Tortoise writes these migrations; both complaints come from its own stubs.
+[[tool.ty.overrides]]
+include = ["src/data/db/migration/**"]
+rules = { invalid-attribute-override = "ignore", invalid-argument-type = "ignore" }

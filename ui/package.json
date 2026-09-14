@@ -1,0 +1,22 @@
+{
+    "name": "ui",
+    "private": true,
+    "version": "0.0.1",
+    "description": "AnyDM UI",
+    "type": "module",
+    "workspaces": [
+        "apps/*"
+    ],
+    "scripts": {
+        "web:clean": "bun run --cwd apps/web clean",
+        "clean": "rm -rf node_modules bun.lock && bun run web:clean",
+        "web:format": "bun run --cwd apps/web format",
+        "web:format.check": "bun run --cwd apps/web format.check",
+        "web:check": "bun run --cwd apps/web check",
+        "web:dev": "bun run web:format && bun run web:check && bun run --cwd apps/web dev",
+        "web:build": "bun run --cwd apps/web build",
+        "reinstall": "bun run clean && bun install",
+        "web:restart": "bun run reinstall && bun run web:dev",
+        "web:start": "bun install && bun run web:dev"
+    }
+}

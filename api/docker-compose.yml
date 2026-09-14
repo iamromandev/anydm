@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:latest
+    hostname: db-anydm-api
+    container_name: db-anydm-api
+    restart: on-failure
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5430:5432"
+    networks:
+      - db
+    volumes:
+      - db:/var/lib/postgresql
+    command: postgres -c client_encoding=utf8
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
+      start_period: 10s
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  server:
+    hostname: server-anydm-api
+    container_name: server-anydm-api
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: dockerfile
+      target: local
+      args:
+        ENV: local
+        WORK_DIR: /workdir
+        INSTALL_DIR: /opt/install
+        PW_DIR: /pwdir
+    ports:
+      - "8030:8000"
+    volumes:
+      - .:/workdir
+      - downloads:/workdir/downloads
+    networks:
+      - db
+      - server
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -c "python -m scripts.migrate && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --loop uvloop"
+
+
+networks:
+  db:
+    name: db-anydm-api
+    driver: bridge
+  server:
+    name: server-anydm-api
+    driver: bridge
+
+
+volumes:
+  db:
+    name: db-anydm-api
+  downloads:
+    name: downloads-anydm-api

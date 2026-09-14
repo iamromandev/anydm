@@ -1,0 +1,132 @@
+import { component$ } from "@qwik.dev/core";
+import {
+    TorrentCard,
+    type TorrentTask,
+} from "@/component/features/torrent-card";
+import { LuDownload, LuSearchX } from "@/component/core/icons";
+import { isActive } from "@/lib/api";
+import "./field.css";
+
+export interface TorrentListProps {
+    tasks: TorrentTask[];
+    filter: TorrentFilter;
+    searchQuery: string;
+    onPause: (id: string) => void;
+    onResume: (id: string) => void;
+    onDownloadFile: (id: string) => void;
+    onRemove: (id: string) => void;
+}
+
+export type TorrentFilter =
+    | "all"
+    | "downloading"
+    | "seeding"
+    | "completed"
+    | `category:${string}`
+    | `label:${string}`;
+
+export const TorrentList = component$<TorrentListProps>(
+    ({
+        tasks,
+        filter,
+        searchQuery,
+        onPause,
+        onResume,
+        onDownloadFile,
+        onRemove,
+    }) => {
+        const filteredTasks = tasks.filter((task) => {
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                if (
+                    !task.title.toLowerCase().includes(query) &&
+                    !task.url.toLowerCase().includes(query) &&
+                    !task.infoHash?.toLowerCase().includes(query)
+                ) {
+                    return false;
+                }
+            }
+
+            switch (filter) {
+                case "downloading":
+                    return isActive(task.status);
+                case "seeding":
+                    // Nothing seeds until torrents are ported. The filter keeps
+                    // its place in the sidebar rather than matching a status
+                    // the API cannot currently return.
+                    return false;
+                case "completed":
+                    return task.status === "complete";
+                case "all":
+                default:
+                    return true;
+            }
+        });
+
+        const getEmptyState = () => {
+            if (tasks.length === 0) {
+                return (
+                    <div class="torrent-list-empty">
+                        <div class="torrent-list-empty-icon">
+                            <LuDownload
+                                width="32"
+                                height="32"
+                                aria-hidden="true"
+                            />
+                        </div>
+                        <p>No downloads yet</p>
+                        <span>Paste a link above or drop a .torrent file</span>
+                    </div>
+                );
+            }
+
+            if (filteredTasks.length === 0) {
+                const filterLabels: Record<string, string> = {
+                    all: "matching your search",
+                    downloading: "currently active",
+                    seeding: "seeding",
+                    completed: "completed",
+                };
+                const label = filterLabels[filter] || "matching your filters";
+                return (
+                    <div class="torrent-list-empty">
+                        <div class="torrent-list-empty-icon">
+                            <LuSearchX
+                                width="32"
+                                height="32"
+                                aria-hidden="true"
+                            />
+                        </div>
+                        <p>No downloads {label}</p>
+                        <span>Try adjusting your filters or search</span>
+                    </div>
+                );
+            }
+
+            return null;
+        };
+
+        return (
+            <div class="torrent-list" role="list" aria-label="Downloads">
+                {getEmptyState()}
+                <div class="torrent-list-items" style={{ contain: "layout" }}>
+                    {filteredTasks.map((task) => (
+                        <div
+                            key={task.id}
+                            class="torrent-list-item"
+                            style={{ contentVisibility: "auto" }}
+                        >
+                            <TorrentCard
+                                task={task}
+                                onPause={onPause}
+                                onResume={onResume}
+                                onDownloadFile={onDownloadFile}
+                                onRemove={onRemove}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    },
+);

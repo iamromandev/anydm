@@ -6,10 +6,12 @@
 node_modules
 dist
 server
-bun.lock
 downloads
 
 # caches
+.pytest_cache
+.ruff_cache
+__pycache__
 .eslintcache
 .cache
 *.tsbuildinfo

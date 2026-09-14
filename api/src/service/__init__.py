@@ -1,0 +1,70 @@
+from functools import lru_cache
+from pathlib import Path
+
+import httpx
+
+from src.config import get_settings
+from src.data.repo import TaskDatabaseRepo
+from src.lib.event import get_event_hub
+from src.lib.youtube.client import get_youtube_client
+from src.service.download import DownloadService as DownloadService
+from src.service.download.control import DownloadControl
+from src.service.download.download_worker import DownloadWorker, WorkerPool
+from src.service.download.downloader import Downloader
+from src.service.download.post_process import FfmpegPostProcessor
+from src.service.extract import ExtractService as ExtractService
+from src.service.health import HealthService as HealthService
+
+
+def get_health_service() -> HealthService:
+    return HealthService()
+
+
+def get_extract_service() -> ExtractService:
+    return ExtractService(client=get_youtube_client())
+
+
+@lru_cache
+def get_download_control() -> DownloadControl:
+    return DownloadControl()
+
+
+def get_download_service() -> DownloadService:
+    settings = get_settings()
+    return DownloadService(
+        repo=TaskDatabaseRepo(),
+        client=get_youtube_client(),
+        control=get_download_control(),
+        hub=get_event_hub(),
+        downloads_root=Path(settings.downloads_dir),
+    )
+
+
+def build_worker_pool() -> WorkerPool:
+    """One HTTP client shared by every worker, closed when the pool stops.
+
+    ``read=None`` disables the read timeout: a large file legitimately takes
+    minutes, and httpx's default would abort it mid-transfer.
+    """
+    settings = get_settings()
+    http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
+    downloader = Downloader(
+        http_client,
+        chunk_size=settings.download_chunk_size,
+        flush_interval_ms=settings.progress_flush_ms,
+    )
+    workers = [
+        DownloadWorker(
+            name=f"worker-{index}",
+            repo=TaskDatabaseRepo(),
+            client=get_youtube_client(),
+            downloader=downloader,
+            post_processor=FfmpegPostProcessor(settings.ffmpeg_path),
+            control=get_download_control(),
+            hub=get_event_hub(),
+            downloads_root=Path(settings.downloads_dir),
+            max_attempts=settings.max_attempts,
+        )
+        for index in range(settings.download_workers)
+    ]
+    return WorkerPool(workers, http_client)

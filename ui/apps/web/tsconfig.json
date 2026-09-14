@@ -1,0 +1,57 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "lib": [
+            "ESNext",
+            "DOM",
+            "WebWorker",
+            "DOM.Iterable"
+        ],
+        "moduleResolution": "bundler",
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "incremental": true,
+        "isolatedModules": true,
+        "jsx": "react-jsx",
+        "jsxImportSource": "@qwik.dev/core",
+        "noEmit": true,
+        "outDir": "dist",
+        "paths": {
+            "@/*": [
+                "./src/*"
+            ],
+            "@/component/core/*": [
+                "./src/component/core/*"
+            ],
+            "@/component/shared/*": [
+                "./src/component/shared/*"
+            ],
+            "@/component/layouts/*": [
+                "./src/component/layouts/*"
+            ],
+            "@/component/features/*": [
+                "./src/component/features/*"
+            ]
+        },
+        "plugins": [
+            {
+                "name": "typescript-plugin-css-modules"
+            }
+        ],
+        "types": [
+            "bun"
+        ]
+    },
+    "include": [
+        "src",
+        "./*.d.ts",
+        "./*.config.ts"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}
