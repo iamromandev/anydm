@@ -34,6 +34,10 @@ class TaskSegmentDatabaseRepo(TaskSegmentRepo):
             row.downloaded = watermarks[row.index]
         await TaskSegment.bulk_update(rows, fields=["downloaded"])
 
+    async def progress(self, task_id: uuid.UUID, part: str) -> int:
+        rows = await TaskSegment.filter(task_id=task_id, part=part)
+        return sum(row.downloaded for row in rows)
+
     async def clear(self, task_id: uuid.UUID, part: str | None = None) -> None:
         query = TaskSegment.filter(task_id=task_id)
         if part is not None:

@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 import pytest
-from src.data.db.model import Task
+from src.data.db.model import Task, TaskSegment
 from src.data.repo import TaskDatabaseRepo, TaskSegmentDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
@@ -205,6 +205,151 @@ async def test_a_direct_task_downloads_from_its_source_url(db: None, tmp_path: P
     assert requested == ["https://cdn.test/file.bin", "https://cdn.test/file.bin"]
     await task.refresh_from_db()
     assert task.status == TaskStatus.COMPLETE
+
+
+BIG = bytes(range(256)) * 64  # 16384 bytes
+
+
+def _ranged(body: bytes = BIG, seen: list[str] | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        header = request.headers.get("range")
+        if seen is not None and header is not None:
+            seen.append(header)
+        if header is None:
+            return httpx.Response(200, content=body, headers={"content-length": str(len(body))})
+        start_text, _, end_text = header.removeprefix("bytes=").partition("-")
+        start = int(start_text)
+        end = int(end_text) if end_text else len(body) - 1
+        chunk = body[start : end + 1]
+        return httpx.Response(
+            206,
+            content=chunk,
+            headers={
+                "content-range": f"bytes {start}-{end}/{len(body)}",
+                "content-length": str(len(chunk)),
+            },
+        )
+
+    return handler
+
+
+async def _direct_task(**overrides: Any) -> Task:
+    return await _task(
+        platform=Platform.DIRECT,
+        video_id=None,
+        kind=Kind.FILE,
+        video_itag=None,
+        filename="f.bin",
+        source_url="https://cdn.test/f.bin",
+        **overrides,
+    )
+
+
+async def test_a_segmented_download_records_its_plan_and_clears_it_when_done(
+    db: None, tmp_path: Path
+) -> None:
+    task = await _direct_task()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_ranged())) as client:
+        worker = _worker(tmp_path, DownloadControl(), client, segments=4)
+        claimed = await TaskDatabaseRepo().claim_next()
+        assert claimed is not None
+        await worker.run_task(claimed)
+
+    await task.refresh_from_db()
+    assert task.status == TaskStatus.COMPLETE
+    assert (tmp_path / str(task.id) / "f.bin").read_bytes() == BIG
+    # Transient state: gone once the file exists.
+    assert await TaskSegment.filter(task_id=task.id).count() == 0
+
+
+async def test_an_interrupted_download_finishes_from_the_database_alone(
+    db: None, tmp_path: Path
+) -> None:
+    """The test that proves the ordering rule.
+
+    Stop mid-transfer, throw away every in-memory object, rebuild from the rows
+    and the .part on disk, and finish. A watermark that ever ran ahead of the
+    disk produces a file of the right size and the wrong bytes here.
+    """
+
+    class StopsPartWay(DownloadControl):
+        """Let some bytes land before pulling the plug.
+
+        Stopping before the first chunk would make the byte comparison below
+        vacuously true — there would be nothing claimed and nothing to compare.
+        """
+
+        def __init__(self, after: int) -> None:
+            super().__init__()
+            self._left = after
+
+        def is_stopping(self, task_id: Any) -> bool:
+            self._left -= 1
+            return self._left <= 0
+
+    task = await _direct_task()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_ranged())) as client:
+        worker = _worker(tmp_path, StopsPartWay(40), client, segments=4)
+        claimed = await TaskDatabaseRepo().claim_next()
+        assert claimed is not None
+        await worker.run_task(claimed)
+
+    # Mid-flight: a plan exists and at least one segment is partly done.
+    rows = await TaskSegment.filter(task_id=task.id)
+    assert len(rows) == 4
+    assert await TaskSegment.filter(task_id=task.id, downloaded__gt=0).count() > 0
+
+    # Whatever a watermark claims must actually be on disk.
+    part = tmp_path / str(task.id) / "file.part"
+    written = part.read_bytes()
+    for row in rows:
+        end = row.start_byte + row.downloaded
+        assert written[row.start_byte : end] == BIG[row.start_byte : end]
+
+    already = sum(row.downloaded for row in rows)
+    assert already > 0
+
+    # Now finish, with a brand new worker and a brand new control.
+    await Task.filter(id=task.id).update(status=TaskStatus.PENDING)
+    seen: list[str] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_ranged(seen=seen))) as client:
+        worker = _worker(tmp_path, DownloadControl(), client, segments=4)
+        claimed = await TaskDatabaseRepo().claim_next()
+        assert claimed is not None
+        await worker.run_task(claimed)
+
+    await task.refresh_from_db()
+    assert task.status == TaskStatus.COMPLETE
+    assert (tmp_path / str(task.id) / "f.bin").read_bytes() == BIG
+
+    # And it genuinely resumed: the bytes already on disk were not re-fetched.
+    refetched = 0
+    for header in seen:
+        start_text, _, end_text = header.removeprefix("bytes=").partition("-")
+        if end_text and int(end_text) - int(start_text) + 1 > 1:
+            refetched += int(end_text) - int(start_text) + 1
+    assert refetched == len(BIG) - already, f"re-downloaded {refetched} of {len(BIG)}"
+
+
+async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None:
+    from src.service.download import DownloadService
+
+    task = await _direct_task()
+    await TaskSegmentDatabaseRepo().reconcile(task.id, "file", [(0, 0, 99), (1, 100, 199)])
+
+    service = DownloadService(
+        repo=TaskDatabaseRepo(),
+        segment_repo=TaskSegmentDatabaseRepo(),
+        client=FakeYouTube(),
+        control=DownloadControl(),
+        hub=EventHub(),
+        downloads_root=tmp_path,
+    )
+    await service.cancel(task.id)
+
+    assert await TaskSegment.filter(task_id=task.id).count() == 0
 
 
 async def test_progress_is_cumulative_across_a_two_part_download(db: None, tmp_path: Path) -> None:

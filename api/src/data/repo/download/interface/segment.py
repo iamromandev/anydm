@@ -32,6 +32,16 @@ class TaskSegmentRepo(ABC):
         ...
 
     @abstractmethod
+    async def progress(self, task_id: uuid.UUID, part: str) -> int:
+        """Bytes already on disk for this part, across every stored segment.
+
+        Read before planning: a part with progress keeps the plan that produced
+        it, whatever the configured segment count now says. Re-planning it would
+        discard bytes that are already downloaded.
+        """
+        ...
+
+    @abstractmethod
     async def clear(self, task_id: uuid.UUID, part: str | None = None) -> None:
         """Delete one part's segments, or all of the task's."""
         ...

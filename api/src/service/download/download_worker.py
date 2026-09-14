@@ -159,13 +159,24 @@ class DownloadWorker:
             offset += destination.stat().st_size
         return parts
 
-    def _segment_count(self, attempts: int) -> int:
+    def _segment_count(self, attempts: int, downloaded: int) -> int:
         """Halve the connections on every retry: 4, then 2, then 1.
 
         Some servers 429 under four connections and are perfectly happy with
         one. ``attempts`` already counts, so this needs no new column, and it
         turns a hard failure on a strict server into a slower success.
+
+        ``downloaded`` outranks all of that. A part with bytes on disk keeps the
+        plan that produced them: a different count would not match the stored
+        ranges, and reconcile would throw the whole ``.part`` away. Crash
+        recovery bumps ``attempts`` without any failure having occurred — which
+        is precisely when there is real progress to protect — so backing off
+        there would cost a full re-download every time the process restarted.
+        A server strict enough to need fewer connections never gets that far:
+        nothing downloads, so nothing is at risk.
         """
+        if downloaded > 0:
+            return self._segments
         return max(1, self._segments >> max(0, attempts - 1))
 
     async def _fetch(
@@ -183,10 +194,11 @@ class DownloadWorker:
         async def discard() -> None:
             await self._segment_repo.clear(task_id, part)
 
+        already = await self._segment_repo.progress(task_id, part)
         await self._engine.fetch(
             UrlSource(provider),
             destination,
-            count=self._segment_count(task.attempts),
+            count=self._segment_count(task.attempts, already),
             reconcile=reconcile,
             on_discard=discard,
             on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
