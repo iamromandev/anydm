@@ -3,9 +3,12 @@ import { describe, expect, it } from "bun:test";
 import {
     canPause,
     canResume,
+    canStopSeeding,
     isActive,
+    isSeeding,
     normalizeApiTask,
     normalizeSegments,
+    normalizeTorrentFiles,
     segmentLayout,
     statusView,
 } from "./task";
@@ -190,5 +193,102 @@ describe("segmentLayout", () => {
 
     it("survives an empty list", () => {
         expect(segmentLayout([])).toEqual([]);
+    });
+});
+
+describe("torrent fields", () => {
+    const rawTorrent = {
+        id: "t1",
+        source_url: "magnet:?xt=urn:btih:abc",
+        title: "Some Release",
+        filename: "Some Release",
+        kind: "torrent",
+        preset: "best",
+        status: "seeding",
+        progress: 100,
+        downloaded_bytes: 1000,
+        total_bytes: 1000,
+        speed_bps: 0,
+        eta_seconds: null,
+        info_hash: "abc",
+        uploaded_bytes: 500,
+        peers_connected: 7,
+        files: [
+            { index: 0, path: "video.mkv", size_bytes: 900, selected: true, downloaded_bytes: 900 },
+            { index: 1, path: "readme.txt", size_bytes: 100, selected: false, downloaded_bytes: 0 },
+        ],
+    };
+
+    it("maps upload, peers and info hash onto the task", () => {
+        const task = normalizeApiTask(rawTorrent);
+        expect(task.peersConnected).toBe(7);
+        expect(task.infoHash).toBe("abc");
+        expect(task.uploadSpeed).toBe(0);
+    });
+
+    it("computes the share ratio from uploaded over downloaded", () => {
+        expect(normalizeApiTask(rawTorrent).ratio).toBe(0.5);
+    });
+
+    it("leaves the ratio undefined when nothing has downloaded", () => {
+        const task = normalizeApiTask({ ...rawTorrent, downloaded_bytes: 0 });
+        expect(task.ratio).toBeUndefined();
+    });
+
+    it("maps the file list, keeping the selection", () => {
+        const task = normalizeApiTask(rawTorrent);
+        expect(task.files).toHaveLength(2);
+        expect(task.files?.[0].path).toBe("video.mkv");
+        expect(task.files?.[0].selected).toBe(true);
+        expect(task.files?.[1].downloadedBytes).toBe(0);
+    });
+
+    it("leaves files undefined for a task that is not a torrent", () => {
+        const task = normalizeApiTask({ ...rawTorrent, files: undefined });
+        expect(task.files).toBeUndefined();
+    });
+
+    it("never invents seeders or leechers", () => {
+        // rqbit reports connected peers and never splits the swarm.
+        const task = normalizeApiTask(rawTorrent);
+        expect(task.seeders).toBeUndefined();
+        expect(task.leechers).toBeUndefined();
+    });
+});
+
+describe("normalizeTorrentFiles", () => {
+    it("returns undefined when the key is absent", () => {
+        expect(normalizeTorrentFiles({ progress: 10 })).toBeUndefined();
+    });
+
+    it("returns undefined for a malformed array", () => {
+        expect(normalizeTorrentFiles({ files: "nope" })).toBeUndefined();
+    });
+});
+
+describe("seeding status", () => {
+    it("has a label rather than rendering as unknown", () => {
+        expect(statusView("seeding")).toEqual({ key: "seeding", label: "Seeding" });
+    });
+
+    it("is not resumable through the ordinary controls", () => {
+        expect(canResume("seeding")).toBe(false);
+    });
+
+    it("can be paused, since the engine accepts it", () => {
+        expect(canPause("seeding")).toBe(true);
+    });
+
+    it("can be stopped", () => {
+        expect(canStopSeeding("seeding")).toBe(true);
+        expect(canStopSeeding("downloading")).toBe(false);
+        expect(canStopSeeding("complete")).toBe(false);
+    });
+
+    it("is not counted as active, because nothing is still arriving", () => {
+        expect(isActive("seeding")).toBe(false);
+        expect(isSeeding("seeding")).toBe(true);
+        expect(isSeeding("complete")).toBe(false);
+        expect(isSeeding("downloading")).toBe(false);
     });
 });

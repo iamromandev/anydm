@@ -12,6 +12,7 @@ export type TaskStatus =
     | "downloading"
     | "muxing"
     | "paused"
+    | "seeding"
     | "complete"
     | "failed"
     | "canceled";
@@ -35,11 +36,26 @@ export type UiTask = {
     peersConnected: number;
     /** Present only while a segmented transfer is running. */
     segments?: SegmentView[];
-    /** Torrent-only, and absent until torrents are ported. */
+    /** Torrent-only. Absent for every other task. */
+    files?: TorrentFileView[];
+    /**
+     * Torrent-only, and never filled: the engine reports connected peers and
+     * does not split a swarm into seeders and leechers. Kept because the card
+     * hides what it has no value for.
+     */
     seeders?: number;
     leechers?: number;
     ratio?: number;
     infoHash?: string;
+};
+
+/** One file inside a torrent, and how much of it has landed. */
+export type TorrentFileView = {
+    index: number;
+    path: string;
+    sizeBytes: number;
+    selected: boolean;
+    downloadedBytes: number;
 };
 
 /** One byte range of the file, and how much of it has landed. */
@@ -96,6 +112,9 @@ export function segmentLayout(
 
 /** A FastAPI task row, flattened into the shape the components read. */
 export function normalizeApiTask(raw: any): UiTask {
+    const downloadedBytes = raw.downloaded_bytes ?? 0;
+    const uploadedBytes = raw.uploaded_bytes ?? 0;
+
     return {
         id: raw.id,
         title: raw.title || raw.filename || raw.source_url,
@@ -105,14 +124,37 @@ export function normalizeApiTask(raw: any): UiTask {
         progress: raw.progress ?? 0,
         eta: raw.eta_seconds ?? 0,
         error: raw.error ?? undefined,
-        downloadedBytes: raw.downloaded_bytes ?? 0,
+        downloadedBytes,
         totalBytes: raw.total_bytes ?? 0,
         downloadSpeed: raw.speed_bps ?? 0,
-        // Nothing uploads or has peers yet; these exist so the torrent rows the
-        // port will add render through the same component.
-        uploadSpeed: 0,
-        peersConnected: 0,
+        // The API tracks cumulative uploaded bytes, not a live upload rate, so
+        // this stays 0 unless a future API version adds one under this key.
+        uploadSpeed: raw.upload_speed_bps ?? 0,
+        peersConnected: raw.peers_connected ?? 0,
+        infoHash: raw.info_hash ?? undefined,
+        // Undefined rather than 0 when nothing has downloaded: the card hides
+        // a ratio it has no value for instead of claiming a ratio of zero.
+        ratio: downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
+        files: normalizeTorrentFiles(raw),
     };
+}
+
+/**
+ * The torrent's files, or `undefined` when there are none.
+ *
+ * `undefined` rather than `[]`, following the same rule `normalizeSegments`
+ * uses: the API omits the key for anything that is not a torrent, and a
+ * missing key means "not applicable" rather than "an empty torrent".
+ */
+export function normalizeTorrentFiles(raw: any): TorrentFileView[] | undefined {
+    if (!Array.isArray(raw?.files)) return undefined;
+    return raw.files.map((file: any) => ({
+        index: file.index ?? 0,
+        path: file.path ?? "",
+        sizeBytes: file.size_bytes ?? 0,
+        selected: file.selected ?? true,
+        downloadedBytes: file.downloaded_bytes ?? 0,
+    }));
 }
 
 /** What a status is called, and which icon key draws it. */
@@ -128,6 +170,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
     downloading: "Downloading",
     muxing: "Processing",
     paused: "Paused",
+    seeding: "Seeding",
     complete: "Complete",
     failed: "Failed",
     canceled: "Canceled",
@@ -148,7 +191,7 @@ export function statusView(status: string): StatusView {
 
 /** Statuses the API's own `pause` accepts. */
 export function canPause(status: string): boolean {
-    return status === "pending" || status === "downloading";
+    return status === "pending" || status === "downloading" || status === "seeding";
 }
 
 /** Statuses the API's own `resume` accepts — a retry is a resume of a failure. */
@@ -161,4 +204,14 @@ export function isActive(status: string): boolean {
     return (
         status === "pending" || status === "downloading" || status === "muxing"
     );
+}
+
+/** Still sharing a finished torrent. */
+export function isSeeding(status: string): boolean {
+    return status === "seeding";
+}
+
+/** Only a seeding torrent can be told to stop. */
+export function canStopSeeding(status: string): boolean {
+    return status === "seeding";
 }

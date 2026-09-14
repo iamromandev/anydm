@@ -15,6 +15,7 @@ import {
     LuGlobe,
     LuFileDown,
     LuRotateCcw,
+    LuUpload,
 } from "@/component/core/icons";
 import {
     canPause,
@@ -52,6 +53,7 @@ const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
     downloading: LuLoader2,
     muxing: LuLoader2,
     paused: LuPause,
+    seeding: LuUpload,
     complete: LuCheckCircle,
     failed: LuAlertTriangle,
     canceled: LuXCircle,
