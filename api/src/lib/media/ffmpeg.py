@@ -48,7 +48,7 @@ def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
 async def run(args: list[str]) -> None:
     """Run ffmpeg, raising an ``Error`` carrying its stderr tail on failure.
 
-    Retryable, and governed by ``MAX_ATTEMPTS`` like every other retryable
+    Retryable, and governed by ``DOWNLOAD_MAX_ATTEMPTS`` like every other retryable
     failure: the common cause is a truncated input, which a re-download fixes.
     A missing binary is not retryable — no number of attempts installs ffmpeg.
     """

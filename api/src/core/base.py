@@ -15,14 +15,31 @@ from tortoise.exceptions import DoesNotExist
 from tortoise.fields.db_defaults import Now
 from tortoise.query_utils import Prefetch
 
+from src.core.common import as_list
 
-class Base(models.Model):
+# Uniqueness rules live in ``Meta.constraints`` as ``UniqueConstraint``
+# (partial uniques carry ``condition=``), the same way platform declares them;
+# plain uniques use ``unique_together``. There is no custom index class here.
+#
+# Known gap, accepted deliberately: Tortoise 1.1.8 applies ``Meta.constraints``
+# only when an *existing* model's options change. ``CreateModel`` renders
+# ``unique_together`` and ``Meta.indexes`` and nothing else, so a database
+# built from scratch by ``make migrate`` gets none of these rules until an
+# ``AddConstraint`` reaches it. Existing databases keep the indexes they were
+# built with.
+
+
+class IdBase(models.Model):
+    """A UUID primary key and nothing else — no timestamps.
+
+    The bottom of the model ladder: ``IdBase`` → ``StampBase`` → ``Base`` →
+    ``SoftBase``. Each rung adds one column, so a model inherits exactly the
+    bookkeeping it wants rather than carrying a ``deleted_at`` it will never
+    set. Everything shared by every row — the Pydantic defaults,
+    ``db_fields``, ``from_query_result`` — is declared once, here.
+    """
+
     id: uuid.UUID = fields.UUIDField(primary_key=True, default=uuid.uuid4)
-    created_at: datetime = fields.DatetimeField(auto_now_add=True, db_index=True)
-    updated_at: datetime = fields.DatetimeField(
-        auto_now=True, db_index=True, db_default=Now()
-    )
-    deleted_at: datetime | None = fields.DatetimeField(null=True, db_index=True)
 
     class Meta:
         abstract = True
@@ -37,14 +54,6 @@ class Base(models.Model):
         allow_cycles = False
         sort_alphabetically = False
         model_config = ConfigDict(from_attributes=True)
-
-    async def soft_delete(self) -> None:
-        self.deleted_at = datetime.now(UTC)
-        await self.save()
-
-    @classmethod
-    def get_active(cls: type[Self]) -> queryset.QuerySet[Self]:
-        return cls.filter(deleted_at__isnull=True)
 
     @classmethod
     def db_fields(cls, excludes: list[str] | None = None) -> list[str]:
@@ -68,6 +77,48 @@ class Base(models.Model):
         return cls.construct(_saved_in_db=True, **mapped)
 
 
+class StampBase(IdBase):
+    """``IdBase`` plus ``created_at``, for rows that are written once and never edited.
+
+    Association rows and append-only records land here: they want to know when
+    they were made, and an ``updated_at`` on a row nothing updates is a column
+    that lies.
+    """
+
+    created_at: datetime = fields.DatetimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        abstract = True
+
+
+class Base(StampBase):
+    """``StampBase`` plus ``updated_at``. Soft delete is opt-in, via ``SoftBase``."""
+
+    updated_at: datetime = fields.DatetimeField(
+        auto_now=True, db_index=True, db_default=Now()
+    )
+
+    class Meta:
+        abstract = True
+
+
+class SoftBase(Base):
+    """``Base`` plus ``deleted_at``, the column every ``WHERE deleted_at IS NULL`` partial unique index keys off."""
+
+    deleted_at: datetime | None = fields.DatetimeField(null=True, db_index=True)
+
+    class Meta:
+        abstract = True
+
+    async def soft_delete(self) -> None:
+        self.deleted_at = datetime.now(UTC)
+        await self.save()
+
+    @classmethod
+    def get_active(cls: type[Self]) -> queryset.QuerySet[Self]:
+        return cls.filter(deleted_at__isnull=True)
+
+
 class CrudRepo[M: models.Model](ABC):
     """Common repository contract implemented by ``BaseRepo``."""
 
@@ -84,10 +135,7 @@ class CrudRepo[M: models.Model](ABC):
     async def get_or_none(self, **kwargs: Any) -> M | None: ...
 
     @abstractmethod
-    # No ``**kwargs`` here, unlike its neighbours: ``BaseRepo`` answers this
-    # one with three named options rather than a filter bag, and an abstract
-    # that accepted anything would be a promise no implementation keeps.
-    async def get_by_id(self, id: uuid.UUID) -> M | None: ...
+    async def get_by_id(self, id: uuid.UUID, **kwargs: Any) -> M | None: ...
 
     @abstractmethod
     async def get_one(self, *args: Any, **kwargs: Any) -> M | None: ...
@@ -183,8 +231,12 @@ class BaseRepo[M: models.Model]:
         select_related: str | Sequence[str] | None = None,
         prefetch_related: str | Sequence[str] | None = None,
         annotations: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> M | None:
-        query: queryset.QuerySet[M] = self._model.filter(id=id)
+        # The named options shape the query; ``kwargs`` narrows the row itself,
+        # so ``get_by_id(id, deleted_at__isnull=True)`` is one round trip rather
+        # than a fetch followed by a tombstone check.
+        query: queryset.QuerySet[M] = self._model.filter(id=id, **kwargs)
 
         # Apply select_related (JOINs for foreign keys)
         if select_related:
@@ -256,9 +308,7 @@ class BaseRepo[M: models.Model]:
             query = query.select_related(*select_related)
 
         if prefetch_related:
-            if isinstance(prefetch_related, str | Prefetch):
-                prefetch_related = [prefetch_related]
-            query = query.prefetch_related(*prefetch_related)
+            query = query.prefetch_related(*as_list(prefetch_related))
 
         # Apply annotations (like Count)
         if annotations:
@@ -294,9 +344,7 @@ class BaseRepo[M: models.Model]:
             query = query.select_related(*select_related)
 
         if prefetch_related:
-            if isinstance(prefetch_related, str | Prefetch):
-                prefetch_related = [prefetch_related]
-            query = query.prefetch_related(*prefetch_related)
+            query = query.prefetch_related(*as_list(prefetch_related))
 
         if annotations:
             query = query.annotate(**annotations)
@@ -339,9 +387,7 @@ class BaseRepo[M: models.Model]:
             query = query.select_related(*select_related)
 
         if prefetch_related:
-            if isinstance(prefetch_related, str | Prefetch):
-                prefetch_related = [prefetch_related]
-            query = query.prefetch_related(*prefetch_related)
+            query = query.prefetch_related(*as_list(prefetch_related))
 
         if annotations:
             query = query.annotate(**annotations)

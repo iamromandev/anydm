@@ -30,7 +30,7 @@ async def lifespan(_app: FastAPI):
     over — which is what makes ``uvicorn --reload`` survivable.
     """
     settings = get_settings()
-    Path(settings.downloads_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.download_dir).mkdir(parents=True, exist_ok=True)
 
     recovered = await TaskDatabaseRepo().recover_orphans()
     if recovered:
@@ -54,13 +54,14 @@ def create_app() -> FastAPI:
         debug=settings.debug,
         lifespan=lifespan,
     )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if settings.cors_origin_list:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origin_list,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     init_global_errors(app)
 

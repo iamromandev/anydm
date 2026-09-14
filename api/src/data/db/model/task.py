@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from tortoise import fields
 from tortoise.indexes import Index
 
-from src.core.base import Base
+from src.core.base import SoftBase
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 
-class Task(Base):
+class Task(SoftBase):
     """One download, from the request that created it to the file it produced."""
 
     # source
@@ -54,8 +55,18 @@ class Task(Base):
     #: observability, and so a second process needs no migration.
     heartbeat_at: datetime | None = fields.DatetimeField(null=True)
 
+    def __str__(self) -> str:
+        return (
+            f"[Task: id {self.id}, platform {self.platform}, kind {self.kind}, "
+            f"preset {self.preset}, status {self.status}, progress {self.progress}]"
+        )
+
     class Meta:
-        table = "download_task"
-        indexes = (
-            Index(fields=("status", "created_at"), name="idx_task_status_created"),
+        table: ClassVar[str] = "task"
+        table_description: ClassVar[str] = "Task"
+        ordering: ClassVar[list[str]] = ["-created_at"]
+        indexes: ClassVar[tuple[Index, ...]] = (
+            # The queue scan and the newest-first listing read the same two
+            # columns in the same order.
+            Index(fields=["status", "created_at"], name="idx_task_status_created"),
         )

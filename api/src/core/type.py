@@ -1,8 +1,14 @@
-"""Shared enums: string enums (``Status``, ``ErrorType``), ``Code`` (HTTP ints)."""
+"""Shared enums: string enums (``Status``, ``ErrorType``, ``Env``), ``Code`` (HTTP ints)."""
 
 from enum import IntEnum, StrEnum
 
 from starlette import status
+
+
+class Env(StrEnum):
+    LOCAL = "local"
+    DEV = "dev"
+    PROD = "prod"
 
 
 def _http_status(*attr_names: str) -> int:

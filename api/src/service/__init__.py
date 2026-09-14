@@ -36,7 +36,7 @@ def get_download_service() -> DownloadService:
         client=get_youtube_client(),
         control=get_download_control(),
         hub=get_event_hub(),
-        downloads_root=Path(settings.downloads_dir),
+        downloads_root=Path(settings.download_dir),
     )
 
 
@@ -51,7 +51,7 @@ def build_worker_pool() -> WorkerPool:
     downloader = Downloader(
         http_client,
         chunk_size=settings.download_chunk_size,
-        flush_interval_ms=settings.progress_flush_ms,
+        flush_interval_ms=settings.download_progress_flush_ms,
     )
     workers = [
         DownloadWorker(
@@ -62,8 +62,8 @@ def build_worker_pool() -> WorkerPool:
             post_processor=FfmpegPostProcessor(settings.ffmpeg_path),
             control=get_download_control(),
             hub=get_event_hub(),
-            downloads_root=Path(settings.downloads_dir),
-            max_attempts=settings.max_attempts,
+            downloads_root=Path(settings.download_dir),
+            max_attempts=settings.download_max_attempts,
         )
         for index in range(settings.download_workers)
     ]
