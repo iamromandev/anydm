@@ -64,6 +64,7 @@ def build_worker_pool() -> WorkerPool:
         http_client,
         chunk_size=settings.download_chunk_size,
         flush_interval_ms=settings.download_progress_flush_ms,
+        write_buffer_bytes=settings.download_write_buffer_bytes,
     )
     workers = [
         DownloadWorker(
