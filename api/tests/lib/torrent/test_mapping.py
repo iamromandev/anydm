@@ -1,12 +1,16 @@
 from typing import Any
 
+import pytest
+from src.data.type import TaskStatus
 from src.lib.torrent.mapping import (
     bps_from_mbps,
     eta_from,
     peers_from,
     progress_from_stats,
     progress_percent,
+    status_for,
 )
+from src.lib.torrent.protocol import TorrentProgress
 
 MIB = 1024 * 1024
 
@@ -127,3 +131,45 @@ def test_progress_percent_rounds_down_and_clamps() -> None:
 
 def test_progress_percent_of_an_unknown_total_is_zero() -> None:
     assert progress_percent(500, 0) == 0
+
+
+def _progress(state: str, *, finished: bool = False) -> TorrentProgress:
+    return TorrentProgress(
+        info_hash="abc",
+        state=state,
+        finished=finished,
+        progress_bytes=0,
+        uploaded_bytes=0,
+        total_bytes=100,
+        download_bps=0,
+        upload_bps=0,
+        peers_connected=0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "finished", "expected"),
+    [
+        ("initializing", False, TaskStatus.DOWNLOADING),
+        ("live", False, TaskStatus.DOWNLOADING),
+        ("live", True, TaskStatus.SEEDING),
+        ("paused", False, TaskStatus.PAUSED),
+        ("error", False, TaskStatus.FAILED),
+        ("error", True, TaskStatus.FAILED),
+    ],
+)
+def test_status_for(state: str, finished: bool, expected: TaskStatus) -> None:
+    assert status_for(_progress(state, finished=finished), TaskStatus.DOWNLOADING) == expected
+
+
+def test_a_stopped_seed_stays_complete() -> None:
+    """Stopping seeding pauses the engine. That pause must not un-complete the row."""
+    assert status_for(_progress("paused", finished=True), TaskStatus.COMPLETE) == TaskStatus.COMPLETE
+
+
+def test_a_canceled_row_is_never_revived() -> None:
+    assert status_for(_progress("live"), TaskStatus.CANCELED) == TaskStatus.CANCELED
+
+
+def test_a_failed_torrent_recovers_when_the_engine_does() -> None:
+    assert status_for(_progress("live"), TaskStatus.FAILED) == TaskStatus.DOWNLOADING

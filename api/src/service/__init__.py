@@ -15,6 +15,7 @@ from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.post_process import FfmpegPostProcessor
 from src.service.download.segmented import SegmentedDownloader
+from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.health import HealthService as HealthService
 
@@ -72,6 +73,21 @@ def get_torrent_service() -> TorrentService:
         client=get_torrent_client(),
         hub=get_event_hub(),
         torrent_root=Path(settings.torrent_dir).resolve(),
+        enabled=settings.torrent_enabled,
+    )
+
+
+@lru_cache
+def get_torrent_monitor() -> TorrentMonitor:
+    """One monitor per process, because it is a singleton background loop."""
+    settings = get_settings()
+    return TorrentMonitor(
+        repo=TaskDatabaseRepo(),
+        file_repo=TorrentFileDatabaseRepo(),
+        client=get_torrent_client(),
+        hub=get_event_hub(),
+        poll_ms=settings.torrent_poll_ms,
+        torrent_root=str(Path(settings.torrent_dir).resolve()),
         enabled=settings.torrent_enabled,
     )
 

@@ -13,7 +13,7 @@ from src.core.error import init_global_errors
 from src.data.db import init_db
 from src.data.repo import TaskDatabaseRepo
 from src.route import router as _router
-from src.service import build_worker_pool
+from src.service import build_worker_pool, close_torrent_client, get_torrent_monitor
 
 
 @asynccontextmanager
@@ -28,9 +28,14 @@ async def lifespan(_app: FastAPI):
     is gone. ``downloaded_bytes`` survives and the ``.part`` files stay on disk,
     so each requeued task resumes from where it stopped rather than starting
     over — which is what makes ``uvicorn --reload`` survivable.
+
+    The torrent monitor runs beside the worker pool, never inside it: rqbit
+    performs every torrent's transfer, so a torrent must never occupy a
+    download worker's slot.
     """
     settings = get_settings()
     Path(settings.download_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.torrent_dir).mkdir(parents=True, exist_ok=True)
 
     recovered = await TaskDatabaseRepo().recover_orphans()
     if recovered:
@@ -38,10 +43,14 @@ async def lifespan(_app: FastAPI):
 
     pool = build_worker_pool()
     await pool.start()
+    monitor = get_torrent_monitor()
+    await monitor.start()
     try:
         yield
     finally:
+        await monitor.stop()
         await pool.stop()
+        await close_torrent_client()
 
 
 def create_app() -> FastAPI:

@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from src.data.type import TaskStatus
 from src.lib.torrent.protocol import TorrentProgress
 
 MIB = 1024 * 1024
@@ -90,3 +91,25 @@ def progress_percent(downloaded: int, total: int) -> int:
     if total <= 0:
         return 0
     return max(0, min(100, int(downloaded * 100 // total)))
+
+
+def status_for(progress: TorrentProgress, current: TaskStatus) -> TaskStatus:
+    """What a task's status becomes, given one engine sample.
+
+    Total, and deliberately ordered. The two decisions the engine cannot make
+    come first: a row the user finished with stays finished, and a soft-deleted
+    row stays dead. Everything after that is the engine's own state.
+
+    ``complete`` is reachable only by a person pressing stop-seeding. The engine
+    never produces it, because a finished torrent that is still sharing is
+    ``seeding``, which is not terminal.
+    """
+    if current in (TaskStatus.COMPLETE, TaskStatus.CANCELED):
+        return current
+    if progress.state == "error":
+        return TaskStatus.FAILED
+    if progress.state == "paused":
+        return TaskStatus.PAUSED
+    if progress.finished:
+        return TaskStatus.SEEDING
+    return TaskStatus.DOWNLOADING

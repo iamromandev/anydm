@@ -96,3 +96,8 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
 
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
         return await self.get_by_id(task_id, deleted_at__isnull=True)
+
+    async def torrents_to_watch(self) -> list[Task]:
+        return await Task.filter(platform=Platform.TORRENT, deleted_at__isnull=True).order_by(
+            "created_at"
+        )

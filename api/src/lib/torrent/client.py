@@ -83,6 +83,10 @@ class RqbitClient:
     def _tag(self) -> str:
         return self.__class__.__name__
 
+    async def aclose(self) -> None:
+        """Close the underlying connection pool. Call once, at shutdown."""
+        await self._http.aclose()
+
     async def ping(self) -> bool:
         try:
             response = await self._http.get(f"{self._base}/torrents")

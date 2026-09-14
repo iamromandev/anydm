@@ -44,3 +44,14 @@ class TaskRepo(CrudRepo[Task]):
     @abstractmethod
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
         ...
+
+    @abstractmethod
+    async def torrents_to_watch(self) -> list[Task]:
+        """Every torrent row the monitor should mirror.
+
+        Soft-deleted rows are excluded because cancelling removed the torrent
+        from the engine too. Terminal statuses are deliberately *not* excluded:
+        a failed torrent whose engine recovers should come back to life, and a
+        complete one is guarded inside ``status_for``.
+        """
+        ...
