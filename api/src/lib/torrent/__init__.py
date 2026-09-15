@@ -10,9 +10,9 @@ from .mapping import peers_from as peers_from
 from .mapping import progress_from_stats as progress_from_stats
 from .mapping import progress_percent as progress_percent
 from .mapping import status_for as status_for
+from .protocol import FileInfo as FileInfo
 from .protocol import TorrentClient as TorrentClient
 from .protocol import TorrentDetails as TorrentDetails
-from .protocol import TorrentFileInfo as TorrentFileInfo
 from .protocol import TorrentProgress as TorrentProgress
 from .source import TorrentSource as TorrentSource
 from .source import parse_source as parse_source

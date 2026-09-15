@@ -19,8 +19,8 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.repo.download.interface import TaskRepo, TorrentFileRepo
-from src.data.schema.download import TaskSchema, TorrentFileSchema, TorrentResolveResponse
+from src.data.repo.download.interface import FileRepo, TaskRepo
+from src.data.schema.download import FileSchema, TaskSchema, TorrentResolveResponse
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
@@ -31,7 +31,7 @@ class TorrentService(BaseService):
     def __init__(
         self,
         repo: TaskRepo,
-        file_repo: TorrentFileRepo,
+        file_repo: FileRepo,
         client: TorrentClient,
         hub: EventHub,
         torrent_root: Path,
@@ -60,7 +60,7 @@ class TorrentService(BaseService):
             title=details.name,
             total_bytes=sum(file.size_bytes for file in details.files),
             files=[
-                TorrentFileSchema(
+                FileSchema(
                     index=file.index,
                     path=file.path,
                     size_bytes=file.size_bytes,

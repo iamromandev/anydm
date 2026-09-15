@@ -15,7 +15,7 @@ from src.lib.torrent.source import TorrentSource
 
 
 @dataclass(frozen=True, slots=True)
-class TorrentFileInfo:
+class FileInfo:
     """One file inside a torrent.
 
     ``index`` is the file's position in the torrent, which is what rqbit's
@@ -33,7 +33,7 @@ class TorrentDetails:
     info_hash: str
     name: str
     output_folder: str
-    files: list[TorrentFileInfo] = field(default_factory=list)
+    files: list[FileInfo] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ class TorrentProgress:
     peers_connected: int
     eta_seconds: int | None = None
     error: str | None = None
-    #: Bytes downloaded per file, indexed the same way ``TorrentFileInfo.index`` is.
+    #: Bytes downloaded per file, indexed the same way ``FileInfo.index`` is.
     file_progress: list[int] = field(default_factory=list)
 
 

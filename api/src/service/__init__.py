@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 
 from src.config import get_settings
-from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo, TorrentFileDatabaseRepo
+from src.data.repo import FileDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
 from src.lib.event import get_event_hub
 from src.lib.torrent.client import RqbitClient
 from src.lib.youtube.client import get_youtube_client
@@ -70,7 +70,7 @@ def get_torrent_service() -> TorrentService:
     settings = get_settings()
     return TorrentService(
         repo=TaskDatabaseRepo(),
-        file_repo=TorrentFileDatabaseRepo(),
+        file_repo=FileDatabaseRepo(),
         client=get_torrent_client(),
         hub=get_event_hub(),
         torrent_root=Path(settings.torrent_dir).resolve(),
@@ -84,7 +84,7 @@ def get_torrent_monitor() -> TorrentMonitor:
     settings = get_settings()
     return TorrentMonitor(
         repo=TaskDatabaseRepo(),
-        file_repo=TorrentFileDatabaseRepo(),
+        file_repo=FileDatabaseRepo(),
         client=get_torrent_client(),
         hub=get_event_hub(),
         poll_ms=settings.torrent_poll_ms,

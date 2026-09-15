@@ -4,15 +4,15 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from src.data.db.model import TorrentFile
+from src.data.db.model import File
 
 #: ``(index, path, size_bytes, selected)``. A tuple rather than the service
-#: layer's ``TorrentFileInfo`` for the same reason ``SegmentRepo`` takes
-#: triples: the data layer imports nothing from ``src.lib`` or ``src.service``.
+#: layer's ``FileInfo`` for the same reason ``SegmentRepo`` takes triples: the
+#: data layer imports nothing from ``src.lib`` or ``src.service``.
 FileRow = tuple[int, str, int, bool]
 
 
-class TorrentFileRepo(ABC):
+class FileRepo(ABC):
     @abstractmethod
     async def replace(self, task_id: uuid.UUID, files: Sequence[FileRow]) -> None:
         """Make the stored file list exactly ``files``.
@@ -23,7 +23,7 @@ class TorrentFileRepo(ABC):
         ...
 
     @abstractmethod
-    async def list_for(self, task_id: uuid.UUID) -> list[TorrentFile]:
+    async def list_for(self, task_id: uuid.UUID) -> list[File]:
         """Every file row, in torrent order."""
         ...
 

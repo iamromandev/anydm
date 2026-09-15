@@ -19,7 +19,7 @@ from loguru import logger
 
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.mapping import progress_from_stats
-from src.lib.torrent.protocol import TorrentDetails, TorrentFileInfo, TorrentProgress
+from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
 
 
@@ -48,7 +48,7 @@ def _details_of(payload: Mapping[str, Any]) -> TorrentDetails:
     details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else payload
 
     files = [
-        TorrentFileInfo(
+        FileInfo(
             index=index,
             path=str(raw.get("name") or ""),
             size_bytes=int(raw.get("length") or 0),

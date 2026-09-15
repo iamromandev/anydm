@@ -19,7 +19,7 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
-from src.data.repo.download.interface import TaskRepo, TorrentFileRepo
+from src.data.repo.download.interface import FileRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import TaskStatus
 from src.lib.event import EventHub
@@ -32,7 +32,7 @@ class TorrentMonitor:
     def __init__(
         self,
         repo: TaskRepo,
-        file_repo: TorrentFileRepo,
+        file_repo: FileRepo,
         client: TorrentClient,
         hub: EventHub,
         poll_ms: int,

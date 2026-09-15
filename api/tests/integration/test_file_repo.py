@@ -1,6 +1,6 @@
 import pytest
 from src.data.db.model import Task
-from src.data.repo import TorrentFileDatabaseRepo
+from src.data.repo import FileDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 pytestmark = pytest.mark.integration
@@ -20,7 +20,7 @@ async def _task() -> Task:
 @pytest.mark.asyncio
 async def test_replace_writes_every_file(db: None) -> None:
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
 
     await repo.replace(
         task.id,
@@ -39,7 +39,7 @@ async def test_replace_writes_every_file(db: None) -> None:
 async def test_replace_is_idempotent(db: None) -> None:
     """Reconciliation re-adds a torrent; its file rows must not double."""
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
 
     await repo.replace(task.id, [(0, "video.mkv", 900, True)])
     await repo.replace(task.id, [(0, "video.mkv", 900, True)])
@@ -50,7 +50,7 @@ async def test_replace_is_idempotent(db: None) -> None:
 @pytest.mark.asyncio
 async def test_selected_indexes_are_sorted_and_filtered(db: None) -> None:
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
 
     await repo.replace(
         task.id,
@@ -63,7 +63,7 @@ async def test_selected_indexes_are_sorted_and_filtered(db: None) -> None:
 @pytest.mark.asyncio
 async def test_selected_size_sums_only_the_selection(db: None) -> None:
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
 
     await repo.replace(task.id, [(0, "a.mkv", 10, True), (1, "b.txt", 20, False)])
 
@@ -73,7 +73,7 @@ async def test_selected_size_sums_only_the_selection(db: None) -> None:
 @pytest.mark.asyncio
 async def test_flush_progress_writes_by_index(db: None) -> None:
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
     await repo.replace(task.id, [(0, "a.mkv", 100, True), (1, "b.mkv", 200, True)])
 
     await repo.flush_progress(task.id, [40, 80])
@@ -86,7 +86,7 @@ async def test_flush_progress_writes_by_index(db: None) -> None:
 async def test_flush_progress_ignores_a_short_or_long_array(db: None) -> None:
     """The engine's array and our rows can disagree for one tick after a change."""
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
     await repo.replace(task.id, [(0, "a.mkv", 100, True), (1, "b.mkv", 200, True)])
 
     await repo.flush_progress(task.id, [40])
@@ -99,7 +99,7 @@ async def test_flush_progress_ignores_a_short_or_long_array(db: None) -> None:
 @pytest.mark.asyncio
 async def test_empty_task_reads_cleanly(db: None) -> None:
     task = await _task()
-    repo = TorrentFileDatabaseRepo()
+    repo = FileDatabaseRepo()
 
     assert await repo.list_for(task.id) == []
     assert await repo.selected_indexes(task.id) == []
