@@ -90,10 +90,19 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
             return;
         }
 
+        // Recomputed here rather than closing over the outer `activeKind`:
+        // that value is captured once when this handler's QRL is created —
+        // typically on the very first render, while the input is still
+        // empty — and never refreshes as the user types. Reading `store.kind`
+        // and `store.value` directly keeps this in step with what is on
+        // screen right now.
+        const kindNow =
+            store.kind === "auto" ? detectKind(store.value) : store.kind;
+
         let type: "magnet" | "url" | "file" = "url";
-        if (activeKind === "magnet") type = "magnet";
-        if (activeKind === "torrent") type = "url";
-        if (activeKind === "youtube") type = "url";
+        if (kindNow === "magnet") type = "magnet";
+        if (kindNow === "torrent") type = "url";
+        if (kindNow === "youtube") type = "url";
 
         store.isLoading = true;
         store.error = "";
@@ -101,7 +110,7 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
             await onSubmit({
                 type,
                 value,
-                preset: activeKind === "youtube" ? store.preset : undefined,
+                preset: kindNow === "youtube" ? store.preset : undefined,
             });
             store.value = "";
         } catch (err) {
