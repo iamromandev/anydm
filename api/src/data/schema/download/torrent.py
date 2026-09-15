@@ -7,7 +7,7 @@ from pydantic import Field
 from src.core.base import BaseSchema
 
 
-class TorrentFileSchema(BaseSchema):
+class FileSchema(BaseSchema):
     """One file inside a torrent, as the API reports it."""
 
     index: int
@@ -33,7 +33,7 @@ class TorrentResolveResponse(BaseSchema):
     info_hash: str
     title: str = ""
     total_bytes: int = 0
-    files: list[TorrentFileSchema] = Field(default_factory=list)
+    files: list[FileSchema] = Field(default_factory=list)
 
 
 class TorrentDownloadRequest(BaseSchema):

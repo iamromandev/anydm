@@ -8,7 +8,7 @@ import {
     isSeeding,
     normalizeApiTask,
     normalizeSegments,
-    normalizeTorrentFiles,
+    normalizeFiles,
     segmentLayout,
     statusView,
 } from "./task";
@@ -268,13 +268,13 @@ describe("torrent fields", () => {
     });
 });
 
-describe("normalizeTorrentFiles", () => {
+describe("normalizeFiles", () => {
     it("returns undefined when the key is absent", () => {
-        expect(normalizeTorrentFiles({ progress: 10 })).toBeUndefined();
+        expect(normalizeFiles({ progress: 10 })).toBeUndefined();
     });
 
     it("returns undefined for a malformed array", () => {
-        expect(normalizeTorrentFiles({ files: "nope" })).toBeUndefined();
+        expect(normalizeFiles({ files: "nope" })).toBeUndefined();
     });
 });
 

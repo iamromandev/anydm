@@ -7,7 +7,7 @@ from tortoise import fields
 from src.core.base import LinkBase
 
 
-class TorrentFile(LinkBase):
+class File(LinkBase):
     """One file inside a torrent, and whether the user asked for it.
 
     Selection lives in the database rather than only in the engine because it
@@ -23,6 +23,12 @@ class TorrentFile(LinkBase):
     that folder, which is what keeps this column free of absolute paths.
     """
 
+    # ``related_name`` deliberately does not say "files": ``TaskSchema`` has a
+    # field of that exact name, and ``TaskSchema.model_validate(task)`` reads
+    # attributes by name. A related_name of "files" shadows the intended list
+    # with Tortoise's raw ``ReverseRelation`` manager and fails validation for
+    # every task, torrent or not — this is what broke the whole worker suite
+    # the first time this was tried.
     task = fields.ForeignKeyField(
         "model.Task", related_name="torrent_files", on_delete=fields.CASCADE
     )
@@ -34,10 +40,10 @@ class TorrentFile(LinkBase):
     downloaded_bytes: int = fields.BigIntField(default=0)
 
     def __str__(self) -> str:
-        return f"[TorrentFile: task {self.task_id}, index {self.index}, path {self.path}]"
+        return f"[File: task {self.task_id}, index {self.index}, path {self.path}]"
 
     class Meta:
-        table: ClassVar[str] = "torrent_file"
-        table_description: ClassVar[str] = "TorrentFile"
+        table: ClassVar[str] = "file"
+        table_description: ClassVar[str] = "File"
         ordering: ClassVar[list[str]] = ["index"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("task", "index"),)

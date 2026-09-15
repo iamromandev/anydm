@@ -7,7 +7,7 @@ from src.core.error import Error
 from src.core.type import Code
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
-from src.lib.torrent.protocol import TorrentDetails, TorrentFileInfo
+from src.lib.torrent.protocol import FileInfo, TorrentDetails
 from src.service.download.torrent_service import TorrentService
 
 MAGNET = "magnet:?xt=urn:btih:abc123"
@@ -17,8 +17,8 @@ DETAILS = TorrentDetails(
     name="Some Release",
     output_folder="/workdir/download/torrent/Some Release",
     files=[
-        TorrentFileInfo(index=0, path="video.mkv", size_bytes=900),
-        TorrentFileInfo(index=1, path="readme.txt", size_bytes=100),
+        FileInfo(index=0, path="video.mkv", size_bytes=900),
+        FileInfo(index=1, path="readme.txt", size_bytes=100),
     ],
 )
 

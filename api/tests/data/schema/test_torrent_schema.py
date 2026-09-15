@@ -3,9 +3,9 @@ import uuid
 import pytest
 from pydantic import ValidationError
 from src.data.schema.download import (
+    FileSchema,
     TaskSchema,
     TorrentDownloadRequest,
-    TorrentFileSchema,
     TorrentResolveRequest,
     TorrentResolveResponse,
 )
@@ -23,8 +23,8 @@ def test_resolve_response_carries_the_file_list() -> None:
         title="Some Release",
         total_bytes=1000,
         files=[
-            TorrentFileSchema(index=0, path="video.mkv", size_bytes=900, selected=True),
-            TorrentFileSchema(index=1, path="readme.txt", size_bytes=100, selected=False),
+            FileSchema(index=0, path="video.mkv", size_bytes=900, selected=True),
+            FileSchema(index=1, path="readme.txt", size_bytes=100, selected=False),
         ],
     )
     assert [f.index for f in response.files] == [0, 1]
@@ -52,7 +52,7 @@ def test_task_schema_exposes_the_torrent_fields() -> None:
         info_hash="abc",
         uploaded_bytes=512,
         peers_connected=7,
-        files=[TorrentFileSchema(index=0, path="video.mkv", size_bytes=900, selected=True)],
+        files=[FileSchema(index=0, path="video.mkv", size_bytes=900, selected=True)],
     )
     assert schema.info_hash == "abc"
     assert schema.uploaded_bytes == 512

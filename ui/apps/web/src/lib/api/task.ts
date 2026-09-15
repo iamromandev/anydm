@@ -37,7 +37,7 @@ export type UiTask = {
     /** Present only while a segmented transfer is running. */
     segments?: SegmentView[];
     /** Torrent-only. Absent for every other task. */
-    files?: TorrentFileView[];
+    files?: FileView[];
     /**
      * Torrent-only, and never filled: the engine reports connected peers and
      * does not split a swarm into seeders and leechers. Kept because the card
@@ -50,7 +50,7 @@ export type UiTask = {
 };
 
 /** One file inside a torrent, and how much of it has landed. */
-export type TorrentFileView = {
+export type FileView = {
     index: number;
     path: string;
     sizeBytes: number;
@@ -136,7 +136,7 @@ export function normalizeApiTask(raw: any): UiTask {
         // a ratio it has no value for instead of claiming a ratio of zero.
         ratio:
             downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
-        files: normalizeTorrentFiles(raw),
+        files: normalizeFiles(raw),
     };
 }
 
@@ -147,7 +147,7 @@ export function normalizeApiTask(raw: any): UiTask {
  * uses: the API omits the key for anything that is not a torrent, and a
  * missing key means "not applicable" rather than "an empty torrent".
  */
-export function normalizeTorrentFiles(raw: any): TorrentFileView[] | undefined {
+export function normalizeFiles(raw: any): FileView[] | undefined {
     if (!Array.isArray(raw?.files)) return undefined;
     return raw.files.map((file: any) => ({
         index: file.index ?? 0,

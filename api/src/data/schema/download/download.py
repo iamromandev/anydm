@@ -7,7 +7,7 @@ from typing import Annotated
 from pydantic import Field
 
 from src.core.base import BaseSchema
-from src.data.schema.download.torrent import TorrentFileSchema
+from src.data.schema.download.torrent import FileSchema
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 
@@ -42,7 +42,7 @@ class TaskSchema(BaseSchema):
     peers_connected: int = 0
     #: ``None`` rather than ``[]`` on purpose: a missing key means "this is not
     #: a torrent", which is the same rule ``segments`` already follows.
-    files: list[TorrentFileSchema] | None = None
+    files: list[FileSchema] | None = None
     file_size: int | None = None
     error: str | None = None
     error_code: str | None = None
