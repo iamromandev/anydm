@@ -1,5 +1,7 @@
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
 from src.config.settings import Settings
 
 
@@ -65,8 +67,20 @@ def test_http_pool_covers_every_worker_times_every_segment() -> None:
 
 
 def test_segments_must_be_at_least_one() -> None:
-    import pytest
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         _settings(download_segments=0)
+
+
+def test_torrent_defaults() -> None:
+    settings = _settings()
+    assert settings.torrent_enabled is True
+    assert settings.torrent_api_url == "http://torrent-anydm-api:3030"
+    assert settings.torrent_dir == "./download/torrent"
+    assert settings.torrent_poll_ms == 1000
+    assert settings.torrent_metadata_timeout_s == 30
+    assert settings.torrent_request_timeout_s == 10
+
+
+def test_torrent_poll_ms_has_a_floor() -> None:
+    with pytest.raises(ValidationError):
+        _settings(torrent_poll_ms=100)

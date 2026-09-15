@@ -6,17 +6,21 @@ from typing import ClassVar
 from tortoise import fields
 from tortoise.indexes import Index
 
-from src.core.base import SoftBase
+from src.core.base import Base
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 
-class Task(SoftBase):
+class Task(Base):
     """One download, from the request that created it to the file it produced."""
 
     # source
     source_url: str = fields.TextField()
     platform: Platform = fields.CharEnumField(Platform, max_length=16, db_index=True)
     video_id: str | None = fields.CharField(max_length=64, null=True, db_index=True)
+    #: The torrent's info hash, and the only torrent identifier stored. rqbit
+    #: accepts it anywhere it accepts its own numeric id, and that numeric id
+    #: does not survive a restart of the engine.
+    info_hash: str | None = fields.CharField(max_length=40, null=True, db_index=True)
 
     # request
     preset: Preset = fields.CharEnumField(Preset, max_length=8)
@@ -38,6 +42,12 @@ class Task(SoftBase):
     total_bytes: int | None = fields.BigIntField(null=True)
     speed_bps: int = fields.BigIntField(default=0)
     eta_seconds: int | None = fields.IntField(null=True)
+    #: Torrent-only. Stored rather than computed so the share ratio the card
+    #: draws needs no second source.
+    uploaded_bytes: int = fields.BigIntField(default=0)
+    #: Torrent-only. Stored so a reconnecting browser sees a peer count at once
+    #: instead of waiting for the next monitor tick.
+    peers_connected: int = fields.IntField(default=0)
 
     # result
     file_path: str | None = fields.CharField(max_length=1024, null=True)

@@ -116,3 +116,64 @@ async def test_get_active_by_id_ignores_soft_deleted(db: None) -> None:
     assert await repo.get_active_by_id(task.id) is not None
     await task.soft_delete()
     assert await repo.get_active_by_id(task.id) is None
+
+
+async def test_recover_orphans_leaves_torrents_alone(db: None) -> None:
+    """rqbit owns a torrent's transfer, and it survived the restart too."""
+    torrent = await Task.create(
+        source_url="magnet:?xt=urn:btih:abc",
+        platform=Platform.TORRENT,
+        preset=Preset.BEST,
+        kind=Kind.TORRENT,
+        status=TaskStatus.DOWNLOADING,
+        info_hash="abc",
+    )
+
+    await TaskDatabaseRepo().recover_orphans()
+
+    await torrent.refresh_from_db()
+    assert torrent.status == TaskStatus.DOWNLOADING
+
+
+async def test_claim_next_never_returns_a_torrent(db: None) -> None:
+    await Task.create(
+        source_url="magnet:?xt=urn:btih:abc",
+        platform=Platform.TORRENT,
+        preset=Preset.BEST,
+        kind=Kind.TORRENT,
+        status=TaskStatus.PENDING,
+        info_hash="abc",
+    )
+
+    assert await TaskDatabaseRepo().claim_next() is None
+
+
+async def test_torrents_to_watch_returns_live_torrent_rows_only(db: None) -> None:
+    watched = await Task.create(
+        source_url="magnet:?xt=urn:btih:abc",
+        platform=Platform.TORRENT,
+        preset=Preset.BEST,
+        kind=Kind.TORRENT,
+        status=TaskStatus.DOWNLOADING,
+        info_hash="abc",
+    )
+    await Task.create(
+        source_url="magnet:?xt=urn:btih:def",
+        platform=Platform.TORRENT,
+        preset=Preset.BEST,
+        kind=Kind.TORRENT,
+        status=TaskStatus.CANCELED,
+        info_hash="def",
+        deleted_at=now(),
+    )
+    await Task.create(
+        source_url="https://example.test/a.bin",
+        platform=Platform.DIRECT,
+        preset=Preset.BEST,
+        kind=Kind.FILE,
+        status=TaskStatus.DOWNLOADING,
+    )
+
+    rows = await TaskDatabaseRepo().torrents_to_watch()
+
+    assert [row.id for row in rows] == [watched.id]

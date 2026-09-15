@@ -4,15 +4,18 @@ from pathlib import Path
 import httpx
 
 from src.config import get_settings
-from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo
+from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo, TorrentFileDatabaseRepo
 from src.lib.event import get_event_hub
+from src.lib.torrent.client import RqbitClient
 from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
+from src.service.download import TorrentService as TorrentService
 from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.post_process import FfmpegPostProcessor
 from src.service.download.segmented import SegmentedDownloader
+from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.health import HealthService as HealthService
 
@@ -39,6 +42,54 @@ def get_download_service() -> DownloadService:
         control=get_download_control(),
         hub=get_event_hub(),
         downloads_root=Path(settings.download_dir),
+        torrents=get_torrent_service(),
+    )
+
+
+@lru_cache
+def get_torrent_client() -> RqbitClient:
+    """One client, one connection pool, for the life of the process.
+
+    The short timeout here is for control calls. Adding a torrent overrides it
+    with the metadata timeout, because waiting for a peer is not the same kind
+    of wait as asking the engine to pause something.
+    """
+    settings = get_settings()
+    return RqbitClient(
+        settings.torrent_api_url,
+        client=httpx.AsyncClient(timeout=httpx.Timeout(settings.torrent_request_timeout_s)),
+        metadata_timeout_s=settings.torrent_metadata_timeout_s,
+    )
+
+
+async def close_torrent_client() -> None:
+    await get_torrent_client().aclose()
+
+
+def get_torrent_service() -> TorrentService:
+    settings = get_settings()
+    return TorrentService(
+        repo=TaskDatabaseRepo(),
+        file_repo=TorrentFileDatabaseRepo(),
+        client=get_torrent_client(),
+        hub=get_event_hub(),
+        torrent_root=Path(settings.torrent_dir).resolve(),
+        enabled=settings.torrent_enabled,
+    )
+
+
+@lru_cache
+def get_torrent_monitor() -> TorrentMonitor:
+    """One monitor per process, because it is a singleton background loop."""
+    settings = get_settings()
+    return TorrentMonitor(
+        repo=TaskDatabaseRepo(),
+        file_repo=TorrentFileDatabaseRepo(),
+        client=get_torrent_client(),
+        hub=get_event_hub(),
+        poll_ms=settings.torrent_poll_ms,
+        torrent_root=str(Path(settings.torrent_dir).resolve()),
+        enabled=settings.torrent_enabled,
     )
 
 

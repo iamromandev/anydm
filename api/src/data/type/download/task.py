@@ -12,6 +12,7 @@ from tortoise.fields.base import StrEnum
 class Platform(StrEnum):
     YOUTUBE = "youtube"
     DIRECT = "direct"
+    TORRENT = "torrent"
 
 
 class Preset(StrEnum):
@@ -37,6 +38,9 @@ class Kind(StrEnum):
     #: An arbitrary fetched file — what ``Platform.DIRECT`` produces. It has no
     #: notion of stream quality, so no preset applies to it.
     FILE = "file"
+    #: A whole torrent, which may hold many files. The selected ones live in
+    #: ``torrent_file``; this row is the torrent itself.
+    TORRENT = "torrent"
 
 
 class TaskStatus(StrEnum):
@@ -44,6 +48,9 @@ class TaskStatus(StrEnum):
     DOWNLOADING = "downloading"
     MUXING = "muxing"
     PAUSED = "paused"
+    #: Every selected byte has landed and the torrent is still sharing. Not
+    #: terminal: the user can stop seeding, which is what moves it to COMPLETE.
+    SEEDING = "seeding"
     COMPLETE = "complete"
     FAILED = "failed"
     CANCELED = "canceled"

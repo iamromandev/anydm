@@ -1,5 +1,10 @@
 import { component$, $ } from "@qwik.dev/core";
-import { isActive, type UiTask } from "@/lib/api";
+import {
+    isActive,
+    isSeeding,
+    type ResolvedTorrent,
+    type UiTask,
+} from "@/lib/api";
 import { StatusBar } from "@/component/features/status-bar";
 import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
@@ -33,11 +38,14 @@ export interface AppShellProps {
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
     onRemove: (id: string) => void;
+    onStopSeeding: (id: string) => void;
     onAdd: (input: {
         type: "magnet" | "file" | "url";
         value: string;
         preset?: string;
+        files?: number[];
     }) => void;
+    onResolve: (torrent: string) => Promise<ResolvedTorrent>;
 }
 
 export const AppShell = component$<AppShellProps>(
@@ -59,7 +67,9 @@ export const AppShell = component$<AppShellProps>(
         onResume,
         onDownloadFile,
         onRemove,
+        onStopSeeding,
         onAdd,
+        onResolve,
     }) => {
         const noop = $(() => {});
 
@@ -73,8 +83,7 @@ export const AppShell = component$<AppShellProps>(
         const counts = {
             all: tasks.length,
             downloading: tasks.filter((t) => isActive(t.status)).length,
-            // Seeding arrives with the torrent port; nothing reaches it yet.
-            seeding: 0,
+            seeding: tasks.filter((t) => isSeeding(t.status)).length,
             completed: tasks.filter((t) => t.status === "complete").length,
         };
 
@@ -134,6 +143,7 @@ export const AppShell = component$<AppShellProps>(
                                 onResume={onResume}
                                 onDownloadFile={onDownloadFile}
                                 onRemove={onRemove}
+                                onStopSeeding={onStopSeeding}
                             />
                         </section>
                     </div>
@@ -145,6 +155,7 @@ export const AppShell = component$<AppShellProps>(
                     open={addModalOpen}
                     onClose={onAddModalClose}
                     onAdd={onAdd}
+                    onResolve={onResolve}
                 />
             </div>
         );

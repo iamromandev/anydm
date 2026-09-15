@@ -346,6 +346,7 @@ async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None
         control=DownloadControl(),
         hub=EventHub(),
         downloads_root=tmp_path,
+        torrents=None,  # ty: ignore[invalid-argument-type]  # this task is not a torrent
     )
     await service.cancel(task.id)
 

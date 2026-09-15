@@ -181,6 +181,20 @@ class Error(Exception, BaseMixin):
         )
 
     @classmethod
+    def service_unavailable(cls, message: str | None = None) -> Error:
+        """A dependency this service does not own is not answering.
+
+        ``retry_able`` is True because that is what it means: the caller, or a
+        worker, should try again rather than treat the request as wrong.
+        """
+        return cls(
+            code=Code.SERVICE_UNAVAILABLE,
+            message=message,
+            error_type=ErrorType.SERVICE_UNAVAILABLE,
+            retry_able=True,
+        )
+
+    @classmethod
     def not_found(
         cls,
         message: str | None = None,

@@ -2,6 +2,7 @@ import { component$, $, useStore, useVisibleTask$ } from "@qwik.dev/core";
 import "../style/global.css";
 import { AppShell } from "@/component/layouts/app-shell";
 import {
+    addTorrent,
     apiUrl,
     deleteApi,
     getApi,
@@ -9,6 +10,8 @@ import {
     normalizeApiTask,
     normalizeSegments,
     postApi,
+    resolveTorrent,
+    type ResolvedTorrent,
     type UiTask,
 } from "@/lib/api";
 
@@ -222,11 +225,18 @@ export default component$(() => {
         store.addModalOpen = false;
     });
 
+    const handleResolveTorrent = $(
+        (torrent: string): Promise<ResolvedTorrent> => {
+            return resolveTorrent(torrent);
+        },
+    );
+
     const handleAdd = $(
         async (input: {
             type: "magnet" | "file" | "url";
             value: string;
             preset?: string;
+            files?: number[];
         }) => {
             try {
                 if (input.type === "url") {
@@ -245,12 +255,7 @@ export default component$(() => {
                           })
                         : postApi("/download/url", { url: input.value }));
                 } else {
-                    // Torrents are not ported yet. This route will exist on the
-                    // same service when they are; until then the API answers
-                    // 404 and the modal surfaces it.
-                    await postApi("/download/torrent", {
-                        torrent: input.value,
-                    });
+                    await addTorrent(input.value, input.files ?? []);
                 }
             } catch (err) {
                 console.error(err);
@@ -261,6 +266,16 @@ export default component$(() => {
             syncTask();
         },
     );
+
+    const handleStopSeeding = $(async (taskId: string) => {
+        try {
+            await postApi(`/download/${taskId}/seed/stop`, {});
+        } catch (err) {
+            console.error(err);
+            return;
+        }
+        syncTask();
+    });
 
     return (
         <AppShell
@@ -282,6 +297,8 @@ export default component$(() => {
             onDownloadFile={handleDownloadFile}
             onRemove={handleRemove}
             onAdd={handleAdd}
+            onResolve={handleResolveTorrent}
+            onStopSeeding={handleStopSeeding}
         />
     );
 });

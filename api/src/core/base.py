@@ -32,7 +32,7 @@ from src.core.common import as_list
 class IdBase(models.Model):
     """A UUID primary key and nothing else — no timestamps.
 
-    The bottom of the model ladder: ``IdBase`` → ``Base`` → ``SoftBase``. Each
+    The bottom of the model ladder: ``IdBase`` → ``LinkBase`` → ``Base``. Each
     rung adds bookkeeping the one below it does without, so a model inherits
     exactly what it wants rather than carrying a ``deleted_at`` it will never
     set. Everything shared by every row — the Pydantic defaults,
@@ -77,8 +77,8 @@ class IdBase(models.Model):
         return cls.construct(_saved_in_db=True, **mapped)
 
 
-class Base(IdBase):
-    """``IdBase`` plus ``created_at`` and ``updated_at``. Soft delete is opt-in, via ``SoftBase``."""
+class LinkBase(IdBase):
+    """``IdBase`` plus ``created_at`` and ``updated_at``. Soft delete is opt-in, via ``Base``."""
 
     created_at: datetime = fields.DatetimeField(auto_now_add=True, db_index=True)
     updated_at: datetime = fields.DatetimeField(
@@ -89,8 +89,8 @@ class Base(IdBase):
         abstract = True
 
 
-class SoftBase(Base):
-    """``Base`` plus ``deleted_at``, the column every ``WHERE deleted_at IS NULL`` partial unique index keys off."""
+class Base(LinkBase):
+    """``LinkBase`` plus ``deleted_at``, the column every ``WHERE deleted_at IS NULL`` partial unique index keys off."""
 
     deleted_at: datetime | None = fields.DatetimeField(null=True, db_index=True)
 

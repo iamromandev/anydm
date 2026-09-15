@@ -47,7 +47,7 @@ class Migration(migrations.Migration):
                 ('heartbeat_at', fields.DatetimeField(null=True, description='Written by the progress flush. Startup recovery does not consult it —', auto_now=False, auto_now_add=False)),
             ],
             options={'table': 'task', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_task_status_created')], 'pk_attr': 'id', 'table_description': 'Task'},
-            bases=['SoftBase'],
+            bases=['Base'],
         ),
         ops.CreateModel(
             name='Segment',

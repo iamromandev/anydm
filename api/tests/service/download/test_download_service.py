@@ -93,8 +93,31 @@ class FakeSegmentRepo:
         self.cleared.append(task_id)
 
 
-def _service(downloads_dir: Path | None = None) -> tuple[DownloadService, FakeRepo]:
+class FakeTorrentService:
+    """Stands in for ``TorrentService`` in the branches ``DownloadService`` delegates to."""
+
+    def __init__(self) -> None:
+        self.paused: list[uuid.UUID] = []
+        self.resumed: list[uuid.UUID] = []
+        self.canceled: list[uuid.UUID] = []
+
+    async def pause(self, task_id: uuid.UUID) -> Any:
+        self.paused.append(task_id)
+        return type("Row", (), {"status": TaskStatus.PAUSED})()
+
+    async def resume(self, task_id: uuid.UUID) -> Any:
+        self.resumed.append(task_id)
+        return type("Row", (), {"status": TaskStatus.DOWNLOADING})()
+
+    async def cancel(self, task_id: uuid.UUID) -> None:
+        self.canceled.append(task_id)
+
+
+def _service(
+    downloads_dir: Path | None = None,
+) -> tuple[DownloadService, FakeRepo, FakeTorrentService]:
     repo = FakeRepo()
+    torrents = FakeTorrentService()
     service = DownloadService(
         repo=repo,  # ty: ignore[invalid-argument-type]
         segment_repo=FakeSegmentRepo(),  # ty: ignore[invalid-argument-type]
@@ -102,13 +125,14 @@ def _service(downloads_dir: Path | None = None) -> tuple[DownloadService, FakeRe
         control=DownloadControl(),
         hub=EventHub(),
         downloads_root=downloads_dir or Path("/tmp/anydm-test"),
+        torrents=torrents,  # ty: ignore[invalid-argument-type]
     )
-    return service, repo
+    return service, repo, torrents
 
 
 @pytest.mark.asyncio
 async def test_enqueue_writes_a_pending_row() -> None:
-    service, repo = _service()
+    service, repo, _ = _service()
     await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
 
     assert len(repo.created) == 1
@@ -122,7 +146,7 @@ async def test_enqueue_writes_a_pending_row() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_stores_the_resolved_plan() -> None:
-    service, repo = _service()
+    service, repo, _ = _service()
     await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
 
     row = repo.created[0]
@@ -135,7 +159,7 @@ async def test_enqueue_stores_the_resolved_plan() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_stores_an_mp3_plan() -> None:
-    service, repo = _service()
+    service, repo, _ = _service()
     await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.MP3)
 
     row = repo.created[0]
@@ -147,7 +171,7 @@ async def test_enqueue_stores_an_mp3_plan() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_rejects_a_non_youtube_url() -> None:
-    service, _ = _service()
+    service, _, _ = _service()
     with pytest.raises(Error) as caught:
         await service.enqueue_youtube("https://example.com/v", Preset.BEST)
     assert caught.value.code == 400
@@ -156,14 +180,14 @@ async def test_enqueue_rejects_a_non_youtube_url() -> None:
 @pytest.mark.asyncio
 async def test_a_taller_preset_than_available_falls_back_to_the_tallest() -> None:
     # 1080p is the tallest on offer, so 2160 degrades rather than failing.
-    service, repo = _service()
+    service, repo, _ = _service()
     await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P2160)
     assert repo.created[0]["video_itag"] == 137
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_rejects_an_incomplete_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING, file_path=None)
 
@@ -174,7 +198,7 @@ async def test_resolve_file_rejects_an_incomplete_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_file_returns_the_path_for_a_complete_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     target = tmp_path / str(task_id) / "clip.mp4"
     target.parent.mkdir(parents=True)
@@ -191,7 +215,7 @@ async def test_resolve_file_returns_the_path_for_a_complete_task(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_resolve_file_404s_when_the_row_is_gone(tmp_path: Path) -> None:
-    service, _ = _service(downloads_dir=tmp_path)
+    service, _, _ = _service(downloads_dir=tmp_path)
     with pytest.raises(Error) as caught:
         await service.resolve_file(uuid.uuid4())
     assert caught.value.code == 404
@@ -199,7 +223,7 @@ async def test_resolve_file_404s_when_the_row_is_gone(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_file_404s_when_the_file_vanished(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(
         task_id, status=TaskStatus.COMPLETE, file_path=f"{task_id}/gone.mp4", filename="gone.mp4"
@@ -211,7 +235,7 @@ async def test_resolve_file_404s_when_the_file_vanished(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_pause_stops_a_running_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING)
 
@@ -223,7 +247,7 @@ async def test_pause_stops_a_running_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_pause_also_works_on_a_queued_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.PENDING)
     assert (await service.pause(task_id)).status == TaskStatus.PAUSED
@@ -231,7 +255,7 @@ async def test_pause_also_works_on_a_queued_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_pause_rejects_a_completed_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE)
 
@@ -242,7 +266,7 @@ async def test_pause_rejects_a_completed_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resume_requeues_a_paused_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.PAUSED)
     service._control.request_stop(task_id)
@@ -255,7 +279,7 @@ async def test_resume_requeues_a_paused_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resume_clears_the_failure_state(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(
         task_id, status=TaskStatus.FAILED, error="boom", error_code="dependency_failure", attempts=3
@@ -271,7 +295,7 @@ async def test_resume_clears_the_failure_state(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_resume_rejects_a_running_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING)
 
@@ -282,7 +306,7 @@ async def test_resume_rejects_a_running_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_stops_the_task_and_removes_its_files(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()
     (tmp_path / str(task_id)).mkdir(parents=True)
     (tmp_path / str(task_id) / "video.part").write_bytes(b"x")
@@ -297,15 +321,51 @@ async def test_cancel_stops_the_task_and_removes_its_files(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_cancel_404s_on_an_unknown_task(tmp_path: Path) -> None:
-    service, _ = _service(downloads_dir=tmp_path)
+    service, _, _ = _service(downloads_dir=tmp_path)
     with pytest.raises(Error) as caught:
         await service.cancel(uuid.uuid4())
     assert caught.value.code == 404
 
 
 @pytest.mark.asyncio
+async def test_pause_delegates_a_torrent_to_the_torrent_service(tmp_path: Path) -> None:
+    service, repo, torrents = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, status=TaskStatus.DOWNLOADING)
+
+    result = await service.pause(task_id)
+
+    assert torrents.paused == [task_id]
+    assert result.status == TaskStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_resume_delegates_a_torrent_to_the_torrent_service(tmp_path: Path) -> None:
+    service, repo, torrents = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, status=TaskStatus.PAUSED)
+
+    result = await service.resume(task_id)
+
+    assert torrents.resumed == [task_id]
+    assert result.status == TaskStatus.DOWNLOADING
+
+
+@pytest.mark.asyncio
+async def test_cancel_delegates_a_torrent_to_the_torrent_service(tmp_path: Path) -> None:
+    """A torrent's files are the engine's to remove, not this service's."""
+    service, repo, torrents = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, status=TaskStatus.SEEDING)
+
+    await service.cancel(task_id)
+
+    assert torrents.canceled == [task_id]
+
+
+@pytest.mark.asyncio
 async def test_enqueue_url_writes_a_direct_task(tmp_path: Path) -> None:
-    service, repo = _service(downloads_dir=tmp_path)
+    service, repo, _ = _service(downloads_dir=tmp_path)
     await service.enqueue_url("https://cdn.test/files/report.pdf")
 
     row = repo.created[0]
@@ -320,7 +380,7 @@ async def test_enqueue_url_writes_a_direct_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_url_rejects_a_non_http_scheme(tmp_path: Path) -> None:
-    service, _ = _service(downloads_dir=tmp_path)
+    service, _, _ = _service(downloads_dir=tmp_path)
     with pytest.raises(Error) as caught:
         await service.enqueue_url("file:///etc/passwd")
     assert caught.value.code == 400

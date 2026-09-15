@@ -27,5 +27,15 @@ def test_active_statuses_are_the_ones_a_restart_must_requeue() -> None:
 
 
 def test_platform_and_kind_values() -> None:
-    assert {p.value for p in Platform} == {"youtube", "direct"}
-    assert {k.value for k in Kind} == {"video", "audio", "file"}
+    assert {p.value for p in Platform} == {"youtube", "direct", "torrent"}
+    assert {k.value for k in Kind} == {"video", "audio", "file", "torrent"}
+
+
+def test_seeding_is_a_status_and_is_not_terminal() -> None:
+    assert TaskStatus.SEEDING.value == "seeding"
+    assert TaskStatus.SEEDING.is_terminal is False
+
+
+def test_seeding_is_not_an_active_status() -> None:
+    """A seeding torrent is not mid-transfer, so a restart must not requeue it."""
+    assert TaskStatus.SEEDING not in ACTIVE_STATUSES

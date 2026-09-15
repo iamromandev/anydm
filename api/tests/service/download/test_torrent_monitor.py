@@ -1,0 +1,261 @@
+import uuid
+from typing import Any
+
+import pytest
+from src.core.error import Error
+from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.lib.event import EventHub
+from src.lib.torrent import error as torrent_error
+from src.lib.torrent.protocol import TorrentProgress
+from src.service.download.torrent_monitor import TorrentMonitor
+
+
+def _row(**overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "source_url": "magnet:?xt=urn:btih:abc",
+        "platform": Platform.TORRENT,
+        "video_id": None,
+        "preset": Preset.BEST,
+        "kind": Kind.TORRENT,
+        "title": "Some Release",
+        "filename": "Some Release",
+        "mime_type": None,
+        "info_hash": "abc",
+        "status": TaskStatus.PENDING,
+        "progress": 0,
+        "downloaded_bytes": 0,
+        "total_bytes": None,
+        "speed_bps": 0,
+        "eta_seconds": None,
+        "uploaded_bytes": 0,
+        "peers_connected": 0,
+        "file_path": "/workdir/download/torrent/Some Release",
+        "file_size": None,
+        "error": None,
+        "error_code": None,
+        "attempts": 0,
+        "next_attempt_at": None,
+        "deleted_at": None,
+        "created_at": None,
+        "started_at": None,
+        "completed_at": None,
+    }
+    fields.update(overrides)
+    row = type("Row", (), fields)()
+    row.saved_fields = []
+
+    async def _save(*_args: Any, update_fields: Any = None, **_kwargs: Any) -> None:
+        row.saved_fields.append(list(update_fields or []))
+
+    row.save = _save
+    return row
+
+
+def _sample(**overrides: Any) -> TorrentProgress:
+    fields: dict[str, Any] = {
+        "info_hash": "abc",
+        "state": "live",
+        "finished": False,
+        "progress_bytes": 500,
+        "uploaded_bytes": 100,
+        "total_bytes": 1000,
+        "download_bps": 4096,
+        "upload_bps": 512,
+        "peers_connected": 6,
+        "eta_seconds": 12,
+        "error": None,
+        "file_progress": [500],
+    }
+    fields.update(overrides)
+    return TorrentProgress(**fields)
+
+
+class FakeRepo:
+    def __init__(self, rows: list[Any]) -> None:
+        self.rows = rows
+
+    async def torrents_to_watch(self) -> list[Any]:
+        return list(self.rows)
+
+
+class FakeFileRepo:
+    def __init__(self, selected: list[int] | None = None) -> None:
+        self.flushed: list[tuple[uuid.UUID, list[int]]] = []
+        self.selected = selected or [0]
+
+    async def flush_progress(self, task_id: uuid.UUID, file_progress: Any) -> None:
+        self.flushed.append((task_id, list(file_progress)))
+
+    async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
+        return self.selected
+
+
+class FakeClient:
+    def __init__(self, samples: list[TorrentProgress] | None = None, *, fail: Error | None = None) -> None:
+        self.samples = samples or []
+        self.fail = fail
+        self.added: list[dict[str, Any]] = []
+
+    async def ping(self) -> bool:
+        return self.fail is None
+
+    async def list_progress(self) -> list[TorrentProgress]:
+        if self.fail:
+            raise self.fail
+        return list(self.samples)
+
+    async def add(self, source: Any, *, only_files: Any, output_folder: str) -> Any:
+        self.added.append({"only_files": list(only_files), "output_folder": output_folder})
+        return None
+
+    async def resolve(self, source: Any) -> Any: ...
+
+    async def pause(self, info_hash: str) -> None: ...
+
+    async def start(self, info_hash: str) -> None: ...
+
+    async def delete(self, info_hash: str) -> None: ...
+
+
+def _monitor(repo: Any, client: Any, file_repo: Any = None, hub: EventHub | None = None) -> TorrentMonitor:
+    return TorrentMonitor(
+        repo=repo,
+        file_repo=file_repo or FakeFileRepo(),  # ty: ignore[invalid-argument-type]
+        client=client,
+        hub=hub or EventHub(),
+        poll_ms=1000,
+        torrent_root="/workdir/download/torrent",
+        enabled=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tick_mirrors_a_sample_onto_the_row() -> None:
+    row = _row()
+    monitor = _monitor(FakeRepo([row]), FakeClient([_sample()]))
+
+    await monitor.tick()
+
+    assert row.status == TaskStatus.DOWNLOADING
+    assert row.progress == 50
+    assert row.downloaded_bytes == 500
+    assert row.total_bytes == 1000
+    assert row.speed_bps == 4096
+    assert row.uploaded_bytes == 100
+    assert row.peers_connected == 6
+    assert row.eta_seconds == 12
+
+
+@pytest.mark.asyncio
+async def test_tick_writes_per_file_progress() -> None:
+    row = _row()
+    files = FakeFileRepo()
+    await _monitor(FakeRepo([row]), FakeClient([_sample()]), files).tick()
+
+    assert files.flushed == [(row.id, [500])]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_torrent_becomes_seeding_and_is_stamped() -> None:
+    row = _row(status=TaskStatus.DOWNLOADING)
+    sample = _sample(finished=True, progress_bytes=1000, eta_seconds=None)
+
+    await _monitor(FakeRepo([row]), FakeClient([sample])).tick()
+
+    assert row.status == TaskStatus.SEEDING
+    assert row.progress == 100
+    assert row.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_an_errored_torrent_carries_the_engine_message() -> None:
+    row = _row(status=TaskStatus.DOWNLOADING)
+    sample = _sample(state="error", error="no space left on device")
+
+    await _monitor(FakeRepo([row]), FakeClient([sample])).tick()
+
+    assert row.status == TaskStatus.FAILED
+    assert row.error == "no space left on device"
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_written_when_nothing_changed() -> None:
+    row = _row(
+        status=TaskStatus.DOWNLOADING,
+        progress=50,
+        downloaded_bytes=500,
+        total_bytes=1000,
+        speed_bps=4096,
+        uploaded_bytes=100,
+        peers_connected=6,
+        eta_seconds=12,
+    )
+    monitor = _monitor(FakeRepo([row]), FakeClient([_sample()]))
+
+    await monitor.tick()
+
+    assert row.saved_fields == []
+
+
+@pytest.mark.asyncio
+async def test_every_tick_publishes_even_without_a_write() -> None:
+    hub = EventHub()
+    subscription = hub.subscribe()
+    row = _row(status=TaskStatus.DOWNLOADING, progress=50, downloaded_bytes=500,
+               total_bytes=1000, speed_bps=4096, uploaded_bytes=100,
+               peers_connected=6, eta_seconds=12)
+
+    await _monitor(FakeRepo([row]), FakeClient([_sample()]), hub=hub).tick()
+
+    event, data = await anext(aiter(subscription))
+    assert event == "task"
+    assert data["peers_connected"] == 6
+    subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_engine_leaves_rows_untouched() -> None:
+    row = _row(status=TaskStatus.DOWNLOADING)
+    client = FakeClient(fail=torrent_error.engine_unavailable("connection refused"))
+
+    await _monitor(FakeRepo([row]), client).tick()
+
+    assert row.status == TaskStatus.DOWNLOADING
+    assert row.saved_fields == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_engine_has_lost_is_re_added_with_its_selection() -> None:
+    row = _row(status=TaskStatus.DOWNLOADING)
+    client = FakeClient([])
+    files = FakeFileRepo(selected=[0, 2])
+
+    await _monitor(FakeRepo([row]), client, files).tick()
+
+    assert client.added == [
+        {"only_files": [0, 2], "output_folder": "/workdir/download/torrent"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_re_adding_happens_once_not_every_tick() -> None:
+    """Reconciliation is a startup job. A later tick must not re-add again."""
+    row = _row(status=TaskStatus.DOWNLOADING)
+    client = FakeClient([])
+    monitor = _monitor(FakeRepo([row]), client)
+
+    await monitor.tick()
+    await monitor.tick()
+
+    assert len(client.added) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_engine_still_has_is_adopted_not_re_added() -> None:
+    row = _row(status=TaskStatus.DOWNLOADING)
+    client = FakeClient([_sample()])
+
+    await _monitor(FakeRepo([row]), client).tick()
+
+    assert client.added == []
