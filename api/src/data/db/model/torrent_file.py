@@ -4,10 +4,10 @@ from typing import ClassVar
 
 from tortoise import fields
 
-from src.core.base import Base
+from src.core.base import LinkBase
 
 
-class TorrentFile(Base):
+class TorrentFile(LinkBase):
     """One file inside a torrent, and whether the user asked for it.
 
     Selection lives in the database rather than only in the engine because it

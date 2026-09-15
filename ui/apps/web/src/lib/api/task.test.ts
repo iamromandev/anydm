@@ -214,8 +214,20 @@ describe("torrent fields", () => {
         uploaded_bytes: 500,
         peers_connected: 7,
         files: [
-            { index: 0, path: "video.mkv", size_bytes: 900, selected: true, downloaded_bytes: 900 },
-            { index: 1, path: "readme.txt", size_bytes: 100, selected: false, downloaded_bytes: 0 },
+            {
+                index: 0,
+                path: "video.mkv",
+                size_bytes: 900,
+                selected: true,
+                downloaded_bytes: 900,
+            },
+            {
+                index: 1,
+                path: "readme.txt",
+                size_bytes: 100,
+                selected: false,
+                downloaded_bytes: 0,
+            },
         ],
     };
 
@@ -268,7 +280,10 @@ describe("normalizeTorrentFiles", () => {
 
 describe("seeding status", () => {
     it("has a label rather than rendering as unknown", () => {
-        expect(statusView("seeding")).toEqual({ key: "seeding", label: "Seeding" });
+        expect(statusView("seeding")).toEqual({
+            key: "seeding",
+            label: "Seeding",
+        });
     });
 
     it("is not resumable through the ordinary controls", () => {

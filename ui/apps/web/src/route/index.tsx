@@ -225,9 +225,11 @@ export default component$(() => {
         store.addModalOpen = false;
     });
 
-    const handleResolveTorrent = $((torrent: string): Promise<ResolvedTorrent> => {
-        return resolveTorrent(torrent);
-    });
+    const handleResolveTorrent = $(
+        (torrent: string): Promise<ResolvedTorrent> => {
+            return resolveTorrent(torrent);
+        },
+    );
 
     const handleAdd = $(
         async (input: {

@@ -22,7 +22,13 @@ export interface AddTorrentModalProps {
 
 function formatBytes(bytes: number): string {
     if (bytes === 0) return "0 B";
-    const units = ["B", "KB", "MB", "GB", "TB"];
+    const units = [
+        "B",
+        "KB",
+        "MB",
+        "GB",
+        "TB",
+    ];
     let size = bytes;
     let unitIndex = 0;
     while (size >= 1024 && unitIndex < units.length - 1) {
@@ -61,7 +67,9 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                 store.selected = resolved.files.map((file) => file.index);
             } catch (err) {
                 store.resolveError =
-                    err instanceof Error ? err.message : "Could not read that torrent";
+                    err instanceof Error
+                        ? err.message
+                        : "Could not read that torrent";
             } finally {
                 store.isResolving = false;
             }
@@ -70,11 +78,16 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
         const toggleFile = $((index: number) => {
             store.selected = store.selected.includes(index)
                 ? store.selected.filter((value) => value !== index)
-                : [...store.selected, index];
+                : [
+                      ...store.selected,
+                      index,
+                  ];
         });
 
         const selectAll = $(() => {
-            store.selected = (store.resolved?.files ?? []).map((file) => file.index);
+            store.selected = (store.resolved?.files ?? []).map(
+                (file) => file.index,
+            );
         });
 
         const selectNone = $(() => {
@@ -117,7 +130,8 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
         });
 
         // Compute button label - simple string ternary
-        const isTorrentTab = store.inputType === "magnet" || store.inputType === "file";
+        const isTorrentTab =
+            store.inputType === "magnet" || store.inputType === "file";
         const buttonLabel = store.isAdding ? "Adding…" : "Add";
 
         // Use string type for preset to avoid type narrowing issues with select
@@ -425,7 +439,8 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                 class="modal-btn modal-btn--primary"
                                 onClick$={handleResolve}
                                 disabled={
-                                    store.isResolving || !store.inputValue.trim()
+                                    store.isResolving ||
+                                    !store.inputValue.trim()
                                 }
                             >
                                 <span class="button-text">
@@ -456,7 +471,8 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                 onClick$={handleAdd}
                                 disabled={
                                     store.isAdding ||
-                                    (isTorrentTab && store.selected.length === 0)
+                                    (isTorrentTab &&
+                                        store.selected.length === 0)
                                 }
                             >
                                 <span class="button-text">{buttonLabel}</span>

@@ -134,7 +134,8 @@ export function normalizeApiTask(raw: any): UiTask {
         infoHash: raw.info_hash ?? undefined,
         // Undefined rather than 0 when nothing has downloaded: the card hides
         // a ratio it has no value for instead of claiming a ratio of zero.
-        ratio: downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
+        ratio:
+            downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
         files: normalizeTorrentFiles(raw),
     };
 }
@@ -191,7 +192,9 @@ export function statusView(status: string): StatusView {
 
 /** Statuses the API's own `pause` accepts. */
 export function canPause(status: string): boolean {
-    return status === "pending" || status === "downloading" || status === "seeding";
+    return (
+        status === "pending" || status === "downloading" || status === "seeding"
+    );
 }
 
 /** Statuses the API's own `resume` accepts — a retry is a resume of a failure. */

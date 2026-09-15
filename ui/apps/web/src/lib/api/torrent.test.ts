@@ -22,7 +22,10 @@ describe("normalizeResolvedTorrent", () => {
 
     it("keeps the torrent's own file order and indexes", () => {
         const resolved = normalizeResolvedTorrent(raw);
-        expect(resolved.files.map((file) => file.index)).toEqual([0, 1]);
+        expect(resolved.files.map((file) => file.index)).toEqual([
+            0,
+            1,
+        ]);
         expect(resolved.files[0].path).toBe("video.mkv");
         expect(resolved.files[0].sizeBytes).toBe(900);
     });

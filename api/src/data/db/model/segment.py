@@ -4,10 +4,10 @@ from typing import ClassVar
 
 from tortoise import fields
 
-from src.core.base import Base
+from src.core.base import LinkBase
 
 
-class Segment(Base):
+class Segment(LinkBase):
     """One byte range of one part of one task, and how much of it is on disk.
 
     Not to be confused with ``src.service.download.segment.Segment``, which is
@@ -15,7 +15,7 @@ class Segment(Base):
     They never meet: the repository takes ``(index, start, end)`` triples so the
     data layer imports nothing from ``src.service``.
 
-    ``updated_at`` arrives with ``Base`` and tracks the progress flush, which
+    ``updated_at`` arrives with ``LinkBase`` and tracks the progress flush, which
     rewrites ``downloaded`` about once a second per segment. Nothing reads it —
     liveness checks consult ``Task.heartbeat_at``.
 

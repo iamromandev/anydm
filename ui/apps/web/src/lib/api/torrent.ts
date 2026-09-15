@@ -38,11 +38,18 @@ export function normalizeResolvedTorrent(raw: any): ResolvedTorrent {
 }
 
 /** Inspect a magnet or .torrent. Talks to peers, so it can take seconds. */
-export async function resolveTorrent(torrent: string): Promise<ResolvedTorrent> {
-    return normalizeResolvedTorrent(await postApi<any>("/download/torrent/resolve", { torrent }));
+export async function resolveTorrent(
+    torrent: string,
+): Promise<ResolvedTorrent> {
+    return normalizeResolvedTorrent(
+        await postApi<any>("/download/torrent/resolve", { torrent }),
+    );
 }
 
 /** Start downloading the chosen files. An empty list means every file. */
-export async function addTorrent(torrent: string, files: number[]): Promise<void> {
+export async function addTorrent(
+    torrent: string,
+    files: number[],
+): Promise<void> {
     await postApi<unknown>("/download/torrent", { torrent, files });
 }

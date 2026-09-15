@@ -6,11 +6,11 @@ from typing import ClassVar
 from tortoise import fields
 from tortoise.indexes import Index
 
-from src.core.base import SoftBase
+from src.core.base import Base
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 
-class Task(SoftBase):
+class Task(Base):
     """One download, from the request that created it to the file it produced."""
 
     # source

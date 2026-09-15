@@ -1,5 +1,10 @@
 import { component$, $ } from "@qwik.dev/core";
-import { isActive, isSeeding, type ResolvedTorrent, type UiTask } from "@/lib/api";
+import {
+    isActive,
+    isSeeding,
+    type ResolvedTorrent,
+    type UiTask,
+} from "@/lib/api";
 import { StatusBar } from "@/component/features/status-bar";
 import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
