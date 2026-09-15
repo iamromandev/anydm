@@ -20,10 +20,6 @@ ignore = [
 [lint.per-file-ignores]
 # FastAPI injects dependencies via default callables.
 "src/route/**/*.py" = ["B008"]
-# Tortoise writes these files itself. Its import order and bare `operations = [...]`
-# class attributes are not ours to own, and re-styling them means every
-# `makemigrations` run reintroduces a lint failure.
-"src/data/db/migration/*.py" = ["I001", "RUF012"]
 
 [format]
 quote-style = "double"
