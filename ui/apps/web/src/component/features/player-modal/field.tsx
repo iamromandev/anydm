@@ -25,66 +25,70 @@ export const PlayerModal = component$<PlayerModalProps>(
             hasVideo: true,
         });
 
-        useVisibleTask$(async ({ track, cleanup }) => {
-            const isOpen = track(() => open);
-            const sourceUrl = track(() => url);
+        useVisibleTask$(
+            async ({ track, cleanup }) => {
+                const isOpen = track(() => open);
+                const sourceUrl = track(() => url);
 
-            if (!isOpen || !sourceUrl) {
-                return;
-            }
-
-            store.isLoading = true;
-            store.error = "";
-            store.sessionId = "";
-
-            // Reassigned inside the try block below; declared here so `cleanup`
-            // below can reach whichever instance (if any) actually got created.
-            let hls: import("hls.js").default | null = null;
-
-            try {
-                const session = await startStream(sourceUrl);
-                store.sessionId = session.sessionId;
-                store.hasVideo = session.hasVideo;
-
-                const video = videoRef.value;
-                if (!video) {
+                if (!isOpen || !sourceUrl) {
                     return;
                 }
 
-                const playlistUrl = apiUrl(session.playlistUrl);
-                if (video.canPlayType("application/vnd.apple.mpegurl")) {
-                    // Safari plays HLS natively; no library needed.
-                    video.src = playlistUrl;
-                } else {
-                    const { default: Hls } = await import("hls.js");
-                    if (Hls.isSupported()) {
-                        hls = new Hls();
-                        hls.loadSource(playlistUrl);
-                        hls.attachMedia(video);
-                    } else {
-                        store.error = "This browser cannot play HLS streams.";
-                    }
-                }
-            } catch (err) {
-                store.error =
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to start the stream";
-            } finally {
-                store.isLoading = false;
-            }
+                store.isLoading = true;
+                store.error = "";
+                store.sessionId = "";
 
-            cleanup(() => {
-                hls?.destroy();
-                if (store.sessionId) {
-                    const sessionId = store.sessionId;
-                    store.sessionId = "";
-                    stopStream(sessionId).catch(() => {
-                        // Best-effort: the idle sweeper cleans this up anyway.
-                    });
+                // Reassigned inside the try block below; declared here so `cleanup`
+                // below can reach whichever instance (if any) actually got created.
+                let hls: import("hls.js").default | null = null;
+
+                try {
+                    const session = await startStream(sourceUrl);
+                    store.sessionId = session.sessionId;
+                    store.hasVideo = session.hasVideo;
+
+                    const video = videoRef.value;
+                    if (!video) {
+                        return;
+                    }
+
+                    const playlistUrl = apiUrl(session.playlistUrl);
+                    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+                        // Safari plays HLS natively; no library needed.
+                        video.src = playlistUrl;
+                    } else {
+                        const { default: Hls } = await import("hls.js");
+                        if (Hls.isSupported()) {
+                            hls = new Hls();
+                            hls.loadSource(playlistUrl);
+                            hls.attachMedia(video);
+                        } else {
+                            store.error =
+                                "This browser cannot play HLS streams.";
+                        }
+                    }
+                } catch (err) {
+                    store.error =
+                        err instanceof Error
+                            ? err.message
+                            : "Failed to start the stream";
+                } finally {
+                    store.isLoading = false;
                 }
-            });
-        });
+
+                cleanup(() => {
+                    hls?.destroy();
+                    if (store.sessionId) {
+                        const sessionId = store.sessionId;
+                        store.sessionId = "";
+                        stopStream(sessionId).catch(() => {
+                            // Best-effort: the idle sweeper cleans this up anyway.
+                        });
+                    }
+                });
+            },
+            { strategy: "document-ready" },
+        );
 
         const handleClose = $(() => {
             onClose();
