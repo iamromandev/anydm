@@ -18,8 +18,21 @@ export function normalizeStreamSession(raw: any): StreamSession {
     };
 }
 
-export async function startStream(url: string): Promise<StreamSession> {
-    return normalizeStreamSession(await postApi<any>("/stream/start", { url }));
+export function buildStreamStartBody(
+    value: string,
+    kind: string,
+): { url: string } | { torrent: string } {
+    const isTorrentSource = kind === "magnet" || kind === "torrent";
+    return isTorrentSource ? { torrent: value } : { url: value };
+}
+
+export async function startStream(
+    value: string,
+    kind: string,
+): Promise<StreamSession> {
+    return normalizeStreamSession(
+        await postApi<any>("/stream/start", buildStreamStartBody(value, kind)),
+    );
 }
 
 export function stopStream(sessionId: string): Promise<void> {

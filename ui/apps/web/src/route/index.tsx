@@ -33,6 +33,7 @@ export default component$(() => {
         addModalOpen: false as boolean,
         playerModalOpen: false as boolean,
         playerUrl: "" as string,
+        playerKind: "" as string,
     });
 
     /**
@@ -227,8 +228,9 @@ export default component$(() => {
         store.addModalOpen = false;
     });
 
-    const handlePlayClick = $((value: string) => {
+    const handlePlayClick = $((value: string, kind: string) => {
         store.playerUrl = value;
+        store.playerKind = kind;
         store.playerModalOpen = true;
     });
 
@@ -305,6 +307,7 @@ export default component$(() => {
             onAddClick={handleAddClick}
             playerModalOpen={store.playerModalOpen}
             playerUrl={store.playerUrl}
+            playerKind={store.playerKind}
             onPlayClick={handlePlayClick}
             onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}

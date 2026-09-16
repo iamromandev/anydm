@@ -31,7 +31,8 @@ export interface AppShellProps {
     addModalOpen: boolean;
     playerModalOpen: boolean;
     playerUrl: string;
-    onPlayClick: (value: string) => void;
+    playerKind: string;
+    onPlayClick: (value: string, kind: string) => void;
     onPlayerModalClose: () => void;
     onSidebarToggle: () => void;
     onSidebarCollapseToggle: () => void;
@@ -64,6 +65,7 @@ export const AppShell = component$<AppShellProps>(
         addModalOpen,
         playerModalOpen,
         playerUrl,
+        playerKind,
         onPlayClick,
         onPlayerModalClose,
         onSidebarToggle,
@@ -126,7 +128,9 @@ export const AppShell = component$<AppShellProps>(
                                     await onAdd(input);
                                 },
                             )}
-                            onPlay={$((value: string) => onPlayClick(value))}
+                            onPlay={$((value: string, kind: string) =>
+                                onPlayClick(value, kind),
+                            )}
                         />
 
                         <section class="app-shell-list" aria-label="Downloads">
@@ -166,11 +170,15 @@ export const AppShell = component$<AppShellProps>(
                     onClose={onAddModalClose}
                     onAdd={onAdd}
                     onResolve={onResolve}
+                    onPlay={$((value: string, kind: string) =>
+                        onPlayClick(value, kind),
+                    )}
                 />
 
                 <PlayerModal
                     open={playerModalOpen}
                     url={playerUrl}
+                    kind={playerKind}
                     onClose={onPlayerModalClose}
                 />
             </div>

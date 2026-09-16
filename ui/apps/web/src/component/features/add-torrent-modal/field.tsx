@@ -13,6 +13,7 @@ export interface AddTorrentModalProps {
     open: boolean;
     onClose: () => void;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
+    onPlay: (value: string, kind: string) => void | Promise<void>;
     onAdd: (input: {
         type: "magnet" | "file" | "url";
         value: string;
@@ -40,7 +41,7 @@ function formatBytes(bytes: number): string {
 }
 
 export const AddTorrentModal = component$<AddTorrentModalProps>(
-    ({ open, onClose, onResolve, onAdd }) => {
+    ({ open, onClose, onResolve, onPlay, onAdd }) => {
         const store = useStore({
             inputType: "magnet" as "magnet" | "file" | "url",
             inputValue: "" as string,
@@ -471,9 +472,14 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                     <button
                                         type="button"
                                         class="modal-btn modal-btn--secondary"
-                                        disabled
-                                        title="Streaming coming soon"
-                                        aria-disabled="true"
+                                        onClick$={$(() =>
+                                            onPlay(
+                                                store.inputValue,
+                                                store.inputType === "file"
+                                                    ? "torrent"
+                                                    : "magnet",
+                                            ),
+                                        )}
                                     >
                                         <LuPlay
                                             width="16"

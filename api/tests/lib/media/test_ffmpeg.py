@@ -76,6 +76,21 @@ def test_segment_args_uses_the_configured_binary() -> None:
     assert args[0] == "/opt/bin/ffmpeg"
 
 
+def test_segment_args_downmixes_audio_to_stereo() -> None:
+    # A multichannel (e.g. 5.1) source re-encoded to multichannel AAC
+    # reliably fails to append into Chromium's MediaSource. Stereo is the
+    # safe, universally-supported target — see the docstring on segment_args().
+    video = segment_args(
+        "ffmpeg", "http://example.com/movie.mkv", 0.0, 6.0, Path("/t/s.ts"), has_video=True
+    )
+    assert video[video.index("-ac") + 1] == "2"
+
+    audio_only = segment_args(
+        "ffmpeg", "http://example.com/song.flac", 0.0, 6.0, Path("/t/s.ts"), has_video=False
+    )
+    assert audio_only[audio_only.index("-ac") + 1] == "2"
+
+
 @pytest.mark.asyncio
 async def test_run_raises_on_a_non_zero_exit() -> None:
     with pytest.raises(Error) as caught:

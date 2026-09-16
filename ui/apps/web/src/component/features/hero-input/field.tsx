@@ -30,7 +30,7 @@ export interface HeroInputProps {
         value: string;
         preset?: string;
     }) => void | Promise<void>;
-    onPlay?: (value: string) => void | Promise<void>;
+    onPlay?: (value: string, kind: string) => void | Promise<void>;
 }
 
 function magnetName(value: string): string {
@@ -217,17 +217,24 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit, onPlay }) => {
                         <button
                             type="button"
                             class="hero-input-play"
-                            disabled={activeKind !== "media" || store.isLoading}
-                            title={
-                                activeKind === "media"
-                                    ? undefined
-                                    : "Streaming coming soon"
+                            disabled={
+                                activeKind === "youtube" || store.isLoading
                             }
-                            aria-disabled={activeKind !== "media"}
-                            onClick$={
-                                activeKind === "media"
-                                    ? $(() => onPlay?.(store.value.trim()))
+                            title={
+                                activeKind === "youtube"
+                                    ? "Streaming coming soon"
                                     : undefined
+                            }
+                            aria-disabled={activeKind === "youtube"}
+                            onClick$={
+                                activeKind === "youtube"
+                                    ? undefined
+                                    : $(() =>
+                                          onPlay?.(
+                                              store.value.trim(),
+                                              activeKind,
+                                          ),
+                                      )
                             }
                         >
                             <LuPlay width="18" height="18" aria-hidden="true" />

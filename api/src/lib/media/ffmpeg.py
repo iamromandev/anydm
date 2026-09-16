@@ -72,6 +72,13 @@ def segment_args(
     expecting the raw timestamps to be continuous and remap each segment to
     its playlist-declared position — the standard HLS mechanism for exactly
     this situation (also used for ad breaks and stream splicing).
+
+    Audio is always downmixed to stereo (``-ac 2``). A multichannel source
+    (5.1 is common in movie rips) re-encoded to multichannel AAC reliably
+    fails to append into Chromium's MediaSource — confirmed live against a
+    real 5.1 torrent, where hls.js's fragmented-MP4 remux of an unmodified
+    6-channel AAC segment raised CHUNK_DEMUXER_ERROR_APPEND_FAILED on every
+    attempt. Stereo is the safe, universally-supported target.
     """
     args = [
         ffmpeg,
@@ -81,9 +88,9 @@ def segment_args(
         "-t", str(duration_seconds),
     ]
     if has_video:
-        args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"]
+        args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2"]
     else:
-        args += ["-vn", "-c:a", "aac"]
+        args += ["-vn", "-c:a", "aac", "-ac", "2"]
     args += ["-f", "mpegts", str(destination)]
     return args
 
