@@ -164,6 +164,11 @@ def get_stream_service() -> StreamService:
         segment_seconds=settings.stream_segment_seconds,
         readahead_segments=settings.stream_readahead_segments,
         max_concurrent_encodes=settings.stream_max_concurrent_encodes,
+        torrent_client=get_torrent_client(),
+        task_repo=TaskDatabaseRepo(),
+        torrent_dir=Path(settings.torrent_dir).resolve(),
+        torrent_api_url=settings.torrent_api_url,
+        torrent_enabled=settings.torrent_enabled,
     )
 
 

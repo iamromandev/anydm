@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse, Response
 
+from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.stream import StreamSessionSchema, StreamStartRequest
@@ -19,7 +20,12 @@ async def start_stream(
     payload: StreamStartRequest,
     stream_service: Annotated[StreamService, Depends(get_stream_service)],
 ) -> Response:
-    session = await stream_service.start_session(payload.url.strip())
+    if payload.torrent:
+        session = await stream_service.start_torrent_session(payload.torrent.strip())
+    elif payload.url:
+        session = await stream_service.start_session(payload.url.strip())
+    else:
+        raise Error.bad_request("Provide either url or torrent")
     schema = StreamSessionSchema(
         session_id=session.id,
         playlist_url=f"/stream/{session.id}/playlist.m3u8",
