@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 from src.core.error import Error
 from src.lib.media.ffprobe import ProbeResult
+from src.lib.torrent.protocol import FileInfo, TorrentDetails
+from src.lib.torrent.source import TorrentSource
 from src.service.stream.session import SegmentState, StreamSessionStore
-from src.service.stream.stream_service import StreamService
+from src.service.stream.stream_service import Prober, StreamService
 
 
 def _service(tmp_path: Path, **overrides: object) -> tuple[StreamService, list[list[str]]]:
@@ -30,7 +32,7 @@ def _service(tmp_path: Path, **overrides: object) -> tuple[StreamService, list[l
         "encoder": fake_encoder,
     }
     defaults.update(overrides)
-    return StreamService(**defaults), encoded_calls
+    return StreamService(**defaults), encoded_calls  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.asyncio
@@ -216,3 +218,180 @@ async def test_stop_session_does_not_hang_on_a_still_running_readahead_encode(
     await asyncio.wait_for(service.stop_session(session.id), timeout=2.0)
 
     assert all(task.cancelled() for task in session.background_tasks)
+
+
+class FakeTorrentClient:
+    def __init__(self, *, details: TorrentDetails, fail: Error | None = None) -> None:
+        self.details = details
+        self.fail = fail
+        self.added: list[dict[str, object]] = []
+        self.deleted: list[str] = []
+
+    async def resolve(self, source: TorrentSource) -> TorrentDetails:
+        if self.fail:
+            raise self.fail
+        return self.details
+
+    async def add(self, source: TorrentSource, *, only_files, output_folder: str) -> TorrentDetails:
+        self.added.append({"only_files": list(only_files), "output_folder": output_folder})
+        return self.details
+
+    async def delete(self, info_hash: str) -> None:
+        if self.fail:
+            raise self.fail
+        self.deleted.append(info_hash)
+
+
+class FakeTaskRepo:
+    def __init__(self, *, existing_info_hash: str | None = None) -> None:
+        self._existing_info_hash = existing_info_hash
+
+    async def get_one(self, **kwargs: object) -> object | None:
+        if kwargs.get("info_hash") == self._existing_info_hash and self._existing_info_hash is not None:
+            return object()  # any truthy row stands in for a real Task
+        return None
+
+
+TORRENT_DETAILS = TorrentDetails(
+    info_hash="deadbeef",
+    name="Some Release",
+    output_folder="/workdir/download/torrent/Some Release",
+    files=[
+        FileInfo(index=0, path="Movie.en.srt", size_bytes=100),
+        FileInfo(index=1, path="Movie.mkv", size_bytes=900_000_000),
+    ],
+)
+
+
+def _torrent_service(
+    tmp_path: Path,
+    *,
+    torrent_client: object,
+    task_repo: object,
+    prober: Prober | None = None,
+) -> tuple[StreamService, list[list[str]]]:
+    encoded_calls: list[list[str]] = []
+
+    async def default_prober(_ffprobe: str, _source: str) -> ProbeResult:
+        return ProbeResult(duration_seconds=20.0, has_video=True)
+
+    async def fake_encoder(args: list[str]) -> None:
+        encoded_calls.append(args)
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service = StreamService(
+        sessions=StreamSessionStore(),
+        stream_dir=tmp_path,
+        ffmpeg_path="ffmpeg",
+        ffprobe_path="ffprobe",
+        segment_seconds=6,
+        readahead_segments=0,
+        max_concurrent_encodes=2,
+        prober=prober or default_prober,
+        encoder=fake_encoder,
+        torrent_client=torrent_client,  # ty: ignore[invalid-argument-type]
+        task_repo=task_repo,  # ty: ignore[invalid-argument-type]
+        torrent_dir=tmp_path / "torrent",
+        torrent_api_url="http://torrent-anydm-api:3030",
+        torrent_enabled=True,
+    )
+    return service, encoded_calls
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> None:
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    assert session.info_hash == "deadbeef"
+    assert session.duration_seconds == 20.0  # from the fake prober
+    assert torrent_client.added == [
+        {"only_files": [1], "output_folder": str(tmp_path / "torrent")}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_builds_the_rqbit_stream_url(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def recording_prober(_ffprobe: str, source: str) -> ProbeResult:
+        calls.append(source)
+        return ProbeResult(duration_seconds=20.0, has_video=True)
+
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
+        task_repo=FakeTaskRepo(),
+        prober=recording_prober,
+    )
+
+    await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    assert calls == ["http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"]
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_rejects_a_torrent_with_no_media_file(tmp_path: Path) -> None:
+    no_media = TorrentDetails(
+        info_hash="deadbeef",
+        name="Docs",
+        output_folder="/x",
+        files=[FileInfo(index=0, path="readme.txt", size_bytes=100)],
+    )
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=FakeTorrentClient(details=no_media),
+        task_repo=FakeTaskRepo(),
+    )
+    with pytest.raises(Error):
+        await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_rejects_when_torrent_support_is_disabled(tmp_path: Path) -> None:
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
+        task_repo=FakeTaskRepo(),
+    )
+    service._torrent_enabled = False
+    with pytest.raises(Error):
+        await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+
+@pytest.mark.asyncio
+async def test_stop_session_deletes_the_torrent_when_no_task_owns_it(tmp_path: Path) -> None:
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    await service.stop_session(session.id)
+
+    assert torrent_client.deleted == ["deadbeef"]
+
+
+@pytest.mark.asyncio
+async def test_stop_session_leaves_the_torrent_when_a_real_task_owns_it(tmp_path: Path) -> None:
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=torrent_client,
+        task_repo=FakeTaskRepo(existing_info_hash="deadbeef"),
+    )
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    await service.stop_session(session.id)
+
+    assert torrent_client.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_stop_session_does_not_raise_when_the_engine_delete_fails(tmp_path: Path) -> None:
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    torrent_client.fail = Error.service_unavailable("down")
+    await service.stop_session(session.id)  # must not raise

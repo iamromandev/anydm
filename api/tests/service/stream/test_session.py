@@ -88,3 +88,15 @@ async def test_store_add_get_remove_all() -> None:
 @pytest.mark.asyncio
 async def test_store_remove_is_a_no_op_for_an_unknown_id() -> None:
     assert StreamSessionStore().remove("nope") is None
+
+
+@pytest.mark.asyncio
+async def test_info_hash_defaults_to_none() -> None:
+    assert _session().info_hash is None
+
+
+@pytest.mark.asyncio
+async def test_info_hash_can_be_set() -> None:
+    session = _session()
+    session.info_hash = "abc123"
+    assert session.info_hash == "abc123"

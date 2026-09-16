@@ -43,6 +43,9 @@ class StreamSession:
     events: dict[int, asyncio.Event] = field(default_factory=dict)
     background_tasks: list[asyncio.Task] = field(default_factory=list)
     last_accessed: float = field(default_factory=time.monotonic)
+    #: Set only for torrent-backed sessions. ``stop_session()`` uses this to
+    #: decide whether it's safe to delete the underlying rqbit torrent.
+    info_hash: str | None = None
 
     @property
     def segment_count(self) -> int:

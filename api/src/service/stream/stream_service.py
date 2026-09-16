@@ -13,10 +13,15 @@ from loguru import logger
 
 from src.core.base import BaseService
 from src.core.error import Error
+from src.core.type import Code, ErrorType
+from src.data.repo.download.interface import TaskRepo
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
+from src.lib.torrent.protocol import TorrentClient
+from src.lib.torrent.source import parse_source
 from src.service.stream.session import SegmentState, StreamSession, StreamSessionStore
+from src.service.stream.torrent_source import pick_media_file
 
 Prober = Callable[[str, str], Awaitable[ProbeResult]]
 Encoder = Callable[[list[str]], Awaitable[None]]
@@ -34,6 +39,11 @@ class StreamService(BaseService):
         max_concurrent_encodes: int,
         prober: Prober = probe,
         encoder: Encoder = ffmpeg_run,
+        torrent_client: TorrentClient | None = None,
+        task_repo: TaskRepo | None = None,
+        torrent_dir: Path | None = None,
+        torrent_api_url: str = "",
+        torrent_enabled: bool = True,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -45,6 +55,11 @@ class StreamService(BaseService):
         self._max_concurrent_encodes = max_concurrent_encodes
         self._prober = prober
         self._encoder = encoder
+        self._torrent_client = torrent_client
+        self._task_repo = task_repo
+        self._torrent_dir = torrent_dir
+        self._torrent_api_url = torrent_api_url
+        self._torrent_enabled = torrent_enabled
 
     async def start_session(self, source_url: str) -> StreamSession:
         result = await self._prober(self._ffprobe_path, source_url)
@@ -61,6 +76,37 @@ class StreamService(BaseService):
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
         )
         self._sessions.add(session)
+        return session
+
+    async def start_torrent_session(self, torrent_raw: str) -> StreamSession:
+        if not self._torrent_enabled:
+            raise Error.service_unavailable("Torrent support is disabled")
+        if self._torrent_client is None or self._task_repo is None or self._torrent_dir is None:
+            raise Error.create(
+                code=Code.INTERNAL_SERVER_ERROR,
+                message="Torrent streaming is not configured",
+                error_type=ErrorType.SERVER_ERROR,
+            )
+
+        source = parse_source(torrent_raw)
+        details = await self._torrent_client.resolve(source)
+        target = pick_media_file(details.files)
+        if target is None:
+            raise Error.create(
+                code=Code.UNPROCESSABLE_ENTITY,
+                message="This torrent has no playable media file",
+                error_type=ErrorType.UNPROCESSABLE_ENTITY,
+            )
+
+        await self._torrent_client.add(
+            source,
+            only_files=[target.index],
+            output_folder=str(self._torrent_dir),
+        )
+
+        stream_url = f"{self._torrent_api_url}/torrents/{details.info_hash}/stream/{target.index}"
+        session = await self.start_session(stream_url)
+        session.info_hash = details.info_hash
         return session
 
     def get_session(self, session_id: str) -> StreamSession:
@@ -155,5 +201,19 @@ class StreamService(BaseService):
         for task in session.background_tasks:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await task
+
+        if session.info_hash and self._torrent_client is not None and self._task_repo is not None:
+            existing = await self._task_repo.get_one(
+                info_hash=session.info_hash, deleted_at__isnull=True
+            )
+            if existing is None:
+                try:
+                    await self._torrent_client.delete(session.info_hash)
+                except Error as error:
+                    logger.warning(
+                        "StreamService|torrent delete failed for {}: {}",
+                        session.info_hash,
+                        error.message,
+                    )
 
         await asyncio.to_thread(shutil.rmtree, session.session_dir, ignore_errors=True)
