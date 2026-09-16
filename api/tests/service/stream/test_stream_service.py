@@ -30,7 +30,7 @@ def _service(tmp_path: Path, **overrides: object) -> tuple[StreamService, list[l
         "encoder": fake_encoder,
     }
     defaults.update(overrides)
-    return StreamService(**defaults), encoded_calls  # type: ignore[arg-type]
+    return StreamService(**defaults), encoded_calls
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_concurrent_requests_for_the_same_segment_encode_only_once(tmp_pat
 
 @pytest.mark.asyncio
 async def test_requesting_a_segment_triggers_readahead(tmp_path: Path) -> None:
-    service, encoded_calls = _service(tmp_path)
+    service, _encoded_calls = _service(tmp_path)
     session = await service.start_session("http://example.com/movie.mkv")
 
     await service.get_segment(session, 0)

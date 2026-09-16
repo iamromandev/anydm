@@ -28,6 +28,7 @@ async def test_capture_returns_stdout_on_success() -> None:
 async def test_capture_raises_on_a_non_zero_exit() -> None:
     with pytest.raises(Error) as caught:
         await capture(["python3", "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"])
+    assert caught.value.message is not None
     assert "boom" in caught.value.message
 
 

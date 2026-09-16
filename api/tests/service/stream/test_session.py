@@ -16,7 +16,7 @@ def _session(**overrides: object) -> StreamSession:
         "encode_semaphore": asyncio.Semaphore(2),
     }
     base.update(overrides)
-    return StreamSession(**base)  # type: ignore[arg-type]
+    return StreamSession(**base)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.asyncio

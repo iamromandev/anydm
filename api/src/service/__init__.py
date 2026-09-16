@@ -18,6 +18,9 @@ from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.health import HealthService as HealthService
+from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
+from src.service.stream import StreamService as StreamService
+from src.service.stream import StreamSessionStore as StreamSessionStore
 
 
 def get_health_service() -> HealthService:
@@ -144,3 +147,32 @@ def build_worker_pool() -> WorkerPool:
         for index in range(settings.download_workers)
     ]
     return WorkerPool(workers, http_client)
+
+
+@lru_cache
+def get_stream_sessions() -> StreamSessionStore:
+    return StreamSessionStore()
+
+
+def get_stream_service() -> StreamService:
+    settings = get_settings()
+    return StreamService(
+        sessions=get_stream_sessions(),
+        stream_dir=Path(settings.stream_dir),
+        ffmpeg_path=settings.ffmpeg_path,
+        ffprobe_path=settings.ffprobe_path,
+        segment_seconds=settings.stream_segment_seconds,
+        readahead_segments=settings.stream_readahead_segments,
+        max_concurrent_encodes=settings.stream_max_concurrent_encodes,
+    )
+
+
+@lru_cache
+def get_stream_sweeper() -> StreamIdleSweeper:
+    """One sweeper per process, because it is a singleton background loop."""
+    settings = get_settings()
+    return StreamIdleSweeper(
+        service=get_stream_service(),
+        sessions=get_stream_sessions(),
+        idle_timeout_s=settings.stream_idle_timeout_s,
+    )
