@@ -85,6 +85,28 @@ class Settings(BaseSettings):
     ]
     # media
     ffmpeg_path: Annotated[str, Field(default="ffmpeg", description="ffmpeg executable")]
+    ffprobe_path: Annotated[str, Field(default="ffprobe", description="ffprobe executable")]
+    # stream
+    stream_dir: Annotated[
+        str,
+        Field(default="./stream", description="Temp directory for on-demand HLS segments"),
+    ]
+    stream_segment_seconds: Annotated[
+        int,
+        Field(default=6, ge=1, description="Fixed HLS segment duration, in seconds"),
+    ]
+    stream_readahead_segments: Annotated[
+        int,
+        Field(default=2, ge=0, description="Segments to pre-generate ahead of a request"),
+    ]
+    stream_max_concurrent_encodes: Annotated[
+        int,
+        Field(default=2, ge=1, description="Per-session ffmpeg concurrency cap"),
+    ]
+    stream_idle_timeout_s: Annotated[
+        int,
+        Field(default=300, ge=1, description="Seconds of inactivity before a session is swept"),
+    ]
 
     @property
     def is_local(self) -> bool:

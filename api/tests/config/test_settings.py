@@ -37,6 +37,16 @@ def test_is_local() -> None:
     assert _settings(env="prod").is_local is False
 
 
+def test_stream_defaults() -> None:
+    settings = _settings()
+    assert settings.ffprobe_path == "ffprobe"
+    assert settings.stream_dir == "./stream"
+    assert settings.stream_segment_seconds == 6
+    assert settings.stream_readahead_segments == 2
+    assert settings.stream_max_concurrent_encodes == 2
+    assert settings.stream_idle_timeout_s == 300
+
+
 def test_download_defaults() -> None:
     settings = _settings()
     assert settings.download_dir == "./download"
