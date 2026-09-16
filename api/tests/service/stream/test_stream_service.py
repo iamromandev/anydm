@@ -67,6 +67,22 @@ async def test_playlist_text_lists_every_segment_with_the_right_durations(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_playlist_text_marks_every_segment_after_the_first_as_a_discontinuity(
+    tmp_path: Path,
+) -> None:
+    service, _ = _service(tmp_path)
+    session = await service.start_session("http://example.com/movie.mkv")
+    lines = service.playlist_text(session).splitlines()
+
+    # segment_0.ts is the start of the stream and needs no discontinuity
+    # marker; every segment after it is an independently-encoded file whose
+    # raw timestamps restart near zero, so each needs one.
+    assert lines[lines.index("segment_0.ts") - 2] != "#EXT-X-DISCONTINUITY"
+    for name in ["segment_1.ts", "segment_2.ts", "segment_3.ts"]:
+        assert lines[lines.index(name) - 2] == "#EXT-X-DISCONTINUITY"
+
+
+@pytest.mark.asyncio
 async def test_get_segment_generates_and_returns_the_file(tmp_path: Path) -> None:
     service, encoded_calls = _service(tmp_path)
     session = await service.start_session("http://example.com/movie.mkv")

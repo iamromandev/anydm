@@ -62,13 +62,16 @@ def segment_args(
     land exactly on a source keyframe, which arbitrary fixed-length
     boundaries essentially never do.
 
-    ``-output_ts_offset`` matters just as much: each segment is its own
-    independent ffmpeg process, so without it every segment's internal
-    timestamps would restart near zero instead of continuing from where the
-    previous segment left off. A player can only play the concatenated
-    segments as one continuous stream if their timestamps actually are
-    continuous — otherwise playback stalls the moment it crosses a segment
-    boundary, even though every segment individually decodes fine.
+    Each segment's own internal timestamps are left alone — no attempt is
+    made to offset them to their "true" position in the full stream. Every
+    segment is its own independent ffmpeg process with its own encoder
+    buffering delay, so two segments' raw timestamps never line up *exactly*
+    at the seam even when offset; MSE demuxers reject that as an out-of-order
+    buffer. ``playlist_text()`` marks every segment after the first with
+    ``#EXT-X-DISCONTINUITY`` instead, which is what tells a player to stop
+    expecting the raw timestamps to be continuous and remap each segment to
+    its playlist-declared position — the standard HLS mechanism for exactly
+    this situation (also used for ad breaks and stream splicing).
     """
     args = [
         ffmpeg,
@@ -81,7 +84,7 @@ def segment_args(
         args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"]
     else:
         args += ["-vn", "-c:a", "aac"]
-    args += ["-output_ts_offset", str(start_seconds), "-f", "mpegts", str(destination)]
+    args += ["-f", "mpegts", str(destination)]
     return args
 
 

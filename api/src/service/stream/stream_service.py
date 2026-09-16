@@ -77,6 +77,13 @@ class StreamService(BaseService):
             "#EXT-X-PLAYLIST-TYPE:VOD",
         ]
         for index in range(session.segment_count):
+            # Every segment past the first is its own independent ffmpeg
+            # encode with its own near-zero-restarting timestamps — see
+            # segment_args()'s docstring. This tells the player to remap each
+            # one to its playlist position instead of expecting the raw
+            # timestamps to already be continuous across the boundary.
+            if index > 0:
+                lines.append("#EXT-X-DISCONTINUITY")
             lines.append(f"#EXTINF:{session.segment_duration(index):.3f},")
             lines.append(f"segment_{index}.ts")
         lines.append("#EXT-X-ENDLIST")

@@ -53,14 +53,13 @@ def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
     assert args[-1] == "/t/segment_2.ts"
 
 
-def test_segment_args_offsets_output_timestamps_to_match_the_segment_position() -> None:
-    # Each segment is its own ffmpeg process. Without an output offset, every
-    # segment's timestamps would restart near zero instead of continuing from
-    # where the previous one left off, and playback would stall at the seam.
+def test_segment_args_does_not_offset_output_timestamps() -> None:
+    # Deliberately not offset — see the docstring on segment_args(). The
+    # playlist's #EXT-X-DISCONTINUITY markers are what handle this instead.
     args = segment_args(
         "ffmpeg", "http://example.com/movie.mkv", 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
     )
-    assert args[args.index("-output_ts_offset") + 1] == "12.0"
+    assert "-output_ts_offset" not in args
 
 
 def test_segment_args_drops_video_flags_for_audio_only() -> None:
