@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable
@@ -135,6 +136,17 @@ class StreamService(BaseService):
         session = self._sessions.remove(session_id)
         if session is None:
             return
+
+        # Cancelling a task doesn't cancel it *now* — it schedules
+        # CancelledError for the next time that task runs, and does nothing
+        # to any subprocess it's awaiting. Without waiting for the tasks
+        # here, rmtree below can race an ffmpeg process that's still writing
+        # into the very directory being deleted. (`run()` in ffmpeg.py is
+        # what actually kills that process, once its task is cancelled.)
         for task in session.background_tasks:
             task.cancel()
-        shutil.rmtree(session.session_dir, ignore_errors=True)
+        for task in session.background_tasks:
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await task
+
+        await asyncio.to_thread(shutil.rmtree, session.session_dir, ignore_errors=True)

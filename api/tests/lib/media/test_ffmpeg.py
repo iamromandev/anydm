@@ -1,3 +1,5 @@
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -51,6 +53,16 @@ def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
     assert args[-1] == "/t/segment_2.ts"
 
 
+def test_segment_args_offsets_output_timestamps_to_match_the_segment_position() -> None:
+    # Each segment is its own ffmpeg process. Without an output offset, every
+    # segment's timestamps would restart near zero instead of continuing from
+    # where the previous one left off, and playback would stall at the seam.
+    args = segment_args(
+        "ffmpeg", "http://example.com/movie.mkv", 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
+    )
+    assert args[args.index("-output_ts_offset") + 1] == "12.0"
+
+
 def test_segment_args_drops_video_flags_for_audio_only() -> None:
     args = segment_args(
         "ffmpeg", "http://example.com/song.mp3", 6.0, 6.0, Path("/t/segment_1.ts"), has_video=False
@@ -90,3 +102,18 @@ async def test_run_reports_a_missing_binary_permanently() -> None:
     with pytest.raises(Error) as caught:
         await run(["definitely-not-a-real-binary-xyz"])
     assert caught.value.retry_able is False
+
+
+@pytest.mark.asyncio
+async def test_run_kills_the_subprocess_when_its_task_is_cancelled() -> None:
+    # A long-lived process, cancelled almost immediately. If cancelling the
+    # task only unblocked `await` without killing the subprocess, this would
+    # hang for the full 10 seconds instead of returning promptly.
+    task = asyncio.create_task(run(["python3", "-c", "import time; time.sleep(10)"]))
+    await asyncio.sleep(0.05)
+
+    started = time.monotonic()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert time.monotonic() - started < 5.0

@@ -156,3 +156,47 @@ async def test_stop_session_removes_it_and_deletes_its_directory(tmp_path: Path)
 async def test_stop_session_on_an_unknown_id_is_a_no_op(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
     await service.stop_session("nope")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_stop_session_does_not_hang_on_a_still_running_readahead_encode(
+    tmp_path: Path,
+) -> None:
+    # Regression: stop_session used to fire-and-forget cancel() without
+    # awaiting the cancelled tasks, then immediately rmtree the directory
+    # those tasks were still writing into. On a slow filesystem that can hang
+    # the whole process. The fake encoder here never returns on its own —
+    # only cancellation ends it — so this proves stop_session actually waits.
+    async def fake_prober(_ffprobe: str, _source: str) -> ProbeResult:
+        return ProbeResult(duration_seconds=20.0, has_video=True)
+
+    never_finishes = asyncio.Event()
+
+    async def hanging_encoder(args: list[str]) -> None:
+        destination = Path(args[-1])
+        destination.touch()
+        # segment_0 (the directly-awaited one) must complete normally so
+        # get_segment() returns and the readahead tasks actually get a
+        # chance to start; only the readahead segments hang.
+        if destination.name != "segment_0.ts":
+            await never_finishes.wait()  # only cancellation ends this
+
+    service = StreamService(
+        sessions=StreamSessionStore(),
+        stream_dir=tmp_path,
+        ffmpeg_path="ffmpeg",
+        ffprobe_path="ffprobe",
+        segment_seconds=6,
+        readahead_segments=2,
+        max_concurrent_encodes=2,
+        prober=fake_prober,
+        encoder=hanging_encoder,
+    )
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    await service.get_segment(session, 0)  # kicks off readahead for 1 and 2
+    await asyncio.sleep(0.01)  # let the readahead tasks actually start
+
+    await asyncio.wait_for(service.stop_session(session.id), timeout=2.0)
+
+    assert all(task.cancelled() for task in session.background_tasks)

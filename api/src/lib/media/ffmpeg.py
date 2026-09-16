@@ -61,6 +61,14 @@ def segment_args(
     prior keyframe internally. A copy segment would need the cut point to
     land exactly on a source keyframe, which arbitrary fixed-length
     boundaries essentially never do.
+
+    ``-output_ts_offset`` matters just as much: each segment is its own
+    independent ffmpeg process, so without it every segment's internal
+    timestamps would restart near zero instead of continuing from where the
+    previous segment left off. A player can only play the concatenated
+    segments as one continuous stream if their timestamps actually are
+    continuous — otherwise playback stalls the moment it crosses a segment
+    boundary, even though every segment individually decodes fine.
     """
     args = [
         ffmpeg,
@@ -73,7 +81,7 @@ def segment_args(
         args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"]
     else:
         args += ["-vn", "-c:a", "aac"]
-    args += ["-f", "mpegts", str(destination)]
+    args += ["-output_ts_offset", str(start_seconds), "-f", "mpegts", str(destination)]
     return args
 
 
@@ -83,6 +91,13 @@ async def run(args: list[str]) -> None:
     Retryable, and governed by ``DOWNLOAD_MAX_ATTEMPTS`` like every other retryable
     failure: the common cause is a truncated input, which a re-download fixes.
     A missing binary is not retryable — no number of attempts installs ffmpeg.
+
+    If the awaiting task is cancelled — a caller giving up on this encode,
+    e.g. a stream session being torn down — the subprocess is killed rather
+    than left to run orphaned. Cancelling the *task* does nothing to the
+    *process* on its own: without this, an abandoned ffmpeg keeps writing to
+    its output file indefinitely, which is exactly what a caller cleaning up
+    that same file is trying to prevent.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -98,7 +113,12 @@ async def run(args: list[str]) -> None:
             error_type=ErrorType.DEPENDENCY_FAILURE,
         ) from exc
 
-    _, stderr = await process.communicate()
+    try:
+        _, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        process.kill()
+        await process.wait()
+        raise
     if process.returncode != 0:
         tail = (stderr or b"").decode(errors="replace")[-_STDERR_TAIL:]
         logger.error("ffmpeg|run(): exit {} — {}", process.returncode, tail)
