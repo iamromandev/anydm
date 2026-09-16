@@ -19,9 +19,7 @@ export function normalizeStreamSession(raw: any): StreamSession {
 }
 
 export async function startStream(url: string): Promise<StreamSession> {
-    return normalizeStreamSession(
-        await postApi<any>("/stream/start", { url }),
-    );
+    return normalizeStreamSession(await postApi<any>("/stream/start", { url }));
 }
 
 export function stopStream(sessionId: string): Promise<void> {

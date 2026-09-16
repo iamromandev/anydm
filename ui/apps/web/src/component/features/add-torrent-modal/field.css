@@ -242,6 +242,11 @@
     transition: all var(--transition-fast) ease;
 }
 
+.modal-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .modal-btn--secondary {
     background: transparent;
     color: color-mix(in srgb, var(--color-foreground) 60%, transparent);

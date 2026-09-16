@@ -11,6 +11,7 @@ import { TorrentList } from "@/component/features/torrent-list";
 import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
+import { PlayerModal } from "@/component/features/player-modal";
 import "./field.css";
 
 export interface GlobalStats {
@@ -28,6 +29,10 @@ export interface AppShellProps {
     sidebarOpen: boolean;
     sidebarCollapsed: boolean;
     addModalOpen: boolean;
+    playerModalOpen: boolean;
+    playerUrl: string;
+    onPlayClick: (value: string) => void;
+    onPlayerModalClose: () => void;
     onSidebarToggle: () => void;
     onSidebarCollapseToggle: () => void;
     onFilterChange: (filter: string) => void;
@@ -57,6 +62,10 @@ export const AppShell = component$<AppShellProps>(
         sidebarOpen,
         sidebarCollapsed,
         addModalOpen,
+        playerModalOpen,
+        playerUrl,
+        onPlayClick,
+        onPlayerModalClose,
         onSidebarToggle,
         onSidebarCollapseToggle,
         onFilterChange,
@@ -117,6 +126,7 @@ export const AppShell = component$<AppShellProps>(
                                     await onAdd(input);
                                 },
                             )}
+                            onPlay={$((value: string) => onPlayClick(value))}
                         />
 
                         <section class="app-shell-list" aria-label="Downloads">
@@ -156,6 +166,12 @@ export const AppShell = component$<AppShellProps>(
                     onClose={onAddModalClose}
                     onAdd={onAdd}
                     onResolve={onResolve}
+                />
+
+                <PlayerModal
+                    open={playerModalOpen}
+                    url={playerUrl}
+                    onClose={onPlayerModalClose}
                 />
             </div>
         );

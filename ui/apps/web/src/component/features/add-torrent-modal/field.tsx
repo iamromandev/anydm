@@ -4,6 +4,7 @@ import {
     LuX,
     LuCheckCircle,
     LuLoader2,
+    LuPlay,
 } from "@/component/core/icons";
 import type { ResolvedTorrent } from "@/lib/api";
 import "./field.css";
@@ -465,33 +466,53 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                 )}
                             </button>
                         ) : (
-                            <button
-                                type="button"
-                                class="modal-btn modal-btn--primary"
-                                onClick$={handleAdd}
-                                disabled={
-                                    store.isAdding ||
-                                    (isTorrentTab &&
-                                        store.selected.length === 0)
-                                }
-                            >
-                                <span class="button-text">{buttonLabel}</span>
-                                {spinner && (
-                                    <svg
-                                        class="spin"
-                                        width="16"
-                                        height="16"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        aria-hidden="true"
-                                        style={{ marginLeft: "0.5rem" }}
+                            <>
+                                {isTorrentTab && (
+                                    <button
+                                        type="button"
+                                        class="modal-btn modal-btn--secondary"
+                                        disabled
+                                        title="Streaming coming soon"
+                                        aria-disabled="true"
                                     >
-                                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                                    </svg>
+                                        <LuPlay
+                                            width="16"
+                                            height="16"
+                                            aria-hidden="true"
+                                        />
+                                        <span class="button-text">Play</span>
+                                    </button>
                                 )}
-                            </button>
+                                <button
+                                    type="button"
+                                    class="modal-btn modal-btn--primary"
+                                    onClick$={handleAdd}
+                                    disabled={
+                                        store.isAdding ||
+                                        (isTorrentTab &&
+                                            store.selected.length === 0)
+                                    }
+                                >
+                                    <span class="button-text">
+                                        {buttonLabel}
+                                    </span>
+                                    {spinner && (
+                                        <svg
+                                            class="spin"
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            aria-hidden="true"
+                                            style={{ marginLeft: "0.5rem" }}
+                                        >
+                                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </>
                         )}
                     </footer>
                 </div>

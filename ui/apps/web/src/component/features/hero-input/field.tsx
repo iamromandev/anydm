@@ -12,12 +12,17 @@ import {
     SiYoutube,
     LuGlobe,
     LuFile,
+    LuFilm,
+    LuPlay,
     LuLoader2,
     LuAlertCircle,
 } from "@/component/core/icons";
+import { detectKind, isPlayableKind } from "./kind";
+import type { InputKind } from "./kind";
 import "./field.css";
 
-export type InputKind = "auto" | "magnet" | "youtube" | "url" | "torrent";
+export type { InputKind };
+export { detectKind, isPlayableKind };
 
 export interface HeroInputProps {
     onSubmit: (input: {
@@ -25,28 +30,7 @@ export interface HeroInputProps {
         value: string;
         preset?: string;
     }) => void | Promise<void>;
-}
-
-const YOUTUBE_HOSTS = new Set([
-    "youtube.com",
-    "www.youtube.com",
-    "youtu.be",
-    "m.youtube.com",
-    "music.youtube.com",
-]);
-
-function detectKind(value: string): Exclude<InputKind, "auto"> {
-    const trimmed = value.trim();
-    if (trimmed.startsWith("magnet:?")) return "magnet";
-
-    try {
-        const url = new URL(trimmed);
-        if (YOUTUBE_HOSTS.has(url.hostname)) return "youtube";
-        if (url.pathname.endsWith(".torrent")) return "torrent";
-        return "url";
-    } catch {
-        return "url";
-    }
+    onPlay?: (value: string) => void | Promise<void>;
 }
 
 function magnetName(value: string): string {
@@ -54,7 +38,7 @@ function magnetName(value: string): string {
     return dn || value;
 }
 
-export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
+export const HeroInput = component$<HeroInputProps>(({ onSubmit, onPlay }) => {
     const inputRef = useSignal<HTMLInputElement>();
     const store = useStore({
         value: "",
@@ -167,6 +151,8 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
                         <LuMagnet width="20" height="20" aria-hidden="true" />
                     ) : activeKind === "torrent" ? (
                         <LuFile width="20" height="20" aria-hidden="true" />
+                    ) : activeKind === "media" ? (
+                        <LuFilm width="20" height="20" aria-hidden="true" />
                     ) : activeKind === "url" ? (
                         <LuGlobe width="20" height="20" aria-hidden="true" />
                     ) : (
@@ -226,26 +212,54 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
 
                 <div class="hero-input-divider" aria-hidden="true" />
 
-                <button
-                    type="button"
-                    class="hero-input-submit"
-                    disabled={!store.value.trim() || store.isLoading}
-                    onClick$={handleSubmit}
-                >
-                    {store.isLoading ? (
-                        <LuLoader2
-                            width="18"
-                            height="18"
-                            class="hero-input-spin"
-                            aria-hidden="true"
-                        />
-                    ) : (
-                        <LuDownload width="18" height="18" aria-hidden="true" />
+                <div class="hero-input-actions">
+                    {isPlayableKind(activeKind) && (
+                        <button
+                            type="button"
+                            class="hero-input-play"
+                            disabled={activeKind !== "media" || store.isLoading}
+                            title={
+                                activeKind === "media"
+                                    ? undefined
+                                    : "Streaming coming soon"
+                            }
+                            aria-disabled={activeKind !== "media"}
+                            onClick$={
+                                activeKind === "media"
+                                    ? $(() => onPlay?.(store.value.trim()))
+                                    : undefined
+                            }
+                        >
+                            <LuPlay width="18" height="18" aria-hidden="true" />
+                            <span class="hero-input-submit-text">Play</span>
+                        </button>
                     )}
-                    <span class="hero-input-submit-text">
-                        {store.isLoading ? "Adding…" : "Download"}
-                    </span>
-                </button>
+
+                    <button
+                        type="button"
+                        class="hero-input-submit"
+                        disabled={!store.value.trim() || store.isLoading}
+                        onClick$={handleSubmit}
+                    >
+                        {store.isLoading ? (
+                            <LuLoader2
+                                width="18"
+                                height="18"
+                                class="hero-input-spin"
+                                aria-hidden="true"
+                            />
+                        ) : (
+                            <LuDownload
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        )}
+                        <span class="hero-input-submit-text">
+                            {store.isLoading ? "Adding…" : "Download"}
+                        </span>
+                    </button>
+                </div>
             </div>
 
             <div
@@ -259,6 +273,7 @@ export const HeroInput = component$<HeroInputProps>(({ onSubmit }) => {
                     { id: "magnet" as InputKind, label: "Magnet" },
                     { id: "url" as InputKind, label: "URL" },
                     { id: "torrent" as InputKind, label: ".torrent" },
+                    { id: "media" as InputKind, label: "Media" },
                 ].map((chip) => {
                     const resolved =
                         store.kind === "auto"
