@@ -45,6 +45,38 @@ def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
     ]
 
 
+def segment_args(
+    ffmpeg: str,
+    source: str,
+    start_seconds: float,
+    duration_seconds: float,
+    destination: Path,
+    *,
+    has_video: bool,
+) -> list[str]:
+    """One HLS-compatible segment, always re-encoded.
+
+    Always re-encoding (never ``-c copy``) is deliberate: it lets ``-ss`` cut
+    at any exact timestamp cleanly, because ffmpeg decodes from the nearest
+    prior keyframe internally. A copy segment would need the cut point to
+    land exactly on a source keyframe, which arbitrary fixed-length
+    boundaries essentially never do.
+    """
+    args = [
+        ffmpeg,
+        "-y",
+        "-ss", str(start_seconds),
+        "-i", source,
+        "-t", str(duration_seconds),
+    ]
+    if has_video:
+        args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac"]
+    else:
+        args += ["-vn", "-c:a", "aac"]
+    args += ["-f", "mpegts", str(destination)]
+    return args
+
+
 async def run(args: list[str]) -> None:
     """Run ffmpeg, raising an ``Error`` carrying its stderr tail on failure.
 

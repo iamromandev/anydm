@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
-from src.lib.media.ffmpeg import mp3_args, mux_args, run
+from src.lib.media.ffmpeg import mp3_args, mux_args, run, segment_args
 
 
 def test_mux_args_copies_both_streams_without_re_encoding() -> None:
@@ -35,6 +35,34 @@ def test_mp3_args_drop_video_and_encode_audio() -> None:
 
 def test_the_configured_binary_is_used() -> None:
     assert mp3_args("/opt/bin/ffmpeg", Path("/t/a"), Path("/t/o"))[0] == "/opt/bin/ffmpeg"
+
+
+def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
+    args = segment_args(
+        "ffmpeg", "http://example.com/movie.mkv", 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
+    )
+    assert args[0] == "ffmpeg"
+    assert args[args.index("-ss") + 1] == "12.0"
+    assert args[args.index("-i") + 1] == "http://example.com/movie.mkv"
+    assert args[args.index("-t") + 1] == "6.0"
+    assert args[args.index("-c:v") + 1] == "libx264"
+    assert args[args.index("-c:a") + 1] == "aac"
+    assert args[args.index("-f") + 1] == "mpegts"
+    assert args[-1] == "/t/segment_2.ts"
+
+
+def test_segment_args_drops_video_flags_for_audio_only() -> None:
+    args = segment_args(
+        "ffmpeg", "http://example.com/song.mp3", 6.0, 6.0, Path("/t/segment_1.ts"), has_video=False
+    )
+    assert "-vn" in args
+    assert "-c:v" not in args
+    assert args[args.index("-c:a") + 1] == "aac"
+
+
+def test_segment_args_uses_the_configured_binary() -> None:
+    args = segment_args("/opt/bin/ffmpeg", "http://x/y.mp4", 0.0, 6.0, Path("/t/o.ts"), has_video=True)
+    assert args[0] == "/opt/bin/ffmpeg"
 
 
 @pytest.mark.asyncio
