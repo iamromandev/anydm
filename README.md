@@ -57,7 +57,7 @@ Common root targets — run `make help` for the full list, `make -C api help` fo
 | `make api-test-all` | Every API test, integration included (needs `make api-up`) |
 | `make api-migrate` | Run database migrations in the server container |
 | `make api-logs` / `api-ps` | Follow logs / list containers |
-| `make api-clean-db` | Drop the database volume |
+| `make api-clean-volumes` | Drop the project's volumes (db, download, torrent) |
 | `make ui-build` | Production build for the UI |
 | `make ui-check` / `ui-format` | Typecheck / format the UI |
 | `make ui-test` | UI unit tests (`bun test`) |

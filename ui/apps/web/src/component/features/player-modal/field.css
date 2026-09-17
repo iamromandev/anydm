@@ -73,8 +73,7 @@
     height: 100%;
 }
 
-.player-modal-error,
-.player-modal-loading {
+.player-modal-error {
     margin: 0;
     padding: 1rem;
     color: #fff;

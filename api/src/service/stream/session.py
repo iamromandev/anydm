@@ -42,6 +42,12 @@ class StreamSession:
     states: dict[int, SegmentState] = field(default_factory=dict)
     events: dict[int, asyncio.Event] = field(default_factory=dict)
     background_tasks: list[asyncio.Task] = field(default_factory=list)
+    #: The torrent swarm-progress poller. Kept separate from
+    #: ``background_tasks`` because it deliberately outlives the probe
+    #: task — it keeps publishing peer/speed/progress updates through
+    #: playback, not just while connecting — and stops only when
+    #: ``stop_session()`` cancels it.
+    progress_task: asyncio.Task | None = None
     last_accessed: float = field(default_factory=time.monotonic)
     #: Set only for torrent-backed sessions. ``stop_session()`` uses this to
     #: decide whether it's safe to delete the underlying rqbit torrent.

@@ -10,22 +10,51 @@ export type StreamSession = {
     hasVideo: boolean | null;
 };
 
+/** One `stream_status` SSE payload — peer/speed/progress fields are only
+ * present on torrent-backed sessions, and keep arriving through playback. */
+export type StreamStatusEvent = {
+    id: string;
+    status: string;
+    message?: string;
+    peersConnected?: number;
+    downloadBps?: number;
+    progressBytes?: number;
+    totalBytes?: number;
+};
+
+export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
+    return {
+        id: raw?.id ?? "",
+        status: raw?.status ?? "",
+        message: raw?.message,
+        peersConnected: raw?.peers_connected,
+        downloadBps: raw?.download_bps,
+        progressBytes: raw?.progress_bytes,
+        totalBytes: raw?.total_bytes,
+    };
+}
+
 export function normalizeStreamSession(raw: any): StreamSession {
     return {
         sessionId: raw?.session_id ?? "",
         playlistUrl: raw?.playlist_url ?? "",
         status: raw?.status ?? "ready",
-        durationSeconds: raw?.duration_seconds ?? (raw?.status === "connecting" ? null : 0),
-        hasVideo: raw?.has_video ?? (raw?.status === "connecting" ? null : false),
+        durationSeconds:
+            raw?.duration_seconds ?? (raw?.status === "connecting" ? null : 0),
+        hasVideo:
+            raw?.has_video ?? (raw?.status === "connecting" ? null : false),
     };
+}
+
+export function isTorrentKind(kind: string): boolean {
+    return kind === "magnet" || kind === "torrent";
 }
 
 export function buildStreamStartBody(
     value: string,
     kind: string,
 ): { url: string } | { torrent: string } {
-    const isTorrentSource = kind === "magnet" || kind === "torrent";
-    return isTorrentSource ? { torrent: value } : { url: value };
+    return isTorrentKind(kind) ? { torrent: value } : { url: value };
 }
 
 export async function startStream(

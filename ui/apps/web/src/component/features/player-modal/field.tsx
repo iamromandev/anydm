@@ -6,8 +6,14 @@ import {
     useVisibleTask$,
 } from "@qwik.dev/core";
 import { LuX } from "@/component/core/icons";
-import { apiUrl, startStream, stopStream } from "@/lib/api";
-import { connectingMessage, loadingMessage } from "./loading-message";
+import {
+    apiUrl,
+    isTorrentKind,
+    normalizeStreamStatusEvent,
+    startStream,
+    stopStream,
+} from "@/lib/api";
+import { PlayerHud } from "./hud";
 import "./field.css";
 
 export interface PlayerModalProps {
@@ -22,13 +28,15 @@ export const PlayerModal = component$<PlayerModalProps>(
         const videoRef = useSignal<HTMLVideoElement>();
         const store = useStore({
             isLoading: false,
-            elapsedSeconds: 0,
             error: "" as string,
             sessionId: "" as string,
             hasVideo: true,
             streamStatus: "" as string,
+            isTorrent: false,
             peersConnected: 0,
             downloadBps: 0,
+            progressBytes: 0,
+            totalBytes: 0,
         });
 
         useVisibleTask$(
@@ -42,20 +50,19 @@ export const PlayerModal = component$<PlayerModalProps>(
                 }
 
                 store.isLoading = true;
-                store.elapsedSeconds = 0;
                 store.error = "";
                 store.sessionId = "";
                 store.streamStatus = "";
+                // Known synchronously from the picked kind, not from the
+                // server response — for a magnet link, even the initial
+                // POST /stream/start can take a while (metadata resolve),
+                // and the HUD needs to be up for that whole wait, not just
+                // after it resolves.
+                store.isTorrent = isTorrentKind(sourceKind);
                 store.peersConnected = 0;
                 store.downloadBps = 0;
-
-                // Starting a torrent-backed stream can legitimately take tens
-                // of seconds (metadata resolve + buffering enough for
-                // ffprobe) — without this, a silent spinner looks identical
-                // to a hang.
-                const elapsedTimer = setInterval(() => {
-                    store.elapsedSeconds += 1;
-                }, 1000);
+                store.progressBytes = 0;
+                store.totalBytes = 0;
 
                 // Reassigned inside the try block below; declared here so `cleanup`
                 // below can reach whichever instance (if any) actually got created.
@@ -64,7 +71,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                 // from inside the Promise executor below — TypeScript narrows a
                 // closure-only-assigned `let` back to its null initializer at
                 // this scope, which a property access on a ref object avoids.
-                const streamEventsRef: { current: EventSource | null } = { current: null };
+                const streamEventsRef: { current: EventSource | null } = {
+                    current: null,
+                };
 
                 try {
                     const session = await startStream(sourceUrl, sourceKind);
@@ -78,27 +87,56 @@ export const PlayerModal = component$<PlayerModalProps>(
                         // has run — the backend probes in the background and
                         // pushes live swarm status here until it's ready (or
                         // gives up), so the modal never sits on a silent wait.
+                        // The connection is left open past that point (closed
+                        // only in `cleanup` below): the backend keeps
+                        // publishing peer/speed/progress updates through
+                        // playback, which is what feeds the HUD's live stats.
                         ready = await new Promise<boolean>((resolve) => {
-                            const events = new EventSource(apiUrl("/stream/events"));
+                            const events = new EventSource(
+                                apiUrl("/stream/events"),
+                            );
                             streamEventsRef.current = events;
-                            events.addEventListener("stream_status", (event) => {
-                                const data = JSON.parse((event as MessageEvent).data);
-                                if (data.id !== session.sessionId) {
-                                    return;
-                                }
-                                if (data.status === "connecting") {
-                                    store.peersConnected = data.peers_connected ?? 0;
-                                    store.downloadBps = data.download_bps ?? 0;
-                                } else if (data.status === "ready") {
-                                    resolve(true);
-                                } else if (data.status === "error") {
-                                    store.error = data.message || "Failed to start the stream";
-                                    resolve(false);
-                                }
-                            });
+                            let resolved = false;
+                            events.addEventListener(
+                                "stream_status",
+                                (event) => {
+                                    const data = normalizeStreamStatusEvent(
+                                        JSON.parse(
+                                            (event as MessageEvent).data,
+                                        ),
+                                    );
+                                    if (data.id !== session.sessionId) {
+                                        return;
+                                    }
+                                    if (data.status === "error") {
+                                        store.error =
+                                            data.message ||
+                                            "Failed to start the stream";
+                                        resolved = true;
+                                        resolve(false);
+                                        return;
+                                    }
+                                    if (data.peersConnected !== undefined) {
+                                        store.peersConnected =
+                                            data.peersConnected;
+                                    }
+                                    if (data.downloadBps !== undefined) {
+                                        store.downloadBps = data.downloadBps;
+                                    }
+                                    if (data.progressBytes !== undefined) {
+                                        store.progressBytes =
+                                            data.progressBytes;
+                                    }
+                                    if (data.totalBytes !== undefined) {
+                                        store.totalBytes = data.totalBytes;
+                                    }
+                                    if (!resolved && data.status === "ready") {
+                                        resolved = true;
+                                        resolve(true);
+                                    }
+                                },
+                            );
                         });
-                        streamEventsRef.current?.close();
-                        streamEventsRef.current = null;
                     }
 
                     if (ready) {
@@ -118,11 +156,14 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 hls.loadSource(playlistUrl);
                                 hls.attachMedia(video);
                             } else if (
-                                video.canPlayType("application/vnd.apple.mpegurl")
+                                video.canPlayType(
+                                    "application/vnd.apple.mpegurl",
+                                )
                             ) {
                                 video.src = playlistUrl;
                             } else {
-                                store.error = "This browser cannot play HLS streams.";
+                                store.error =
+                                    "This browser cannot play HLS streams.";
                             }
                         }
                     }
@@ -132,12 +173,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                             ? err.message
                             : "Failed to start the stream";
                 } finally {
-                    clearInterval(elapsedTimer);
                     store.isLoading = false;
                 }
 
                 cleanup(() => {
-                    clearInterval(elapsedTimer);
                     streamEventsRef.current?.close();
                     hls?.destroy();
                     if (store.sessionId) {
@@ -190,12 +229,14 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 autoplay
                             />
                         )}
-                        {store.isLoading && (
-                            <p class="player-modal-loading">
-                                {store.streamStatus === "connecting"
-                                    ? connectingMessage(store.peersConnected, store.downloadBps)
-                                    : loadingMessage(store.elapsedSeconds)}
-                            </p>
+                        {store.isTorrent && !store.error && (
+                            <PlayerHud
+                                connecting={store.isLoading}
+                                peersConnected={store.peersConnected}
+                                downloadBps={store.downloadBps}
+                                progressBytes={store.progressBytes}
+                                totalBytes={store.totalBytes}
+                            />
                         )}
                     </div>
                 </div>

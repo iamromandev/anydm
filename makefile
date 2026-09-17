@@ -12,9 +12,9 @@ BUN := bun
 UI_PORT := 3030
 
 # phony targets
-.PHONY: check down restart help \
+.PHONY: check down restart clean-volumes help \
 	api-check api-test api-test-all api-run api-up api-down api-build api-restart api-ps api-logs \
-	api-migrate api-install api-export api-clean api-clean-db api-clean-system \
+	api-migrate api-install api-export api-clean-all api-clean-volumes api-clean-host \
 	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format
 
 ## both stacks
@@ -23,6 +23,8 @@ check: api-check ui-check # Lint + typecheck both stacks
 down: api-down ui-down # Stop both stacks: remove the API containers, kill the UI dev server
 
 restart: api-restart ui-down ui-dev # Restart both stacks: rebuild + restart the API containers, then relaunch the UI dev server
+
+clean: api-clean-volumes # Remove the project's volumes (db, download, torrent)
 
 ## api — delegates to api/makefile
 api-check: # Lint + typecheck the API
@@ -64,14 +66,14 @@ api-install: # Install API dependencies
 api-export: # Export requirements.txt
 	$(MAKE) -C $(API) export
 
-api-clean: # Stop containers, remove volumes and images
-	$(MAKE) -C $(API) clean
+api-clean-all: # Stop containers, remove volumes and images
+	$(MAKE) -C $(API) clean-all
 
-api-clean-db: # Remove the database volume
-	$(MAKE) -C $(API) clean-db
+api-clean-volumes: # Remove the project's volumes (db, download, torrent)
+	$(MAKE) -C $(API) clean-volumes
 
-api-clean-system: # Prune all unused Docker data
-	$(MAKE) -C $(API) clean-system
+api-clean-host: # Prune all unused Docker data on the host
+	$(MAKE) -C $(API) clean-host
 
 ## ui — delegates to ui/package.json
 ui-install: # Install UI dependencies

@@ -417,6 +417,58 @@ async def test_start_torrent_session_publishes_peer_progress_while_connecting(
 
 
 @pytest.mark.asyncio
+async def test_progress_polling_survives_past_ready_and_stops_when_session_stops(
+    tmp_path: Path,
+) -> None:
+    from src.lib.event import EventHub
+
+    hub = EventHub()
+    subscription = hub.subscribe()
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    torrent_client.progress_rows = [
+        TorrentProgress(
+            info_hash="deadbeef",
+            state="live",
+            finished=False,
+            progress_bytes=450_000_000,
+            uploaded_bytes=0,
+            total_bytes=900_000_000,
+            download_bps=340_000,
+            upload_bps=0,
+            peers_connected=2,
+        )
+    ]
+
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=torrent_client,
+        task_repo=FakeTaskRepo(),
+    )
+    service._event_hub = hub
+    service._progress_poll_s = 0.01
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    events = subscription.__aiter__()
+    data: dict[str, object] = {}
+    for _ in range(200):
+        _, data = await asyncio.wait_for(events.__anext__(), timeout=1.0)
+        if data["id"] == session.id and "peers_connected" in data and data["status"] == "ready":
+            break
+    else:
+        raise AssertionError("never saw a post-ready progress event")
+
+    assert data["peers_connected"] == 2
+    assert data["progress_bytes"] == 450_000_000
+    assert data["total_bytes"] == 900_000_000
+    assert session.progress_task is not None
+    assert not session.progress_task.done()
+
+    await service.stop_session(session.id)
+    assert session.progress_task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_start_torrent_session_marks_status_error_when_probe_fails(tmp_path: Path) -> None:
     async def failing_prober(_ffprobe: str, _source: str) -> ProbeResult:
         raise Error.create(

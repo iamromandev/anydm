@@ -131,21 +131,24 @@ class StreamService(BaseService):
 
     async def _probe_torrent_session(self, session: StreamSession) -> None:
         poll_task = asyncio.create_task(self._publish_progress_until_cancelled(session))
+        session.progress_task = poll_task
         try:
             result = await self._prober(self._ffprobe_path, session.source_url)
         except Error as error:
             session.status = "error"
             session.error = error.message
             self._publish_status(session, status="error", message=error.message)
-            return
-        finally:
             poll_task.cancel()
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await poll_task
+            return
         session.duration_seconds = result.duration_seconds
         session.has_video = result.has_video
         session.status = "ready"
         self._publish_status(session, status="ready")
+        # poll_task keeps running after this — it's what keeps the player's
+        # swarm HUD live during playback, not just while connecting. It
+        # stops only when stop_session() cancels it.
 
     async def _publish_progress_until_cancelled(self, session: StreamSession) -> None:
         assert session.info_hash is not None
@@ -154,9 +157,11 @@ class StreamService(BaseService):
             if progress is not None:
                 self._publish_status(
                     session,
-                    status="connecting",
+                    status=session.status,
                     peers_connected=progress.peers_connected,
                     download_bps=progress.download_bps,
+                    progress_bytes=progress.progress_bytes,
+                    total_bytes=progress.total_bytes,
                 )
             await asyncio.sleep(self._progress_poll_s)
 
@@ -259,9 +264,12 @@ class StreamService(BaseService):
         # here, rmtree below can race an ffmpeg process that's still writing
         # into the very directory being deleted. (`run()` in ffmpeg.py is
         # what actually kills that process, once its task is cancelled.)
-        for task in session.background_tasks:
+        tasks = list(session.background_tasks)
+        if session.progress_task is not None:
+            tasks.append(session.progress_task)
+        for task in tasks:
             task.cancel()
-        for task in session.background_tasks:
+        for task in tasks:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await task
 

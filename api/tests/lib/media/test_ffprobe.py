@@ -2,6 +2,7 @@ import json
 
 import pytest
 from src.core.error import Error
+from src.core.type import ErrorType
 from src.lib.media.ffprobe import ProbeResult, capture, parse_probe_output, probe_args
 
 
@@ -30,6 +31,16 @@ async def test_capture_raises_on_a_non_zero_exit() -> None:
         await capture(["python3", "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"])
     assert caught.value.message is not None
     assert "boom" in caught.value.message
+
+
+@pytest.mark.asyncio
+async def test_capture_times_out_when_the_process_runs_too_long() -> None:
+    with pytest.raises(Error) as caught:
+        await capture(
+            ["python3", "-c", "import time; time.sleep(5)"],
+            timeout_s=0.1,
+        )
+    assert caught.value.type == ErrorType.TIMEOUT
 
 
 @pytest.mark.asyncio

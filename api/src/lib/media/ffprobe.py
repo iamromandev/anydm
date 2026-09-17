@@ -35,8 +35,14 @@ def probe_args(ffprobe: str, source: str) -> list[str]:
     ]
 
 
-async def capture(args: list[str]) -> str:
-    """Run ``args``, returning stdout as text. See ``ffmpeg.run`` for the sibling that discards it."""
+async def capture(args: list[str], timeout_s: float | None = None) -> str:
+    """Run ``args``, returning stdout as text. See ``ffmpeg.run`` for the sibling that discards it.
+
+    A torrent-backed source can legitimately take a while to yield enough
+    data for ffprobe to read the format, but a source with no peers never
+    yields anything — without ``timeout_s`` that call hangs forever with no
+    error, which looks identical to the app being broken.
+    """
     try:
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -51,7 +57,18 @@ async def capture(args: list[str]) -> str:
             error_type=ErrorType.DEPENDENCY_FAILURE,
         ) from exc
 
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
+    except TimeoutError as exc:
+        process.kill()
+        await process.wait()
+        logger.error("ffprobe|capture(): timed out after {}s", timeout_s)
+        raise Error.create(
+            code=Code.REQUEST_TIMEOUT,
+            message=f"ffprobe did not finish within {timeout_s}s",
+            error_type=ErrorType.TIMEOUT,
+            retry_able=True,
+        ) from exc
     if process.returncode != 0:
         tail = (stderr or b"").decode(errors="replace")[-_STDERR_TAIL:]
         logger.error("ffprobe|capture(): exit {} — {}", process.returncode, tail)
@@ -80,5 +97,5 @@ def parse_probe_output(raw: str) -> ProbeResult:
     return ProbeResult(duration_seconds=duration, has_video=has_video)
 
 
-async def probe(ffprobe: str, source: str) -> ProbeResult:
-    return parse_probe_output(await capture(probe_args(ffprobe, source)))
+async def probe(ffprobe: str, source: str, timeout_s: float | None = None) -> ProbeResult:
+    return parse_probe_output(await capture(probe_args(ffprobe, source), timeout_s=timeout_s))
