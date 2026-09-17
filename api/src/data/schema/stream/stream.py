@@ -25,5 +25,6 @@ class StreamStartRequest(BaseSchema):
 class StreamSessionSchema(BaseSchema):
     session_id: str
     playlist_url: str
-    duration_seconds: float
-    has_video: bool
+    status: str
+    duration_seconds: float | None = None
+    has_video: bool | None = None

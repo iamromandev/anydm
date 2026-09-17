@@ -1,12 +1,16 @@
+import json
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse, Response
+from sse_starlette import EventSourceResponse
 
 from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.stream import StreamSessionSchema, StreamStartRequest
+from src.lib.event import EventHub, get_event_hub
 from src.service import StreamService, get_stream_service
 
 router = APIRouter()
@@ -29,10 +33,30 @@ async def start_stream(
     schema = StreamSessionSchema(
         session_id=session.id,
         playlist_url=f"/stream/{session.id}/playlist.m3u8",
-        duration_seconds=session.duration_seconds,
-        has_video=session.has_video,
+        status=session.status,
+        duration_seconds=session.duration_seconds if session.status == "ready" else None,
+        has_video=session.has_video if session.status == "ready" else None,
     )
     return Success.created(data=schema).to_resp()
+
+
+@router.get(path="/stream/events")
+async def stream_events(hub: Annotated[EventHub, Depends(get_event_hub)]) -> EventSourceResponse:
+    """Live status for in-flight torrent stream sessions.
+
+    One shared stream for every session, same as ``/download/events`` —
+    consumers filter by the ``id`` field in each event's payload.
+    """
+    subscription = hub.subscribe()
+
+    async def publisher() -> AsyncIterator[dict[str, str]]:
+        try:
+            async for event, data in subscription:
+                yield {"event": event, "data": json.dumps(data)}
+        finally:
+            subscription.close()
+
+    return EventSourceResponse(publisher(), ping=15)
 
 
 @router.get(path="/stream/{session_id}/playlist.m3u8")
