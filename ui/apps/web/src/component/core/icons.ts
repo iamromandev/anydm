@@ -38,6 +38,10 @@ import {
     LuAlertCircle as _LuAlertCircle,
     LuSearchX as _LuSearchX,
     LuUpload as _LuUpload,
+    LuVolume2 as _LuVolume2,
+    LuVolumeX as _LuVolumeX,
+    LuMaximize as _LuMaximize,
+    LuMinimize as _LuMinimize,
 } from "qwikset-icons-v2/lucide";
 
 export const LuDownload = _LuDownload;
@@ -74,6 +78,10 @@ export const LuRotateCcw = _LuRotateCcw;
 export const LuAlertCircle = _LuAlertCircle;
 export const LuSearchX = _LuSearchX;
 export const LuUpload = _LuUpload;
+export const LuVolume2 = _LuVolume2;
+export const LuVolumeX = _LuVolumeX;
+export const LuMaximize = _LuMaximize;
+export const LuMinimize = _LuMinimize;
 
 // Simple Icons (brand logos)
 import {
