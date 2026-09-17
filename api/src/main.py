@@ -13,7 +13,13 @@ from src.core.error import init_global_errors
 from src.data.db import init_db
 from src.data.repo import TaskDatabaseRepo
 from src.route import router as _router
-from src.service import build_worker_pool, close_torrent_client, get_torrent_monitor
+from src.service import (
+    build_worker_pool,
+    close_torrent_client,
+    get_stream_sweeper,
+    get_torrent_monitor,
+    get_torrent_reaper,
+)
 
 
 @asynccontextmanager
@@ -36,6 +42,7 @@ async def lifespan(_app: FastAPI):
     settings = get_settings()
     Path(settings.download_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.torrent_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.stream_dir).mkdir(parents=True, exist_ok=True)
 
     recovered = await TaskDatabaseRepo().recover_orphans()
     if recovered:
@@ -45,9 +52,15 @@ async def lifespan(_app: FastAPI):
     await pool.start()
     monitor = get_torrent_monitor()
     await monitor.start()
+    sweeper = get_stream_sweeper()
+    await sweeper.start()
+    reaper = get_torrent_reaper()
+    await reaper.start()
     try:
         yield
     finally:
+        await reaper.stop()
+        await sweeper.stop()
         await monitor.stop()
         await pool.stop()
         await close_torrent_client()

@@ -31,6 +31,9 @@ export default component$(() => {
         sidebarOpen: false as boolean,
         sidebarCollapsed: true as boolean,
         addModalOpen: false as boolean,
+        playerModalOpen: false as boolean,
+        playerUrl: "" as string,
+        playerKind: "" as string,
     });
 
     /**
@@ -225,6 +228,16 @@ export default component$(() => {
         store.addModalOpen = false;
     });
 
+    const handlePlayClick = $((value: string, kind: string) => {
+        store.playerUrl = value;
+        store.playerKind = kind;
+        store.playerModalOpen = true;
+    });
+
+    const handlePlayerModalClose = $(() => {
+        store.playerModalOpen = false;
+    });
+
     const handleResolveTorrent = $(
         (torrent: string): Promise<ResolvedTorrent> => {
             return resolveTorrent(torrent);
@@ -292,6 +305,11 @@ export default component$(() => {
             addModalOpen={store.addModalOpen}
             onAddModalClose={handleAddModalClose}
             onAddClick={handleAddClick}
+            playerModalOpen={store.playerModalOpen}
+            playerUrl={store.playerUrl}
+            playerKind={store.playerKind}
+            onPlayClick={handlePlayClick}
+            onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}
             onResume={handleResume}
             onDownloadFile={handleDownloadFile}

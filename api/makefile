@@ -6,20 +6,20 @@ UVX := $(UV)x
 SERVER_CONTAINER := server-anydm-fastapi
 
 # phony targets
-.PHONY: clean-system clean-db clean ps build up stop down restart install install-dev check test test-all run export add logs migrate help
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all run export add logs migrate help
 
 ## operation
 # system cleanup
-clean-system: # Prune all unused Docker data
+clean-host: # Prune all unused Docker data on the host
 	docker system prune --all --force
 	docker volume prune --all --force
 	docker buildx prune --all --force
 	docker builder prune --all --force
 
-clean-db: # Remove DB volumes
+clean-volumes: # Remove this project's volumes (db, download, torrent)
 	$(DOCKER_COMPOSE) down -v
 
-clean: # Stop all containers, remove volumes & images
+clean-all: # Stop containers, remove volumes & images
 	$(DOCKER_COMPOSE) down -v --rmi all
 
 # docker control

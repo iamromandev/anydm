@@ -45,12 +45,69 @@ def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
     ]
 
 
+def segment_args(
+    ffmpeg: str,
+    source: str,
+    start_seconds: float,
+    duration_seconds: float,
+    destination: Path,
+    *,
+    has_video: bool,
+) -> list[str]:
+    """One HLS-compatible segment, always re-encoded.
+
+    Always re-encoding (never ``-c copy``) is deliberate: it lets ``-ss`` cut
+    at any exact timestamp cleanly, because ffmpeg decodes from the nearest
+    prior keyframe internally. A copy segment would need the cut point to
+    land exactly on a source keyframe, which arbitrary fixed-length
+    boundaries essentially never do.
+
+    Each segment's own internal timestamps are left alone — no attempt is
+    made to offset them to their "true" position in the full stream. Every
+    segment is its own independent ffmpeg process with its own encoder
+    buffering delay, so two segments' raw timestamps never line up *exactly*
+    at the seam even when offset; MSE demuxers reject that as an out-of-order
+    buffer. ``playlist_text()`` marks every segment after the first with
+    ``#EXT-X-DISCONTINUITY`` instead, which is what tells a player to stop
+    expecting the raw timestamps to be continuous and remap each segment to
+    its playlist-declared position — the standard HLS mechanism for exactly
+    this situation (also used for ad breaks and stream splicing).
+
+    Audio is always downmixed to stereo (``-ac 2``). A multichannel source
+    (5.1 is common in movie rips) re-encoded to multichannel AAC reliably
+    fails to append into Chromium's MediaSource — confirmed live against a
+    real 5.1 torrent, where hls.js's fragmented-MP4 remux of an unmodified
+    6-channel AAC segment raised CHUNK_DEMUXER_ERROR_APPEND_FAILED on every
+    attempt. Stereo is the safe, universally-supported target.
+    """
+    args = [
+        ffmpeg,
+        "-y",
+        "-ss", str(start_seconds),
+        "-i", source,
+        "-t", str(duration_seconds),
+    ]
+    if has_video:
+        args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2"]
+    else:
+        args += ["-vn", "-c:a", "aac", "-ac", "2"]
+    args += ["-f", "mpegts", str(destination)]
+    return args
+
+
 async def run(args: list[str]) -> None:
     """Run ffmpeg, raising an ``Error`` carrying its stderr tail on failure.
 
     Retryable, and governed by ``DOWNLOAD_MAX_ATTEMPTS`` like every other retryable
     failure: the common cause is a truncated input, which a re-download fixes.
     A missing binary is not retryable — no number of attempts installs ffmpeg.
+
+    If the awaiting task is cancelled — a caller giving up on this encode,
+    e.g. a stream session being torn down — the subprocess is killed rather
+    than left to run orphaned. Cancelling the *task* does nothing to the
+    *process* on its own: without this, an abandoned ffmpeg keeps writing to
+    its output file indefinitely, which is exactly what a caller cleaning up
+    that same file is trying to prevent.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -66,7 +123,12 @@ async def run(args: list[str]) -> None:
             error_type=ErrorType.DEPENDENCY_FAILURE,
         ) from exc
 
-    _, stderr = await process.communicate()
+    try:
+        _, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        process.kill()
+        await process.wait()
+        raise
     if process.returncode != 0:
         tail = (stderr or b"").decode(errors="replace")[-_STDERR_TAIL:]
         logger.error("ffmpeg|run(): exit {} — {}", process.returncode, tail)

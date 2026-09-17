@@ -1,4 +1,4 @@
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 
 import httpx
@@ -6,6 +6,7 @@ import httpx
 from src.config import get_settings
 from src.data.repo import FileDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
 from src.lib.event import get_event_hub
+from src.lib.media.ffprobe import probe
 from src.lib.torrent.client import RqbitClient
 from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
@@ -18,6 +19,10 @@ from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.health import HealthService as HealthService
+from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
+from src.service.stream import StreamService as StreamService
+from src.service.stream import StreamSessionStore as StreamSessionStore
+from src.service.stream import TorrentReaper as TorrentReaper
 
 
 def get_health_service() -> HealthService:
@@ -144,3 +149,51 @@ def build_worker_pool() -> WorkerPool:
         for index in range(settings.download_workers)
     ]
     return WorkerPool(workers, http_client)
+
+
+@lru_cache
+def get_stream_sessions() -> StreamSessionStore:
+    return StreamSessionStore()
+
+
+def get_stream_service() -> StreamService:
+    settings = get_settings()
+    return StreamService(
+        sessions=get_stream_sessions(),
+        stream_dir=Path(settings.stream_dir),
+        ffmpeg_path=settings.ffmpeg_path,
+        ffprobe_path=settings.ffprobe_path,
+        segment_seconds=settings.stream_segment_seconds,
+        readahead_segments=settings.stream_readahead_segments,
+        max_concurrent_encodes=settings.stream_max_concurrent_encodes,
+        prober=partial(probe, timeout_s=settings.stream_probe_timeout_s),
+        torrent_client=get_torrent_client(),
+        task_repo=TaskDatabaseRepo(),
+        torrent_dir=Path(settings.torrent_dir).resolve(),
+        torrent_api_url=settings.torrent_api_url,
+        torrent_enabled=settings.torrent_enabled,
+        event_hub=get_event_hub(),
+    )
+
+
+@lru_cache
+def get_stream_sweeper() -> StreamIdleSweeper:
+    """One sweeper per process, because it is a singleton background loop."""
+    settings = get_settings()
+    return StreamIdleSweeper(
+        service=get_stream_service(),
+        sessions=get_stream_sessions(),
+        idle_timeout_s=settings.stream_idle_timeout_s,
+    )
+
+
+@lru_cache
+def get_torrent_reaper() -> TorrentReaper:
+    """One reaper per process, because it is a singleton background loop."""
+    settings = get_settings()
+    return TorrentReaper(
+        client=get_torrent_client(),
+        task_repo=TaskDatabaseRepo(),
+        sessions=get_stream_sessions(),
+        poll_s=settings.torrent_reap_poll_s,
+    )
