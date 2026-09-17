@@ -7,11 +7,13 @@ describe("normalizeStreamSession", () => {
         const session = normalizeStreamSession({
             session_id: "abc123",
             playlist_url: "/stream/abc123/playlist.m3u8",
+            status: "ready",
             duration_seconds: 125.5,
             has_video: true,
         });
         expect(session.sessionId).toBe("abc123");
         expect(session.playlistUrl).toBe("/stream/abc123/playlist.m3u8");
+        expect(session.status).toBe("ready");
         expect(session.durationSeconds).toBe(125.5);
         expect(session.hasVideo).toBe(true);
     });
@@ -20,8 +22,20 @@ describe("normalizeStreamSession", () => {
         const session = normalizeStreamSession({});
         expect(session.sessionId).toBe("");
         expect(session.playlistUrl).toBe("");
+        expect(session.status).toBe("ready");
         expect(session.durationSeconds).toBe(0);
         expect(session.hasVideo).toBe(false);
+    });
+
+    it("carries a connecting status with null duration and video", () => {
+        const session = normalizeStreamSession({
+            session_id: "abc123",
+            playlist_url: "/stream/abc123/playlist.m3u8",
+            status: "connecting",
+        });
+        expect(session.status).toBe("connecting");
+        expect(session.durationSeconds).toBeNull();
+        expect(session.hasVideo).toBeNull();
     });
 });
 

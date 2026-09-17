@@ -5,16 +5,18 @@ import { deleteApi, postApi } from "./client";
 export type StreamSession = {
     sessionId: string;
     playlistUrl: string;
-    durationSeconds: number;
-    hasVideo: boolean;
+    status: string;
+    durationSeconds: number | null;
+    hasVideo: boolean | null;
 };
 
 export function normalizeStreamSession(raw: any): StreamSession {
     return {
         sessionId: raw?.session_id ?? "",
         playlistUrl: raw?.playlist_url ?? "",
-        durationSeconds: raw?.duration_seconds ?? 0,
-        hasVideo: raw?.has_video ?? false,
+        status: raw?.status ?? "ready",
+        durationSeconds: raw?.duration_seconds ?? (raw?.status === "connecting" ? null : 0),
+        hasVideo: raw?.has_video ?? (raw?.status === "connecting" ? null : false),
     };
 }
 
