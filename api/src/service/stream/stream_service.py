@@ -15,10 +15,11 @@ from src.core.base import BaseService
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.interface import TaskRepo
+from src.lib.event import EventHub
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
-from src.lib.torrent.protocol import TorrentClient
+from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.stream.session import SegmentState, StreamSession, StreamSessionStore
 from src.service.stream.torrent_source import pick_media_file
@@ -44,6 +45,8 @@ class StreamService(BaseService):
         torrent_dir: Path | None = None,
         torrent_api_url: str = "",
         torrent_enabled: bool = True,
+        event_hub: EventHub | None = None,
+        progress_poll_s: float = 1.0,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -60,6 +63,8 @@ class StreamService(BaseService):
         self._torrent_dir = torrent_dir
         self._torrent_api_url = torrent_api_url
         self._torrent_enabled = torrent_enabled
+        self._event_hub = event_hub
+        self._progress_poll_s = progress_poll_s
 
     async def start_session(self, source_url: str) -> StreamSession:
         result = await self._prober(self._ffprobe_path, source_url)
@@ -105,9 +110,67 @@ class StreamService(BaseService):
         )
 
         stream_url = f"{self._torrent_api_url}/torrents/{details.info_hash}/stream/{target.index}"
-        session = await self.start_session(stream_url)
-        session.info_hash = details.info_hash
+        session_id = uuid.uuid4().hex
+        session_dir = self._stream_dir / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session = StreamSession(
+            id=session_id,
+            source_url=stream_url,
+            duration_seconds=0.0,
+            has_video=True,
+            segment_seconds=self._segment_seconds,
+            session_dir=session_dir,
+            encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
+            info_hash=details.info_hash,
+            status="connecting",
+        )
+        self._sessions.add(session)
+        task = asyncio.create_task(self._probe_torrent_session(session))
+        session.background_tasks.append(task)
         return session
+
+    async def _probe_torrent_session(self, session: StreamSession) -> None:
+        poll_task = asyncio.create_task(self._publish_progress_until_cancelled(session))
+        try:
+            result = await self._prober(self._ffprobe_path, session.source_url)
+        except Error as error:
+            session.status = "error"
+            session.error = error.message
+            self._publish_status(session, status="error", message=error.message)
+            return
+        finally:
+            poll_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await poll_task
+        session.duration_seconds = result.duration_seconds
+        session.has_video = result.has_video
+        session.status = "ready"
+        self._publish_status(session, status="ready")
+
+    async def _publish_progress_until_cancelled(self, session: StreamSession) -> None:
+        assert session.info_hash is not None
+        while True:
+            progress = await self._progress_for(session.info_hash)
+            if progress is not None:
+                self._publish_status(
+                    session,
+                    status="connecting",
+                    peers_connected=progress.peers_connected,
+                    download_bps=progress.download_bps,
+                )
+            await asyncio.sleep(self._progress_poll_s)
+
+    async def _progress_for(self, info_hash: str) -> TorrentProgress | None:
+        assert self._torrent_client is not None
+        for row in await self._torrent_client.list_progress():
+            if row.info_hash == info_hash:
+                return row
+        return None
+
+    def _publish_status(self, session: StreamSession, *, status: str, **fields: object) -> None:
+        if self._event_hub is None:
+            return
+        self._event_hub.publish("stream_status", {"id": session.id, "status": status, **fields})
 
     def get_session(self, session_id: str) -> StreamSession:
         session = self._sessions.get(session_id)

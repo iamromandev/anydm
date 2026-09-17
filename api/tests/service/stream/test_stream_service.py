@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
+from src.core.type import Code, ErrorType
 from src.lib.media.ffprobe import ProbeResult
-from src.lib.torrent.protocol import FileInfo, TorrentDetails
+from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
 from src.service.stream.session import SegmentState, StreamSessionStore
 from src.service.stream.stream_service import Prober, StreamService
@@ -226,6 +227,7 @@ class FakeTorrentClient:
         self.fail = fail
         self.added: list[dict[str, object]] = []
         self.deleted: list[str] = []
+        self.progress_rows: list[TorrentProgress] = []
 
     async def resolve(self, source: TorrentSource) -> TorrentDetails:
         if self.fail:
@@ -235,6 +237,9 @@ class FakeTorrentClient:
     async def add(self, source: TorrentSource, *, only_files, output_folder: str) -> TorrentDetails:
         self.added.append({"only_files": list(only_files), "output_folder": output_folder})
         return self.details
+
+    async def list_progress(self) -> list[TorrentProgress]:
+        return self.progress_rows
 
     async def delete(self, info_hash: str) -> None:
         if self.fail:
@@ -304,12 +309,36 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
     service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+    await asyncio.gather(*session.background_tasks)
 
     assert session.info_hash == "deadbeef"
+    assert session.status == "ready"
     assert session.duration_seconds == 20.0  # from the fake prober
     assert torrent_client.added == [
         {"only_files": [1], "output_folder": str(tmp_path / "torrent")}
     ]
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_returns_immediately_as_connecting(tmp_path: Path) -> None:
+    never_returns = asyncio.Event()
+
+    async def hanging_prober(_ffprobe: str, _source: str) -> ProbeResult:
+        await never_returns.wait()
+        raise AssertionError("unreachable")
+
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
+        task_repo=FakeTaskRepo(),
+        prober=hanging_prober,
+    )
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    assert session.status == "connecting"
+    assert session.duration_seconds == 0.0
+    await service.stop_session(session.id)  # let the hanging background task be cancelled cleanly
 
 
 @pytest.mark.asyncio
@@ -327,9 +356,87 @@ async def test_start_torrent_session_builds_the_rqbit_stream_url(tmp_path: Path)
         prober=recording_prober,
     )
 
-    await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+    await asyncio.gather(*session.background_tasks)
 
     assert calls == ["http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"]
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_publishes_peer_progress_while_connecting(
+    tmp_path: Path,
+) -> None:
+    from src.lib.event import EventHub
+
+    hub = EventHub()
+    subscription = hub.subscribe()
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    torrent_client.progress_rows = [
+        TorrentProgress(
+            info_hash="deadbeef",
+            state="live",
+            finished=False,
+            progress_bytes=0,
+            uploaded_bytes=0,
+            total_bytes=900_000_000,
+            download_bps=340_000,
+            upload_bps=0,
+            peers_connected=2,
+        )
+    ]
+
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def slow_prober(_ffprobe: str, _source: str) -> ProbeResult:
+        probe_started.set()
+        await release_probe.wait()
+        return ProbeResult(duration_seconds=20.0, has_video=True)
+
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=torrent_client,
+        task_repo=FakeTaskRepo(),
+        prober=slow_prober,
+    )
+    service._event_hub = hub
+    service._progress_poll_s = 0.01
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+    await probe_started.wait()
+
+    event, data = await asyncio.wait_for(subscription.__aiter__().__anext__(), timeout=1.0)
+    assert event == "stream_status"
+    assert data["id"] == session.id
+    assert data["status"] == "connecting"
+    assert data["peers_connected"] == 2
+    assert data["download_bps"] == 340_000
+
+    release_probe.set()
+    await asyncio.gather(*session.background_tasks)
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_marks_status_error_when_probe_fails(tmp_path: Path) -> None:
+    async def failing_prober(_ffprobe: str, _source: str) -> ProbeResult:
+        raise Error.create(
+            code=Code.REQUEST_TIMEOUT,
+            message="ffprobe did not finish within 600s",
+            error_type=ErrorType.TIMEOUT,
+        )
+
+    service, _ = _torrent_service(
+        tmp_path,
+        torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
+        task_repo=FakeTaskRepo(),
+        prober=failing_prober,
+    )
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+
+    await asyncio.gather(*session.background_tasks)
+
+    assert session.status == "error"
+    assert session.error == "ffprobe did not finish within 600s"
 
 
 @pytest.mark.asyncio
