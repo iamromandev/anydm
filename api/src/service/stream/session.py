@@ -46,6 +46,12 @@ class StreamSession:
     #: Set only for torrent-backed sessions. ``stop_session()`` uses this to
     #: decide whether it's safe to delete the underlying rqbit torrent.
     info_hash: str | None = None
+    #: "connecting" while a torrent-backed session is waiting for real data
+    #: and ffprobe; "ready" once playback can start; "error" if it never did.
+    #: Direct-URL sessions are "ready" the moment they're created, since
+    #: ``start_session`` already probes synchronously before returning one.
+    status: str = "ready"
+    error: str | None = None
 
     @property
     def segment_count(self) -> int:

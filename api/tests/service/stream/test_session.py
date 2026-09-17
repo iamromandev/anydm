@@ -100,3 +100,21 @@ async def test_info_hash_can_be_set() -> None:
     session = _session()
     session.info_hash = "abc123"
     assert session.info_hash == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_status_defaults_to_ready() -> None:
+    assert _session().status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_status_and_error_can_be_set() -> None:
+    session = _session()
+    session.status = "connecting"
+    session.error = None
+    assert session.status == "connecting"
+
+    session.status = "error"
+    session.error = "no seeders"
+    assert session.status == "error"
+    assert session.error == "no seeders"
