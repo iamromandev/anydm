@@ -26,10 +26,12 @@ export function swarmStatsView(stats: SwarmStats): SwarmStatsView {
             : 0;
 
     const remainingBytes = totalBytes - progressBytes;
-    const etaLabel =
-        downloadBps > 0 && remainingBytes > 0
-            ? formatTime(Math.ceil(remainingBytes / downloadBps))
-            : null;
+    const isComplete = totalBytes > 0 && remainingBytes <= 0;
+    const etaLabel = isComplete
+        ? null
+        : downloadBps > 0
+          ? formatTime(Math.ceil(remainingBytes / downloadBps))
+          : "Calculating…";
 
     return { peersLabel, speedLabel, percent, etaLabel };
 }
