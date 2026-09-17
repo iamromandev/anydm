@@ -10,6 +10,9 @@ export interface PlayerHudProps {
     downloadBps: number;
     progressBytes: number;
     totalBytes: number;
+    /** Percent of the video actually buffered ahead of the playhead,
+     * separate from the swarm's torrent-wide download percent. */
+    bufferedPercent: number;
 }
 
 export const PlayerHud = component$<PlayerHudProps>(
@@ -19,6 +22,7 @@ export const PlayerHud = component$<PlayerHudProps>(
         downloadBps,
         progressBytes,
         totalBytes,
+        bufferedPercent,
     }) => {
         const stats = swarmStatsView({
             peersConnected,
@@ -55,6 +59,12 @@ export const PlayerHud = component$<PlayerHudProps>(
                         <span class="player-hud-value">{stats.etaLabel}</span>
                     </div>
                 )}
+                <div class="player-hud-buffered-bar">
+                    <div
+                        class="player-hud-buffered-bar-fill"
+                        style={{ width: `${bufferedPercent}%` }}
+                    />
+                </div>
             </div>
         );
     },

@@ -13,6 +13,7 @@ import {
     startStream,
     stopStream,
 } from "@/lib/api";
+import { getBufferedPercent } from "./buffered-progress";
 import { PlayerHud } from "./hud";
 import "./field.css";
 
@@ -37,6 +38,7 @@ export const PlayerModal = component$<PlayerModalProps>(
             downloadBps: 0,
             progressBytes: 0,
             totalBytes: 0,
+            bufferedPercent: 0,
         });
 
         useVisibleTask$(
@@ -63,6 +65,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                 store.downloadBps = 0;
                 store.progressBytes = 0;
                 store.totalBytes = 0;
+                store.bufferedPercent = 0;
 
                 // Reassigned inside the try block below; declared here so `cleanup`
                 // below can reach whichever instance (if any) actually got created.
@@ -142,6 +145,42 @@ export const PlayerModal = component$<PlayerModalProps>(
                     if (ready) {
                         const video = videoRef.value;
                         if (video) {
+                            const updateBufferedPercent = () => {
+                                const ranges = [];
+                                for (
+                                    let i = 0;
+                                    i < video.buffered.length;
+                                    i++
+                                ) {
+                                    ranges.push({
+                                        start: video.buffered.start(i),
+                                        end: video.buffered.end(i),
+                                    });
+                                }
+                                store.bufferedPercent = getBufferedPercent({
+                                    ranges,
+                                    currentTime: video.currentTime,
+                                    duration: video.duration,
+                                });
+                            };
+                            video.addEventListener(
+                                "timeupdate",
+                                updateBufferedPercent,
+                            );
+                            video.addEventListener(
+                                "progress",
+                                updateBufferedPercent,
+                            );
+                            cleanup(() => {
+                                video.removeEventListener(
+                                    "timeupdate",
+                                    updateBufferedPercent,
+                                );
+                                video.removeEventListener(
+                                    "progress",
+                                    updateBufferedPercent,
+                                );
+                            });
                             // hls.js first: Chromium's canPlayType("application/vnd.apple.mpegurl")
                             // reports "maybe" even though Chrome has no real native
                             // HLS support, which let this decode a simple mono test
@@ -236,6 +275,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 downloadBps={store.downloadBps}
                                 progressBytes={store.progressBytes}
                                 totalBytes={store.totalBytes}
+                                bufferedPercent={store.bufferedPercent}
                             />
                         )}
                     </div>
