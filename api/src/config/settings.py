@@ -107,6 +107,26 @@ class Settings(BaseSettings):
         int,
         Field(default=300, ge=1, description="Seconds of inactivity before a session is swept"),
     ]
+    stream_probe_timeout_s: Annotated[
+        int,
+        Field(
+            default=600,
+            ge=1,
+            description=(
+                "Safety-net ceiling for ffprobe while waiting for a torrent-backed "
+                "stream to yield data. Not meant to be hit in normal use — the user "
+                "is expected to cancel a stalled swarm long before this fires."
+            ),
+        ),
+    ]
+    torrent_reap_poll_s: Annotated[
+        float,
+        Field(
+            default=60.0,
+            ge=1,
+            description="How often to delete rqbit torrents no Task or live stream session owns",
+        ),
+    ]
 
     @property
     def is_local(self) -> bool:

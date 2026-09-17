@@ -47,6 +47,10 @@ def test_stream_defaults() -> None:
     assert settings.stream_idle_timeout_s == 300
 
 
+def test_stream_probe_timeout_defaults_to_a_generous_backstop() -> None:
+    assert _settings().stream_probe_timeout_s == 600
+
+
 def test_download_defaults() -> None:
     settings = _settings()
     assert settings.download_dir == "./download"
