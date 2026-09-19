@@ -209,13 +209,6 @@
     color: var(--color-success);
 }
 
-.progress-error {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    color: var(--color-error);
-}
-
 .progress-retry {
     display: inline-flex;
     align-items: center;
