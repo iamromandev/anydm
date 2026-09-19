@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from src.core.error import Error
+from src.core.success import Meta
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.youtube.protocol import StreamInfo, VideoInfo
@@ -32,6 +33,16 @@ class FakeRepo:
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
         self.rows: dict[uuid.UUID, Any] = {}
+        self.listed_statuses: list[Any] | None = None
+
+    async def list_page(
+        self,
+        page: int,
+        page_size: int,
+        statuses: list[Any] | None = None,
+    ) -> tuple[list[Any], Meta]:
+        self.listed_statuses = statuses
+        return [], Meta(page=page, page_size=page_size, total=0, total_pages=0)
 
     async def create(self, **kwargs: Any) -> Any:
         kwargs.setdefault("id", uuid.uuid4())
@@ -304,6 +315,42 @@ async def test_resume_rejects_a_running_task(tmp_path: Path) -> None:
     with pytest.raises(Error) as caught:
         await service.resume(task_id)
     assert caught.value.code == 409
+
+
+@pytest.mark.asyncio
+async def test_listing_a_group_asks_for_the_statuses_it_means(tmp_path: Path) -> None:
+    """The sidebar's "Active" includes queued rows; the orphan check does not."""
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.list_tasks(page=1, page_size=10, group="downloading")
+
+    assert repo.listed_statuses is not None
+    assert set(repo.listed_statuses) == {
+        TaskStatus.PENDING,
+        TaskStatus.DOWNLOADING,
+        TaskStatus.MUXING,
+    }
+
+
+@pytest.mark.asyncio
+async def test_listing_everything_asks_for_no_statuses_at_all(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.list_tasks(page=1, page_size=10, group="all")
+
+    assert repo.listed_statuses is None
+
+
+@pytest.mark.asyncio
+async def test_listing_an_unknown_group_is_rejected(tmp_path: Path) -> None:
+    service, _, _ = _service(downloads_dir=tmp_path)
+
+    with pytest.raises(Error) as caught:
+        await service.list_tasks(page=1, page_size=10, group="nonsense")
+
+    # The route also types this parameter, so a request never gets this far;
+    # this guards the service against a caller inside the process.
+    assert caught.value.code == 400
 
 
 @pytest.mark.asyncio

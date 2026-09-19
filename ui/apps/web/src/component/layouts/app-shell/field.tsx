@@ -4,6 +4,7 @@ import {
     isActive,
     isSeeding,
     type ResolvedTorrent,
+    type TaskSummary,
     type UiTask,
 } from "@/lib/api";
 import { StatusBar } from "@/component/features/status-bar";
@@ -25,6 +26,11 @@ export interface AppShellProps {
     searchQuery: string;
     now: number;
     connection: Connection;
+    summary: TaskSummary | null;
+    page: number;
+    totalPages: number;
+    loadingMore: boolean;
+    onLoadMore: () => void;
     toasts: Toast[];
     onDismissToast: (id: string) => void;
     sidebarOpen: boolean;
@@ -65,6 +71,11 @@ export const AppShell = component$<AppShellProps>(
         searchQuery,
         now,
         connection,
+        summary,
+        page,
+        totalPages,
+        loadingMore,
+        onLoadMore,
         toasts,
         onDismissToast,
         sidebarOpen,
@@ -96,7 +107,10 @@ export const AppShell = component$<AppShellProps>(
 
         const stats = aggregateStats(tasks);
 
-        const counts = {
+        // Counted by the API when it can be. Falling back to the loaded rows
+        // keeps the numbers plausible before the first summary arrives, but
+        // they are only ever a floor: the list is one page of many.
+        const counts = summary ?? {
             all: tasks.length,
             downloading: tasks.filter((t) => isActive(t.status)).length,
             seeding: tasks.filter((t) => isSeeding(t.status)).length,
@@ -157,6 +171,9 @@ export const AppShell = component$<AppShellProps>(
                             <TorrentList
                                 tasks={tasks}
                                 now={now}
+                                hasMore={page < totalPages}
+                                loadingMore={loadingMore}
+                                onLoadMore={onLoadMore}
                                 filter={filter}
                                 searchQuery={searchQuery}
                                 onPause={onPause}

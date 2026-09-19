@@ -6,6 +6,8 @@ can be used directly in ``CharEnumField``, exactly as auth's ``Env`` is.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from tortoise.fields.base import StrEnum
 
 
@@ -64,3 +66,18 @@ class TaskStatus(StrEnum):
 #: startup is an orphan by definition — this process is the only one that runs
 #: workers, and it has just started.
 ACTIVE_STATUSES = frozenset({TaskStatus.DOWNLOADING, TaskStatus.MUXING})
+
+#: What each of the sidebar's filters means, keyed by the name the UI already
+#: uses for it. Deliberately not ``ACTIVE_STATUSES``: that answers "was a
+#: worker mid-flight", which excludes ``PENDING`` because a queued row is not
+#: an orphan. To someone reading the list, a queued row is very much active.
+#: The filter names the API accepts, which are the sidebar's own.
+TaskGroup = Literal["all", "downloading", "seeding", "completed"]
+
+TASK_GROUPS: dict[str, frozenset[TaskStatus]] = {
+    "downloading": frozenset(
+        {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING}
+    ),
+    "seeding": frozenset({TaskStatus.SEEDING}),
+    "completed": frozenset({TaskStatus.COMPLETE}),
+}

@@ -47,3 +47,40 @@
 .torrent-list-empty span {
     font-size: 0.8125rem;
 }
+
+.torrent-list-more {
+    display: flex;
+    justify-content: center;
+    padding: 0.75rem 0 0.25rem;
+}
+
+.torrent-list-more-btn {
+    min-height: 36px;
+    padding: 0 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-size: 0.8125rem;
+    cursor: pointer;
+}
+
+.torrent-list-more-btn:hover:not(:disabled) {
+    background: var(--color-muted);
+}
+
+.torrent-list-more-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.torrent-list-more-btn:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+@media (max-width: 640px) {
+    .torrent-list-more-btn {
+        min-height: 44px;
+    }
+}

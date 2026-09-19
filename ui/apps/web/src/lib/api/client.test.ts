@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { getApi } from "./client";
+import { getApi, getPageApi } from "./client";
 import { ApiError } from "./envelope";
 
 const realFetch = globalThis.fetch;
@@ -67,5 +67,54 @@ describe("getApi", () => {
         const error = (await getApi("/download").catch((e) => e)) as ApiError;
         expect(error).toBeInstanceOf(ApiError);
         expect(error.message).toContain("Could not reach");
+    });
+});
+
+describe("getPageApi", () => {
+    it("returns the rows and the pagination beside them", async () => {
+        respondWith(
+            JSON.stringify({
+                status: "success",
+                code: 200,
+                data: [
+                    { id: "a" },
+                ],
+                meta: { page: 2, page_size: 25, total: 60, total_pages: 3 },
+            }),
+            { status: 200 },
+        );
+
+        const page = await getPageApi<{ id: string }[]>("/download?page=2");
+
+        expect(page.data).toEqual([
+            { id: "a" },
+        ]);
+        expect(page.meta).toEqual({
+            page: 2,
+            pageSize: 25,
+            total: 60,
+            totalPages: 3,
+        });
+    });
+
+    it("falls back to a single page when the envelope carries no meta", async () => {
+        respondWith(
+            JSON.stringify({ status: "success", code: 200, data: [] }),
+            { status: 200 },
+        );
+
+        const page = await getPageApi<unknown[]>("/download");
+
+        expect(page.meta.page).toBe(1);
+        expect(page.meta.totalPages).toBe(1);
+    });
+
+    it("still throws the service's message when the request is refused", () => {
+        respondWith(
+            JSON.stringify({ status: "error", code: 500, message: "boom" }),
+            { status: 500 },
+        );
+
+        expect(getPageApi("/download")).rejects.toThrow("boom");
     });
 });

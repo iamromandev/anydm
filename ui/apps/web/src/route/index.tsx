@@ -5,12 +5,16 @@ import {
     addTorrent,
     apiUrl,
     deleteApi,
+    appendPage,
     getApi,
+    getPageApi,
     normalizeApiTask,
     normalizeSegments,
     postApi,
     resolveTorrent,
     type ResolvedTorrent,
+    normalizeSummary,
+    type TaskSummary,
     type UiTask,
 } from "@/lib/api";
 import {
@@ -31,11 +35,21 @@ import {
     type ToastTone,
 } from "@/lib/toast";
 
-const MAX_TASKS = 50;
+/** Rows per request. The API caps this at 100. */
+const PAGE_SIZE = 25;
 
 export default component$(() => {
     const store = useStore({
         tasks: [] as UiTask[],
+        // The last page fetched, and how many there are for the current
+        // filter. Pages accumulate: nothing already on screen is dropped to
+        // make room, which is what lets the list grow as it is scrolled.
+        page: 1,
+        totalPages: 1,
+        loadingMore: false,
+        // Counts for every filter, from the database rather than from the
+        // rows that happen to be loaded.
+        summary: null as TaskSummary | null,
         toasts: [] as Toast[],
         // The task the remove dialog is asking about, or null when it is shut.
         removing: null as { id: string; title: string; status: string } | null,
@@ -84,10 +98,12 @@ export default component$(() => {
             ]),
         );
         let next = store.toasts;
+        let announced = false;
 
         for (const row of rows) {
             const announcement = transitionToast(previous.get(row.id), row);
             if (announcement) {
+                announced = true;
                 next = raise(
                     next,
                     createToast(
@@ -100,6 +116,12 @@ export default component$(() => {
         }
 
         store.toasts = next;
+
+        // A status moved, so the counts beside the filters are now wrong.
+        // Only a real transition triggers this: the torrent monitor publishes
+        // a task frame every tick whether or not anything changed, and
+        // refetching on each of those would be a poll by another name.
+        if (announced) loadSummary();
     });
 
     /**
@@ -123,18 +145,51 @@ export default component$(() => {
         });
     });
 
+    const loadSummary = $(async () => {
+        const summary = await getApi<any>("/download/summary").catch(
+            () => null,
+        );
+        if (summary) store.summary = normalizeSummary(summary);
+    });
+
+    /**
+     * Fetch one page of the current filter.
+     *
+     * Page 1 replaces the list; later pages are added to it. A request that
+     * never landed leaves everything exactly as it is — the list is the only
+     * record of what was running, and emptying it during an outage throws away
+     * the very thing the connection indicator is saying is merely stale.
+     */
+    const loadPage = $(async (page: number) => {
+        const query = `page=${page}&page_size=${PAGE_SIZE}&group=${store.filter}`;
+        const result = await getPageApi<any[]>(`/download?${query}`).catch(
+            () => null,
+        );
+        if (result === null) return;
+
+        const rows = result.data.map(normalizeApiTask);
+        await noteTransitions(rows);
+
+        const carried = await carrySegments(rows);
+        store.tasks = page === 1 ? carried : appendPage(store.tasks, carried);
+        store.page = result.meta.page;
+        store.totalPages = result.meta.totalPages;
+    });
+
+    /** Back to the top of the current filter. */
     const syncTask = $(async () => {
-        const rows = await getApi<any[]>("/download").catch(() => null);
+        await loadPage(1);
+        await loadSummary();
+    });
 
-        // A request that never landed leaves the list exactly as it is. The
-        // list is the only record of what was running, and emptying it during
-        // an outage throws away the very thing the connection indicator is
-        // saying is merely stale.
-        if (rows === null) return;
-
-        const tasks = rows.map(normalizeApiTask);
-        await noteTransitions(tasks);
-        store.tasks = (await carrySegments(tasks)).slice(0, MAX_TASKS);
+    const handleLoadMore = $(async () => {
+        if (store.loadingMore || store.page >= store.totalPages) return;
+        store.loadingMore = true;
+        try {
+            await loadPage(store.page + 1);
+        } finally {
+            store.loadingMore = false;
+        }
     });
 
     /** Fold rows from an SSE frame into the list, replacing what they match. */
@@ -145,7 +200,7 @@ export default component$(() => {
         store.tasks = [
             ...(await carrySegments(rows)),
             ...kept,
-        ].slice(0, MAX_TASKS);
+        ];
     });
 
     /**
@@ -313,8 +368,13 @@ export default component$(() => {
         store.sidebarCollapsed = !store.sidebarCollapsed;
     });
 
-    const handleFilterChange = $((filter: string) => {
+    const handleFilterChange = $(async (filter: string) => {
         store.filter = filter as any;
+        // The filter is answered by the database now, so changing it is a new
+        // list rather than a different view of this one.
+        store.page = 1;
+        store.totalPages = 1;
+        await loadPage(1);
     });
 
     const handleSearchChange = $((query: string) => {
@@ -471,6 +531,11 @@ export default component$(() => {
             searchQuery={store.searchQuery}
             now={store.now}
             connection={store.connection}
+            summary={store.summary}
+            page={store.page}
+            totalPages={store.totalPages}
+            loadingMore={store.loadingMore}
+            onLoadMore={handleLoadMore}
             toasts={store.toasts}
             onDismissToast={handleDismissToast}
             sidebarOpen={store.sidebarOpen}

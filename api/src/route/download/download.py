@@ -9,7 +9,13 @@ from sse_starlette import EventSourceResponse
 
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.download import TaskSchema, UrlDownloadRequest, YoutubeDownloadRequest
+from src.data.schema.download import (
+    TaskSchema,
+    TaskSummarySchema,
+    UrlDownloadRequest,
+    YoutubeDownloadRequest,
+)
+from src.data.type import TaskGroup
 from src.lib.event import EventHub, get_event_hub
 from src.service import DownloadService, get_download_service
 
@@ -54,9 +60,27 @@ async def list_tasks(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+    group: Annotated[
+        TaskGroup,
+        Query(description="Which of the sidebar's filters to answer for"),
+    ] = "all",
 ) -> Response:
-    data, meta = await download_service.list_tasks(page=page, page_size=page_size)
+    data, meta = await download_service.list_tasks(
+        page=page, page_size=page_size, group=group
+    )
     return Success.ok(data=data, meta=meta).to_resp()
+
+
+@router.get(
+    # Before "/download/{task_id}", per the note above: otherwise "summary" is
+    # read as a task id and the request dies on a uuid it was never given.
+    path="/download/summary",
+    response_model=Success[TaskSummarySchema],
+)
+async def task_summary(
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    return Success.ok(data=await download_service.summary()).to_resp()
 
 
 @router.get(path="/download/events")

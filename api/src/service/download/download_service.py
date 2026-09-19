@@ -9,8 +9,8 @@ from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import SegmentRepo, TaskRepo
-from src.data.schema.download import TaskSchema
-from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.data.schema.download import TaskSchema, TaskSummarySchema
+from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.youtube import (
     YouTubeClient,
@@ -107,9 +107,29 @@ class DownloadService(BaseService):
         self._control.wake()
         return self._published(task)
 
-    async def list_tasks(self, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
-        tasks, meta = await self._repo.list_page(page=page, page_size=page_size)
+    async def list_tasks(
+        self,
+        page: int,
+        page_size: int,
+        group: str = "all",
+    ) -> tuple[list[TaskSchema], Meta]:
+        """One page of the list, narrowed to one of the sidebar's groups.
+
+        The group is named rather than spelled out as a list of statuses so
+        that the filter and the counts beside it cannot drift: both read
+        ``TASK_GROUPS``.
+        """
+        if group != "all" and group not in TASK_GROUPS:
+            raise Error.bad_request(message=f"Unknown group: {group}")
+
+        statuses = None if group == "all" else sorted(TASK_GROUPS[group])
+        tasks, meta = await self._repo.list_page(
+            page=page, page_size=page_size, statuses=statuses
+        )
         return [TaskSchema.model_validate(task) for task in tasks], meta
+
+    async def summary(self) -> TaskSummarySchema:
+        return await self._repo.summary()
 
     async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
         return TaskSchema.model_validate(await self._require(task_id))
