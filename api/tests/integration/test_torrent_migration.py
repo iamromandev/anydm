@@ -8,8 +8,9 @@ This exists because of two specific, repeated failures:
 * ``ops.RenameModel`` on a model that owns a foreign key only reloads the
   renamed model itself, not the model its field points at, and re-registering
   the backward relation without ever clearing the old one raises
-  ``backward relation "..." duplicates``. ``0004_torrent_file_to_file`` works
-  around it; this is what proves the workaround actually lands correctly.
+  ``backward relation "..." duplicates``. The rename has since been folded
+  into ``0002_task``/``0003_download``, so what is checked now is the state
+  those leave behind rather than the workaround that got there.
 """
 
 import pytest
@@ -32,11 +33,21 @@ async def test_task_has_the_torrent_columns(db: None) -> None:
 
 @pytest.mark.asyncio
 async def test_info_hash_is_indexed(db: None) -> None:
+    """An index on the column, whatever it ends up being called.
+
+    This used to name ``idx_task_info_hash``, from a migration that created
+    the index by hand. That migration has since been folded into
+    ``0002_task``, where the column is declared ``db_index=True`` and Tortoise
+    names the index itself — ``idx_task_info_ha_<hash>``. The old assertion
+    still passed on databases that had lived through both, and only failed
+    once one was built from the migrations alone. The name was never the
+    point; the index is.
+    """
     connection = Tortoise.get_connection("default")
     _, rows = await connection.execute_query(
-        "SELECT indexname FROM pg_indexes WHERE tablename = 'task'"
+        "SELECT indexdef FROM pg_indexes WHERE tablename = 'task'"
     )
-    assert "idx_task_info_hash" in {row["indexname"] for row in rows}
+    assert any("info_hash" in row["indexdef"] for row in rows)
 
 
 @pytest.mark.asyncio
