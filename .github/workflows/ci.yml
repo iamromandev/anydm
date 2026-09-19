@@ -20,9 +20,60 @@ jobs:
             - run: uv sync
             - run: uvx ruff check
             - run: uv run ty check
-            # Unit tests only. The integration suite needs Postgres and a disk,
-            # and runs locally against `make api:up` with `make api:test-all`.
+            # The fast path: everything that needs nothing but Python. The
+            # suite that needs a database is its own job, running in parallel.
             - run: uv run pytest
+
+    api-integration:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: api
+        services:
+            postgres:
+                # Tracks the tag `api/docker-compose.yml` runs, so CI gates
+                # on the database people actually develop against rather than
+                # on an older major they never see.
+                image: postgres:latest
+                env:
+                    POSTGRES_USER: user
+                    POSTGRES_PASSWORD: password
+                    POSTGRES_DB: db-anydm
+                ports:
+                    - 5432:5432
+                # Without a health gate the first connection races the
+                # server's own startup, which fails perhaps one run in five.
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+        env:
+            ENV: local
+            DEBUG: "false"
+            DB_ENGINE: tortoise.backends.asyncpg
+            DB_HOST: localhost
+            DB_PORT: "5432"
+            DB_NAME: db-anydm
+            DB_USER: user
+            DB_PASSWORD: password
+            # No engine is running here, and nothing in this suite needs one.
+            TORRENT_ENABLED: "false"
+            # `runner` is not a context a job-level `env` can read; only a
+            # step can. `github.workspace` is available here and serves.
+            DOWNLOAD_DIR: ${{ github.workspace }}/download
+        steps:
+            - uses: actions/checkout@v4
+            - uses: astral-sh/setup-uv@v5
+              with:
+                  enable-cache: true
+            - run: uv python install 3.14.6
+            - run: uv sync
+            # The schema comes from the migrations, not from
+            # `generate_schemas`, so that a migration that does not do what it
+            # claims fails here rather than on someone's database.
+            - run: uv run python -m scripts.migrate
+            - run: uv run pytest -m integration
 
     ui:
         runs-on: ubuntu-latest
