@@ -1,5 +1,6 @@
 import { component$, $ } from "@qwik.dev/core";
 import {
+    aggregateStats,
     isActive,
     isSeeding,
     type ResolvedTorrent,
@@ -14,18 +15,10 @@ import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import "./field.css";
 
-export interface GlobalStats {
-    downloadSpeed: number;
-    uploadSpeed: number;
-    totalDownloaded: number;
-    totalPeers: number;
-}
-
 export interface AppShellProps {
     tasks: UiTask[];
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
-    globalStats: GlobalStats | null;
     sidebarOpen: boolean;
     sidebarCollapsed: boolean;
     addModalOpen: boolean;
@@ -59,7 +52,6 @@ export const AppShell = component$<AppShellProps>(
         tasks,
         filter,
         searchQuery,
-        globalStats,
         sidebarOpen,
         sidebarCollapsed,
         addModalOpen,
@@ -84,12 +76,7 @@ export const AppShell = component$<AppShellProps>(
     }) => {
         const noop = $(() => {});
 
-        const stats: GlobalStats = globalStats ?? {
-            downloadSpeed: 0,
-            uploadSpeed: 0,
-            totalDownloaded: 0,
-            totalPeers: 0,
-        };
+        const stats = aggregateStats(tasks);
 
         const counts = {
             all: tasks.length,
@@ -163,7 +150,12 @@ export const AppShell = component$<AppShellProps>(
                     </div>
                 </div>
 
-                <StatusBar stats={stats} />
+                <StatusBar
+                    downloadSpeed={stats.downloadSpeed}
+                    uploadSpeed={stats.uploadSpeed}
+                    totalDownloaded={stats.totalDownloaded}
+                    totalPeers={stats.totalPeers}
+                />
 
                 <AddTorrentModal
                     open={addModalOpen}

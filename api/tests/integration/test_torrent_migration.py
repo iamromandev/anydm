@@ -27,7 +27,7 @@ async def test_task_has_the_torrent_columns(db: None) -> None:
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'task'"
     )
     columns = {row["column_name"] for row in rows}
-    assert {"info_hash", "uploaded_bytes", "peers_connected"} <= columns
+    assert {"info_hash", "uploaded_bytes", "upload_speed_bps", "peers_connected"} <= columns
 
 
 @pytest.mark.asyncio

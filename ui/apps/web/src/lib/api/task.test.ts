@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    aggregateStats,
     canPause,
     canResume,
     canStopSeeding,
@@ -11,6 +12,7 @@ import {
     normalizeFiles,
     segmentLayout,
     statusView,
+    type UiTask,
 } from "./task";
 
 describe("normalizeApiTask", () => {
@@ -305,5 +307,81 @@ describe("seeding status", () => {
         expect(isSeeding("seeding")).toBe(true);
         expect(isSeeding("complete")).toBe(false);
         expect(isSeeding("downloading")).toBe(false);
+    });
+});
+
+describe("aggregateStats", () => {
+    const task = (overrides: Partial<UiTask> = {}): UiTask => ({
+        id: "t",
+        title: "t",
+        url: "",
+        kind: "file",
+        status: "downloading",
+        progress: 0,
+        eta: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+        ...overrides,
+    });
+
+    it("is all zeros when nothing is listed", () => {
+        expect(aggregateStats([])).toEqual({
+            downloadSpeed: 0,
+            uploadSpeed: 0,
+            totalDownloaded: 0,
+            totalPeers: 0,
+        });
+    });
+
+    it("adds up the rates of everything still transferring", () => {
+        const stats = aggregateStats([
+            task({
+                id: "a",
+                status: "downloading",
+                downloadSpeed: 1000,
+                downloadedBytes: 500,
+            }),
+            task({
+                id: "b",
+                status: "seeding",
+                uploadSpeed: 250,
+                peersConnected: 4,
+                downloadedBytes: 900,
+            }),
+        ]);
+
+        expect(stats.downloadSpeed).toBe(1000);
+        expect(stats.uploadSpeed).toBe(250);
+        expect(stats.totalPeers).toBe(4);
+    });
+
+    it("drops the rates a finished or failed row still carries", () => {
+        const stats = aggregateStats([
+            task({
+                id: "a",
+                status: "complete",
+                downloadSpeed: 8000,
+                peersConnected: 3,
+            }),
+            task({ id: "b", status: "failed", downloadSpeed: 4000 }),
+            task({ id: "c", status: "canceled", uploadSpeed: 2000 }),
+        ]);
+
+        expect(stats.downloadSpeed).toBe(0);
+        expect(stats.uploadSpeed).toBe(0);
+        expect(stats.totalPeers).toBe(0);
+    });
+
+    it("counts the bytes of every row, finished ones included", () => {
+        const stats = aggregateStats([
+            task({ id: "a", status: "downloading", downloadedBytes: 120 }),
+            task({ id: "b", status: "complete", downloadedBytes: 300 }),
+            task({ id: "c", status: "failed", downloadedBytes: 80 }),
+        ]);
+
+        expect(stats.totalDownloaded).toBe(500);
     });
 });
