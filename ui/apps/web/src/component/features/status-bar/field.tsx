@@ -1,4 +1,5 @@
 import { component$, useStore, useVisibleTask$ } from "@qwik.dev/core";
+import { connectionLabel, type Connection } from "@/lib/connection";
 import { HISTORY_LIMIT, appendSample, emptyHistory } from "./history";
 import "./field.css";
 
@@ -13,6 +14,7 @@ interface StatusBarProps {
     uploadSpeed: number;
     totalDownloaded: number;
     totalPeers: number;
+    connection: Connection;
 }
 
 interface SpeedGaugeProps {
@@ -32,7 +34,13 @@ const SPARK_PAD = 3;
 const SAMPLE_MS = 1000;
 
 export const StatusBar = component$<StatusBarProps>(
-    ({ downloadSpeed, uploadSpeed, totalDownloaded, totalPeers }) => {
+    ({
+        downloadSpeed,
+        uploadSpeed,
+        totalDownloaded,
+        totalPeers,
+        connection,
+    }) => {
         const history = useStore(emptyHistory());
 
         /**
@@ -175,6 +183,15 @@ export const StatusBar = component$<StatusBarProps>(
                         </svg>
                         <span class="speed-meter-stat-value">{totalPeers}</span>
                         <span class="speed-meter-stat-label">Peers</span>
+                    </span>
+                    <span
+                        class={`speed-meter-link speed-meter-link--${connection}`}
+                        title={`Live updates: ${connectionLabel(connection)}`}
+                    >
+                        <span class="speed-meter-link-dot" aria-hidden="true" />
+                        <span class="speed-meter-stat-label">
+                            {connectionLabel(connection)}
+                        </span>
                     </span>
                 </div>
             </footer>

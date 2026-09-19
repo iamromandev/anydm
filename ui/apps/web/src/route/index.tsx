@@ -15,6 +15,13 @@ import {
     type UiTask,
 } from "@/lib/api";
 import {
+    FALLBACK_POLL_MS,
+    connectionOnError,
+    isDegraded,
+    shouldWarn,
+    type Connection,
+} from "@/lib/connection";
+import {
     createToast,
     dismiss,
     errorMessage,
@@ -33,6 +40,13 @@ export default component$(() => {
         toasts: [] as Toast[],
         // Ticked only while a retry is actually pending; see the clock below.
         now: Date.now(),
+        connection: "connecting" as Connection,
+        // When the current gap in live updates began, for the warning's grace
+        // period. Null whenever the stream is live.
+        degradedSince: null as number | null,
+        // The id of the "lost contact" toast, so reconnecting can take it
+        // down rather than leaving a stale alarm on screen.
+        outageToastId: null as string | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
         sidebarOpen: false as boolean,
@@ -109,10 +123,15 @@ export default component$(() => {
     });
 
     const syncTask = $(async () => {
-        const tasks = await getApi<any[]>("/download")
-            .then((rows) => rows.map(normalizeApiTask))
-            .catch(() => [] as UiTask[]);
+        const rows = await getApi<any[]>("/download").catch(() => null);
 
+        // A request that never landed leaves the list exactly as it is. The
+        // list is the only record of what was running, and emptying it during
+        // an outage throws away the very thing the connection indicator is
+        // saying is merely stale.
+        if (rows === null) return;
+
+        const tasks = rows.map(normalizeApiTask);
         await noteTransitions(tasks);
         store.tasks = (await carrySegments(tasks)).slice(0, MAX_TASKS);
     });
@@ -155,7 +174,6 @@ export default component$(() => {
     useVisibleTask$(
         ({ cleanup }) => {
             syncTask();
-            const interval = setInterval(syncTask, 2500);
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
             const sweeper = setInterval(() => {
@@ -175,6 +193,41 @@ export default component$(() => {
                         task.nextAttemptAt > at - 2000,
                 );
                 if (waiting) store.now = at;
+            }, 1000);
+
+            /**
+             * What used to be an unconditional poll every 2.5s.
+             *
+             * The stream carries every change and replays a full snapshot on
+             * each connection, so fetching the list on a timer bought nothing
+             * except a request per tab per tick — and hid any stream bug, by
+             * papering over it within seconds. Fetching now happens only while
+             * the stream is not confirmed live, which also covers the case it
+             * never opens at all: a proxy that strips `text/event-stream`
+             * leaves a degraded app rather than a frozen one.
+             */
+            let lastFallbackAt = 0;
+            const watch = setInterval(() => {
+                const at = Date.now();
+                if (!isDegraded(store.connection)) return;
+
+                if (at - lastFallbackAt >= FALLBACK_POLL_MS) {
+                    lastFallbackAt = at;
+                    syncTask();
+                }
+
+                if (
+                    store.outageToastId === null &&
+                    shouldWarn(store.connection, store.degradedSince, at)
+                ) {
+                    const toast = createToast(
+                        "error",
+                        "Lost contact with the API. Still trying, and the list may be out of date.",
+                        at,
+                    );
+                    store.outageToastId = toast.id;
+                    store.toasts = raise(store.toasts, toast);
+                }
             }, 1000);
 
             let apiEvents: EventSource | null = null;
@@ -208,15 +261,36 @@ export default component$(() => {
                         // malformed event
                     }
                 });
+                apiEvents.onopen = () => {
+                    const wasWarned = store.outageToastId;
+                    store.connection = "live";
+                    store.degradedSince = null;
+                    // The snapshot that follows an open replaces whatever went
+                    // stale during the gap, so nothing else has to be undone.
+                    if (wasWarned) {
+                        store.toasts = raise(
+                            dismiss(store.toasts, wasWarned),
+                            createToast("info", "Back in contact", Date.now()),
+                        );
+                        store.outageToastId = null;
+                    }
+                };
                 apiEvents.onerror = () => {
-                    // EventSource reconnects automatically
+                    // The browser reopens on its own; this only records that
+                    // it is currently not open, so the footer can say so.
+                    store.connection = connectionOnError(
+                        apiEvents?.readyState ?? 2,
+                    );
+                    store.degradedSince ??= Date.now();
                 };
             } catch {
                 apiEvents = null;
+                store.connection = "offline";
+                store.degradedSince ??= Date.now();
             }
 
             cleanup(() => {
-                clearInterval(interval);
+                clearInterval(watch);
                 clearInterval(sweeper);
                 clearInterval(clock);
                 apiEvents?.close();
@@ -375,6 +449,7 @@ export default component$(() => {
             filter={store.filter}
             searchQuery={store.searchQuery}
             now={store.now}
+            connection={store.connection}
             toasts={store.toasts}
             onDismissToast={handleDismissToast}
             sidebarOpen={store.sidebarOpen}
