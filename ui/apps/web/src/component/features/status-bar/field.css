@@ -224,3 +224,49 @@
         font-size: 0.75rem;
     }
 }
+
+.speed-meter-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.speed-meter-link-dot {
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: var(--radius-full);
+    background: var(--color-success);
+}
+
+.speed-meter-link--connecting .speed-meter-link-dot,
+.speed-meter-link--reconnecting .speed-meter-link-dot {
+    background: var(--color-warning);
+    /* A pulse, because "still trying" is the one state worth noticing. */
+    animation: link-pulse 1.2s ease-in-out infinite;
+}
+
+.speed-meter-link--offline .speed-meter-link-dot {
+    background: var(--color-error);
+}
+
+/* The label is redundant next to the dot once space is short; the title and
+   the colour still carry it. */
+.speed-meter-link--live .speed-meter-stat-label {
+    display: none;
+}
+
+@keyframes link-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .speed-meter-link-dot {
+        animation: none;
+    }
+}

@@ -14,6 +14,7 @@ import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import { Toaster } from "@/component/shared/toast";
+import type { Connection } from "@/lib/connection";
 import type { Toast } from "@/lib/toast";
 import "./field.css";
 
@@ -22,6 +23,7 @@ export interface AppShellProps {
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
     now: number;
+    connection: Connection;
     toasts: Toast[];
     onDismissToast: (id: string) => void;
     sidebarOpen: boolean;
@@ -58,6 +60,7 @@ export const AppShell = component$<AppShellProps>(
         filter,
         searchQuery,
         now,
+        connection,
         toasts,
         onDismissToast,
         sidebarOpen,
@@ -164,6 +167,7 @@ export const AppShell = component$<AppShellProps>(
                     uploadSpeed={stats.uploadSpeed}
                     totalDownloaded={stats.totalDownloaded}
                     totalPeers={stats.totalPeers}
+                    connection={connection}
                 />
 
                 <Toaster toasts={toasts} onDismiss={onDismissToast} />
