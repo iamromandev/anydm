@@ -27,6 +27,7 @@ def _row(**overrides: Any) -> Any:
         "downloaded_bytes": 0,
         "total_bytes": None,
         "speed_bps": 0,
+        "upload_speed_bps": 0,
         "eta_seconds": None,
         "uploaded_bytes": 0,
         "peers_connected": 0,
@@ -142,6 +143,7 @@ async def test_tick_mirrors_a_sample_onto_the_row() -> None:
     assert row.downloaded_bytes == 500
     assert row.total_bytes == 1000
     assert row.speed_bps == 4096
+    assert row.upload_speed_bps == 512
     assert row.uploaded_bytes == 100
     assert row.peers_connected == 6
     assert row.eta_seconds == 12
@@ -187,6 +189,7 @@ async def test_nothing_is_written_when_nothing_changed() -> None:
         downloaded_bytes=500,
         total_bytes=1000,
         speed_bps=4096,
+        upload_speed_bps=512,
         uploaded_bytes=100,
         peers_connected=6,
         eta_seconds=12,

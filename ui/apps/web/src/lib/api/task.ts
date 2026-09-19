@@ -127,8 +127,8 @@ export function normalizeApiTask(raw: any): UiTask {
         downloadedBytes,
         totalBytes: raw.total_bytes ?? 0,
         downloadSpeed: raw.speed_bps ?? 0,
-        // The API tracks cumulative uploaded bytes, not a live upload rate, so
-        // this stays 0 unless a future API version adds one under this key.
+        // Torrent-only: the engine reports an upload rate and the monitor
+        // mirrors it. Every other platform leaves the key absent, which is 0.
         uploadSpeed: raw.upload_speed_bps ?? 0,
         peersConnected: raw.peers_connected ?? 0,
         infoHash: raw.info_hash ?? undefined,
@@ -217,4 +217,42 @@ export function isSeeding(status: string): boolean {
 /** Only a seeding torrent can be told to stop. */
 export function canStopSeeding(status: string): boolean {
     return status === "seeding";
+}
+
+/** The four numbers the status bar draws. */
+export type GlobalStats = {
+    downloadSpeed: number;
+    uploadSpeed: number;
+    totalDownloaded: number;
+    totalPeers: number;
+};
+
+/**
+ * The status bar's numbers, from the rows already on screen.
+ *
+ * Rates count only rows that are still transferring. The API zeroes `speed_bps`
+ * on every terminal transition, but a row left `downloading` by a killed
+ * process keeps its last speed until recovery requeues it, and that stale
+ * number would otherwise read as live throughput in the footer.
+ *
+ * Bytes are the opposite: every row counts, because a finished download is
+ * precisely what a total downloaded is made of.
+ */
+export function aggregateStats(tasks: UiTask[]): GlobalStats {
+    const stats: GlobalStats = {
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        totalDownloaded: 0,
+        totalPeers: 0,
+    };
+
+    for (const task of tasks) {
+        stats.totalDownloaded += task.downloadedBytes;
+        if (!isActive(task.status) && !isSeeding(task.status)) continue;
+        stats.downloadSpeed += task.downloadSpeed;
+        stats.uploadSpeed += task.uploadSpeed;
+        stats.totalPeers += task.peersConnected;
+    }
+
+    return stats;
 }

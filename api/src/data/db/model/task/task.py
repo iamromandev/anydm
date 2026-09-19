@@ -45,6 +45,10 @@ class Task(Base):
     #: Torrent-only. Stored rather than computed so the share ratio the card
     #: draws needs no second source.
     uploaded_bytes: int = fields.BigIntField(default=0)
+    #: Torrent-only. Spelled out rather than mirroring ``speed_bps``, which
+    #: predates it and means download: a bare ``speed_bps`` beside an
+    #: ``upload_bps`` would leave the older column's direction to guesswork.
+    upload_speed_bps: int = fields.BigIntField(default=0)
     #: Torrent-only. Stored so a reconnecting browser sees a peer count at once
     #: instead of waiting for the next monitor tick.
     peers_connected: int = fields.IntField(default=0)

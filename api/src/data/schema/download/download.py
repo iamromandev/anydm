@@ -39,6 +39,7 @@ class TaskSchema(BaseSchema):
     # torrent. Absent, zero and None for every other platform.
     info_hash: str | None = None
     uploaded_bytes: int = 0
+    upload_speed_bps: int = 0
     peers_connected: int = 0
     #: ``None`` rather than ``[]`` on purpose: a missing key means "this is not
     #: a torrent", which is the same rule ``segments`` already follows.

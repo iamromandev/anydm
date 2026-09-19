@@ -150,6 +150,7 @@ class TorrentMonitor:
             "total_bytes": sample.total_bytes or None,
             "speed_bps": sample.download_bps,
             "uploaded_bytes": sample.uploaded_bytes,
+            "upload_speed_bps": sample.upload_bps,
             "peers_connected": sample.peers_connected,
             "eta_seconds": sample.eta_seconds,
         }

@@ -1,15 +1,18 @@
 import { component$, useStore, useVisibleTask$ } from "@qwik.dev/core";
+import { HISTORY_LIMIT, appendSample, emptyHistory } from "./history";
 import "./field.css";
 
-interface GlobalStats {
+/**
+ * Four numbers rather than a `GlobalStats` object.
+ *
+ * The footer draws exactly these, and taking them apart keeps a presentational
+ * component free of the API layer's task contract.
+ */
+interface StatusBarProps {
     downloadSpeed: number;
     uploadSpeed: number;
     totalDownloaded: number;
     totalPeers: number;
-}
-
-interface StatusBarProps {
-    stats: GlobalStats;
 }
 
 interface SpeedGaugeProps {
@@ -22,54 +25,117 @@ interface SpeedGaugeProps {
     icon: any;
 }
 
-const HISTORY_LIMIT = 48;
 const SPARK_WIDTH = 120;
 const SPARK_HEIGHT = 32;
 const SPARK_PAD = 3;
+/** How often a sparkline point is taken. */
+const SAMPLE_MS = 1000;
 
-export const StatusBar = component$<StatusBarProps>(({ stats }) => {
-    const history = useStore({
-        download: [] as number[],
-        upload: [] as number[],
-        max: 1,
-    });
+export const StatusBar = component$<StatusBarProps>(
+    ({ downloadSpeed, uploadSpeed, totalDownloaded, totalPeers }) => {
+        const history = useStore(emptyHistory());
 
-    useVisibleTask$(({ track }) => {
-        track(() => stats.downloadSpeed);
-        track(() => stats.uploadSpeed);
+        /**
+         * `document-ready` rather than the default: the footer is fixed to the
+         * bottom of every page, so gating it on an intersection buys nothing —
+         * and the observer does not fire for it at all, which is half of why
+         * these sparklines were empty.
+         *
+         * The timer is the other half. Sampling from tracked props ran this
+         * once and never again, leaving one point where a line needs two.
+         */
+        useVisibleTask$(
+            ({ cleanup }) => {
+                const sample = () => {
+                    const next = appendSample(
+                        history,
+                        downloadSpeed,
+                        uploadSpeed,
+                    );
+                    history.download = next.download;
+                    history.upload = next.upload;
+                    history.max = next.max;
+                };
 
-        history.download = [
-            ...history.download,
-            stats.downloadSpeed,
-        ].slice(-HISTORY_LIMIT);
-        history.upload = [
-            ...history.upload,
-            stats.uploadSpeed,
-        ].slice(-HISTORY_LIMIT);
-        history.max = Math.max(1, ...history.download, ...history.upload);
-    });
+                sample();
+                const timer = setInterval(sample, SAMPLE_MS);
+                cleanup(() => clearInterval(timer));
+            },
+            { strategy: "document-ready" },
+        );
 
-    const downActive = stats.downloadSpeed > 0;
-    const upActive = stats.uploadSpeed > 0;
+        const downActive = downloadSpeed > 0;
+        const upActive = uploadSpeed > 0;
 
-    return (
-        <footer
-            class={`speed-meter ${downActive || upActive ? "speed-meter--active" : ""}`}
-            role="status"
-            aria-live="polite"
-        >
-            <div class="speed-meter-gauges">
-                <SpeedGauge
-                    label="Download"
-                    value={formatSpeed(stats.downloadSpeed)}
-                    active={downActive}
-                    tone="down"
-                    history={history.download}
-                    max={history.max}
-                    icon={
+        return (
+            <footer
+                class={`speed-meter ${downActive || upActive ? "speed-meter--active" : ""}`}
+                role="status"
+                aria-live="polite"
+            >
+                <div class="speed-meter-gauges">
+                    <SpeedGauge
+                        label="Download"
+                        value={formatSpeed(downloadSpeed)}
+                        active={downActive}
+                        tone="down"
+                        history={history.download}
+                        max={history.max}
+                        icon={
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                        }
+                    />
+                    <SpeedGauge
+                        label="Upload"
+                        value={formatSpeed(uploadSpeed)}
+                        active={upActive}
+                        tone="up"
+                        history={history.upload}
+                        max={history.max}
+                        icon={
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                        }
+                    />
+                </div>
+
+                <div class="speed-meter-divider" aria-hidden="true" />
+
+                <div class="speed-meter-stats">
+                    <span
+                        class="speed-meter-stat"
+                        aria-label={`Downloaded total ${formatBytes(totalDownloaded)}`}
+                    >
                         <svg
-                            width="14"
-                            height="14"
+                            width="12"
+                            height="12"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -78,23 +144,22 @@ export const StatusBar = component$<StatusBarProps>(({ stats }) => {
                             stroke-linejoin="round"
                             aria-hidden="true"
                         >
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
+                            <ellipse cx="12" cy="5" rx="7" ry="3" />
+                            <path d="M5 5v8c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+                            <path d="M5 13v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
                         </svg>
-                    }
-                />
-                <SpeedGauge
-                    label="Upload"
-                    value={formatSpeed(stats.uploadSpeed)}
-                    active={upActive}
-                    tone="up"
-                    history={history.upload}
-                    max={history.max}
-                    icon={
+                        <span class="speed-meter-stat-value">
+                            {formatBytes(totalDownloaded)}
+                        </span>
+                        <span class="speed-meter-stat-label">Total</span>
+                    </span>
+                    <span
+                        class="speed-meter-stat"
+                        aria-label={`Connected peers ${totalPeers}`}
+                    >
                         <svg
-                            width="14"
-                            height="14"
+                            width="12"
+                            height="12"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -103,70 +168,19 @@ export const StatusBar = component$<StatusBarProps>(({ stats }) => {
                             stroke-linejoin="round"
                             aria-hidden="true"
                         >
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                         </svg>
-                    }
-                />
-            </div>
-
-            <div class="speed-meter-divider" aria-hidden="true" />
-
-            <div class="speed-meter-stats">
-                <span
-                    class="speed-meter-stat"
-                    aria-label={`Downloaded total ${formatBytes(stats.totalDownloaded)}`}
-                >
-                    <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <ellipse cx="12" cy="5" rx="7" ry="3" />
-                        <path d="M5 5v8c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
-                        <path d="M5 13v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
-                    </svg>
-                    <span class="speed-meter-stat-value">
-                        {formatBytes(stats.totalDownloaded)}
+                        <span class="speed-meter-stat-value">{totalPeers}</span>
+                        <span class="speed-meter-stat-label">Peers</span>
                     </span>
-                    <span class="speed-meter-stat-label">Total</span>
-                </span>
-                <span
-                    class="speed-meter-stat"
-                    aria-label={`Connected peers ${stats.totalPeers}`}
-                >
-                    <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                    </svg>
-                    <span class="speed-meter-stat-value">
-                        {stats.totalPeers}
-                    </span>
-                    <span class="speed-meter-stat-label">Peers</span>
-                </span>
-            </div>
-        </footer>
-    );
-});
+                </div>
+            </footer>
+        );
+    },
+);
 
 export const SpeedGauge = component$<SpeedGaugeProps>(
     ({ label, value, active, tone, history, max, icon }) => {

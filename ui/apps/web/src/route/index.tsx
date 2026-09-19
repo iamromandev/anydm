@@ -22,12 +22,6 @@ export default component$(() => {
         tasks: [] as UiTask[],
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
-        globalStats: null as {
-            downloadSpeed: number;
-            uploadSpeed: number;
-            totalDownloaded: number;
-            totalPeers: number;
-        } | null,
         sidebarOpen: false as boolean,
         sidebarCollapsed: true as boolean,
         addModalOpen: false as boolean,
@@ -295,7 +289,6 @@ export default component$(() => {
             tasks={store.tasks}
             filter={store.filter}
             searchQuery={store.searchQuery}
-            globalStats={store.globalStats}
             sidebarOpen={store.sidebarOpen}
             sidebarCollapsed={store.sidebarCollapsed}
             onSidebarToggle={toggleSidebar}
