@@ -31,7 +31,10 @@ jobs:
                 working-directory: api
         services:
             postgres:
-                image: postgres:16
+                # Tracks the tag `api/docker-compose.yml` runs, so CI gates
+                # on the database people actually develop against rather than
+                # on an older major they never see.
+                image: postgres:latest
                 env:
                     POSTGRES_USER: user
                     POSTGRES_PASSWORD: password
