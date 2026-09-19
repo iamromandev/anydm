@@ -20,6 +20,3 @@ __pycache__
 
 ### allow ###
 !.env.example
-
-### allow lockfile (CI runs uv sync --frozen) ###
-!uv.lock
