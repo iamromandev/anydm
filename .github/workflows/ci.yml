@@ -17,7 +17,7 @@ jobs:
               with:
                   enable-cache: true
             - run: uv python install 3.14.6
-            - run: uv sync --frozen
+            - run: uv sync
             - run: uvx ruff check
             - run: uv run ty check
             # Unit tests only. The integration suite needs Postgres and a disk,

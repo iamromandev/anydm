@@ -1,0 +1,132 @@
+.player-controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem 0.625rem;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0));
+    color: #fff;
+}
+
+.player-controls-track {
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.player-controls-track::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.player-controls-fill {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 4px;
+    border-radius: 9999px;
+    pointer-events: none;
+}
+
+.player-controls-fill--swarm {
+    background: rgba(255, 255, 255, 0.25);
+    z-index: 1;
+}
+
+.player-controls-fill--buffered {
+    background: rgba(255, 255, 255, 0.5);
+    z-index: 2;
+}
+
+.player-controls-fill--played {
+    background: #7c4dff;
+    z-index: 3;
+}
+
+.player-controls-thumb {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #7c4dff;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    pointer-events: none;
+}
+
+.player-controls-tooltip {
+    position: absolute;
+    bottom: 18px;
+    transform: translateX(-50%);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.85);
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.player-controls-row {
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.player-controls-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+
+.player-controls-button:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.player-controls-volume {
+    width: 72px;
+}
+
+.player-controls-time {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.player-controls-rate {
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.25rem;
+}

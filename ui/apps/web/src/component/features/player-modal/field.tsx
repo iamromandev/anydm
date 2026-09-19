@@ -13,7 +13,10 @@ import {
     startStream,
     stopStream,
 } from "@/lib/api";
+import { getBufferedPercent } from "./buffered-progress";
+import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
+import { scrubberSegments } from "./scrubber-progress";
 import "./field.css";
 
 export interface PlayerModalProps {
@@ -26,6 +29,7 @@ export interface PlayerModalProps {
 export const PlayerModal = component$<PlayerModalProps>(
     ({ open, url, kind, onClose }) => {
         const videoRef = useSignal<HTMLVideoElement>();
+        const panelRef = useSignal<HTMLDivElement>();
         const store = useStore({
             isLoading: false,
             error: "" as string,
@@ -37,6 +41,15 @@ export const PlayerModal = component$<PlayerModalProps>(
             downloadBps: 0,
             progressBytes: 0,
             totalBytes: 0,
+            bufferedPercent: 0,
+            bufferedRanges: [] as { start: number; end: number }[],
+            currentTime: 0,
+            duration: 0,
+            paused: true,
+            volume: 1,
+            muted: false,
+            playbackRate: 1,
+            fullscreen: false,
         });
 
         useVisibleTask$(
@@ -63,6 +76,14 @@ export const PlayerModal = component$<PlayerModalProps>(
                 store.downloadBps = 0;
                 store.progressBytes = 0;
                 store.totalBytes = 0;
+                store.bufferedPercent = 0;
+                store.bufferedRanges = [];
+                store.currentTime = 0;
+                store.duration = 0;
+                store.paused = true;
+                store.volume = 1;
+                store.muted = false;
+                store.playbackRate = 1;
 
                 // Reassigned inside the try block below; declared here so `cleanup`
                 // below can reach whichever instance (if any) actually got created.
@@ -74,6 +95,21 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const streamEventsRef: { current: EventSource | null } = {
                     current: null,
                 };
+
+                const updateFullscreenState = () => {
+                    store.fullscreen =
+                        document.fullscreenElement === panelRef.value;
+                };
+                document.addEventListener(
+                    "fullscreenchange",
+                    updateFullscreenState,
+                );
+                cleanup(() => {
+                    document.removeEventListener(
+                        "fullscreenchange",
+                        updateFullscreenState,
+                    );
+                });
 
                 try {
                     const session = await startStream(sourceUrl, sourceKind);
@@ -142,6 +178,94 @@ export const PlayerModal = component$<PlayerModalProps>(
                     if (ready) {
                         const video = videoRef.value;
                         if (video) {
+                            const updateBufferedPercent = () => {
+                                const ranges: {
+                                    start: number;
+                                    end: number;
+                                }[] = [];
+                                for (
+                                    let i = 0;
+                                    i < video.buffered.length;
+                                    i++
+                                ) {
+                                    ranges.push({
+                                        start: video.buffered.start(i),
+                                        end: video.buffered.end(i),
+                                    });
+                                }
+                                store.bufferedRanges = ranges;
+                                store.currentTime = video.currentTime;
+                                store.bufferedPercent = getBufferedPercent({
+                                    ranges,
+                                    currentTime: video.currentTime,
+                                    duration: video.duration,
+                                });
+                            };
+                            const updatePlaybackState = () => {
+                                store.paused = video.paused;
+                            };
+                            const updateVolumeState = () => {
+                                store.volume = video.volume;
+                                store.muted = video.muted;
+                            };
+                            const updateRateState = () => {
+                                store.playbackRate = video.playbackRate;
+                            };
+                            const updateDuration = () => {
+                                store.duration = video.duration;
+                            };
+
+                            const videoListeners: [
+                                string,
+                                () => void,
+                            ][] = [
+                                [
+                                    "timeupdate",
+                                    updateBufferedPercent,
+                                ],
+                                [
+                                    "progress",
+                                    updateBufferedPercent,
+                                ],
+                                [
+                                    "play",
+                                    updatePlaybackState,
+                                ],
+                                [
+                                    "pause",
+                                    updatePlaybackState,
+                                ],
+                                [
+                                    "volumechange",
+                                    updateVolumeState,
+                                ],
+                                [
+                                    "ratechange",
+                                    updateRateState,
+                                ],
+                                [
+                                    "durationchange",
+                                    updateDuration,
+                                ],
+                                [
+                                    "loadedmetadata",
+                                    updateDuration,
+                                ],
+                            ];
+                            for (const [
+                                type,
+                                handler,
+                            ] of videoListeners) {
+                                video.addEventListener(type, handler);
+                            }
+                            cleanup(() => {
+                                for (const [
+                                    type,
+                                    handler,
+                                ] of videoListeners) {
+                                    video.removeEventListener(type, handler);
+                                }
+                            });
                             // hls.js first: Chromium's canPlayType("application/vnd.apple.mpegurl")
                             // reports "maybe" even though Chrome has no real native
                             // HLS support, which let this decode a simple mono test
@@ -195,6 +319,67 @@ export const PlayerModal = component$<PlayerModalProps>(
             onClose();
         });
 
+        const handleTogglePlay = $(() => {
+            const video = videoRef.value;
+            if (!video) {
+                return;
+            }
+            if (video.paused) {
+                video.play().catch(() => {
+                    // Best-effort: autoplay-restriction policies can reject this.
+                });
+            } else {
+                video.pause();
+            }
+        });
+
+        const handleSeek = $((time: number) => {
+            const video = videoRef.value;
+            if (!video || !Number.isFinite(time)) {
+                return;
+            }
+            video.currentTime = Math.max(0, time);
+        });
+
+        const handleVolumeChange = $((volume: number) => {
+            const video = videoRef.value;
+            if (!video) {
+                return;
+            }
+            video.volume = Math.min(1, Math.max(0, volume));
+            if (video.volume > 0) {
+                video.muted = false;
+            }
+        });
+
+        const handleToggleMute = $(() => {
+            const video = videoRef.value;
+            if (!video) {
+                return;
+            }
+            video.muted = !video.muted;
+        });
+
+        const handlePlaybackRateChange = $((rate: number) => {
+            const video = videoRef.value;
+            if (!video) {
+                return;
+            }
+            video.playbackRate = rate;
+        });
+
+        const handleToggleFullscreen = $(() => {
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {
+                    // Best-effort: some browsers/iframes reject exit requests.
+                });
+            } else {
+                panelRef.value?.requestFullscreen().catch(() => {
+                    // Best-effort: fullscreen isn't available everywhere.
+                });
+            }
+        });
+
         if (!open) {
             return null;
         }
@@ -207,6 +392,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                 aria-label="Media player"
             >
                 <div
+                    ref={panelRef}
                     class={`player-modal-panel ${store.hasVideo ? "" : "player-modal-panel--audio-only"}`}
                 >
                     <button
@@ -225,7 +411,6 @@ export const PlayerModal = component$<PlayerModalProps>(
                             <video
                                 ref={videoRef}
                                 class="player-modal-video"
-                                controls
                                 autoplay
                             />
                         )}
@@ -236,6 +421,32 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 downloadBps={store.downloadBps}
                                 progressBytes={store.progressBytes}
                                 totalBytes={store.totalBytes}
+                                bufferedPercent={store.bufferedPercent}
+                            />
+                        )}
+                        {!store.error && (
+                            <PlayerControls
+                                paused={store.paused}
+                                currentTime={store.currentTime}
+                                duration={store.duration}
+                                volume={store.volume}
+                                muted={store.muted}
+                                playbackRate={store.playbackRate}
+                                fullscreen={store.fullscreen}
+                                segments={scrubberSegments({
+                                    isTorrent: store.isTorrent,
+                                    progressBytes: store.progressBytes,
+                                    totalBytes: store.totalBytes,
+                                    bufferedRanges: store.bufferedRanges,
+                                    currentTime: store.currentTime,
+                                    duration: store.duration,
+                                })}
+                                onTogglePlay={handleTogglePlay}
+                                onSeek={handleSeek}
+                                onVolumeChange={handleVolumeChange}
+                                onToggleMute={handleToggleMute}
+                                onPlaybackRateChange={handlePlaybackRateChange}
+                                onToggleFullscreen={handleToggleFullscreen}
                             />
                         )}
                     </div>

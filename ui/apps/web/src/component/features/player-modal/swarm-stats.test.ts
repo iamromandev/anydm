@@ -74,7 +74,7 @@ describe("swarmStatsView", () => {
         ).toBe(0);
     });
 
-    it("has no eta when there's no speed to estimate from", () => {
+    it("shows a placeholder eta when there's no speed to estimate from yet", () => {
         expect(
             swarmStatsView({
                 peersConnected: 1,
@@ -82,7 +82,18 @@ describe("swarmStatsView", () => {
                 progressBytes: 100,
                 totalBytes: 900_000_000,
             }).etaLabel,
-        ).toBeNull();
+        ).toBe("Calculating…");
+    });
+
+    it("shows a placeholder eta before any progress/total bytes are known", () => {
+        expect(
+            swarmStatsView({
+                peersConnected: 0,
+                downloadBps: 0,
+                progressBytes: 0,
+                totalBytes: 0,
+            }).etaLabel,
+        ).toBe("Calculating…");
     });
 
     it("estimates remaining time from the bytes left and current speed", () => {
