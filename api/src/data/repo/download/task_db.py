@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from tortoise.expressions import Q
 from tortoise.transactions import in_transaction
@@ -10,7 +11,8 @@ from src.core.common import now
 from src.core.success import Meta
 from src.data.db.model import Task
 from src.data.repo.download.interface import TaskRepo
-from src.data.type import ACTIVE_STATUSES, Platform, TaskStatus
+from src.data.schema.download import TaskSummarySchema
+from src.data.type import ACTIVE_STATUSES, TASK_GROUPS, Platform, TaskStatus
 
 
 class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
@@ -85,14 +87,51 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
             heartbeat_at=now(),
         )
 
-    async def list_page(self, page: int, page_size: int) -> tuple[list[Task], Meta]:
+    async def list_page(
+        self,
+        page: int,
+        page_size: int,
+        statuses: list[TaskStatus] | None = None,
+    ) -> tuple[list[Task], Meta]:
+        """One page of the list, newest first, optionally narrowed by status.
+
+        The filter is applied in the database rather than after the fact so
+        that ``Meta.total`` describes the filtered set. A total that counted
+        rows the caller will never be sent is a "load more" button that never
+        stops offering.
+        """
+        filters: dict[str, Any] = {"deleted_at__isnull": True}
+        if statuses:
+            filters["status__in"] = list(statuses)
+
         tasks, meta = await self.get_paginated(
-            deleted_at__isnull=True,
             order_by="-created_at",
             page=page,
             page_size=page_size,
+            **filters,
         )
         return tasks, Meta(**meta)
+
+    async def summary(self) -> TaskSummarySchema:
+        """How many tasks each sidebar filter would show.
+
+        Four counts rather than one grouped query: Tortoise makes conditional
+        aggregation awkward enough that the clever version would need more
+        explaining than it saves, and this runs on a page load, not a tick.
+        """
+
+        async def count(group: str | None = None) -> int:
+            query = Task.filter(deleted_at__isnull=True)
+            if group is not None:
+                query = query.filter(status__in=list(TASK_GROUPS[group]))
+            return await query.count()
+
+        return TaskSummarySchema(
+            all=await count(),
+            downloading=await count("downloading"),
+            seeding=await count("seeding"),
+            completed=await count("completed"),
+        )
 
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
         return await self.get_by_id(task_id, deleted_at__isnull=True)

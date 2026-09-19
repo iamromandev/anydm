@@ -177,3 +177,82 @@ async def test_torrents_to_watch_returns_live_torrent_rows_only(db: None) -> Non
     rows = await TaskDatabaseRepo().torrents_to_watch()
 
     assert [row.id for row in rows] == [watched.id]
+
+
+async def _task(status: TaskStatus, title: str) -> Task:
+    return await Task.create(
+        source_url="https://youtu.be/x",
+        platform=Platform.YOUTUBE,
+        preset=Preset.BEST,
+        kind=Kind.VIDEO,
+        status=status,
+        title=title,
+        filename=f"{title}.mp4",
+    )
+
+
+async def test_list_page_can_be_narrowed_to_a_set_of_statuses(db: None) -> None:
+    await _task(TaskStatus.DOWNLOADING, "a")
+    await _task(TaskStatus.COMPLETE, "b")
+    await _task(TaskStatus.SEEDING, "c")
+
+    rows, meta = await TaskDatabaseRepo().list_page(
+        page=1, page_size=10, statuses=[TaskStatus.COMPLETE, TaskStatus.SEEDING]
+    )
+
+    assert {row.title for row in rows} == {"b", "c"}
+    # The total describes the filtered set, or "load more" would never end.
+    assert meta.total == 2
+
+
+async def test_list_page_without_statuses_returns_everything(db: None) -> None:
+    await _task(TaskStatus.DOWNLOADING, "a")
+    await _task(TaskStatus.COMPLETE, "b")
+
+    rows, meta = await TaskDatabaseRepo().list_page(page=1, page_size=10, statuses=None)
+
+    assert meta.total == 2
+    assert len(rows) == 2
+
+
+async def test_a_second_page_carries_on_where_the_first_stopped(db: None) -> None:
+    for index in range(5):
+        await _task(TaskStatus.COMPLETE, f"t{index}")
+
+    repo = TaskDatabaseRepo()
+    first, meta = await repo.list_page(page=1, page_size=2, statuses=None)
+    second, _ = await repo.list_page(page=2, page_size=2, statuses=None)
+
+    assert meta.total == 5
+    assert meta.total_pages == 3
+    assert {row.id for row in first}.isdisjoint({row.id for row in second})
+
+
+async def test_summary_counts_each_group_the_sidebar_shows(db: None) -> None:
+    await _task(TaskStatus.PENDING, "a")
+    await _task(TaskStatus.DOWNLOADING, "b")
+    await _task(TaskStatus.MUXING, "c")
+    await _task(TaskStatus.SEEDING, "d")
+    await _task(TaskStatus.COMPLETE, "e")
+    await _task(TaskStatus.FAILED, "f")
+
+    summary = await TaskDatabaseRepo().summary()
+
+    assert summary.all == 6
+    # "Active" means still on its way to a file, which is what the filter says.
+    assert summary.downloading == 3
+    assert summary.seeding == 1
+    assert summary.completed == 1
+
+
+async def test_summary_ignores_soft_deleted_rows(db: None) -> None:
+    kept = await _task(TaskStatus.COMPLETE, "kept")
+    gone = await _task(TaskStatus.COMPLETE, "gone")
+    gone.deleted_at = now()
+    await gone.save(update_fields=["deleted_at"])
+
+    summary = await TaskDatabaseRepo().summary()
+
+    assert summary.all == 1
+    assert summary.completed == 1
+    assert kept.deleted_at is None

@@ -319,3 +319,51 @@ export function retryLabel(task: UiTask, now: number): RetryView | null {
         detail: task.error,
     };
 }
+
+/** How many tasks each sidebar filter would show, counted by the API. */
+export type TaskSummary = {
+    all: number;
+    downloading: number;
+    seeding: number;
+    completed: number;
+};
+
+/**
+ * The counts, with anything absent read as zero.
+ *
+ * Zero rather than undefined so the sidebar always has a number to draw. A
+ * blank where a count should be reads as a bug; a zero reads as an empty
+ * filter, which is what a missing count almost always means.
+ */
+export function normalizeSummary(raw: any): TaskSummary {
+    return {
+        all: raw?.all ?? 0,
+        downloading: raw?.downloading ?? 0,
+        seeding: raw?.seeding ?? 0,
+        completed: raw?.completed ?? 0,
+    };
+}
+
+/**
+ * A freshly fetched page, added to what is already on screen.
+ *
+ * Rows already loaded keep their position, so the list never reshuffles under
+ * a reader. Where a page overlaps what is held — which happens whenever a task
+ * is added between two requests, since the order is newest first — the newer
+ * copy wins in the older row's place.
+ */
+export function appendPage(existing: UiTask[], incoming: UiTask[]): UiTask[] {
+    const byId = new Map(
+        incoming.map((row) => [
+            row.id,
+            row,
+        ]),
+    );
+    const updated = existing.map((row) => byId.get(row.id) ?? row);
+    const seen = new Set(existing.map((row) => row.id));
+
+    return [
+        ...updated,
+        ...incoming.filter((row) => !seen.has(row.id)),
+    ];
+}

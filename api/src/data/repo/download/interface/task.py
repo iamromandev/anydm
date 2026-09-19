@@ -6,6 +6,8 @@ from abc import abstractmethod
 from src.core.base import CrudRepo
 from src.core.success import Meta
 from src.data.db.model import Task
+from src.data.schema.download import TaskSummarySchema
+from src.data.type import TaskStatus
 
 
 class TaskRepo(CrudRepo[Task]):
@@ -38,7 +40,16 @@ class TaskRepo(CrudRepo[Task]):
         ...
 
     @abstractmethod
-    async def list_page(self, page: int, page_size: int) -> tuple[list[Task], Meta]:
+    async def list_page(
+        self,
+        page: int,
+        page_size: int,
+        statuses: list[TaskStatus] | None = None,
+    ) -> tuple[list[Task], Meta]:
+        ...
+
+    @abstractmethod
+    async def summary(self) -> TaskSummarySchema:
         ...
 
     @abstractmethod

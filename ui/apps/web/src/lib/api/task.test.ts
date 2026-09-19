@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 
 import {
     aggregateStats,
+    appendPage,
+    normalizeSummary,
     canPause,
     retryLabel,
     canResume,
@@ -530,5 +532,103 @@ describe("normalizeApiTask, for a retry in progress", () => {
         expect(row.attempts).toBe(2);
         expect(row.maxAttempts).toBe(3);
         expect(row.errorCode).toBe("network");
+    });
+});
+
+describe("normalizeSummary", () => {
+    it("reads the four counts the sidebar shows", () => {
+        expect(
+            normalizeSummary({
+                all: 12,
+                downloading: 3,
+                seeding: 2,
+                completed: 7,
+            }),
+        ).toEqual({ all: 12, downloading: 3, seeding: 2, completed: 7 });
+    });
+
+    it("treats a missing count as none, not as unknown", () => {
+        expect(normalizeSummary({ all: 4 })).toEqual({
+            all: 4,
+            downloading: 0,
+            seeding: 0,
+            completed: 0,
+        });
+    });
+});
+
+describe("appendPage", () => {
+    const row = (id: string): UiTask => ({
+        id,
+        title: id,
+        url: "",
+        kind: "file",
+        status: "complete",
+        progress: 100,
+        eta: 0,
+        attempts: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+    });
+
+    it("keeps what is already on screen and adds the new page after it", () => {
+        const merged = appendPage(
+            [
+                row("a"),
+                row("b"),
+            ],
+            [
+                row("c"),
+                row("d"),
+            ],
+        );
+
+        expect(merged.map((t) => t.id)).toEqual([
+            "a",
+            "b",
+            "c",
+            "d",
+        ]);
+    });
+
+    it("lets the newer copy of a row win, without moving it twice", () => {
+        // A task can change between one page being fetched and the next, and
+        // pages overlap whenever a row is added while reading.
+        const stale = { ...row("b"), progress: 10 };
+        const fresh = { ...row("b"), progress: 90 };
+
+        const merged = appendPage(
+            [
+                row("a"),
+                stale,
+            ],
+            [
+                fresh,
+                row("c"),
+            ],
+        );
+
+        expect(merged.map((t) => t.id)).toEqual([
+            "a",
+            "b",
+            "c",
+        ]);
+        expect(merged.find((t) => t.id === "b")?.progress).toBe(90);
+    });
+
+    it("is just the new page when nothing was loaded yet", () => {
+        expect(
+            appendPage(
+                [],
+                [
+                    row("a"),
+                ],
+            ).map((t) => t.id),
+        ).toEqual([
+            "a",
+        ]);
     });
 });

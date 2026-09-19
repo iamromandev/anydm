@@ -13,6 +13,10 @@ export interface TorrentListProps {
     searchQuery: string;
     /** The shared clock every card's retry countdown reads. */
     now: number;
+    /** Whether the API has pages left for the current filter. */
+    hasMore: boolean;
+    loadingMore: boolean;
+    onLoadMore: () => void;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
@@ -34,6 +38,9 @@ export const TorrentList = component$<TorrentListProps>(
         filter,
         searchQuery,
         now,
+        hasMore,
+        loadingMore,
+        onLoadMore,
         onPause,
         onResume,
         onDownloadFile,
@@ -100,7 +107,11 @@ export const TorrentList = component$<TorrentListProps>(
                             />
                         </div>
                         <p>No downloads {label}</p>
-                        <span>Try adjusting your filters or search</span>
+                        <span>
+                            {searchQuery && hasMore
+                                ? `Only the ${tasks.length} loaded downloads were searched. Load more to search further.`
+                                : "Try adjusting your filters or search"}
+                        </span>
                     </div>
                 );
             }
@@ -130,6 +141,19 @@ export const TorrentList = component$<TorrentListProps>(
                         </div>
                     ))}
                 </div>
+
+                {hasMore && (
+                    <div class="torrent-list-more">
+                        <button
+                            type="button"
+                            class="torrent-list-more-btn"
+                            onClick$={onLoadMore}
+                            disabled={loadingMore}
+                        >
+                            {loadingMore ? "Loading…" : "Load more"}
+                        </button>
+                    </div>
+                )}
             </div>
         );
     },

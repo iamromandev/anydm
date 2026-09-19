@@ -21,6 +21,20 @@ class UrlDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
 
 
+class TaskSummarySchema(BaseSchema):
+    """How many tasks each sidebar filter would show.
+
+    Counted in the database rather than from the rows the browser happens to
+    hold, so the numbers stay right no matter how little of the list has been
+    loaded.
+    """
+
+    all: int = 0
+    downloading: int = 0
+    seeding: int = 0
+    completed: int = 0
+
+
 class TaskSchema(BaseSchema):
     id: uuid.UUID
     source_url: str

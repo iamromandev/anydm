@@ -9,6 +9,19 @@ export function apiUrl(path: string): string {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+    const payload = await requestEnvelope(url, init);
+    return payload === undefined ? (undefined as T) : unwrap<T>(payload);
+}
+
+/**
+ * The envelope, unopened.
+ *
+ * `undefined` for a 204, which carries no body at all.
+ */
+async function requestEnvelope(
+    url: string,
+    init?: RequestInit,
+): Promise<unknown> {
     let response: Response;
     try {
         response = await fetch(url, init);
@@ -19,7 +32,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
 
     if (response.status === 204) {
-        return undefined as T;
+        return undefined;
     }
 
     let payload: unknown;
@@ -34,11 +47,45 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
         );
     }
 
-    return unwrap<T>(payload);
+    return payload;
 }
 
 export function getApi<T>(path: string): Promise<T> {
     return request<T>(apiUrl(path));
+}
+
+/** Where a list is in its pages, in the shape the UI names things. */
+export type PageMeta = {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+};
+
+/**
+ * A page of a list, with the pagination the envelope carries alongside it.
+ *
+ * `getApi` deliberately returns only `data`, which is what almost every caller
+ * wants. A list that can be asked for more of itself needs the rest, so it
+ * gets its own function rather than a second return value nobody else uses.
+ */
+export async function getPageApi<T>(
+    path: string,
+): Promise<{ data: T; meta: PageMeta }> {
+    const payload = await requestEnvelope(apiUrl(path));
+    const raw = (payload as { meta?: Record<string, unknown> }).meta;
+
+    return {
+        data: unwrap<T>(payload),
+        meta: {
+            page: Number(raw?.page ?? 1),
+            pageSize: Number(raw?.page_size ?? 0),
+            total: Number(raw?.total ?? 0),
+            // One page, not zero: "there is nothing more to load" is the safe
+            // reading when the service did not say.
+            totalPages: Number(raw?.total_pages ?? 1),
+        },
+    };
 }
 
 export function postApi<T>(path: string, body: unknown): Promise<T> {
