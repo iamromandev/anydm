@@ -31,6 +31,8 @@ export default component$(() => {
     const store = useStore({
         tasks: [] as UiTask[],
         toasts: [] as Toast[],
+        // Ticked only while a retry is actually pending; see the clock below.
+        now: Date.now(),
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
         sidebarOpen: false as boolean,
@@ -159,6 +161,21 @@ export default component$(() => {
             const sweeper = setInterval(() => {
                 store.toasts = prune(store.toasts, Date.now());
             }, 500);
+            // The retry countdown's clock. It writes only while a deadline is
+            // live, so a list with nothing retrying re-renders at the poll's
+            // pace rather than every second. The two second grace lets the
+            // last tick land, turning "Retrying in 1s" into "Retrying…"
+            // instead of freezing on the final second.
+            const clock = setInterval(() => {
+                const at = Date.now();
+                const waiting = store.tasks.some(
+                    (task) =>
+                        task.status === "pending" &&
+                        task.nextAttemptAt !== undefined &&
+                        task.nextAttemptAt > at - 2000,
+                );
+                if (waiting) store.now = at;
+            }, 1000);
 
             let apiEvents: EventSource | null = null;
             try {
@@ -201,6 +218,7 @@ export default component$(() => {
             cleanup(() => {
                 clearInterval(interval);
                 clearInterval(sweeper);
+                clearInterval(clock);
                 apiEvents?.close();
             });
         },
@@ -356,6 +374,7 @@ export default component$(() => {
             tasks={store.tasks}
             filter={store.filter}
             searchQuery={store.searchQuery}
+            now={store.now}
             toasts={store.toasts}
             onDismissToast={handleDismissToast}
             sidebarOpen={store.sidebarOpen}

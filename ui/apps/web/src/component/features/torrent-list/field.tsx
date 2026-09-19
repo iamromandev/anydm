@@ -11,6 +11,8 @@ export interface TorrentListProps {
     tasks: TorrentTask[];
     filter: TorrentFilter;
     searchQuery: string;
+    /** The shared clock every card's retry countdown reads. */
+    now: number;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
@@ -31,6 +33,7 @@ export const TorrentList = component$<TorrentListProps>(
         tasks,
         filter,
         searchQuery,
+        now,
         onPause,
         onResume,
         onDownloadFile,
@@ -116,6 +119,7 @@ export const TorrentList = component$<TorrentListProps>(
                             style={{ contentVisibility: "auto" }}
                         >
                             <TorrentCard
+                                now={now}
                                 task={task}
                                 onPause={onPause}
                                 onResume={onResume}

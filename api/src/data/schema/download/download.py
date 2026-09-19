@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from src.config import get_settings
 from src.core.base import BaseSchema
 from src.data.schema.download.torrent import FileSchema
 from src.data.type import Kind, Platform, Preset, TaskStatus
@@ -48,6 +49,17 @@ class TaskSchema(BaseSchema):
     error: str | None = None
     error_code: str | None = None
     attempts: int = 0
+    #: When the queue will consider this task again. Set only while a retry is
+    #: pending, which is the one case where ``pending`` does not mean "waiting
+    #: for a free worker" and the browser has no other way to tell.
+    next_attempt_at: datetime | None = None
+    #: The retry budget this task is spending, so the client can say "attempt 2
+    #: of 3" rather than a number with nothing to measure it against. It comes
+    #: from settings rather than the row: it is configuration, identical for
+    #: every task, and a column would only let the two disagree.
+    max_attempts: int = Field(
+        default_factory=lambda: get_settings().download_max_attempts
+    )
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

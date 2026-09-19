@@ -34,6 +34,13 @@ export type UiTask = {
     downloadSpeed: number;
     uploadSpeed: number;
     peersConnected: number;
+    /** Tries so far, this one included. */
+    attempts: number;
+    /** The retry budget, as the API has it configured. */
+    maxAttempts?: number;
+    /** When the queue looks at this task again, while a retry is pending. */
+    nextAttemptAt?: number;
+    errorCode?: string;
     /** Present only while a segmented transfer is running. */
     segments?: SegmentView[];
     /** Torrent-only. Absent for every other task. */
@@ -131,6 +138,15 @@ export function normalizeApiTask(raw: any): UiTask {
         // mirrors it. Every other platform leaves the key absent, which is 0.
         uploadSpeed: raw.upload_speed_bps ?? 0,
         peersConnected: raw.peers_connected ?? 0,
+        attempts: raw.attempts ?? 0,
+        maxAttempts: raw.max_attempts ?? undefined,
+        // An instant, not a string: the card counts down against the local
+        // clock, and comparing formatted times is how off-by-a-timezone bugs
+        // are made.
+        nextAttemptAt: raw.next_attempt_at
+            ? Date.parse(raw.next_attempt_at)
+            : undefined,
+        errorCode: raw.error_code ?? undefined,
         infoHash: raw.info_hash ?? undefined,
         // Undefined rather than 0 when nothing has downloaded: the card hides
         // a ratio it has no value for instead of claiming a ratio of zero.
@@ -255,4 +271,51 @@ export function aggregateStats(tasks: UiTask[]): GlobalStats {
     }
 
     return stats;
+}
+
+/** What a card says about a task that is being retried, or has given up. */
+export type RetryView = {
+    tone: "warning" | "error";
+    headline: string;
+    detail?: string;
+};
+
+function attemptsPhrase(attempts: number): string {
+    return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
+}
+
+/**
+ * The line explaining a retry, or `null` when there is nothing to explain.
+ *
+ * A task waiting to be retried is `pending` with a deadline in the future,
+ * which on its own looks exactly like a task waiting for a free worker. The
+ * deadline is the only thing that distinguishes them, so it is also the thing
+ * that decides whether this says anything at all.
+ *
+ * `now` is passed in rather than read, so the countdown is a pure function of
+ * the clock the caller is ticking.
+ */
+export function retryLabel(task: UiTask, now: number): RetryView | null {
+    if (task.status === "failed") {
+        const code = task.errorCode ? ` · ${task.errorCode}` : "";
+        return {
+            tone: "error",
+            headline: `Failed after ${attemptsPhrase(task.attempts)}${code}`,
+            detail: task.error,
+        };
+    }
+
+    if (task.status !== "pending" || task.nextAttemptAt === undefined) {
+        return null;
+    }
+
+    const remaining = Math.ceil((task.nextAttemptAt - now) / 1000);
+    const budget = task.maxAttempts ? ` of ${task.maxAttempts}` : "";
+    const wait = remaining > 0 ? `Retrying in ${remaining}s` : "Retrying…";
+
+    return {
+        tone: "warning",
+        headline: `${wait} · attempt ${task.attempts}${budget}`,
+        detail: task.error,
+    };
 }

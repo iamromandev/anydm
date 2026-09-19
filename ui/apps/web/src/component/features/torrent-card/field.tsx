@@ -23,6 +23,7 @@ import {
     canResume,
     canStopSeeding,
     isActive,
+    retryLabel,
     statusView,
     type StatusView,
     type TaskKind,
@@ -32,6 +33,12 @@ import "./field.css";
 
 export interface TorrentCardProps {
     task: TorrentTask;
+    /**
+     * The clock the countdown is measured against, ticked by whoever owns the
+     * list. Passed in rather than read here so every card on screen agrees,
+     * and so the label stays a pure function of its inputs.
+     */
+    now: number;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
@@ -64,8 +71,17 @@ const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
 };
 
 export const TorrentCard = component$<TorrentCardProps>(
-    ({ task, onPause, onResume, onDownloadFile, onRemove, onStopSeeding }) => {
+    ({
+        task,
+        now,
+        onPause,
+        onResume,
+        onDownloadFile,
+        onRemove,
+        onStopSeeding,
+    }) => {
         const status = statusView(task.status);
+        const retry = retryLabel(task, now);
         const PlatformIcon = PLATFORM_ICONS[task.kind] ?? LuMagnet;
         const StatusIcon = STATUS_ICONS[status.key];
         const showProgressDetail =
@@ -185,7 +201,7 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 </span>
                             )}
 
-                            {task.status === "pending" && (
+                            {task.status === "pending" && !retry && (
                                 <span class="progress-pending">Queued</span>
                             )}
 
@@ -195,11 +211,19 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 </span>
                             )}
 
-                            {task.status === "failed" && task.error && (
-                                <span class="progress-error">{task.error}</span>
+                            {retry && (
+                                <span
+                                    class={`progress-retry progress-retry--${retry.tone}`}
+                                >
+                                    {retry.headline}
+                                </span>
                             )}
                         </div>
                     </div>
+
+                    {retry?.detail && (
+                        <p class="torrent-retry-detail">{retry.detail}</p>
+                    )}
 
                     {task.files && task.files.length > 0 && (
                         <ul class="torrent-file-progress">
