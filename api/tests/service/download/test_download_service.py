@@ -100,6 +100,7 @@ class FakeTorrentService:
         self.paused: list[uuid.UUID] = []
         self.resumed: list[uuid.UUID] = []
         self.canceled: list[uuid.UUID] = []
+        self.canceled_with_files: list[bool] = []
 
     async def pause(self, task_id: uuid.UUID) -> Any:
         self.paused.append(task_id)
@@ -109,8 +110,9 @@ class FakeTorrentService:
         self.resumed.append(task_id)
         return type("Row", (), {"status": TaskStatus.DOWNLOADING})()
 
-    async def cancel(self, task_id: uuid.UUID) -> None:
+    async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
         self.canceled.append(task_id)
+        self.canceled_with_files.append(delete_files)
 
 
 def _service(
@@ -320,6 +322,37 @@ async def test_cancel_stops_the_task_and_removes_its_files(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_cancel_can_keep_the_files_of_a_finished_task(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    (tmp_path / str(task_id)).mkdir(parents=True)
+    (tmp_path / str(task_id) / "video.mp4").write_bytes(b"x")
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE)
+
+    await service.cancel(task_id, delete_files=False)
+
+    assert (tmp_path / str(task_id) / "video.mp4").read_bytes() == b"x"
+    assert repo.rows[task_id].status == TaskStatus.CANCELED
+    assert repo.rows[task_id].deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_refuses_to_keep_the_files_of_an_unfinished_task(
+    tmp_path: Path,
+) -> None:
+    """A `.part` is meaningless once its row and byte watermarks are gone."""
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING)
+
+    with pytest.raises(Error) as caught:
+        await service.cancel(task_id, delete_files=False)
+
+    assert caught.value.code == 409
+    assert repo.rows[task_id].status == TaskStatus.DOWNLOADING
+
+
+@pytest.mark.asyncio
 async def test_cancel_404s_on_an_unknown_task(tmp_path: Path) -> None:
     service, _, _ = _service(downloads_dir=tmp_path)
     with pytest.raises(Error) as caught:
@@ -361,6 +394,21 @@ async def test_cancel_delegates_a_torrent_to_the_torrent_service(tmp_path: Path)
     await service.cancel(task_id)
 
     assert torrents.canceled == [task_id]
+    assert torrents.canceled_with_files == [True]
+
+
+@pytest.mark.asyncio
+async def test_keeping_a_torrents_files_is_the_engine_s_decision_to_make(
+    tmp_path: Path,
+) -> None:
+    """This service must not try to keep a torrent's files itself."""
+    service, repo, torrents = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, status=TaskStatus.SEEDING)
+
+    await service.cancel(task_id, delete_files=False)
+
+    assert torrents.canceled_with_files == [False]
 
 
 @pytest.mark.asyncio

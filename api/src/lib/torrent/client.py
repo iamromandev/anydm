@@ -135,6 +135,9 @@ class RqbitClient:
     async def delete(self, info_hash: str) -> None:
         await self._request("POST", f"/torrents/{info_hash}/delete")
 
+    async def forget(self, info_hash: str) -> None:
+        await self._request("POST", f"/torrents/{info_hash}/forget")
+
     async def _add(self, source: TorrentSource, *, params: dict[str, str]) -> dict[str, Any]:
         """POST /torrents, with the metadata timeout rather than the short one.
 

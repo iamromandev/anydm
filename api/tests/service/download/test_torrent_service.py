@@ -32,6 +32,7 @@ class FakeTorrentClient:
         self.paused: list[str] = []
         self.started: list[str] = []
         self.deleted: list[str] = []
+        self.forgotten: list[str] = []
 
     async def ping(self) -> bool:
         return self.fail is None
@@ -67,6 +68,11 @@ class FakeTorrentClient:
         if self.fail:
             raise self.fail
         self.deleted.append(info_hash)
+
+    async def forget(self, info_hash: str) -> None:
+        if self.fail:
+            raise self.fail
+        self.forgotten.append(info_hash)
 
 
 class FakeTaskRepo:
@@ -381,6 +387,23 @@ async def test_cancel_deletes_from_the_engine_and_soft_deletes_the_row() -> None
     await _service(client, repo=repo).cancel(task_id)
 
     assert client.deleted == ["abc123"]
+    assert row.status == TaskStatus.CANCELED
+    assert row.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeping_files_forgets_rather_than_deletes() -> None:
+    """`delete` takes the data with it; `forget` is the one that leaves it."""
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    row = _torrent_row(task_id, status=TaskStatus.SEEDING)
+    repo.rows[task_id] = row
+    client = FakeTorrentClient()
+
+    await _service(client, repo=repo).cancel(task_id, delete_files=False)
+
+    assert client.forgotten == ["abc123"]
+    assert client.deleted == []
     assert row.status == TaskStatus.CANCELED
     assert row.deleted_at is not None
 

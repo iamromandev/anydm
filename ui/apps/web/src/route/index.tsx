@@ -6,7 +6,6 @@ import {
     apiUrl,
     deleteApi,
     getApi,
-    isActive,
     normalizeApiTask,
     normalizeSegments,
     postApi,
@@ -38,6 +37,8 @@ export default component$(() => {
     const store = useStore({
         tasks: [] as UiTask[],
         toasts: [] as Toast[],
+        // The task the remove dialog is asking about, or null when it is shut.
+        removing: null as { id: string; title: string; status: string } | null,
         // Ticked only while a retry is actually pending; see the clock below.
         now: Date.now(),
         connection: "connecting" as Connection,
@@ -350,23 +351,38 @@ export default component$(() => {
 
     const handleResume = $((id: string) => handleTaskAction(id, "resume"));
 
-    const handleRemove = $(async (taskId: string) => {
+    /** Open the dialog. Nothing is removed until it is confirmed. */
+    const handleRemove = $((taskId: string) => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
-
-        if (isActive(task.status) && !confirm("Stop and remove this download?"))
-            return;
-
-        try {
-            await deleteApi(`/download/${taskId}`);
-        } catch (err) {
-            // The row still goes: the person asked for it gone, and a failure
-            // here is nearly always a row the API has already forgotten.
-            notify("error", errorMessage(err));
-        }
-
-        store.tasks = store.tasks.filter((t) => t.id !== taskId);
+        store.removing = {
+            id: task.id,
+            title: task.title,
+            status: task.status,
+        };
     });
+
+    const handleRemoveCancel = $(() => {
+        store.removing = null;
+    });
+
+    const handleRemoveConfirm = $(
+        async (taskId: string, deleteFiles: boolean) => {
+            store.removing = null;
+
+            try {
+                await deleteApi(
+                    `/download/${taskId}?delete_files=${deleteFiles}`,
+                );
+            } catch (err) {
+                // The row still goes: the person asked for it gone, and a failure
+                // here is nearly always a row the API has already forgotten.
+                notify("error", errorMessage(err));
+            }
+
+            store.tasks = store.tasks.filter((t) => t.id !== taskId);
+        },
+    );
 
     const handleDownloadFile = $((taskId: string) => {
         const task = store.tasks.find((t) => t.id === taskId);
@@ -475,6 +491,9 @@ export default component$(() => {
             onResume={handleResume}
             onDownloadFile={handleDownloadFile}
             onRemove={handleRemove}
+            removing={store.removing}
+            onRemoveCancel={handleRemoveCancel}
+            onRemoveConfirm={handleRemoveConfirm}
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             onStopSeeding={handleStopSeeding}

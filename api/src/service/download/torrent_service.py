@@ -195,17 +195,22 @@ class TorrentService(BaseService):
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
         return self._published(task)
 
-    async def cancel(self, task_id: uuid.UUID) -> None:
-        """Remove the torrent, its files, and the row.
+    async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
+        """Remove the torrent and the row, with or without the files.
 
-        The engine's delete removes the files, which is what cancelling a
-        download already means here. An engine that cannot be reached does not
-        block it: the person asked for this to be gone, and a stranded torrent
-        is a smaller problem than a row that refuses to disappear.
+        rqbit draws the distinction for us: ``delete`` takes the data with it,
+        ``forget`` drops the torrent and leaves it. An engine that cannot be
+        reached does not block either: the person asked for this to be gone,
+        and a stranded torrent is a smaller problem than a row that refuses to
+        disappear.
         """
         task = await self._require(task_id)
+        info_hash = task.info_hash or ""
         try:
-            await self._client.delete(task.info_hash or "")
+            if delete_files:
+                await self._client.delete(info_hash)
+            else:
+                await self._client.forget(info_hash)
         except Error as error:
             logger.warning("{}|engine delete failed for {}: {}", self._tag, task.id, error.message)
 
