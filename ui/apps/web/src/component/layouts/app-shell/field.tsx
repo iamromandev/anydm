@@ -21,6 +21,7 @@ export interface AppShellProps {
     tasks: UiTask[];
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
+    now: number;
     toasts: Toast[];
     onDismissToast: (id: string) => void;
     sidebarOpen: boolean;
@@ -56,6 +57,7 @@ export const AppShell = component$<AppShellProps>(
         tasks,
         filter,
         searchQuery,
+        now,
         toasts,
         onDismissToast,
         sidebarOpen,
@@ -144,6 +146,7 @@ export const AppShell = component$<AppShellProps>(
 
                             <TorrentList
                                 tasks={tasks}
+                                now={now}
                                 filter={filter}
                                 searchQuery={searchQuery}
                                 onPause={onPause}

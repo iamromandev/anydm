@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
     aggregateStats,
     canPause,
+    retryLabel,
     canResume,
     canStopSeeding,
     isActive,
@@ -319,6 +320,7 @@ describe("aggregateStats", () => {
         status: "downloading",
         progress: 0,
         eta: 0,
+        attempts: 0,
         downloadedBytes: 0,
         totalBytes: 0,
         downloadSpeed: 0,
@@ -383,5 +385,150 @@ describe("aggregateStats", () => {
         ]);
 
         expect(stats.totalDownloaded).toBe(500);
+    });
+});
+
+describe("retryLabel", () => {
+    const NOW = 1_700_000_000_000;
+    const task = (overrides: Partial<UiTask> = {}): UiTask => ({
+        id: "t",
+        title: "clip",
+        url: "",
+        kind: "file",
+        status: "pending",
+        progress: 0,
+        eta: 0,
+        attempts: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+        ...overrides,
+    });
+
+    it("says nothing about a task that is simply queued", () => {
+        expect(retryLabel(task(), NOW)).toBeNull();
+    });
+
+    it("says nothing about a task that is running", () => {
+        expect(retryLabel(task({ status: "downloading" }), NOW)).toBeNull();
+    });
+
+    it("counts down to the next attempt and names the budget", () => {
+        const view = retryLabel(
+            task({
+                attempts: 2,
+                maxAttempts: 3,
+                nextAttemptAt: NOW + 12_000,
+            }),
+            NOW,
+        );
+
+        expect(view).toEqual({
+            tone: "warning",
+            headline: "Retrying in 12s · attempt 2 of 3",
+        });
+    });
+
+    it("rounds the wait up, so it never reads zero while still waiting", () => {
+        const view = retryLabel(
+            task({ attempts: 1, maxAttempts: 3, nextAttemptAt: NOW + 200 }),
+            NOW,
+        );
+
+        expect(view?.headline).toBe("Retrying in 1s · attempt 1 of 3");
+    });
+
+    it("stops counting once the deadline has passed", () => {
+        const view = retryLabel(
+            task({ attempts: 1, maxAttempts: 3, nextAttemptAt: NOW - 5_000 }),
+            NOW,
+        );
+
+        expect(view?.headline).toBe("Retrying… · attempt 1 of 3");
+    });
+
+    it("carries the reason the last attempt failed", () => {
+        const view = retryLabel(
+            task({
+                attempts: 1,
+                maxAttempts: 3,
+                nextAttemptAt: NOW + 5_000,
+                error: "connection reset",
+            }),
+            NOW,
+        );
+
+        expect(view?.detail).toBe("connection reset");
+    });
+
+    it("reports a final failure with the code the API gave", () => {
+        const view = retryLabel(
+            task({
+                status: "failed",
+                attempts: 3,
+                maxAttempts: 3,
+                error: "connection reset",
+                errorCode: "network",
+            }),
+            NOW,
+        );
+
+        expect(view).toEqual({
+            tone: "error",
+            headline: "Failed after 3 attempts · network",
+            detail: "connection reset",
+        });
+    });
+
+    it("counts a single attempt in the singular", () => {
+        const view = retryLabel(
+            task({ status: "failed", attempts: 1, errorCode: "not_found" }),
+            NOW,
+        );
+
+        expect(view?.headline).toBe("Failed after 1 attempt · not_found");
+    });
+
+    it("leaves the code out of a failure that came without one", () => {
+        const view = retryLabel(task({ status: "failed", attempts: 2 }), NOW);
+
+        expect(view?.headline).toBe("Failed after 2 attempts");
+    });
+});
+
+describe("normalizeApiTask, for a retry in progress", () => {
+    const raw = {
+        id: "a",
+        source_url: "https://example.com/a.mkv",
+        kind: "file",
+        status: "pending",
+        attempts: 2,
+        max_attempts: 3,
+        error: "connection reset",
+        error_code: "network",
+        next_attempt_at: "2026-09-19T08:30:00+00:00",
+    };
+
+    it("reads the deadline as an instant", () => {
+        expect(normalizeApiTask(raw).nextAttemptAt).toBe(
+            Date.parse("2026-09-19T08:30:00Z"),
+        );
+    });
+
+    it("leaves the deadline out when the API omitted it", () => {
+        expect(
+            normalizeApiTask({ ...raw, next_attempt_at: undefined })
+                .nextAttemptAt,
+        ).toBeUndefined();
+    });
+
+    it("carries the attempt count, the budget and the code", () => {
+        const row = normalizeApiTask(raw);
+
+        expect(row.attempts).toBe(2);
+        expect(row.maxAttempts).toBe(3);
+        expect(row.errorCode).toBe("network");
     });
 });

@@ -216,6 +216,29 @@
     color: var(--color-error);
 }
 
+.progress-retry {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-retry--warning {
+    color: var(--color-warning);
+}
+
+.progress-retry--error {
+    color: var(--color-error);
+}
+
+.torrent-retry-detail {
+    margin: 0.375rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    overflow-wrap: anywhere;
+}
+
 .torrent-file-progress {
     list-style: none;
     margin: 0.5rem 0 0;
