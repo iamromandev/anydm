@@ -12,7 +12,9 @@ describe("scrubberSegments", () => {
             isTorrent: true,
             progressBytes: 450_000_000,
             totalBytes: 900_000_000,
-            bufferedRanges: [{ start: 0, end: 60 }],
+            bufferedRanges: [
+                { start: 0, end: 60 },
+            ],
             currentTime: 30,
             duration: 120,
         });
@@ -26,7 +28,9 @@ describe("scrubberSegments", () => {
             isTorrent: false,
             progressBytes: 450_000_000,
             totalBytes: 900_000_000,
-            bufferedRanges: [{ start: 0, end: 60 }],
+            bufferedRanges: [
+                { start: 0, end: 60 },
+            ],
             currentTime: 0,
             duration: 120,
         });

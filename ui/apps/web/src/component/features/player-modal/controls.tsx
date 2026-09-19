@@ -156,11 +156,7 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         aria-label={paused ? "Play" : "Pause"}
                     >
                         {paused ? (
-                            <LuPlay
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
+                            <LuPlay width="18" height="18" aria-hidden="true" />
                         ) : (
                             <LuPause
                                 width="18"

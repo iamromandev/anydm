@@ -215,17 +215,47 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 store.duration = video.duration;
                             };
 
-                            const videoListeners: [string, () => void][] = [
-                                ["timeupdate", updateBufferedPercent],
-                                ["progress", updateBufferedPercent],
-                                ["play", updatePlaybackState],
-                                ["pause", updatePlaybackState],
-                                ["volumechange", updateVolumeState],
-                                ["ratechange", updateRateState],
-                                ["durationchange", updateDuration],
-                                ["loadedmetadata", updateDuration],
+                            const videoListeners: [
+                                string,
+                                () => void,
+                            ][] = [
+                                [
+                                    "timeupdate",
+                                    updateBufferedPercent,
+                                ],
+                                [
+                                    "progress",
+                                    updateBufferedPercent,
+                                ],
+                                [
+                                    "play",
+                                    updatePlaybackState,
+                                ],
+                                [
+                                    "pause",
+                                    updatePlaybackState,
+                                ],
+                                [
+                                    "volumechange",
+                                    updateVolumeState,
+                                ],
+                                [
+                                    "ratechange",
+                                    updateRateState,
+                                ],
+                                [
+                                    "durationchange",
+                                    updateDuration,
+                                ],
+                                [
+                                    "loadedmetadata",
+                                    updateDuration,
+                                ],
                             ];
-                            for (const [type, handler] of videoListeners) {
+                            for (const [
+                                type,
+                                handler,
+                            ] of videoListeners) {
                                 video.addEventListener(type, handler);
                             }
                             cleanup(() => {
@@ -415,9 +445,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 onSeek={handleSeek}
                                 onVolumeChange={handleVolumeChange}
                                 onToggleMute={handleToggleMute}
-                                onPlaybackRateChange={
-                                    handlePlaybackRateChange
-                                }
+                                onPlaybackRateChange={handlePlaybackRateChange}
                                 onToggleFullscreen={handleToggleFullscreen}
                             />
                         )}

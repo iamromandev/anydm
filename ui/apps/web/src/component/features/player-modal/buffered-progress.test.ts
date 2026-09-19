@@ -18,7 +18,9 @@ describe("getBufferedPercent", () => {
     it("returns 0 when duration is NaN (metadata not loaded yet)", () => {
         expect(
             getBufferedPercent({
-                ranges: [{ start: 0, end: 5 }],
+                ranges: [
+                    { start: 0, end: 5 },
+                ],
                 currentTime: 0,
                 duration: NaN,
             }),
