@@ -112,4 +112,10 @@
     .toast {
         width: auto;
     }
+
+    .toast-dismiss {
+        width: 44px;
+        height: 44px;
+        margin: -0.5rem -0.5rem -0.5rem 0;
+    }
 }

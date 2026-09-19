@@ -338,4 +338,12 @@
     .action-btn--danger {
         margin-left: auto;
     }
+
+    /* A finger, not a cursor. Five of these sit on a card and 32px was a
+       third of the recommended target; at 44px four of them still fit a
+       343px card in one row, so nothing has to move or fold away. */
+    .action-btn {
+        width: 44px;
+        height: 44px;
+    }
 }
