@@ -13,12 +13,16 @@ import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
+import { Toaster } from "@/component/shared/toast";
+import type { Toast } from "@/lib/toast";
 import "./field.css";
 
 export interface AppShellProps {
     tasks: UiTask[];
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
+    toasts: Toast[];
+    onDismissToast: (id: string) => void;
     sidebarOpen: boolean;
     sidebarCollapsed: boolean;
     addModalOpen: boolean;
@@ -52,6 +56,8 @@ export const AppShell = component$<AppShellProps>(
         tasks,
         filter,
         searchQuery,
+        toasts,
+        onDismissToast,
         sidebarOpen,
         sidebarCollapsed,
         addModalOpen,
@@ -156,6 +162,8 @@ export const AppShell = component$<AppShellProps>(
                     totalDownloaded={stats.totalDownloaded}
                     totalPeers={stats.totalPeers}
                 />
+
+                <Toaster toasts={toasts} onDismiss={onDismissToast} />
 
                 <AddTorrentModal
                     open={addModalOpen}

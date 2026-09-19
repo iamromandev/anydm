@@ -14,12 +14,23 @@ import {
     type ResolvedTorrent,
     type UiTask,
 } from "@/lib/api";
+import {
+    createToast,
+    dismiss,
+    errorMessage,
+    prune,
+    raise,
+    transitionToast,
+    type Toast,
+    type ToastTone,
+} from "@/lib/toast";
 
 const MAX_TASKS = 50;
 
 export default component$(() => {
     const store = useStore({
         tasks: [] as UiTask[],
+        toasts: [] as Toast[],
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
         sidebarOpen: false as boolean,
@@ -28,6 +39,50 @@ export default component$(() => {
         playerModalOpen: false as boolean,
         playerUrl: "" as string,
         playerKind: "" as string,
+    });
+
+    const notify = $((tone: ToastTone, message: string) => {
+        store.toasts = raise(
+            store.toasts,
+            createToast(tone, message, Date.now()),
+        );
+    });
+
+    const handleDismissToast = $((id: string) => {
+        store.toasts = dismiss(store.toasts, id);
+    });
+
+    /**
+     * Announce any row whose status moved since the copy already on screen.
+     *
+     * Called by both update paths before either writes, so whichever arrives
+     * first announces and the other finds nothing changed. A row that is new to
+     * the list says nothing, which is what keeps a reload quiet.
+     */
+    const noteTransitions = $((rows: UiTask[]) => {
+        const previous = new Map(
+            store.tasks.map((t) => [
+                t.id,
+                t.status,
+            ]),
+        );
+        let next = store.toasts;
+
+        for (const row of rows) {
+            const announcement = transitionToast(previous.get(row.id), row);
+            if (announcement) {
+                next = raise(
+                    next,
+                    createToast(
+                        announcement.tone,
+                        announcement.message,
+                        Date.now(),
+                    ),
+                );
+            }
+        }
+
+        store.toasts = next;
     });
 
     /**
@@ -56,11 +111,13 @@ export default component$(() => {
             .then((rows) => rows.map(normalizeApiTask))
             .catch(() => [] as UiTask[]);
 
+        await noteTransitions(tasks);
         store.tasks = (await carrySegments(tasks)).slice(0, MAX_TASKS);
     });
 
     /** Fold rows from an SSE frame into the list, replacing what they match. */
     const mergeTasks = $(async (rows: UiTask[]) => {
+        await noteTransitions(rows);
         const incoming = new Set(rows.map((row) => row.id));
         const kept = store.tasks.filter((t) => !incoming.has(t.id));
         store.tasks = [
@@ -97,6 +154,11 @@ export default component$(() => {
         ({ cleanup }) => {
             syncTask();
             const interval = setInterval(syncTask, 2500);
+            // One clock for every toast, rather than a timer per toast: an
+            // expiry is a deadline, and a sweep is how a deadline is noticed.
+            const sweeper = setInterval(() => {
+                store.toasts = prune(store.toasts, Date.now());
+            }, 500);
 
             let apiEvents: EventSource | null = null;
             try {
@@ -138,6 +200,7 @@ export default component$(() => {
 
             cleanup(() => {
                 clearInterval(interval);
+                clearInterval(sweeper);
                 apiEvents?.close();
             });
         },
@@ -181,7 +244,7 @@ export default component$(() => {
                     );
                 }
             } catch (err) {
-                console.error(err);
+                notify("error", errorMessage(err));
             }
         },
     );
@@ -200,7 +263,9 @@ export default component$(() => {
         try {
             await deleteApi(`/download/${taskId}`);
         } catch (err) {
-            console.error(err);
+            // The row still goes: the person asked for it gone, and a failure
+            // here is nearly always a row the API has already forgotten.
+            notify("error", errorMessage(err));
         }
 
         store.tasks = store.tasks.filter((t) => t.id !== taskId);
@@ -265,7 +330,9 @@ export default component$(() => {
                     await addTorrent(input.value, input.files ?? []);
                 }
             } catch (err) {
-                console.error(err);
+                notify("error", errorMessage(err));
+                // Rethrown so the modal keeps what was typed instead of
+                // closing over a submission that never landed.
                 throw err;
             }
 
@@ -278,7 +345,7 @@ export default component$(() => {
         try {
             await postApi(`/download/${taskId}/seed/stop`, {});
         } catch (err) {
-            console.error(err);
+            notify("error", errorMessage(err));
             return;
         }
         syncTask();
@@ -289,6 +356,8 @@ export default component$(() => {
             tasks={store.tasks}
             filter={store.filter}
             searchQuery={store.searchQuery}
+            toasts={store.toasts}
+            onDismissToast={handleDismissToast}
             sidebarOpen={store.sidebarOpen}
             sidebarCollapsed={store.sidebarCollapsed}
             onSidebarToggle={toggleSidebar}
