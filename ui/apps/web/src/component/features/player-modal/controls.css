@@ -130,3 +130,27 @@
     font-size: 0.75rem;
     padding: 0.125rem 0.25rem;
 }
+
+@media (max-width: 640px) {
+    /* The bar itself stays 4px — it is drawn by ::before, centred — while the
+       area a thumb can land on grows to the full target. Scrubbing is the one
+       gesture here that is hard to repeat when it misses. */
+    .player-controls-track {
+        height: 44px;
+    }
+
+    .player-controls-button {
+        width: 44px;
+        height: 44px;
+    }
+
+    .player-controls-rate {
+        min-height: 44px;
+    }
+
+    /* A phone has volume keys, and the slider is both a 16px target and the
+       widest thing competing for a 309px row. */
+    .player-controls-volume {
+        display: none;
+    }
+}

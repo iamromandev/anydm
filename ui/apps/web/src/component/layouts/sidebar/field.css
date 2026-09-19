@@ -153,4 +153,14 @@
     .sidebar-header {
         height: 56px;
     }
+
+    .sidebar-filter {
+        min-height: 44px;
+    }
+
+    /* The drawer is opened and closed from the toolbar here, so the
+       collapse handle is both redundant and a 24px target. */
+    .sidebar-collapse-btn {
+        display: none;
+    }
 }

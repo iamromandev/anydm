@@ -12,30 +12,24 @@
 .modal-panel {
     width: 90%;
     max-width: 520px;
-    background: rgba(255, 255, 255, 0.95);
+    background: color-mix(in srgb, var(--color-card) 95%, transparent);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: var(--radius-lg);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--color-border);
     overflow: hidden;
     animation: modalIn 200ms ease-out;
 }
 
-@media (prefers-color-scheme: dark) {
-    .modal-panel {
-        background: rgba(15, 15, 15, 0.95);
-        border-color: rgba(255, 255, 255, 0.06);
-    }
-}
-
+/* Opacity only. A scale that is interrupted — by any re-render, since that
+   restarts the animation — leaves the panel and every control in it drawn
+   smaller than it measures, which is how a 44px target became 41.8px. */
 @keyframes modalIn {
     from {
         opacity: 0;
-        transform: scale(0.95);
     }
     to {
         opacity: 1;
-        transform: scale(1);
     }
 }
 
@@ -44,13 +38,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.25rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-    .modal-header {
-        border-color: rgba(255, 255, 255, 0.04);
-    }
+    border-bottom: 1px solid var(--color-border);
 }
 
 .modal-title {
@@ -85,13 +73,7 @@
     display: flex;
     gap: 0.25rem;
     margin-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-    .modal-tabs {
-        border-color: rgba(255, 255, 255, 0.04);
-    }
+    border-bottom: 1px solid var(--color-border);
 }
 
 .modal-tab {
@@ -130,9 +112,9 @@
 .magnet-input-field {
     width: 100%;
     padding: 0.75rem 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--color-input);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     color: var(--color-foreground);
@@ -140,13 +122,6 @@
     font-family: var(--font-sans);
     outline: none;
     transition: all var(--transition-fast) ease;
-}
-
-@media (prefers-color-scheme: dark) {
-    .magnet-input-field {
-        border-color: rgba(255, 255, 255, 0.06);
-        background: rgba(255, 255, 255, 0.04);
-    }
 }
 
 .magnet-input-field:focus {
@@ -158,9 +133,9 @@
 .file-input-field {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--color-input);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     cursor: pointer;
@@ -170,13 +145,6 @@
     outline: none;
 }
 
-@media (prefers-color-scheme: dark) {
-    .file-input-field {
-        border-color: rgba(255, 255, 255, 0.06);
-        background: rgba(255, 255, 255, 0.04);
-    }
-}
-
 .url-input-section {
     gap: 0.5rem;
 }
@@ -184,9 +152,9 @@
 .url-preset-select {
     width: 100%;
     padding: 0.75rem 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--color-input);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     color: var(--color-foreground);
@@ -201,13 +169,6 @@
     transition: all var(--transition-fast) ease;
 }
 
-@media (prefers-color-scheme: dark) {
-    .url-preset-select {
-        border-color: rgba(255, 255, 255, 0.06);
-        background: rgba(255, 255, 255, 0.04);
-    }
-}
-
 .url-preset-select:focus {
     border-color: var(--gradient-1);
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
@@ -219,13 +180,7 @@
     justify-content: flex-end;
     gap: 0.5rem;
     padding: 1rem 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-    .modal-footer {
-        border-color: rgba(255, 255, 255, 0.04);
-    }
+    border-top: 1px solid var(--color-border);
 }
 
 .modal-btn {
@@ -253,14 +208,8 @@
 }
 
 .modal-btn--secondary:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--color-muted);
     color: var(--color-foreground);
-}
-
-@media (prefers-color-scheme: dark) {
-    .modal-btn--secondary:hover {
-        background: rgba(255, 255, 255, 0.04);
-    }
 }
 
 .modal-btn--primary {
@@ -292,17 +241,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     padding: 0.625rem 0.75rem;
     max-height: 220px;
     overflow: hidden;
-}
-
-@media (prefers-color-scheme: dark) {
-    .torrent-files {
-        border-color: rgba(255, 255, 255, 0.06);
-    }
 }
 
 .torrent-files-header {
@@ -359,9 +302,18 @@
     white-space: nowrap;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
     .modal-panel {
         width: 95%;
         margin: 1rem;
+    }
+
+    .modal-close {
+        width: 44px;
+        height: 44px;
+    }
+
+    .modal-btn {
+        min-height: 44px;
     }
 }

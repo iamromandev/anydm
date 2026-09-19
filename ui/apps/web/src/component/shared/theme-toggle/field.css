@@ -42,3 +42,10 @@
     outline-offset: 2px;
     box-shadow: 0 0 0 2px var(--color-ring);
 }
+
+@media (max-width: 640px) {
+    .theme-toggle {
+        width: 44px;
+        height: 44px;
+    }
+}

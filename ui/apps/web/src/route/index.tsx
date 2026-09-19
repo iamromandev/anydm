@@ -177,7 +177,12 @@ export default component$(() => {
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
             const sweeper = setInterval(() => {
-                store.toasts = prune(store.toasts, Date.now());
+                // Only write when something actually expired. `prune` returns
+                // a fresh array every call, and assigning it unconditionally
+                // re-rendered the whole shell twice a second — which, among
+                // other things, kept restarting the modal's entry animation.
+                const kept = prune(store.toasts, Date.now());
+                if (kept.length !== store.toasts.length) store.toasts = kept;
             }, 500);
             // The retry countdown's clock. It writes only while a deadline is
             // live, so a list with nothing retrying re-renders at the poll's
