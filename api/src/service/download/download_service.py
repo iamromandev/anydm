@@ -174,13 +174,24 @@ class DownloadService(BaseService):
         self._control.wake()
         return self._published(task)
 
-    async def cancel(self, task_id: uuid.UUID) -> None:
-        """Stop the task, delete its files, and soft-delete the row."""
+    async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
+        """Stop the task, soft-delete the row, and take the files or leave them.
+
+        Keeping the files is only offered for a task that finished. A ``.part``
+        outlives its row as so many bytes nothing can describe: the watermarks
+        that say which ranges are sound live in ``segment``, and cancelling
+        clears those.
+        """
         task = await self._require(task_id)
+        if not delete_files and task.status not in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
+            raise Error.conflict(
+                message=f"Cannot keep the files of a task that is {task.status.value}"
+            )
         if task.platform == Platform.TORRENT:
-            return await self._torrents.cancel(task_id)
+            return await self._torrents.cancel(task_id, delete_files=delete_files)
         self._control.request_stop(task_id)
-        remove_task_files(self._root, task_id)
+        if delete_files:
+            remove_task_files(self._root, task_id)
         await self._segment_repo.clear(task_id)
         task.status = TaskStatus.CANCELED
         task.deleted_at = now()

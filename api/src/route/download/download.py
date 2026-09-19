@@ -120,8 +120,14 @@ async def resume_task(
 async def cancel_task(
     task_id: uuid.UUID,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
+    delete_files: Annotated[
+        bool,
+        Query(description="Remove the downloaded files too. Off keeps them and drops only the row."),
+    ] = True,
 ) -> Response:
-    await download_service.cancel(task_id)
+    # Defaulting to True keeps every existing caller doing what it did before
+    # this parameter existed.
+    await download_service.cancel(task_id, delete_files=delete_files)
     return Success(code=Code.NO_CONTENT).to_resp()
 
 

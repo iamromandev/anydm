@@ -13,6 +13,7 @@ import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
+import { RemoveDialog } from "@/component/features/remove-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Connection } from "@/lib/connection";
 import type { Toast } from "@/lib/toast";
@@ -44,6 +45,9 @@ export interface AppShellProps {
     onResume: (id: string) => void;
     onDownloadFile: (id: string) => void;
     onRemove: (id: string) => void;
+    removing: { id: string; title: string; status: string } | null;
+    onRemoveCancel: () => void;
+    onRemoveConfirm: (id: string, deleteFiles: boolean) => void;
     onStopSeeding: (id: string) => void;
     onAdd: (input: {
         type: "magnet" | "file" | "url";
@@ -81,6 +85,9 @@ export const AppShell = component$<AppShellProps>(
         onResume,
         onDownloadFile,
         onRemove,
+        removing,
+        onRemoveCancel,
+        onRemoveConfirm,
         onStopSeeding,
         onAdd,
         onResolve,
@@ -171,6 +178,12 @@ export const AppShell = component$<AppShellProps>(
                 />
 
                 <Toaster toasts={toasts} onDismiss={onDismissToast} />
+
+                <RemoveDialog
+                    task={removing}
+                    onCancel={onRemoveCancel}
+                    onConfirm={onRemoveConfirm}
+                />
 
                 <AddTorrentModal
                     open={addModalOpen}

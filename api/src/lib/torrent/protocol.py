@@ -92,3 +92,7 @@ class TorrentClient(Protocol):
     async def delete(self, info_hash: str) -> None:
         """Forget the torrent and remove its files."""
         ...
+
+    async def forget(self, info_hash: str) -> None:
+        """Forget the torrent, leaving its files on disk."""
+        ...

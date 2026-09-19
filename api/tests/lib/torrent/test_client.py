@@ -157,11 +157,15 @@ async def test_control_verbs_hit_their_paths() -> None:
     await client.pause("abc123")
     await client.start("abc123")
     await client.delete("abc123")
+    await client.forget("abc123")
 
     assert seen == [
         "/torrents/abc123/pause",
         "/torrents/abc123/start",
+        # Two ways to stop tracking a torrent, and the difference is the
+        # files: `delete` takes them with it, `forget` leaves them on disk.
         "/torrents/abc123/delete",
+        "/torrents/abc123/forget",
     ]
 
 
