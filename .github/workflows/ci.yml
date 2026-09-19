@@ -56,7 +56,9 @@ jobs:
             DB_PASSWORD: password
             # No engine is running here, and nothing in this suite needs one.
             TORRENT_ENABLED: "false"
-            DOWNLOAD_DIR: ${{ runner.temp }}/download
+            # `runner` is not a context a job-level `env` can read; only a
+            # step can. `github.workspace` is available here and serves.
+            DOWNLOAD_DIR: ${{ github.workspace }}/download
         steps:
             - uses: actions/checkout@v4
             - uses: astral-sh/setup-uv@v5
