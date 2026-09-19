@@ -1,0 +1,115 @@
+.toaster {
+    position: fixed;
+    /* Above the speed meter, which is fixed to the bottom of every page. */
+    bottom: 5.25rem;
+    right: 1rem;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    /* The region is always present, so it must never swallow a click. */
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    width: min(24rem, calc(100vw - 2rem));
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-info);
+    border-radius: var(--radius-md);
+    background: var(--color-card);
+    box-shadow: var(--shadow-lg);
+    animation: toast-in 160ms ease-out;
+}
+
+.toast--success {
+    border-left-color: var(--color-success);
+}
+
+.toast--error {
+    border-left-color: var(--color-error);
+}
+
+.toast-icon {
+    display: flex;
+    flex: none;
+    padding-top: 0.0625rem;
+    color: var(--color-info);
+}
+
+.toast--success .toast-icon {
+    color: var(--color-success);
+}
+
+.toast--error .toast-icon {
+    color: var(--color-error);
+}
+
+.toast-message {
+    flex: 1;
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    color: var(--color-foreground);
+    /* A long failure reason wraps rather than stretching the stack. */
+    overflow-wrap: anywhere;
+}
+
+.toast-dismiss {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    margin: -0.125rem -0.25rem 0 0;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    cursor: pointer;
+}
+
+.toast-dismiss:hover {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+}
+
+.toast-dismiss:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(0.5rem);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .toast {
+        animation: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .toaster {
+        left: 1rem;
+        align-items: stretch;
+    }
+
+    .toast {
+        width: auto;
+    }
+}

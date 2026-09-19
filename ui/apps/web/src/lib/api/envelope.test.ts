@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { unwrap } from "./envelope";
+import { ApiError, unwrap } from "./envelope";
 
 describe("unwrap", () => {
     it("returns data from a FastAPI success envelope", () => {
@@ -39,5 +39,28 @@ describe("unwrap", () => {
 
     it("throws on a shape it does not recognise", () => {
         expect(() => unwrap(null)).toThrow();
+    });
+});
+
+describe("the error unwrap throws", () => {
+    it("is an ApiError carrying the service's own code", () => {
+        try {
+            unwrap({ status: "error", code: 404, message: "Task not found" });
+            throw new Error("unwrap should have thrown");
+        } catch (error) {
+            expect(error).toBeInstanceOf(ApiError);
+            expect((error as ApiError).code).toBe(404);
+            expect((error as ApiError).message).toBe("Task not found");
+        }
+    });
+
+    it("is still an ApiError when the envelope carries no code", () => {
+        try {
+            unwrap({ success: false, error: "boom" });
+            throw new Error("unwrap should have thrown");
+        } catch (error) {
+            expect(error).toBeInstanceOf(ApiError);
+            expect((error as ApiError).code).toBeUndefined();
+        }
     });
 });
