@@ -87,3 +87,86 @@
         height: 44px;
     }
 }
+
+/* The brief label a key press leaves behind. Centred over the video, ignoring
+   pointer events so it can never sit between a click and the controls. */
+.player-flash {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 1.125rem;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    animation: player-flash-in 120ms ease-out;
+}
+
+@keyframes player-flash-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.player-help {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    max-width: min(26rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-lg);
+    background: rgba(0, 0, 0, 0.86);
+    color: #fff;
+}
+
+.player-help-title {
+    margin: 0 0 0.75rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    /* Stated, not inherited: the global heading rule paints headings in the
+       foreground colour, which on this near-black panel is near-black. */
+    color: #fff;
+}
+
+.player-help-list {
+    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.player-help-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.player-help-keys {
+    flex: none;
+    min-width: 6.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.player-help-description {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .player-flash {
+        animation: none;
+    }
+}

@@ -17,6 +17,11 @@ import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
 import { scrubberSegments } from "./scrubber-progress";
+import {
+    SHORTCUT_HINTS,
+    resolveShortcut,
+    type PlayerAction,
+} from "./shortcuts";
 import "./field.css";
 
 export interface PlayerModalProps {
@@ -50,6 +55,12 @@ export const PlayerModal = component$<PlayerModalProps>(
             muted: false,
             playbackRate: 1,
             fullscreen: false,
+            helpOpen: false,
+            // The brief label a key press leaves on screen, so a seek or a
+            // volume nudge is visible on a video that looks the same either
+            // way. Empty when nothing is showing.
+            flash: "",
+            flashToken: "",
         });
 
         useVisibleTask$(
@@ -380,6 +391,90 @@ export const PlayerModal = component$<PlayerModalProps>(
             }
         });
 
+        const flash = $((label: string) => {
+            store.flash = label;
+            // A token rather than a stored timer id: the point is only to let
+            // a later press win, and comparing what is on screen says that
+            // more directly than cancelling a handle.
+            const token = `${label}:${Date.now()}:${Math.random()}`;
+            store.flashToken = token;
+            setTimeout(() => {
+                if (store.flashToken === token) {
+                    store.flash = "";
+                }
+            }, 700);
+        });
+
+        const applyShortcut = $(async (action: PlayerAction) => {
+            const video = videoRef.value;
+
+            switch (action.type) {
+                case "togglePlay":
+                    // Read before acting: the label describes what the press
+                    // is about to do, not what was true a moment ago.
+                    await flash(video?.paused ? "Play" : "Pause");
+                    await handleTogglePlay();
+                    return;
+                case "seekBy": {
+                    if (!video) return;
+                    const sign = action.seconds > 0 ? "+" : "−";
+                    await flash(`${sign}${Math.abs(action.seconds)}s`);
+                    await handleSeek(video.currentTime + action.seconds);
+                    return;
+                }
+                case "volumeBy": {
+                    if (!video) return;
+                    const next = Math.min(
+                        1,
+                        Math.max(0, video.volume + action.delta),
+                    );
+                    await flash(`Volume ${Math.round(next * 100)}%`);
+                    await handleVolumeChange(next);
+                    return;
+                }
+                case "toggleMute":
+                    await flash(video?.muted ? "Unmuted" : "Muted");
+                    await handleToggleMute();
+                    return;
+                case "toggleFullscreen":
+                    await handleToggleFullscreen();
+                    return;
+                case "toggleHelp":
+                    store.helpOpen = !store.helpOpen;
+                    return;
+                case "escape":
+                    // The browser leaves fullscreen on Escape by itself, so
+                    // doing anything else here would close the player out
+                    // from under someone who only wanted the window back.
+                    if (document.fullscreenElement) return;
+                    if (store.helpOpen) {
+                        store.helpOpen = false;
+                        return;
+                    }
+                    await handleClose();
+                    return;
+            }
+        });
+
+        useVisibleTask$(({ track, cleanup }) => {
+            // Its own task, separate from the one that starts the stream: the
+            // keys should work while a torrent is still finding peers, which
+            // is exactly when that other task has not finished.
+            if (!track(() => open)) return;
+
+            const onKeyDown = (event: KeyboardEvent) => {
+                const action = resolveShortcut(event);
+                if (!action) return;
+                // Space scrolls and arrows scroll; neither should, with a
+                // player in front of everything.
+                event.preventDefault();
+                applyShortcut(action);
+            };
+
+            document.addEventListener("keydown", onKeyDown);
+            cleanup(() => document.removeEventListener("keydown", onKeyDown));
+        });
+
         if (!open) {
             return null;
         }
@@ -451,6 +546,36 @@ export const PlayerModal = component$<PlayerModalProps>(
                         )}
                     </div>
                 </div>
+
+                {/* Outside the panel on purpose: an audio-only stream leaves
+                    the panel only as tall as its controls, which clipped both
+                    of these to a couple of lines. */}
+                {store.flash && (
+                    <div class="player-flash" aria-live="polite">
+                        {store.flash}
+                    </div>
+                )}
+
+                {store.helpOpen && (
+                    <section
+                        class="player-help"
+                        aria-label="Keyboard shortcuts"
+                    >
+                        <h2 class="player-help-title">Keyboard shortcuts</h2>
+                        <dl class="player-help-list">
+                            {SHORTCUT_HINTS.map((hint) => (
+                                <div key={hint.keys} class="player-help-row">
+                                    <dt class="player-help-keys">
+                                        {hint.keys}
+                                    </dt>
+                                    <dd class="player-help-description">
+                                        {hint.description}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </section>
+                )}
             </div>
         );
     },
