@@ -5,6 +5,7 @@ import {
 } from "@/component/features/torrent-card";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
 import { isActive, isSeeding } from "@/lib/api";
+import { matchesSearch } from "@/lib/search";
 import "./field.css";
 
 export interface TorrentListProps {
@@ -54,16 +55,7 @@ export const TorrentList = component$<TorrentListProps>(
         });
 
         const filteredTasks = tasks.filter((task) => {
-            if (searchQuery) {
-                const query = searchQuery.toLowerCase();
-                if (
-                    !task.title.toLowerCase().includes(query) &&
-                    !task.url.toLowerCase().includes(query) &&
-                    !task.infoHash?.toLowerCase().includes(query)
-                ) {
-                    return false;
-                }
-            }
+            if (!matchesSearch(task, searchQuery)) return false;
 
             switch (filter) {
                 case "downloading":
@@ -126,7 +118,12 @@ export const TorrentList = component$<TorrentListProps>(
         };
 
         return (
-            <div class="torrent-list" role="list" aria-label="Downloads">
+            <div
+                id="download-list"
+                class="torrent-list"
+                role="list"
+                aria-label="Downloads"
+            >
                 {getEmptyState()}
                 <div class="torrent-list-items" style={{ contain: "layout" }}>
                     {filteredTasks.map((task) => (

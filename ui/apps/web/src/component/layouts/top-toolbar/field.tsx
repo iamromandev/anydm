@@ -1,10 +1,18 @@
 import { component$, $, useStore } from "@qwik.dev/core";
 import { ThemeToggle } from "@/component/shared/theme-toggle";
 import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
-import { LuPlus, LuSettings, LuMenu } from "@/component/core/icons";
+import {
+    LuPlus,
+    LuSettings,
+    LuMenu,
+    LuSearch,
+    LuX,
+} from "@/component/core/icons";
 import "./field.css";
 
 export interface TopToolbarProps {
+    searchQuery: string;
+    onSearchChange: (query: string) => void;
     sort: SortValue;
     onSortChange: (sort: SortValue) => void;
     onAddClick: () => void;
@@ -15,6 +23,8 @@ export interface TopToolbarProps {
 
 export const TopToolbar = component$<TopToolbarProps>(
     ({
+        searchQuery,
+        onSearchChange,
         sort,
         onSortChange,
         onAddClick,
@@ -24,6 +34,9 @@ export const TopToolbar = component$<TopToolbarProps>(
     }) => {
         const store = useStore({
             addMenuOpen: false,
+            // Only meaningful on a narrow screen, where the field is folded
+            // behind its own button; above that it is always shown.
+            searchOpen: false,
         });
 
         return (
@@ -48,6 +61,60 @@ export const TopToolbar = component$<TopToolbarProps>(
                 </div>
 
                 <div class="toolbar-right">
+                    <div
+                        class={`toolbar-search ${store.searchOpen ? "toolbar-search--open" : ""}`}
+                    >
+                        <button
+                            type="button"
+                            class="toolbar-btn toolbar-btn--icon toolbar-search-toggle"
+                            aria-label="Search downloads"
+                            aria-expanded={store.searchOpen}
+                            onClick$={() => {
+                                store.searchOpen = !store.searchOpen;
+                            }}
+                        >
+                            <LuSearch
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
+
+                        <input
+                            type="search"
+                            class="toolbar-search-field"
+                            placeholder="Search downloads"
+                            aria-label="Search downloads"
+                            aria-controls="download-list"
+                            value={searchQuery}
+                            onInput$={(_, el) => onSearchChange(el.value)}
+                            onKeyDown$={(event, el) => {
+                                if (event.key !== "Escape") return;
+                                // Escape clears rather than closing, because a
+                                // filtered list with no visible term is a
+                                // puzzle nobody asked for.
+                                el.value = "";
+                                onSearchChange("");
+                                el.blur();
+                            }}
+                        />
+
+                        {searchQuery && (
+                            <button
+                                type="button"
+                                class="toolbar-search-clear"
+                                aria-label="Clear search"
+                                onClick$={() => onSearchChange("")}
+                            >
+                                <LuX
+                                    width="14"
+                                    height="14"
+                                    aria-hidden="true"
+                                />
+                            </button>
+                        )}
+                    </div>
+
                     <label class="toolbar-sort">
                         <span class="toolbar-sort-label">Sort</span>
                         <select

@@ -36,6 +36,7 @@ import {
     LuFileDown as _LuFileDown,
     LuRotateCcw as _LuRotateCcw,
     LuAlertCircle as _LuAlertCircle,
+    LuSearch as _LuSearch,
     LuSearchX as _LuSearchX,
     LuUpload as _LuUpload,
     LuVolume2 as _LuVolume2,
@@ -76,6 +77,7 @@ export const LuFile = _LuFile;
 export const LuFileDown = _LuFileDown;
 export const LuRotateCcw = _LuRotateCcw;
 export const LuAlertCircle = _LuAlertCircle;
+export const LuSearch = _LuSearch;
 export const LuSearchX = _LuSearchX;
 export const LuUpload = _LuUpload;
 export const LuVolume2 = _LuVolume2;
