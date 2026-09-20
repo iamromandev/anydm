@@ -34,6 +34,7 @@ import {
     type Toast,
     type ToastTone,
 } from "@/lib/toast";
+import { DEFAULT_SORT, loadSort, saveSort, type SortValue } from "@/lib/sort";
 
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
@@ -75,6 +76,9 @@ export default component$(() => {
         outageToastId: null as string | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
+        // Read from storage once the browser is running; the server render
+        // has no localStorage and must not guess at one.
+        sort: DEFAULT_SORT as SortValue,
         sidebarOpen: false as boolean,
         sidebarCollapsed: true as boolean,
         addModalOpen: false as boolean,
@@ -172,7 +176,9 @@ export default component$(() => {
      * the very thing the connection indicator is saying is merely stale.
      */
     const loadPage = $(async (page: number) => {
-        const query = `page=${page}&page_size=${PAGE_SIZE}&group=${store.filter}`;
+        const query =
+            `page=${page}&page_size=${PAGE_SIZE}` +
+            `&group=${store.filter}&sort=${store.sort}`;
         const result = await getPageApi<any[]>(`/download?${query}`).catch(
             () => null,
         );
@@ -255,6 +261,9 @@ export default component$(() => {
 
     useVisibleTask$(
         ({ cleanup }) => {
+            // The remembered order, applied before the first fetch so the
+            // list does not arrive newest-first and then reshuffle.
+            store.sort = loadSort();
             syncTask();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
@@ -398,6 +407,15 @@ export default component$(() => {
         store.filter = filter as any;
         // The filter is answered by the database now, so changing it is a new
         // list rather than a different view of this one.
+        store.page = 1;
+        store.totalPages = 1;
+        await loadPage(1);
+    });
+
+    const handleSortChange = $(async (sort: SortValue) => {
+        store.sort = sort;
+        saveSort(sort);
+        // A different order is a different list, so it starts again at the top.
         store.page = 1;
         store.totalPages = 1;
         await loadPage(1);
@@ -596,6 +614,8 @@ export default component$(() => {
             tasks={store.tasks}
             filter={store.filter}
             searchQuery={store.searchQuery}
+            sort={store.sort}
+            onSortChange={handleSortChange}
             now={store.now}
             connection={store.connection}
             summary={store.summary}

@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from tortoise.expressions import Q
+from tortoise.functions import Coalesce
 from tortoise.transactions import in_transaction
 
 from src.core.base import BaseRepo
@@ -92,6 +93,7 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         page: int,
         page_size: int,
         statuses: list[TaskStatus] | None = None,
+        sort: str = "-created_at",
     ) -> tuple[list[Task], Meta]:
         """One page of the list, newest first, optionally narrowed by status.
 
@@ -104,8 +106,18 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         if statuses:
             filters["status__in"] = list(statuses)
 
+        # NULL means "the server never said how big it is". Postgres sorts
+        # NULL first on a descending order, which would put the one task
+        # nobody knows the size of at the top of "largest first".
+        annotations = None
+        order = sort
+        if sort.lstrip("-") == "total_bytes":
+            annotations = {"known_size": Coalesce("total_bytes", 0)}
+            order = f"{'-' if sort.startswith('-') else ''}known_size"
+
         tasks, meta = await self.get_paginated(
-            order_by="-created_at",
+            order_by=order,
+            annotations=annotations,
             page=page,
             page_size=page_size,
             **filters,

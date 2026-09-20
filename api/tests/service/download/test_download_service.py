@@ -34,14 +34,17 @@ class FakeRepo:
         self.created: list[dict[str, Any]] = []
         self.rows: dict[uuid.UUID, Any] = {}
         self.listed_statuses: list[Any] | None = None
+        self.listed_sort: str | None = None
 
     async def list_page(
         self,
         page: int,
         page_size: int,
         statuses: list[Any] | None = None,
+        sort: str = "-created_at",
     ) -> tuple[list[Any], Meta]:
         self.listed_statuses = statuses
+        self.listed_sort = sort
         return [], Meta(page=page, page_size=page_size, total=0, total_pages=0)
 
     async def create(self, **kwargs: Any) -> Any:
@@ -343,6 +346,36 @@ async def test_listing_everything_asks_for_no_statuses_at_all(tmp_path: Path) ->
     await service.list_tasks(page=1, page_size=10, group="all")
 
     assert repo.listed_statuses is None
+
+
+@pytest.mark.asyncio
+async def test_a_sort_reaches_the_repository_as_asked(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.list_tasks(page=1, page_size=10, sort="-total_bytes")
+
+    assert repo.listed_sort == "-total_bytes"
+
+
+@pytest.mark.asyncio
+async def test_listing_defaults_to_newest_first(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.list_tasks(page=1, page_size=10)
+
+    assert repo.listed_sort == "-created_at"
+
+
+@pytest.mark.asyncio
+async def test_a_sort_on_a_column_not_offered_is_refused(tmp_path: Path) -> None:
+    """The route types this too; this guards against a caller inside the process
+    reaching the database's ORDER BY with something arbitrary."""
+    service, _, _ = _service(downloads_dir=tmp_path)
+
+    for attempt in ("db_password", "-nonsense", ""):
+        with pytest.raises(Error) as caught:
+            await service.list_tasks(page=1, page_size=10, sort=attempt)
+        assert caught.value.code == 400
 
 
 @pytest.mark.asyncio

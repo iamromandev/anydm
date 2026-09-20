@@ -5,4 +5,5 @@ from .download import Kind as Kind
 from .download import Platform as Platform
 from .download import Preset as Preset
 from .download import TaskGroup as TaskGroup
+from .download import TaskSort as TaskSort
 from .download import TaskStatus as TaskStatus

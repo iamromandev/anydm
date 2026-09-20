@@ -20,6 +20,7 @@ import { RemoveDialog } from "@/component/features/remove-dialog";
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Connection } from "@/lib/connection";
+import type { SortValue } from "@/lib/sort";
 import type { Toast } from "@/lib/toast";
 import "./field.css";
 
@@ -27,6 +28,8 @@ export interface AppShellProps {
     tasks: UiTask[];
     filter: "all" | "downloading" | "seeding" | "completed";
     searchQuery: string;
+    sort: SortValue;
+    onSortChange: (sort: SortValue) => void;
     now: number;
     connection: Connection;
     summary: TaskSummary | null;
@@ -80,6 +83,8 @@ export const AppShell = component$<AppShellProps>(
         tasks,
         filter,
         searchQuery,
+        sort,
+        onSortChange,
         now,
         connection,
         summary,
@@ -148,6 +153,8 @@ export const AppShell = component$<AppShellProps>(
         return (
             <div class="app-shell" role="application">
                 <TopToolbar
+                    sort={sort}
+                    onSortChange={onSortChange}
                     onAddClick={onAddClick}
                     onSettingsClick={noop}
                     sidebarOpen={sidebarOpen}
