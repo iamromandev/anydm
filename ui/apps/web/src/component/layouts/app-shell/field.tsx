@@ -1,6 +1,8 @@
 import { component$, $ } from "@qwik.dev/core";
 import {
     aggregateStats,
+    canPause,
+    canResume,
     isActive,
     isSeeding,
     type ResolvedTorrent,
@@ -15,6 +17,7 @@ import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import { RemoveDialog } from "@/component/features/remove-dialog";
+import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Connection } from "@/lib/connection";
 import type { Toast } from "@/lib/toast";
@@ -54,6 +57,14 @@ export interface AppShellProps {
     removing: { id: string; title: string; status: string } | null;
     onRemoveCancel: () => void;
     onRemoveConfirm: (id: string, deleteFiles: boolean) => void;
+    onBulk: (action: "pause_all" | "resume_all" | "clear_finished") => void;
+    bulkPrompt: {
+        heading: string;
+        body: string;
+        confirmLabel: string;
+    } | null;
+    onBulkCancel: () => void;
+    onBulkConfirm: () => void;
     onStopSeeding: (id: string) => void;
     onAdd: (input: {
         type: "magnet" | "file" | "url";
@@ -99,6 +110,10 @@ export const AppShell = component$<AppShellProps>(
         removing,
         onRemoveCancel,
         onRemoveConfirm,
+        onBulk,
+        bulkPrompt,
+        onBulkCancel,
+        onBulkConfirm,
         onStopSeeding,
         onAdd,
         onResolve,
@@ -110,6 +125,19 @@ export const AppShell = component$<AppShellProps>(
         // Counted by the API when it can be. Falling back to the loaded rows
         // keeps the numbers plausible before the first summary arrives, but
         // they are only ever a floor: the list is one page of many.
+        // What each sweep would find, counted from the rows on screen. The
+        // API decides for itself which rows an action applies to; this only
+        // decides whether offering a button is worth the space. A row on an
+        // unloaded page is not counted, so a button can be absent while the
+        // sweep would still have found something — it errs towards quiet.
+        const bulk = {
+            pausable: tasks.filter((t) => canPause(t.status)).length,
+            resumable: tasks.filter((t) => canResume(t.status)).length,
+            finished: tasks.filter(
+                (t) => t.status === "complete" || t.status === "failed",
+            ).length,
+        };
+
         const counts = summary ?? {
             all: tasks.length,
             downloading: tasks.filter((t) => isActive(t.status)).length,
@@ -131,6 +159,10 @@ export const AppShell = component$<AppShellProps>(
                         filter={filter as SidebarFilter}
                         onFilterChange={onFilterChange}
                         counts={counts}
+                        bulk={bulk}
+                        onPauseAll={$(() => onBulk("pause_all"))}
+                        onResumeAll={$(() => onBulk("resume_all"))}
+                        onClearFinished={$(() => onBulk("clear_finished"))}
                         collapsed={sidebarCollapsed}
                         open={sidebarOpen}
                         onToggleCollapse={onSidebarCollapseToggle}
@@ -195,6 +227,12 @@ export const AppShell = component$<AppShellProps>(
                 />
 
                 <Toaster toasts={toasts} onDismiss={onDismissToast} />
+
+                <ConfirmDialog
+                    prompt={bulkPrompt}
+                    onCancel={onBulkCancel}
+                    onConfirm={onBulkConfirm}
+                />
 
                 <RemoveDialog
                     task={removing}

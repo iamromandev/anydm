@@ -54,6 +54,10 @@ class FakeRepo:
     async def get_active_by_id(self, task_id: uuid.UUID) -> Any:
         return self.rows.get(task_id)
 
+    async def by_statuses(self, statuses: list[Any]) -> list[Any]:
+        wanted = set(statuses)
+        return [row for row in self.rows.values() if row.status in wanted]
+
 
 def _row(task_id: uuid.UUID, **overrides: Any) -> Any:
     """A stand-in for a Task row, with a no-op ``save``."""
@@ -479,3 +483,123 @@ async def test_enqueue_url_rejects_a_non_http_scheme(tmp_path: Path) -> None:
     with pytest.raises(Error) as caught:
         await service.enqueue_url("file:///etc/passwd")
     assert caught.value.code == 400
+
+
+# --- bulk actions -----------------------------------------------------------
+
+
+def _bulk_service(tmp_path: Path) -> tuple[DownloadService, FakeRepo, Any]:
+    service, repo, torrents = _service(downloads_dir=tmp_path)
+    for status in (
+        TaskStatus.PENDING,
+        TaskStatus.DOWNLOADING,
+        TaskStatus.PAUSED,
+        TaskStatus.SEEDING,
+        TaskStatus.COMPLETE,
+        TaskStatus.FAILED,
+    ):
+        task_id = uuid.uuid4()
+        platform = Platform.TORRENT if status == TaskStatus.SEEDING else Platform.DIRECT
+        repo.rows[task_id] = _row(task_id, status=status, platform=platform)
+    return service, repo, torrents
+
+
+def _statuses(repo: FakeRepo) -> list[TaskStatus]:
+    return sorted(row.status for row in repo.rows.values())
+
+
+@pytest.mark.asyncio
+async def test_pause_all_takes_only_what_can_be_paused(tmp_path: Path) -> None:
+    service, repo, _ = _bulk_service(tmp_path)
+
+    affected = await service.bulk("pause_all")
+
+    # pending, downloading and the seeding torrent; not paused, complete or failed.
+    assert affected == 3
+    assert _statuses(repo).count(TaskStatus.PAUSED) == 3
+    assert TaskStatus.COMPLETE in _statuses(repo)
+    assert TaskStatus.FAILED in _statuses(repo)
+
+
+@pytest.mark.asyncio
+async def test_resume_all_takes_only_what_can_be_resumed(tmp_path: Path) -> None:
+    service, repo, _ = _bulk_service(tmp_path)
+
+    affected = await service.bulk("resume_all")
+
+    # The paused one and the failed one, both back to pending.
+    assert affected == 2
+    assert _statuses(repo).count(TaskStatus.PENDING) == 3
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_keeps_a_finished_file_but_not_a_failed_one(
+    tmp_path: Path,
+) -> None:
+    """Nothing worth keeping survives a failure, and keeping it would 409."""
+    service, repo, _ = _bulk_service(tmp_path)
+    finished = next(
+        row for row in repo.rows.values() if row.status == TaskStatus.COMPLETE
+    )
+    failed = next(row for row in repo.rows.values() if row.status == TaskStatus.FAILED)
+    for row in (finished, failed):
+        (tmp_path / str(row.id)).mkdir(parents=True)
+        (tmp_path / str(row.id) / "f.bin").write_bytes(b"x")
+
+    affected = await service.bulk("clear_finished")
+
+    assert affected == 2
+    assert (tmp_path / str(finished.id) / "f.bin").exists()
+    assert not (tmp_path / str(failed.id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_can_take_the_files_too(tmp_path: Path) -> None:
+    service, repo, _ = _bulk_service(tmp_path)
+    finished = next(
+        row for row in repo.rows.values() if row.status == TaskStatus.COMPLETE
+    )
+    (tmp_path / str(finished.id)).mkdir(parents=True)
+    (tmp_path / str(finished.id) / "f.bin").write_bytes(b"x")
+
+    await service.bulk("clear_finished", delete_files=True)
+
+    assert not (tmp_path / str(finished.id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_one_row_refusing_does_not_end_the_sweep(tmp_path: Path) -> None:
+    service, repo, _ = _bulk_service(tmp_path)
+    doomed = next(
+        row for row in repo.rows.values() if row.status == TaskStatus.DOWNLOADING
+    )
+
+    async def _explode(*_args: Any, **_kwargs: Any) -> None:
+        raise Error.conflict(message="no")
+
+    doomed.save = _explode
+
+    affected = await service.bulk("pause_all")
+
+    # The other two still paused; the count reports what actually happened.
+    assert affected == 2
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_bulk_action_is_refused(tmp_path: Path) -> None:
+    service, _, _ = _bulk_service(tmp_path)
+
+    with pytest.raises(Error) as caught:
+        await service.bulk("delete_everything")
+
+    assert caught.value.code == 400
+
+
+def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:
+    """The names live in the type module; what they mean lives in the service."""
+    from typing import get_args
+
+    from src.data.type import BulkAction
+    from src.service.download.download_service import BULK_SCOPES
+
+    assert set(get_args(BulkAction)) == set(BULK_SCOPES)

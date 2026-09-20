@@ -1,5 +1,6 @@
 from .download import ACTIVE_STATUSES as ACTIVE_STATUSES
 from .download import TASK_GROUPS as TASK_GROUPS
+from .download import BulkAction as BulkAction
 from .download import Kind as Kind
 from .download import Platform as Platform
 from .download import Preset as Preset

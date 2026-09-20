@@ -131,6 +131,51 @@
     padding: 0.625rem;
 }
 
+.sidebar-bulk {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    margin-top: auto;
+    padding: 0.75rem 0.5rem;
+    border-top: 1px solid var(--color-border);
+}
+
+.sidebar-bulk-label {
+    padding: 0 0.25rem 0.25rem;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: color-mix(in srgb, var(--color-foreground) 45%, transparent);
+}
+
+.sidebar-bulk-btn {
+    min-height: 32px;
+    padding: 0 0.625rem;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 75%, transparent);
+    font-size: 0.8125rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sidebar-bulk-btn:hover {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+}
+
+.sidebar-bulk-btn:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: -2px;
+}
+
+/* Collapsed to icons, these labels would be unreadable stubs. */
+.sidebar--collapsed .sidebar-bulk {
+    display: none;
+}
+
 @media (max-width: 1024px) {
     .sidebar {
         position: fixed;
@@ -155,6 +200,10 @@
     }
 
     .sidebar-filter {
+        min-height: 44px;
+    }
+
+    .sidebar-bulk-btn {
         min-height: 44px;
     }
 

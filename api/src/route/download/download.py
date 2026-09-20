@@ -10,6 +10,8 @@ from sse_starlette import EventSourceResponse
 from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.download import (
+    BulkActionRequest,
+    BulkResultSchema,
     TaskSchema,
     TaskSummarySchema,
     UrlDownloadRequest,
@@ -50,6 +52,20 @@ async def enqueue_url(
 ) -> Response:
     data = await download_service.enqueue_url(payload.url.strip())
     return Success.created(data=data).to_resp()
+
+
+@router.post(
+    path="/download/bulk",
+    response_model=Success[BulkResultSchema],
+)
+async def bulk_action(
+    request: BulkActionRequest,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    affected = await download_service.bulk(
+        request.action, delete_files=request.delete_files
+    )
+    return Success.ok(data=BulkResultSchema(affected=affected)).to_resp()
 
 
 @router.get(

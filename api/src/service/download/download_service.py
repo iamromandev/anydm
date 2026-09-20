@@ -4,6 +4,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
@@ -23,6 +25,18 @@ from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.download_worker import remove_task_files
 from src.service.download.torrent_service import TorrentService
+
+#: Which rows each bulk action applies to. Seeding is in the pause set
+#: because only a torrent can be seeding and the engine accepts pausing one;
+#: failed is in both the resume set and the clear set, because a failure is
+#: equally "try again" and "give up on this".
+BULK_SCOPES: dict[str, frozenset[TaskStatus]] = {
+    "pause_all": frozenset(
+        {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING}
+    ),
+    "resume_all": frozenset({TaskStatus.PAUSED, TaskStatus.FAILED}),
+    "clear_finished": frozenset({TaskStatus.COMPLETE, TaskStatus.FAILED}),
+}
 
 
 class DownloadService(BaseService):
@@ -127,6 +141,49 @@ class DownloadService(BaseService):
             page=page, page_size=page_size, statuses=statuses
         )
         return [TaskSchema.model_validate(task) for task in tasks], meta
+
+    async def bulk(self, action: str, *, delete_files: bool = False) -> int:
+        """Apply one action to every row it makes sense for.
+
+        Which rows those are is decided here rather than by the caller. The
+        preconditions already live on ``pause``, ``resume`` and ``cancel``, and
+        letting a client name its own set of statuses only invites it to name
+        one they refuse — a bulk request that half fails is worse than one that
+        cannot be expressed.
+
+        Every row goes through those same three methods, so a torrent is paused
+        by the engine and a direct download by the worker, exactly as a single
+        action would do it. One row refusing does not end the sweep: a stale
+        status is the most likely reason, and the rest of the list should not
+        pay for it.
+        """
+        scope = BULK_SCOPES.get(action)
+        if scope is None:
+            raise Error.bad_request(message=f"Unknown bulk action: {action}")
+
+        rows = await self._repo.by_statuses(sorted(scope))
+        affected = 0
+
+        for row in rows:
+            try:
+                if action == "pause_all":
+                    await self.pause(row.id)
+                elif action == "resume_all":
+                    await self.resume(row.id)
+                else:
+                    # Only a finished row has anything worth keeping; asking to
+                    # keep the remains of a failure is refused by ``cancel``.
+                    keepable = row.status in (TaskStatus.COMPLETE, TaskStatus.SEEDING)
+                    await self.cancel(
+                        row.id, delete_files=delete_files or not keepable
+                    )
+                affected += 1
+            except Error as error:
+                logger.warning(
+                    "{}|bulk {} skipped {}: {}", self._tag, action, row.id, error.message
+                )
+
+        return affected
 
     async def summary(self) -> TaskSummarySchema:
         return await self._repo.summary()
