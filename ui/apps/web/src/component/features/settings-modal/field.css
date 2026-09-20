@@ -1,0 +1,172 @@
+.settings-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+}
+
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 32rem;
+    /* Taller than the viewport on a phone once the server list is long. */
+    max-height: calc(100vh - 2rem);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-card);
+    box-shadow: var(--shadow-xl);
+    overflow: hidden;
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.settings-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.settings-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    cursor: pointer;
+}
+
+.settings-close:hover {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+}
+
+.settings-body {
+    padding: 1rem 1.25rem 1.25rem;
+    overflow-y: auto;
+}
+
+.settings-section + .settings-section {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--color-border);
+}
+
+.settings-section-title {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.settings-section-note {
+    margin: 0.25rem 0 0.875rem;
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4375rem 0;
+    cursor: pointer;
+}
+
+.settings-label {
+    font-size: 0.8125rem;
+}
+
+.settings-select {
+    min-height: 32px;
+    min-width: 9rem;
+    padding: 0 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-input);
+    color: var(--color-foreground);
+    font-size: 0.8125rem;
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.settings-check {
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+}
+
+.settings-server {
+    display: grid;
+    gap: 0.375rem;
+    margin: 0;
+}
+
+.settings-server-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.settings-server-key {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+.settings-server-value {
+    margin: 0;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    text-align: right;
+    /* A path is longer than the panel is wide. */
+    overflow-wrap: anywhere;
+}
+
+.settings-server-empty {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--color-error);
+}
+
+.settings-select:focus-visible,
+.settings-check:focus-visible,
+.settings-close:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+@media (max-width: 640px) {
+    .settings-row {
+        min-height: 44px;
+    }
+
+    .settings-select {
+        min-height: 44px;
+    }
+
+    .settings-check {
+        width: 1.25rem;
+        height: 1.25rem;
+    }
+
+    .settings-close {
+        width: 44px;
+        height: 44px;
+    }
+}

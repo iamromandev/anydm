@@ -19,6 +19,7 @@ from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.health import HealthService as HealthService
+from src.service.settings import SettingsService as SettingsService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
 from src.service.stream import StreamSessionStore as StreamSessionStore
@@ -27,6 +28,10 @@ from src.service.stream import TorrentReaper as TorrentReaper
 
 def get_health_service() -> HealthService:
     return HealthService()
+
+
+def get_settings_service() -> SettingsService:
+    return SettingsService()
 
 
 def get_extract_service() -> ExtractService:

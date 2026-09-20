@@ -17,9 +17,14 @@ import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import { RemoveDialog } from "@/component/features/remove-dialog";
+import {
+    SettingsModal,
+    type ServerSettings,
+} from "@/component/features/settings-modal";
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Connection } from "@/lib/connection";
+import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
 import type { Toast } from "@/lib/toast";
 import "./field.css";
@@ -30,6 +35,12 @@ export interface AppShellProps {
     searchQuery: string;
     sort: SortValue;
     onSortChange: (sort: SortValue) => void;
+    settingsOpen: boolean;
+    onSettingsOpen: () => void;
+    onSettingsClose: () => void;
+    prefs: Prefs;
+    onPrefsChange: (prefs: Prefs) => void;
+    serverSettings: ServerSettings | null;
     now: number;
     connection: Connection;
     summary: TaskSummary | null;
@@ -85,6 +96,12 @@ export const AppShell = component$<AppShellProps>(
         searchQuery,
         sort,
         onSortChange,
+        settingsOpen,
+        onSettingsOpen,
+        onSettingsClose,
+        prefs,
+        onPrefsChange,
+        serverSettings,
         now,
         connection,
         summary,
@@ -123,8 +140,6 @@ export const AppShell = component$<AppShellProps>(
         onAdd,
         onResolve,
     }) => {
-        const noop = $(() => {});
-
         const stats = aggregateStats(tasks);
 
         // Counted by the API when it can be. Falling back to the loaded rows
@@ -158,7 +173,7 @@ export const AppShell = component$<AppShellProps>(
                     sort={sort}
                     onSortChange={onSortChange}
                     onAddClick={onAddClick}
-                    onSettingsClick={noop}
+                    onSettingsClick={onSettingsOpen}
                     sidebarOpen={sidebarOpen}
                     onSidebarToggle={onSidebarToggle}
                 />
@@ -179,6 +194,7 @@ export const AppShell = component$<AppShellProps>(
 
                     <div class="app-shell-content">
                         <HeroInput
+                            defaultPreset={prefs.defaultPreset}
                             onSubmit={$(
                                 async (input: {
                                     type: "magnet" | "file" | "url";
@@ -241,6 +257,16 @@ export const AppShell = component$<AppShellProps>(
                     prompt={bulkPrompt}
                     onCancel={onBulkCancel}
                     onConfirm={onBulkConfirm}
+                />
+
+                <SettingsModal
+                    open={settingsOpen}
+                    prefs={prefs}
+                    sort={sort}
+                    server={serverSettings}
+                    onClose={onSettingsClose}
+                    onPrefsChange={onPrefsChange}
+                    onSortChange={onSortChange}
                 />
 
                 <RemoveDialog
