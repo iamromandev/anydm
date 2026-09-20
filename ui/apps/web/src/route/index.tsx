@@ -35,6 +35,9 @@ import {
     type ToastTone,
 } from "@/lib/toast";
 import { DEFAULT_SORT, loadSort, saveSort, type SortValue } from "@/lib/sort";
+import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from "@/lib/prefs";
+import type { ServerSettings } from "@/component/features/settings-modal";
+import { removePrompt } from "@/component/features/remove-dialog/prompt";
 
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
@@ -79,6 +82,10 @@ export default component$(() => {
         // Read from storage once the browser is running; the server render
         // has no localStorage and must not guess at one.
         sort: DEFAULT_SORT as SortValue,
+        settingsOpen: false,
+        prefs: DEFAULT_PREFS as Prefs,
+        // Null until the API answers, and after it refuses.
+        serverSettings: null as ServerSettings | null,
         sidebarOpen: false as boolean,
         sidebarCollapsed: true as boolean,
         addModalOpen: false as boolean,
@@ -264,6 +271,7 @@ export default component$(() => {
             // The remembered order, applied before the first fetch so the
             // list does not arrive newest-first and then reshuffle.
             store.sort = loadSort();
+            store.prefs = loadPrefs();
             syncTask();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
@@ -412,6 +420,25 @@ export default component$(() => {
         await loadPage(1);
     });
 
+    const handleSettingsOpen = $(async () => {
+        store.settingsOpen = true;
+        // Fetched on opening rather than on load: nothing else needs it, and
+        // it cannot change without the API restarting.
+        const server = await getApi<ServerSettings>("/settings").catch(
+            () => null,
+        );
+        store.serverSettings = server;
+    });
+
+    const handleSettingsClose = $(() => {
+        store.settingsOpen = false;
+    });
+
+    const handlePrefsChange = $((prefs: Prefs) => {
+        store.prefs = prefs;
+        savePrefs(prefs);
+    });
+
     const handleSortChange = $(async (sort: SortValue) => {
         store.sort = sort;
         saveSort(sort);
@@ -456,9 +483,37 @@ export default component$(() => {
     const handleResume = $((id: string) => handleTaskAction(id, "resume"));
 
     /** Open the dialog. Nothing is removed until it is confirmed. */
-    const handleRemove = $((taskId: string) => {
+    const handleRemoveConfirm = $(
+        async (taskId: string, deleteFiles: boolean) => {
+            store.removing = null;
+
+            try {
+                await deleteApi(
+                    `/download/${taskId}?delete_files=${deleteFiles}`,
+                );
+            } catch (err) {
+                // The row still goes: the person asked for it gone, and a failure
+                // here is nearly always a row the API has already forgotten.
+                notify("error", errorMessage(err));
+            }
+
+            store.tasks = store.tasks.filter((t) => t.id !== taskId);
+        },
+    );
+
+    const handleRemove = $(async (taskId: string) => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
+
+        if (!store.prefs.confirmBeforeRemove) {
+            // Straight through, on the same terms the dialog would have
+            // offered by default: keep a finished download's files, and take
+            // the partial remains of anything else.
+            const keepable = removePrompt(task.status).canKeepFiles;
+            await handleRemoveConfirm(task.id, !keepable);
+            return;
+        }
+
         store.removing = {
             id: task.id,
             title: task.title,
@@ -510,24 +565,6 @@ export default component$(() => {
     const handleRemoveCancel = $(() => {
         store.removing = null;
     });
-
-    const handleRemoveConfirm = $(
-        async (taskId: string, deleteFiles: boolean) => {
-            store.removing = null;
-
-            try {
-                await deleteApi(
-                    `/download/${taskId}?delete_files=${deleteFiles}`,
-                );
-            } catch (err) {
-                // The row still goes: the person asked for it gone, and a failure
-                // here is nearly always a row the API has already forgotten.
-                notify("error", errorMessage(err));
-            }
-
-            store.tasks = store.tasks.filter((t) => t.id !== taskId);
-        },
-    );
 
     const handleDownloadFile = $((taskId: string) => {
         const task = store.tasks.find((t) => t.id === taskId);
@@ -616,6 +653,12 @@ export default component$(() => {
             searchQuery={store.searchQuery}
             sort={store.sort}
             onSortChange={handleSortChange}
+            settingsOpen={store.settingsOpen}
+            onSettingsOpen={handleSettingsOpen}
+            onSettingsClose={handleSettingsClose}
+            prefs={store.prefs}
+            onPrefsChange={handlePrefsChange}
+            serverSettings={store.serverSettings}
             now={store.now}
             connection={store.connection}
             summary={store.summary}
