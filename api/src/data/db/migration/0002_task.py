@@ -41,6 +41,7 @@ class Migration(migrations.Migration):
                 ('speed_bps', fields.BigIntField(default=0)),
                 ('eta_seconds', fields.IntField(null=True)),
                 ('uploaded_bytes', fields.BigIntField(default=0, description='Torrent-only. Stored rather than computed so the share ratio the card')),
+                ('upload_speed_bps', fields.BigIntField(default=0, description='Torrent-only. Spelled out rather than mirroring ``speed_bps``, which')),
                 ('peers_connected', fields.IntField(default=0, description='Torrent-only. Stored so a reconnecting browser sees a peer count at once')),
                 ('file_path', fields.CharField(null=True, max_length=1024)),
                 ('file_size', fields.BigIntField(null=True)),

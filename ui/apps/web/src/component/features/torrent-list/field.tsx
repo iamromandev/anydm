@@ -1,4 +1,4 @@
-import { component$ } from "@qwik.dev/core";
+import { component$, $, useStore } from "@qwik.dev/core";
 import {
     TorrentCard,
     type TorrentTask,
@@ -47,6 +47,12 @@ export const TorrentList = component$<TorrentListProps>(
         onRemove,
         onStopSeeding,
     }) => {
+        // One card at a time: two open at once turns a list into a wall.
+        const store = useStore({ expandedId: "" as string });
+        const toggleDetail = $((id: string) => {
+            store.expandedId = store.expandedId === id ? "" : id;
+        });
+
         const filteredTasks = tasks.filter((task) => {
             if (searchQuery) {
                 const query = searchQuery.toLowerCase();
@@ -131,6 +137,8 @@ export const TorrentList = component$<TorrentListProps>(
                         >
                             <TorrentCard
                                 now={now}
+                                expanded={store.expandedId === task.id}
+                                onToggleDetail={toggleDetail}
                                 task={task}
                                 onPause={onPause}
                                 onResume={onResume}
