@@ -195,3 +195,92 @@
         min-height: 44px;
     }
 }
+
+.toolbar-search {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Above the fold-away width the field is simply always there. */
+.toolbar-search-toggle {
+    display: none;
+}
+
+.toolbar-search-field {
+    width: 12rem;
+    min-height: 32px;
+    padding: 0 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-input);
+    color: var(--color-foreground);
+    font-size: 0.8125rem;
+    font-family: var(--font-sans);
+}
+
+.toolbar-search-field::placeholder {
+    color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+}
+
+.toolbar-search-field:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+/* The browser's own clear affordance; this one is ours, and is the only one
+   that also tells the list. */
+.toolbar-search-field::-webkit-search-cancel-button {
+    display: none;
+}
+
+.toolbar-search-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-left: -1.875rem;
+    border: none;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    cursor: pointer;
+}
+
+.toolbar-search-clear:hover {
+    color: var(--color-foreground);
+}
+
+@media (max-width: 640px) {
+    /* Folded away: the toolbar has no room for a field beside everything
+       else, so it opens over the row when asked for. */
+    .toolbar-search-toggle {
+        display: inline-flex;
+    }
+
+    .toolbar-search-field {
+        display: none;
+    }
+
+    .toolbar-search--open {
+        position: absolute;
+        inset: 0 0.5rem;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        background: var(--color-background);
+    }
+
+    .toolbar-search--open .toolbar-search-field {
+        display: block;
+        flex: 1;
+        min-height: 44px;
+    }
+
+    .toolbar-search--open .toolbar-search-clear {
+        width: 44px;
+        height: 44px;
+        margin-left: -3rem;
+    }
+}

@@ -153,6 +153,8 @@ export const AppShell = component$<AppShellProps>(
         return (
             <div class="app-shell" role="application">
                 <TopToolbar
+                    searchQuery={searchQuery}
+                    onSearchChange={onSearchChange}
                     sort={sort}
                     onSortChange={onSortChange}
                     onAddClick={onAddClick}
