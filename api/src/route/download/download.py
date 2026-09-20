@@ -17,7 +17,7 @@ from src.data.schema.download import (
     UrlDownloadRequest,
     YoutubeDownloadRequest,
 )
-from src.data.type import TaskGroup
+from src.data.type import TaskGroup, TaskSort
 from src.lib.event import EventHub, get_event_hub
 from src.service import DownloadService, get_download_service
 
@@ -80,9 +80,13 @@ async def list_tasks(
         TaskGroup,
         Query(description="Which of the sidebar's filters to answer for"),
     ] = "all",
+    sort: Annotated[
+        TaskSort,
+        Query(description="Field to order by; prefix with - for descending"),
+    ] = "-created_at",
 ) -> Response:
     data, meta = await download_service.list_tasks(
-        page=page, page_size=page_size, group=group
+        page=page, page_size=page_size, group=group, sort=sort
     )
     return Success.ok(data=data, meta=meta).to_resp()
 

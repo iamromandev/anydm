@@ -1,9 +1,12 @@
 import { component$, $, useStore } from "@qwik.dev/core";
 import { ThemeToggle } from "@/component/shared/theme-toggle";
+import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
 import { LuPlus, LuSettings, LuMenu } from "@/component/core/icons";
 import "./field.css";
 
 export interface TopToolbarProps {
+    sort: SortValue;
+    onSortChange: (sort: SortValue) => void;
     onAddClick: () => void;
     onSettingsClick: () => void;
     sidebarOpen: boolean;
@@ -11,7 +14,14 @@ export interface TopToolbarProps {
 }
 
 export const TopToolbar = component$<TopToolbarProps>(
-    ({ onAddClick, onSettingsClick, sidebarOpen, onSidebarToggle }) => {
+    ({
+        sort,
+        onSortChange,
+        onAddClick,
+        onSettingsClick,
+        sidebarOpen,
+        onSidebarToggle,
+    }) => {
         const store = useStore({
             addMenuOpen: false,
         });
@@ -38,6 +48,23 @@ export const TopToolbar = component$<TopToolbarProps>(
                 </div>
 
                 <div class="toolbar-right">
+                    <label class="toolbar-sort">
+                        <span class="toolbar-sort-label">Sort</span>
+                        <select
+                            class="toolbar-sort-select"
+                            value={sort}
+                            onChange$={(_, el) =>
+                                onSortChange(el.value as SortValue)
+                            }
+                        >
+                            {SORT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
                     <div class="toolbar-dropdown">
                         <button
                             type="button"

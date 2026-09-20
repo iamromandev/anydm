@@ -256,3 +256,67 @@ async def test_summary_ignores_soft_deleted_rows(db: None) -> None:
     assert summary.all == 1
     assert summary.completed == 1
     assert kept.deleted_at is None
+
+
+async def _sized(title: str, total: int | None, progress: int = 0) -> Task:
+    return await Task.create(
+        source_url="https://youtu.be/x",
+        platform=Platform.YOUTUBE,
+        preset=Preset.BEST,
+        kind=Kind.VIDEO,
+        status=TaskStatus.COMPLETE,
+        title=title,
+        filename=f"{title}.mp4",
+        total_bytes=total,
+        progress=progress,
+    )
+
+
+async def test_the_default_order_is_newest_first(db: None) -> None:
+    await _sized("first", 1)
+    await asyncio.sleep(0.01)
+    await _sized("second", 2)
+
+    rows, _ = await TaskDatabaseRepo().list_page(page=1, page_size=10)
+
+    assert [row.title for row in rows] == ["second", "first"]
+
+
+async def test_sorting_by_title_is_alphabetical(db: None) -> None:
+    for title in ("charlie", "alpha", "bravo"):
+        await _sized(title, 1)
+
+    rows, _ = await TaskDatabaseRepo().list_page(page=1, page_size=10, sort="title")
+
+    assert [row.title for row in rows] == ["alpha", "bravo", "charlie"]
+
+
+async def test_sorting_by_size_puts_an_unknown_size_at_the_small_end(
+    db: None,
+) -> None:
+    """A direct download whose server sent no length has `total_bytes` NULL.
+
+    Postgres sorts NULL first on a descending order, which would put the one
+    task whose size nobody knows at the top of "largest first".
+    """
+    await _sized("small", 10)
+    await _sized("huge", 9_000)
+    await _sized("unknown", None)
+
+    rows, _ = await TaskDatabaseRepo().list_page(
+        page=1, page_size=10, sort="-total_bytes"
+    )
+
+    assert [row.title for row in rows] == ["huge", "small", "unknown"]
+
+
+async def test_sorting_carries_across_pages(db: None) -> None:
+    for index, title in enumerate(["d", "a", "c", "b"]):
+        await _sized(title, index)
+
+    repo = TaskDatabaseRepo()
+    first, _ = await repo.list_page(page=1, page_size=2, sort="title")
+    second, _ = await repo.list_page(page=2, page_size=2, sort="title")
+
+    assert [row.title for row in first] == ["a", "b"]
+    assert [row.title for row in second] == ["c", "d"]

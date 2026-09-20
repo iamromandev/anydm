@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from loguru import logger
 
@@ -12,7 +12,7 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema, TaskSummarySchema
-from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskStatus
+from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
 from src.lib.youtube import (
     YouTubeClient,
@@ -126,6 +126,7 @@ class DownloadService(BaseService):
         page: int,
         page_size: int,
         group: str = "all",
+        sort: str = "-created_at",
     ) -> tuple[list[TaskSchema], Meta]:
         """One page of the list, narrowed to one of the sidebar's groups.
 
@@ -136,9 +137,15 @@ class DownloadService(BaseService):
         if group != "all" and group not in TASK_GROUPS:
             raise Error.bad_request(message=f"Unknown group: {group}")
 
+        # Checked here as well as at the route, because this value reaches
+        # the database's ORDER BY and a caller inside the process has no
+        # FastAPI between it and that.
+        if sort not in get_args(TaskSort):
+            raise Error.bad_request(message=f"Cannot sort by: {sort}")
+
         statuses = None if group == "all" else sorted(TASK_GROUPS[group])
         tasks, meta = await self._repo.list_page(
-            page=page, page_size=page_size, statuses=statuses
+            page=page, page_size=page_size, statuses=statuses, sort=sort
         )
         return [TaskSchema.model_validate(task) for task in tasks], meta
 

@@ -156,3 +156,42 @@
         height: 44px;
     }
 }
+
+.toolbar-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.toolbar-sort-label {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+.toolbar-sort-select {
+    min-height: 32px;
+    padding: 0 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-size: 0.8125rem;
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.toolbar-sort-select:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+@media (max-width: 640px) {
+    /* The toolbar is full at this width; the word is the first thing to go. */
+    .toolbar-sort-label {
+        display: none;
+    }
+
+    .toolbar-sort-select {
+        min-height: 44px;
+    }
+}

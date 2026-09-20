@@ -71,6 +71,22 @@ ACTIVE_STATUSES = frozenset({TaskStatus.DOWNLOADING, TaskStatus.MUXING})
 #: uses for it. Deliberately not ``ACTIVE_STATUSES``: that answers "was a
 #: worker mid-flight", which excludes ``PENDING`` because a queued row is not
 #: an orphan. To someone reading the list, a queued row is very much active.
+#: How the list may be ordered. Spelled out both ways rather than as a field
+#: plus a direction, so an unknown value is a 422 from the route rather than
+#: something this service has to think about.
+TaskSort = Literal[
+    "created_at",
+    "-created_at",
+    "title",
+    "-title",
+    "total_bytes",
+    "-total_bytes",
+    "progress",
+    "-progress",
+    "speed_bps",
+    "-speed_bps",
+]
+
 #: The bulk actions the API accepts. Which rows each one applies to is the
 #: service's business, in ``BULK_SCOPES``; a test keeps the two in step.
 BulkAction = Literal["pause_all", "resume_all", "clear_finished"]

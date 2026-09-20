@@ -45,6 +45,7 @@ class TaskRepo(CrudRepo[Task]):
         page: int,
         page_size: int,
         statuses: list[TaskStatus] | None = None,
+        sort: str = "-created_at",
     ) -> tuple[list[Task], Meta]:
         ...
 
