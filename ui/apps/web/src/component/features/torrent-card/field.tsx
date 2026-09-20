@@ -1,4 +1,4 @@
-import { component$, $ } from "@qwik.dev/core";
+import { component$, $, useSignal } from "@qwik.dev/core";
 import { SegmentBar } from "@/component/shared/segment-bar";
 import { SpeedDisplay } from "@/component/shared/speed-display";
 import {
@@ -20,6 +20,7 @@ import {
 } from "@/component/core/icons";
 import {
     canPause,
+    detailRows,
     canResume,
     canStopSeeding,
     isActive,
@@ -44,7 +45,50 @@ export interface TorrentCardProps {
     onDownloadFile: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
+    /** Whether this card is the one showing its details. */
+    expanded: boolean;
+    onToggleDetail: (id: string) => void;
 }
+
+/**
+ * Copy one value, or fail gracefully.
+ *
+ * `navigator.clipboard` exists only in a secure context, which a LAN
+ * deployment over plain http is not. Where it is missing the text is selected
+ * instead, so copying is still one keystroke away rather than impossible.
+ */
+export const CopyButton = component$<{ value: string }>(({ value }) => {
+    const copied = useSignal(false);
+
+    return (
+        <button
+            type="button"
+            class="torrent-detail-copy"
+            aria-label={`Copy ${value}`}
+            onClick$={async (_event, el) => {
+                try {
+                    await navigator.clipboard.writeText(value);
+                    copied.value = true;
+                    setTimeout(() => {
+                        copied.value = false;
+                    }, 1200);
+                } catch {
+                    const text = el.parentElement?.querySelector(
+                        ".torrent-detail-text",
+                    );
+                    if (!text) return;
+                    const range = document.createRange();
+                    range.selectNodeContents(text);
+                    const selection = window.getSelection();
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                }
+            }}
+        >
+            {copied.value ? "Copied" : "Copy"}
+        </button>
+    );
+});
 
 /** The card draws whatever the API returns; `@/lib/api` owns that shape. */
 export type TorrentTask = UiTask;
@@ -79,6 +123,8 @@ export const TorrentCard = component$<TorrentCardProps>(
         onDownloadFile,
         onRemove,
         onStopSeeding,
+        expanded,
+        onToggleDetail,
     }) => {
         const status = statusView(task.status);
         const retry = retryLabel(task, now);
@@ -93,7 +139,17 @@ export const TorrentCard = component$<TorrentCardProps>(
                 data-task-id={task.id}
                 data-kind={task.kind}
             >
-                <div class="torrent-card-main">
+                <div
+                    class="torrent-card-main"
+                    onClick$={(event) => {
+                        // Qwik delegates events from the document, so a
+                        // child's stopPropagation does not keep this handler
+                        // from running. Asking what was actually clicked does.
+                        const target = event.target as HTMLElement | null;
+                        if (target?.closest("button, a, input, select")) return;
+                        onToggleDetail(task.id);
+                    }}
+                >
                     <div class="torrent-header">
                         <div class="torrent-platform">
                             <PlatformIcon
@@ -220,6 +276,29 @@ export const TorrentCard = component$<TorrentCardProps>(
                             )}
                         </div>
                     </div>
+
+                    {expanded && (
+                        <dl class="torrent-detail">
+                            {detailRows(task, now).map((row) => (
+                                <div key={row.label} class="torrent-detail-row">
+                                    <dt class="torrent-detail-label">
+                                        {row.label}
+                                    </dt>
+                                    <dd
+                                        class="torrent-detail-value"
+                                        title={row.title}
+                                    >
+                                        <span class="torrent-detail-text">
+                                            {row.value}
+                                        </span>
+                                        {row.copy && (
+                                            <CopyButton value={row.copy} />
+                                        )}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    )}
 
                     {retry?.detail && (
                         <p class="torrent-retry-detail">{retry.detail}</p>

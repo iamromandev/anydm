@@ -36,6 +36,14 @@ export type UiTask = {
     peersConnected: number;
     /** Tries so far, this one included. */
     attempts: number;
+    /** Carried for the detail panel rather than the card's own face. */
+    platform?: string;
+    preset?: string;
+    filename?: string;
+    fileSize?: number;
+    createdAt?: number;
+    startedAt?: number;
+    completedAt?: number;
     /** The retry budget, as the API has it configured. */
     maxAttempts?: number;
     /** When the queue looks at this task again, while a retry is pending. */
@@ -139,6 +147,15 @@ export function normalizeApiTask(raw: any): UiTask {
         uploadSpeed: raw.upload_speed_bps ?? 0,
         peersConnected: raw.peers_connected ?? 0,
         attempts: raw.attempts ?? 0,
+        platform: raw.platform ?? undefined,
+        preset: raw.preset ?? undefined,
+        filename: raw.filename || undefined,
+        fileSize: raw.file_size ?? undefined,
+        createdAt: raw.created_at ? Date.parse(raw.created_at) : undefined,
+        startedAt: raw.started_at ? Date.parse(raw.started_at) : undefined,
+        completedAt: raw.completed_at
+            ? Date.parse(raw.completed_at)
+            : undefined,
         maxAttempts: raw.max_attempts ?? undefined,
         // An instant, not a string: the card counts down against the local
         // clock, and comparing formatted times is how off-by-a-timezone bugs
