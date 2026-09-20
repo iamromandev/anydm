@@ -71,6 +71,10 @@ ACTIVE_STATUSES = frozenset({TaskStatus.DOWNLOADING, TaskStatus.MUXING})
 #: uses for it. Deliberately not ``ACTIVE_STATUSES``: that answers "was a
 #: worker mid-flight", which excludes ``PENDING`` because a queued row is not
 #: an orphan. To someone reading the list, a queued row is very much active.
+#: The bulk actions the API accepts. Which rows each one applies to is the
+#: service's business, in ``BULK_SCOPES``; a test keeps the two in step.
+BulkAction = Literal["pause_all", "resume_all", "clear_finished"]
+
 #: The filter names the API accepts, which are the sidebar's own.
 TaskGroup = Literal["all", "downloading", "seeding", "completed"]
 

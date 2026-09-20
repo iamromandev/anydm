@@ -112,6 +112,17 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         )
         return tasks, Meta(**meta)
 
+    async def by_statuses(self, statuses: list[TaskStatus]) -> list[Task]:
+        """Every live row in one of ``statuses``, oldest first.
+
+        Oldest first because a bulk action reads better applied in the order
+        the queue would have reached them, and unpaginated because the point
+        of "pause all" is that it means all of them.
+        """
+        return await Task.filter(
+            deleted_at__isnull=True, status__in=list(statuses)
+        ).order_by("created_at")
+
     async def summary(self) -> TaskSummarySchema:
         """How many tasks each sidebar filter would show.
 

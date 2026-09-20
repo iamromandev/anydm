@@ -49,6 +49,10 @@ class TaskRepo(CrudRepo[Task]):
         ...
 
     @abstractmethod
+    async def by_statuses(self, statuses: list[TaskStatus]) -> list[Task]:
+        ...
+
+    @abstractmethod
     async def summary(self) -> TaskSummarySchema:
         ...
 

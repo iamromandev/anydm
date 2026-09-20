@@ -16,6 +16,17 @@ export interface SidebarProps {
     collapsed?: boolean;
     open?: boolean;
     onToggleCollapse?: () => void;
+    /** What a sweep would find, so a button that can do nothing stays away. */
+    bulk: BulkAvailability;
+    onPauseAll: () => void;
+    onResumeAll: () => void;
+    onClearFinished: () => void;
+}
+
+export interface BulkAvailability {
+    pausable: number;
+    resumable: number;
+    finished: number;
 }
 
 export type SidebarFilter = "all" | "downloading" | "seeding" | "completed";
@@ -52,6 +63,10 @@ export const Sidebar = component$<SidebarProps>(
         collapsed = false,
         open = true,
         onToggleCollapse,
+        bulk,
+        onPauseAll,
+        onResumeAll,
+        onClearFinished,
     }) => {
         const store = useStore({
             downloadsExpanded: true,
@@ -109,6 +124,41 @@ export const Sidebar = component$<SidebarProps>(
                         </button>
                     ))}
                 </nav>
+
+                {(bulk.pausable > 0 ||
+                    bulk.resumable > 0 ||
+                    bulk.finished > 0) && (
+                    <div class="sidebar-bulk">
+                        <span class="sidebar-bulk-label">Everything</span>
+                        {bulk.pausable > 0 && (
+                            <button
+                                type="button"
+                                class="sidebar-bulk-btn"
+                                onClick$={onPauseAll}
+                            >
+                                Pause all ({bulk.pausable})
+                            </button>
+                        )}
+                        {bulk.resumable > 0 && (
+                            <button
+                                type="button"
+                                class="sidebar-bulk-btn"
+                                onClick$={onResumeAll}
+                            >
+                                Resume all ({bulk.resumable})
+                            </button>
+                        )}
+                        {bulk.finished > 0 && (
+                            <button
+                                type="button"
+                                class="sidebar-bulk-btn"
+                                onClick$={onClearFinished}
+                            >
+                                Clear finished ({bulk.finished})
+                            </button>
+                        )}
+                    </div>
+                )}
             </aside>
         );
     },

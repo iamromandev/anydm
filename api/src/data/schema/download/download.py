@@ -9,7 +9,7 @@ from pydantic import Field
 from src.config import get_settings
 from src.core.base import BaseSchema
 from src.data.schema.download.torrent import FileSchema
-from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.data.type import BulkAction, Kind, Platform, Preset, TaskStatus
 
 
 class YoutubeDownloadRequest(BaseSchema):
@@ -19,6 +19,25 @@ class YoutubeDownloadRequest(BaseSchema):
 
 class UrlDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
+
+
+class BulkActionRequest(BaseSchema):
+    action: Annotated[BulkAction, Field(description="Which sweep to run")]
+    delete_files: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "For clear_finished: take the files of finished downloads too. "
+                "A failure's partial file goes either way — there is nothing "
+                "in it worth keeping."
+            ),
+        ),
+    ]
+
+
+class BulkResultSchema(BaseSchema):
+    affected: int = 0
 
 
 class TaskSummarySchema(BaseSchema):

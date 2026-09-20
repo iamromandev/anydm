@@ -38,6 +38,15 @@ import {
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
 
+type BulkAction = "pause_all" | "resume_all" | "clear_finished";
+
+/** What each sweep did, for the line it leaves behind. */
+const BULK_VERBS: Record<BulkAction, string> = {
+    pause_all: "Paused",
+    resume_all: "Resumed",
+    clear_finished: "Cleared",
+};
+
 export default component$(() => {
     const store = useStore({
         tasks: [] as UiTask[],
@@ -53,6 +62,8 @@ export default component$(() => {
         toasts: [] as Toast[],
         // The task the remove dialog is asking about, or null when it is shut.
         removing: null as { id: string; title: string; status: string } | null,
+        // The sweep waiting to be confirmed, or null when nothing is pending.
+        pendingBulk: null as BulkAction | null,
         // Ticked only while a retry is actually pending; see the clock below.
         now: Date.now(),
         connection: "connecting" as Connection,
@@ -195,10 +206,25 @@ export default component$(() => {
     /** Fold rows from an SSE frame into the list, replacing what they match. */
     const mergeTasks = $(async (rows: UiTask[]) => {
         await noteTransitions(rows);
-        const incoming = new Set(rows.map((row) => row.id));
-        const kept = store.tasks.filter((t) => !incoming.has(t.id));
+
+        // A canceled row is soft-deleted, and the list endpoint never returns
+        // one — but cancelling publishes the row it just removed, so without
+        // this the announcement of a removal puts the row straight back, now
+        // labelled "Canceled". Taking the hint the other way also means a
+        // removal in one tab reaches the others.
+        const removed = new Set(
+            rows
+                .filter((row) => row.status === "canceled")
+                .map((row) => row.id),
+        );
+        const live = rows.filter((row) => row.status !== "canceled");
+
+        const incoming = new Set(live.map((row) => row.id));
+        const kept = store.tasks.filter(
+            (t) => !incoming.has(t.id) && !removed.has(t.id),
+        );
         store.tasks = [
-            ...(await carrySegments(rows)),
+            ...(await carrySegments(live)),
             ...kept,
         ];
     });
@@ -422,6 +448,47 @@ export default component$(() => {
         };
     });
 
+    const runBulk = $(async (action: BulkAction) => {
+        try {
+            const result = await postApi<any>("/download/bulk", { action });
+            const affected = result?.affected ?? 0;
+            notify(
+                "info",
+                affected === 0
+                    ? "Nothing to do"
+                    : `${BULK_VERBS[action]} ${affected} download${affected === 1 ? "" : "s"}`,
+            );
+        } catch (err) {
+            notify("error", errorMessage(err));
+        }
+        await syncTask();
+    });
+
+    /**
+     * Run a sweep, or ask first when it removes things.
+     *
+     * Pausing and resuming are reversible in one click, so they just happen.
+     * Clearing is not, so it asks — and says how many rows it will take, since
+     * the button was drawn from the rows on screen and the sweep is not.
+     */
+    const handleBulk = $(async (action: BulkAction) => {
+        if (action === "clear_finished") {
+            store.pendingBulk = action;
+            return;
+        }
+        await runBulk(action);
+    });
+
+    const handleBulkCancel = $(() => {
+        store.pendingBulk = null;
+    });
+
+    const handleBulkConfirm = $(async () => {
+        const action = store.pendingBulk;
+        store.pendingBulk = null;
+        if (action) await runBulk(action);
+    });
+
     const handleRemoveCancel = $(() => {
         store.removing = null;
     });
@@ -559,6 +626,18 @@ export default component$(() => {
             removing={store.removing}
             onRemoveCancel={handleRemoveCancel}
             onRemoveConfirm={handleRemoveConfirm}
+            onBulk={handleBulk}
+            bulkPrompt={
+                store.pendingBulk === "clear_finished"
+                    ? {
+                          heading: "Clear finished downloads?",
+                          body: "Completed downloads leave the list and keep their files. Anything that failed is discarded along with whatever it had downloaded.",
+                          confirmLabel: "Clear finished",
+                      }
+                    : null
+            }
+            onBulkCancel={handleBulkCancel}
+            onBulkConfirm={handleBulkConfirm}
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             onStopSeeding={handleStopSeeding}
