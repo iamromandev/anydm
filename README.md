@@ -136,17 +136,21 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 
 - **Stack:** FastAPI, Tortoise ORM + asyncpg (Postgres), pytubefix, httpx, sse-starlette, loguru; managed with uv
 - **Endpoints:**
-  - Health and extract
+  - Health, extract and settings
     - `GET /health/check` — health probe
     - `POST /extract` — resolve a URL into stream metadata (YouTube only)
+    - `GET /settings` — how this API is configured, secrets left out; read-only, since changing a setting means editing `api/.env` and restarting
   - Downloads
     - `POST /download/youtube` — enqueue a YouTube download for a preset
     - `POST /download/url` — enqueue a direct URL download
-    - `GET /download` — list tasks
+    - `GET /download` — one page of tasks. `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_bytes`, `progress` or `speed_bps`, prefixed with `-` for descending (default `-created_at`)
+    - `GET /download/summary` — how many tasks each sidebar filter holds, counted in the database
     - `GET /download/events` — SSE task and progress stream
     - `GET /download/{task_id}` — one task
     - `GET /download/{task_id}/file` — serve the finished file
-    - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume` · `DELETE /download/{task_id}`
+    - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
+    - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row
+    - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
   - Torrents
     - `POST /download/torrent/resolve` — inspect a magnet or `.torrent` without downloading
     - `POST /download/torrent` — enqueue a torrent with a file selection
