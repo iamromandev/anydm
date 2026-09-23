@@ -97,6 +97,8 @@ class FakeClient:
         self.samples = samples or []
         self.fail = fail
         self.added: list[dict[str, Any]] = []
+        self.limits: list[tuple[int, int]] = []
+        self.limits_fail: Error | None = None
 
     async def ping(self) -> bool:
         return self.fail is None
@@ -112,6 +114,11 @@ class FakeClient:
 
     async def resolve(self, source: Any) -> Any: ...
 
+    async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None:
+        if self.limits_fail:
+            raise self.limits_fail
+        self.limits.append((download_bps, upload_bps))
+
     async def pause(self, info_hash: str) -> None: ...
 
     async def start(self, info_hash: str) -> None: ...
@@ -119,7 +126,15 @@ class FakeClient:
     async def delete(self, info_hash: str) -> None: ...
 
 
-def _monitor(repo: Any, client: Any, file_repo: Any = None, hub: EventHub | None = None) -> TorrentMonitor:
+def _monitor(
+    repo: Any,
+    client: Any,
+    file_repo: Any = None,
+    hub: EventHub | None = None,
+    *,
+    download_limit_bps: int = 0,
+    upload_limit_bps: int = 0,
+) -> TorrentMonitor:
     return TorrentMonitor(
         repo=repo,
         file_repo=file_repo or FakeFileRepo(),  # ty: ignore[invalid-argument-type]
@@ -128,6 +143,8 @@ def _monitor(repo: Any, client: Any, file_repo: Any = None, hub: EventHub | None
         poll_ms=1000,
         torrent_root="/workdir/download/torrent",
         enabled=True,
+        download_limit_bps=download_limit_bps,
+        upload_limit_bps=upload_limit_bps,
     )
 
 
@@ -262,3 +279,51 @@ async def test_a_row_the_engine_still_has_is_adopted_not_re_added() -> None:
     await _monitor(FakeRepo([row]), client).tick()
 
     assert client.added == []
+
+
+@pytest.mark.asyncio
+async def test_the_first_tick_that_reaches_the_engine_pushes_the_limits_once() -> None:
+    client = FakeClient([_sample()])
+    monitor = _monitor(FakeRepo([_row()]), client, download_limit_bps=262144, upload_limit_bps=65536)
+
+    await monitor.tick()
+    await monitor.tick()
+
+    assert client.limits == [(262144, 65536)]
+
+
+@pytest.mark.asyncio
+async def test_unlimited_is_pushed_too_so_an_old_cap_is_cleared() -> None:
+    client = FakeClient([_sample()])
+    monitor = _monitor(FakeRepo([_row()]), client)
+
+    await monitor.tick()
+
+    assert client.limits == [(0, 0)]
+
+
+@pytest.mark.asyncio
+async def test_the_limits_are_pushed_again_after_the_engine_comes_back() -> None:
+    # rqbit holds limits in memory only, so a restart forgets them.
+    client = FakeClient([_sample()])
+    monitor = _monitor(FakeRepo([_row()]), client, upload_limit_bps=65536)
+
+    await monitor.tick()
+    client.fail = torrent_error.engine_unavailable("connection refused")
+    await monitor.tick()
+    client.fail = None
+    await monitor.tick()
+
+    assert client.limits == [(0, 65536), (0, 65536)]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_limit_does_not_stop_the_mirroring() -> None:
+    row = _row()
+    client = FakeClient([_sample()])
+    client.limits_fail = torrent_error.engine_rejected("nope")
+    monitor = _monitor(FakeRepo([row]), client, download_limit_bps=1024)
+
+    await monitor.tick()
+
+    assert row.downloaded_bytes == 500

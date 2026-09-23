@@ -54,6 +54,8 @@ class FakeTorrentClient:
     async def list_progress(self) -> list[Any]:
         return []
 
+    async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None: ...
+
     async def pause(self, info_hash: str) -> None:
         if self.fail:
             raise self.fail

@@ -19,8 +19,11 @@ class ServerSettingsSchema(BaseSchema):
     download_workers: int = 0
     download_segments: int = 0
     download_max_attempts: int = 0
+    download_rate_limit_bps: int = 0
     torrent_enabled: bool = False
     torrent_dir: str = ""
+    torrent_download_limit_bps: int = 0
+    torrent_upload_limit_bps: int = 0
     stream_segment_seconds: int = 0
     stream_max_concurrent_encodes: int = 0
     ffmpeg_path: str = ""

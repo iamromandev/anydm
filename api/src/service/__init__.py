@@ -15,6 +15,7 @@ from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.post_process import FfmpegPostProcessor
+from src.service.download.rate_limit import rate_limiter
 from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
@@ -100,6 +101,8 @@ def get_torrent_monitor() -> TorrentMonitor:
         poll_ms=settings.torrent_poll_ms,
         torrent_root=str(Path(settings.torrent_dir).resolve()),
         enabled=settings.torrent_enabled,
+        download_limit_bps=settings.torrent_download_limit_bps,
+        upload_limit_bps=settings.torrent_upload_limit_bps,
     )
 
 
@@ -123,11 +126,14 @@ def build_worker_pool() -> WorkerPool:
             max_keepalive_connections=settings.http_max_keepalive,
         ),
     )
+    # One limiter for the whole pool: the cap is on the connection, not per task.
+    limiter = rate_limiter(settings.download_rate_limit_bps)
     downloader = Downloader(
         http_client,
         chunk_size=settings.download_chunk_size,
         flush_interval_ms=settings.download_progress_flush_ms,
         write_buffer_bytes=settings.download_write_buffer_bytes,
+        limiter=limiter,
     )
     engine = SegmentedDownloader(
         http_client,
@@ -136,6 +142,7 @@ def build_worker_pool() -> WorkerPool:
         flush_interval_ms=settings.download_progress_flush_ms,
         min_segment_bytes=settings.download_segment_min_bytes,
         write_buffer_bytes=settings.download_write_buffer_bytes,
+        limiter=limiter,
     )
     workers = [
         DownloadWorker(

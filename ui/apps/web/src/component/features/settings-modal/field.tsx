@@ -2,6 +2,7 @@ import { component$ } from "@qwik.dev/core";
 import { LuX } from "@/component/core/icons";
 import { PRESET_OPTIONS, type Prefs, type Preset } from "@/lib/prefs";
 import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
+import { serverLabel, serverValue } from "./server-value";
 import "./field.css";
 
 /** The server's own configuration, as the API reports it. */
@@ -16,12 +17,6 @@ export interface SettingsModalProps {
     onClose: () => void;
     onPrefsChange: (prefs: Prefs) => void;
     onSortChange: (sort: SortValue) => void;
-}
-
-/** Turn `download_workers` into something worth reading. */
-function humanise(key: string): string {
-    const words = key.replace(/_/g, " ");
-    return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export const SettingsModal = component$<SettingsModalProps>(
@@ -146,10 +141,10 @@ export const SettingsModal = component$<SettingsModalProps>(
                                                 class="settings-server-row"
                                             >
                                                 <dt class="settings-server-key">
-                                                    {humanise(key)}
+                                                    {serverLabel(key)}
                                                 </dt>
                                                 <dd class="settings-server-value">
-                                                    {String(value)}
+                                                    {serverValue(key, value)}
                                                 </dd>
                                             </div>
                                         ),

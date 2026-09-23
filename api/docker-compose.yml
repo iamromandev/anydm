@@ -45,6 +45,8 @@ services:
       - torrent:/session
     # Global options come before the subcommand; the output folder is
     # positional. UPnP cannot work from inside a container, so it is off.
+    # No --ratelimit-* flags: rqbit refuses to start on a value of 0, so the
+    # API pushes TORRENT_*_LIMIT_BPS over the control API instead.
     command: >
       --http-api-listen-addr 0.0.0.0:3030
       --disable-upnp-port-forward

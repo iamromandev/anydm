@@ -38,6 +38,8 @@ class TorrentMonitor:
         poll_ms: int,
         torrent_root: str,
         enabled: bool,
+        download_limit_bps: int = 0,
+        upload_limit_bps: int = 0,
     ) -> None:
         self._repo = repo
         self._file_repo = file_repo
@@ -51,6 +53,12 @@ class TorrentMonitor:
         #: startup. It therefore runs on the first tick that reaches the engine,
         #: not on a clock.
         self._reconciled = False
+        self._download_limit = download_limit_bps
+        self._upload_limit = upload_limit_bps
+        #: rqbit keeps its limits in memory, so a restart forgets them. Cleared
+        #: whenever the engine stops answering, which is how a restart looks
+        #: from here, so the next tick that reaches it pushes them again.
+        self._limits_pushed = False
 
     @property
     def _tag(self) -> str:
@@ -99,7 +107,11 @@ class TorrentMonitor:
             # An unreachable engine is almost always a restart. Rows are left
             # exactly as they are rather than marked failed.
             logger.warning("{}|engine unreachable: {}", self._tag, error.message)
+            self._limits_pushed = False
             return
+
+        if not self._limits_pushed:
+            await self._push_limits()
 
         by_hash = {sample.info_hash: sample for sample in samples if sample.info_hash}
         rows = await self._repo.torrents_to_watch()
@@ -112,6 +124,20 @@ class TorrentMonitor:
             sample = by_hash.get(row.info_hash or "")
             if sample is not None:
                 await self._apply(row, sample)
+
+    async def _push_limits(self) -> None:
+        """Send the caps even when both are unlimited, to clear a stale one.
+
+        A refusal is logged once and not retried every tick: the engine
+        answered, so trying again a second later would get the same answer.
+        """
+        self._limits_pushed = True
+        try:
+            await self._client.set_rate_limits(
+                download_bps=self._download_limit, upload_bps=self._upload_limit
+            )
+        except Error as error:
+            logger.warning("{}|engine refused the rate limits: {}", self._tag, error.message)
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.

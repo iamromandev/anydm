@@ -55,6 +55,10 @@ class Settings(BaseSettings):
         int,
         Field(default=3, ge=1, description="Total tries per task, including the first"),
     ]
+    download_rate_limit_bps: Annotated[
+        int,
+        Field(default=0, ge=0, description="Shared cap across every HTTP download, 0 = unlimited"),
+    ]
     # torrent
     torrent_enabled: Annotated[
         bool,
@@ -82,6 +86,14 @@ class Settings(BaseSettings):
     torrent_request_timeout_s: Annotated[
         int,
         Field(default=10, ge=1, description="Per-call timeout against the control API"),
+    ]
+    torrent_download_limit_bps: Annotated[
+        int,
+        Field(default=0, ge=0, description="rqbit download cap, pushed at runtime, 0 = unlimited"),
+    ]
+    torrent_upload_limit_bps: Annotated[
+        int,
+        Field(default=0, ge=0, description="rqbit upload cap, pushed at runtime, 0 = unlimited"),
     ]
     # media
     ffmpeg_path: Annotated[str, Field(default="ffmpeg", description="ffmpeg executable")]

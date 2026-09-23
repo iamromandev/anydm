@@ -53,3 +53,12 @@ def test_every_field_is_named_one_by_one() -> None:
     source = inspect.getsource(settings_service)
     assert "model_dump" not in source
     assert "__dict__" not in source
+
+
+def test_it_reports_every_rate_limit() -> None:
+    settings = get_settings()
+    described = SettingsService().describe()
+
+    assert described.download_rate_limit_bps == settings.download_rate_limit_bps
+    assert described.torrent_download_limit_bps == settings.torrent_download_limit_bps
+    assert described.torrent_upload_limit_bps == settings.torrent_upload_limit_bps

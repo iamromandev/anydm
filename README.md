@@ -97,12 +97,15 @@ cp api/.env.example api/.env
 | `DOWNLOAD_WRITE_BUFFER_BYTES` | `4194304` | Bytes buffered before a positional write (min 65536), paired with a 500 ms timer |
 | `DOWNLOAD_PROGRESS_FLUSH_MS` | `1000` | How often progress reaches the database (min 100) |
 | `DOWNLOAD_MAX_ATTEMPTS` | `3` | Total tries per task, the first included (min 1) |
+| `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every HTTP download and segment. `0` is unlimited |
 | `TORRENT_ENABLED` | `true` | Torrent routes and the monitor. Off, torrent routes answer 503 and nothing polls |
 | `TORRENT_API_URL` | `http://torrent-anydm-api:3030` | rqbit's control API. `http://127.0.0.1:8031` when running the API on the host |
 | `TORRENT_DIR` | `./download/torrent` | Where rqbit writes, under `DOWNLOAD_DIR` |
 | `TORRENT_POLL_MS` | `1000` | How often the monitor samples the engine (min 250) |
 | `TORRENT_METADATA_TIMEOUT_S` | `30` | How long resolving waits for peers to supply metadata |
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
+| `TORRENT_DOWNLOAD_LIMIT_BPS` | `0` | rqbit's total download cap in bytes per second. `0` is unlimited. Pushed to rqbit by the API, again after rqbit restarts |
+| `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux YouTube's separate video and audio, and to transcode stream segments |
 | `FFPROBE_PATH` | `ffprobe` | ffprobe executable; reads a source's duration and streams before a session starts |
 | `STREAM_DIR` | `./stream` | Scratch directory for on-demand HLS segments |
