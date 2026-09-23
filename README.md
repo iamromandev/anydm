@@ -87,6 +87,7 @@ cp api/.env.example api/.env
 | `DB_USER` | *(required)* | Database user |
 | `DB_PASSWORD` | *(required)* | Database password |
 | `DB_NAME` | *(required)* | Database name |
+| `API_KEY` | *(empty)* | When set, every route but `GET /health/check` requires it in the `X-API-Key` header. Browser-opened URLs (event streams, file downloads, HLS) may pass `?api_key=` instead. Enter the same key in the UI's Settings. Empty leaves the API open |
 | `CORS_ORIGINS` | *(empty)* | Comma-separated origins; empty leaves the CORS middleware off (same-origin only) |
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:8030` | Public URL of this service (declared in settings; no route reads it yet) |
 | `DOWNLOAD_DIR` | `./download` | Where finished files land; compose mounts a named volume here |
