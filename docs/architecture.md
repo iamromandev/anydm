@@ -38,11 +38,24 @@ fills, and TCP slows the sender. Torrents are rqbit's to pace. The API only
 tells it `TORRENT_DOWNLOAD_LIMIT_BPS` and `TORRENT_UPLOAD_LIMIT_BPS` (see the
 torrent monitor below).
 
-The UI's Settings modal has two halves. The preferences are the browser's own
-and never reach the API. The server half is `GET /settings`, fetched when the
-modal opens and shown read-only, since changing any of it means editing
-`api/.env` and restarting. `SettingsService` names each field it reports by
-hand, so a new setting, or a secret, never appears there by accident.
+The UI's Settings modal has two halves. The preferences are the browser's own;
+the only one the API ever sees is the API key, and only as a credential on each
+request. The server half is `GET /settings`, fetched when the modal opens and
+shown read-only, since changing any of it means editing `api/.env` and
+restarting. `SettingsService` names each field it reports by hand, so a new
+setting, or a secret, never appears there by accident.
+
+Access is open unless `API_KEY` is set. When it is, every router but health's
+carries a dependency, `require_api_key` in
+[`api/src/core/auth.py`](../api/src/core/auth.py), that wants the key in
+`X-API-Key` and compares it in constant time. Health stays open so a probe can
+tell whether the API is up without holding a key. A few routes are opened by
+the browser itself, which gives no way to add a header: the two event streams,
+file downloads, and the HLS playlist and segments. Those alone also accept
+`?api_key=`. A playlist fetched that way writes the key into its segment URIs,
+which is what lets Safari's native player authenticate. A key in a URL is
+redacted from uvicorn's access log and the error handlers' lines. In the UI,
+the first 401 opens Settings on the key field.
 
 ## What runs in the background
 

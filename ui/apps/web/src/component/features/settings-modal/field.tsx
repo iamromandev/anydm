@@ -17,11 +17,68 @@ export interface SettingsModalProps {
     onClose: () => void;
     onPrefsChange: (prefs: Prefs) => void;
     onSortChange: (sort: SortValue) => void;
+    /** What this browser sends as `X-API-Key`; empty when nothing is stored. */
+    apiKey: string;
+    /** Why the key is being asked for. Set when the API has answered 401. */
+    apiKeyMessage: string | null;
+    onApiKeySave: (key: string) => void;
 }
 
 export const SettingsModal = component$<SettingsModalProps>(
-    ({ open, prefs, sort, server, onClose, onPrefsChange, onSortChange }) => {
+    ({
+        open,
+        prefs,
+        sort,
+        server,
+        onClose,
+        onPrefsChange,
+        onSortChange,
+        apiKey,
+        apiKeyMessage,
+        onApiKeySave,
+    }) => {
         if (!open) return null;
+
+        // First when the API has just refused a request, since that is the
+        // one thing to do; otherwise after the preferences it rarely matters
+        // next to.
+        const access = (
+            <section class="settings-section">
+                <h3 class="settings-section-title">API key</h3>
+                <p
+                    class={[
+                        "settings-section-note",
+                        apiKeyMessage && "settings-section-note--alert",
+                    ]}
+                    role={apiKeyMessage ? "alert" : undefined}
+                >
+                    {apiKeyMessage ??
+                        "Only needed when the API sets API_KEY. Kept in this browser; save it blank to remove it."}
+                </p>
+                <form
+                    class="settings-key"
+                    preventdefault:submit
+                    onSubmit$={(_, form) =>
+                        onApiKeySave(
+                            String(new FormData(form).get("apiKey") ?? ""),
+                        )
+                    }
+                >
+                    <input
+                        type="password"
+                        name="apiKey"
+                        class="settings-input"
+                        aria-label="API key"
+                        autocomplete="off"
+                        spellcheck={false}
+                        value={apiKey}
+                    />
+                    <button type="submit" class="settings-key-save">
+                        Save
+                    </button>
+                </form>
+            </section>
+        );
 
         return (
             <div
@@ -44,6 +101,7 @@ export const SettingsModal = component$<SettingsModalProps>(
                     </div>
 
                     <div class="settings-body">
+                        {apiKeyMessage && access}
                         <section class="settings-section">
                             <h3 class="settings-section-title">Preferences</h3>
                             <p class="settings-section-note">
@@ -117,6 +175,8 @@ export const SettingsModal = component$<SettingsModalProps>(
                                 />
                             </label>
                         </section>
+
+                        {!apiKeyMessage && access}
 
                         <section class="settings-section">
                             <h3 class="settings-section-title">Server</h3>

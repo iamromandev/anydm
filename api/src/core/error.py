@@ -16,6 +16,7 @@ from src.core.base import BaseSchema
 from src.core.constant import EXCEPTION_CODE_MAP, EXCEPTION_ERROR_TYPE_MAP
 from src.core.format import utc_iso_timestamp
 from src.core.mixin import BaseMixin
+from src.core.redact import redact
 from src.core.type import Code, ErrorType, Status
 
 _SAFE_EXCEPTION_TYPES: tuple[type[Exception], ...] = (ValueError,)
@@ -318,18 +319,18 @@ def init_global_errors(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        logger.warning(f"Validation error at {request.url}: {exc.errors()}")
+        logger.warning(f"Validation error at {redact(str(request.url))}: {exc.errors()}")
         return Error.process_validation_error(exc).to_resp()
 
     @app.exception_handler(Error)
     async def catch_custom_error(request: Request, error: Error) -> JSONResponse:
-        logger.error(f"CustomError at {request.url}: {error!s}")
+        logger.error(f"CustomError at {redact(str(request.url))}: {error!s}")
         return error.to_resp()
 
     @app.exception_handler(Exception)
     async def catch_exception(request: Request, error: Exception) -> JSONResponse:
         tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        logger.error(f"FastAPIHandlerError at {request.url}:\n{tb_str}")
+        logger.error(f"FastAPIHandlerError at {redact(str(request.url))}:\n{tb_str}")
         gc.collect()
         return Error.process_exception(error).to_resp()
 

@@ -41,6 +41,9 @@ export interface AppShellProps {
     prefs: Prefs;
     onPrefsChange: (prefs: Prefs) => void;
     serverSettings: ServerSettings | null;
+    apiKey: string;
+    apiKeyMessage: string | null;
+    onApiKeySave: (key: string) => void;
     now: number;
     connection: Connection;
     summary: TaskSummary | null;
@@ -102,6 +105,9 @@ export const AppShell = component$<AppShellProps>(
         prefs,
         onPrefsChange,
         serverSettings,
+        apiKey,
+        apiKeyMessage,
+        onApiKeySave,
         now,
         connection,
         summary,
@@ -267,6 +273,9 @@ export const AppShell = component$<AppShellProps>(
                     onClose={onSettingsClose}
                     onPrefsChange={onPrefsChange}
                     onSortChange={onSortChange}
+                    apiKey={apiKey}
+                    apiKeyMessage={apiKeyMessage}
+                    onApiKeySave={onApiKeySave}
                 />
 
                 <RemoveDialog

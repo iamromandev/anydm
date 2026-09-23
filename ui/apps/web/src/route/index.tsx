@@ -14,9 +14,11 @@ import {
     resolveTorrent,
     type ResolvedTorrent,
     normalizeSummary,
+    onUnauthorized,
     type TaskSummary,
     type UiTask,
 } from "@/lib/api";
+import { loadApiKey, saveApiKey } from "@/lib/api/key";
 import {
     FALLBACK_POLL_MS,
     connectionOnError,
@@ -86,6 +88,10 @@ export default component$(() => {
         prefs: DEFAULT_PREFS as Prefs,
         // Null until the API answers, and after it refuses.
         serverSettings: null as ServerSettings | null,
+        apiKey: "" as string,
+        // Set by the first 401 and kept: it is what puts the key field first,
+        // and what stops every later 401 from reopening a closed modal.
+        apiKeyMessage: null as string | null,
         sidebarOpen: false as boolean,
         sidebarCollapsed: true as boolean,
         addModalOpen: false as boolean,
@@ -272,6 +278,15 @@ export default component$(() => {
             // list does not arrive newest-first and then reshuffle.
             store.sort = loadSort();
             store.prefs = loadPrefs();
+            store.apiKey = loadApiKey();
+            // Registered before the first request, so its answer is heard.
+            const stopListening = onUnauthorized(() => {
+                if (store.apiKeyMessage !== null) return;
+                store.apiKeyMessage = store.apiKey
+                    ? "The API refused the saved key. Check it matches API_KEY in api/.env."
+                    : "The API requires a key. Enter the one set as API_KEY in api/.env.";
+                store.settingsOpen = true;
+            });
             syncTask();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
@@ -322,6 +337,9 @@ export default component$(() => {
 
                 if (
                     store.outageToastId === null &&
+                    // A refused key already has the modal saying so; "lost
+                    // contact" would send someone to check the wrong thing.
+                    store.apiKeyMessage === null &&
                     shouldWarn(store.connection, store.degradedSince, at)
                 ) {
                     const toast = createToast(
@@ -336,7 +354,9 @@ export default component$(() => {
 
             let apiEvents: EventSource | null = null;
             try {
-                apiEvents = new EventSource(apiUrl("/download/events"));
+                apiEvents = new EventSource(
+                    apiUrl("/download/events", { withKey: true }),
+                );
                 apiEvents.addEventListener("tasks", (event) => {
                     try {
                         const rows = JSON.parse(
@@ -394,6 +414,7 @@ export default component$(() => {
             }
 
             cleanup(() => {
+                stopListening();
                 clearInterval(watch);
                 clearInterval(sweeper);
                 clearInterval(clock);
@@ -432,6 +453,14 @@ export default component$(() => {
 
     const handleSettingsClose = $(() => {
         store.settingsOpen = false;
+    });
+
+    const handleApiKeySave = $((key: string) => {
+        saveApiKey(key);
+        // A reload rather than patching things up in place: the event stream,
+        // the list and any open player were all opened with the old key, and
+        // starting again is the one way to be sure none of them kept it.
+        location.reload();
     });
 
     const handlePrefsChange = $((prefs: Prefs) => {
@@ -571,7 +600,7 @@ export default component$(() => {
         if (!task) return;
 
         const a = document.createElement("a");
-        a.href = apiUrl(`/download/${taskId}/file`);
+        a.href = apiUrl(`/download/${taskId}/file`, { withKey: true });
         a.style.display = "none";
         document.body.appendChild(a);
         a.click();
@@ -659,6 +688,9 @@ export default component$(() => {
             prefs={store.prefs}
             onPrefsChange={handlePrefsChange}
             serverSettings={store.serverSettings}
+            apiKey={store.apiKey}
+            apiKeyMessage={store.apiKeyMessage}
+            onApiKeySave={handleApiKeySave}
             now={store.now}
             connection={store.connection}
             summary={store.summary}

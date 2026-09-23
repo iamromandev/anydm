@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { getApi, getPageApi } from "./client";
+import { apiUrl, getApi, getPageApi, onUnauthorized } from "./client";
 import { ApiError } from "./envelope";
 
 const realFetch = globalThis.fetch;
@@ -116,5 +116,102 @@ describe("getPageApi", () => {
         );
 
         expect(getPageApi("/download")).rejects.toThrow("boom");
+    });
+});
+
+describe("the API key", () => {
+    const store = new Map<string, string>();
+    const realStorage = globalThis.localStorage;
+
+    function storeKey(key: string | null): void {
+        store.clear();
+        if (key !== null) store.set("anydm.apiKey", key);
+        globalThis.localStorage = {
+            getItem: (k: string) => store.get(k) ?? null,
+        } as unknown as Storage;
+    }
+
+    afterEach(() => {
+        globalThis.localStorage = realStorage;
+    });
+
+    it("leaves a URL alone when no key is stored", () => {
+        storeKey(null);
+
+        expect(apiUrl("/download/events", { withKey: true })).toEndWith(
+            "/download/events",
+        );
+    });
+
+    it("appends the key to a URL the browser will open by itself", () => {
+        storeKey("s3 cret&");
+
+        expect(apiUrl("/download/events", { withKey: true })).toEndWith(
+            "/download/events?api_key=s3%20cret%26",
+        );
+    });
+
+    it("joins an existing query rather than starting a second one", () => {
+        storeKey("k");
+
+        expect(
+            apiUrl("/download/x/file?inline=1", { withKey: true }),
+        ).toEndWith("/download/x/file?inline=1&api_key=k");
+    });
+
+    it("keeps the key out of ordinary URLs, which get a header instead", () => {
+        storeKey("k");
+
+        expect(apiUrl("/settings")).toEndWith("/settings");
+    });
+
+    it("sends the stored key as a header", async () => {
+        storeKey("s3cret");
+        const seen: { key: string | null } = { key: null };
+        stubFetch((async (_url: string, init?: RequestInit) => {
+            seen.key = new Headers(init?.headers).get("X-API-Key");
+            return new Response(
+                JSON.stringify({ status: "success", code: 200, data: 1 }),
+            );
+        }) as unknown as () => Promise<Response>);
+
+        await getApi("/settings");
+
+        expect(seen.key).toBe("s3cret");
+    });
+
+    it("sends no header when no key is stored", async () => {
+        storeKey(null);
+        let had = true;
+        stubFetch((async (_url: string, init?: RequestInit) => {
+            had = new Headers(init?.headers).has("X-API-Key");
+            return new Response(
+                JSON.stringify({ status: "success", code: 200, data: 1 }),
+            );
+        }) as unknown as () => Promise<Response>);
+
+        await getApi("/settings");
+
+        expect(had).toBe(false);
+    });
+
+    it("tells whoever is listening about a 401", async () => {
+        storeKey(null);
+        respondWith(
+            JSON.stringify({
+                status: "error",
+                code: 401,
+                message: "A valid API key is required",
+            }),
+            { status: 401 },
+        );
+        let heard = 0;
+        const stop = onUnauthorized(() => heard++);
+
+        await expect(getApi("/settings")).rejects.toThrow(ApiError);
+        stop();
+        await expect(getApi("/settings")).rejects.toThrow(ApiError);
+
+        expect(heard).toBe(1);
     });
 });

@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     db_password: Annotated[SecretStr, Field(description="Database password")]
     # cors: comma-separated origins; empty disables CORS middleware (same-origin only)
     cors_origins: str = ""
+    # auth: unset or empty leaves every route open, as a single-user install expects
+    api_key: Annotated[
+        SecretStr | None,
+        Field(default=None, description="Shared key required on every route but health"),
+    ]
     # public URL of this API
     public_base_url: str = "http://127.0.0.1:8030"
     # download
