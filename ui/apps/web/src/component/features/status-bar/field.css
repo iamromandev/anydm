@@ -202,6 +202,25 @@
     color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
 }
 
+/* Free space takes the colour of how close it is to the API's floor. */
+.speed-meter-disk--low,
+.speed-meter-disk--critical {
+    --disk-accent: var(--color-warning);
+    border-color: color-mix(in srgb, var(--disk-accent) 45%, transparent);
+    background: color-mix(in srgb, var(--disk-accent) 12%, transparent);
+}
+
+.speed-meter-disk--critical {
+    --disk-accent: var(--color-error);
+}
+
+.speed-meter-disk--low svg,
+.speed-meter-disk--critical svg,
+.speed-meter-disk--low .speed-meter-stat-value,
+.speed-meter-disk--critical .speed-meter-stat-value {
+    color: var(--disk-accent);
+}
+
 @media (max-width: 640px) {
     .speed-meter {
         width: calc(100vw - 1rem);

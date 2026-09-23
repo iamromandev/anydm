@@ -1,4 +1,5 @@
 import { component$, useStore, useVisibleTask$ } from "@qwik.dev/core";
+import { diskTone, type Disk, type DiskTone } from "@/lib/api/disk";
 import { connectionLabel, type Connection } from "@/lib/connection";
 import { HISTORY_LIMIT, appendSample, emptyHistory } from "./history";
 import "./field.css";
@@ -15,7 +16,15 @@ interface StatusBarProps {
     totalDownloaded: number;
     totalPeers: number;
     connection: Connection;
+    /** Null until the API has reported it; the stat stays hidden till then. */
+    disk: Disk | null;
 }
+
+const DISK_TONE_LABEL: Record<DiskTone, string> = {
+    ok: "",
+    low: ", running low",
+    critical: ", below the minimum: new downloads are refused",
+};
 
 interface SpeedGaugeProps {
     label: string;
@@ -40,8 +49,10 @@ export const StatusBar = component$<StatusBarProps>(
         totalDownloaded,
         totalPeers,
         connection,
+        disk,
     }) => {
         const history = useStore(emptyHistory());
+        const tone = disk ? diskTone(disk) : "ok";
 
         /**
          * `document-ready` rather than the default: the footer is fixed to the
@@ -137,6 +148,38 @@ export const StatusBar = component$<StatusBarProps>(
                 <div class="speed-meter-divider" aria-hidden="true" />
 
                 <div class="speed-meter-stats">
+                    {disk && (
+                        <span
+                            class={`speed-meter-stat speed-meter-disk speed-meter-disk--${tone}`}
+                            aria-label={`Free disk space ${formatBytes(disk.freeBytes)}${DISK_TONE_LABEL[tone]}`}
+                            title={
+                                disk.minFreeBytes > 0
+                                    ? `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}. Downloads stop below ${formatBytes(disk.minFreeBytes)}.`
+                                    : `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}.`
+                            }
+                        >
+                            <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <line x1="22" y1="12" x2="2" y2="12" />
+                                <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+                                <line x1="6" y1="16" x2="6.01" y2="16" />
+                                <line x1="10" y1="16" x2="10.01" y2="16" />
+                            </svg>
+                            <span class="speed-meter-stat-value">
+                                {formatBytes(disk.freeBytes)}
+                            </span>
+                            <span class="speed-meter-stat-label">Free</span>
+                        </span>
+                    )}
                     <span
                         class="speed-meter-stat"
                         aria-label={`Downloaded total ${formatBytes(totalDownloaded)}`}
