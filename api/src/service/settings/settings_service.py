@@ -26,6 +26,7 @@ class SettingsService(BaseService):
             download_segments=settings.download_segments,
             download_max_attempts=settings.download_max_attempts,
             download_rate_limit_bps=settings.download_rate_limit_bps,
+            download_min_free_bytes=settings.download_min_free_bytes,
             torrent_enabled=settings.torrent_enabled,
             torrent_dir=settings.torrent_dir,
             torrent_download_limit_bps=settings.torrent_download_limit_bps,

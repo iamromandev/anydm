@@ -18,6 +18,7 @@ import {
     type TaskSummary,
     type UiTask,
 } from "@/lib/api";
+import { parseDisk, type Disk } from "@/lib/api/disk";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
 import {
     FALLBACK_POLL_MS,
@@ -79,6 +80,8 @@ export default component$(() => {
         // The id of the "lost contact" toast, so reconnecting can take it
         // down rather than leaving a stale alarm on screen.
         outageToastId: null as string | null,
+        // From the event stream's `disk` frames; null until the first arrives.
+        disk: null as Disk | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
         // Read from storage once the browser is running; the server render
@@ -381,6 +384,16 @@ export default component$(() => {
                 apiEvents.addEventListener("progress", (event) => {
                     try {
                         applyProgress(JSON.parse((event as MessageEvent).data));
+                    } catch {
+                        // malformed event
+                    }
+                });
+                apiEvents.addEventListener("disk", (event) => {
+                    try {
+                        const disk = parseDisk(
+                            JSON.parse((event as MessageEvent).data),
+                        );
+                        if (disk) store.disk = disk;
                     } catch {
                         // malformed event
                     }
@@ -693,6 +706,7 @@ export default component$(() => {
             onApiKeySave={handleApiKeySave}
             now={store.now}
             connection={store.connection}
+            disk={store.disk}
             summary={store.summary}
             page={store.page}
             totalPages={store.totalPages}

@@ -59,7 +59,7 @@ the first 401 opens Settings on the key field.
 
 ## What runs in the background
 
-Four loops start with the app and stop with it, in
+Five loops start with the app and stop with it, in
 [`api/src/main.py`](../api/src/main.py). None of them serve requests.
 
 | Loop | Does | Setting |
@@ -68,6 +68,7 @@ Four loops start with the app and stop with it, in
 | Torrent monitor | Polls rqbit and mirrors progress onto task rows | `TORRENT_POLL_MS` |
 | Stream sweeper | Ends stream sessions nobody has touched | `STREAM_IDLE_TIMEOUT_S` |
 | Torrent reaper | Deletes rqbit torrents no task or session owns | `TORRENT_REAP_POLL_S` |
+| Disk monitor | Sends a `disk` event with free space every 30 s while a browser listens | none |
 
 The reaper exists because the sweeper only knows about sessions this process
 still holds in memory. A torrent orphaned by a lost `DELETE` or an API restart
@@ -104,6 +105,24 @@ Workers move a task through the middle of that diagram; people move it along
 the edges. A retry is the one transition that looks like nothing happened: the
 status returns to `pending` with `next_attempt_at` set, which is why the card
 shows a countdown rather than the word "queued".
+
+Waiting for disk space takes the same shape. One `DiskGuard`, in
+[`api/src/service/download/disk.py`](../api/src/service/download/disk.py),
+keeps `DOWNLOAD_MIN_FREE_BYTES` free on `DOWNLOAD_DIR`'s disk, which is also
+the disk rqbit writes to. It is checked in two places:
+
+- **When a download is added.** A direct URL is checked against the minimum
+  alone, since its size is unknown until a worker probes it. A YouTube plan
+  counts its size too, and so does a torrent's selection, checked before rqbit
+  is asked. A refusal answers 507, and no row is written.
+- **By the worker.** It checks before starting, again once the probe reveals a
+  direct download's size, and when a write fails with `ENOSPC`. Each sends the
+  task back to `pending` with `error_code=insufficient_storage` and a re-check
+  in 30 s. The `.part` stays, and the attempt is handed back: waiting for space
+  never uses up the retry budget.
+
+A torrent that runs out of space mid-download is rqbit's to report; it arrives
+as a free-text error the API does not interpret.
 
 Removing is allowed from any status, not only the `downloading` edge drawn
 above. It is a soft delete: the row becomes `canceled` with `deleted_at` set
@@ -163,8 +182,9 @@ asked for a segment in `STREAM_IDLE_TIMEOUT_S`.
 There is one `EventHub` for the whole process. Both SSE endpoints subscribe to
 it and filter:
 
-- `GET /download/events` sends a full task snapshot on connect, then `task` and
-  `progress` frames as they happen.
+- `GET /download/events` sends a full task snapshot and one `disk` frame on
+  connect, then `task` and `progress` frames as they happen, and `disk` from
+  the disk monitor. The status bar's free-space stat reads those.
 - `GET /stream/events` carries `stream_status` frames, including the swarm
   numbers for a torrent-backed session.
 

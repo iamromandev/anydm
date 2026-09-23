@@ -62,3 +62,9 @@ def test_it_reports_every_rate_limit() -> None:
     assert described.download_rate_limit_bps == settings.download_rate_limit_bps
     assert described.torrent_download_limit_bps == settings.torrent_download_limit_bps
     assert described.torrent_upload_limit_bps == settings.torrent_upload_limit_bps
+
+
+def test_it_reports_the_disk_space_floor() -> None:
+    settings = get_settings()
+
+    assert SettingsService().describe().download_min_free_bytes == settings.download_min_free_bytes

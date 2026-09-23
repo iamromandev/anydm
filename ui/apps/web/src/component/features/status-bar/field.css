@@ -202,6 +202,25 @@
     color: color-mix(in srgb, var(--color-foreground) 40%, transparent);
 }
 
+/* Free space takes the colour of how close it is to the API's floor. */
+.speed-meter-disk--low,
+.speed-meter-disk--critical {
+    --disk-accent: var(--color-warning);
+    border-color: color-mix(in srgb, var(--disk-accent) 45%, transparent);
+    background: color-mix(in srgb, var(--disk-accent) 12%, transparent);
+}
+
+.speed-meter-disk--critical {
+    --disk-accent: var(--color-error);
+}
+
+.speed-meter-disk--low svg,
+.speed-meter-disk--critical svg,
+.speed-meter-disk--low .speed-meter-stat-value,
+.speed-meter-disk--critical .speed-meter-stat-value {
+    color: var(--disk-accent);
+}
+
 @media (max-width: 640px) {
     .speed-meter {
         width: calc(100vw - 1rem);
@@ -222,6 +241,14 @@
 
     .speed-gauge-value {
         font-size: 0.75rem;
+    }
+
+    /* No room for a fifth pill at phone width. Free space shows only once it
+       needs attention, and then in place of the running total, which does not. */
+    .speed-meter-disk--ok,
+    .speed-meter-stats:has(.speed-meter-disk--low, .speed-meter-disk--critical)
+        .speed-meter-stat--total {
+        display: none;
     }
 }
 

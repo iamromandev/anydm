@@ -98,6 +98,7 @@ cp api/.env.example api/.env
 | `DOWNLOAD_WRITE_BUFFER_BYTES` | `4194304` | Bytes buffered before a positional write (min 65536), paired with a 500 ms timer |
 | `DOWNLOAD_PROGRESS_FLUSH_MS` | `1000` | How often progress reaches the database (min 100) |
 | `DOWNLOAD_MAX_ATTEMPTS` | `3` | Total tries per task, the first included (min 1) |
+| `DOWNLOAD_MIN_FREE_BYTES` | `1073741824` | Free space `DOWNLOAD_DIR`'s disk must keep. Adding a download that would dip below it (counting its size, when known) answers 507, and a queued task waits and re-checks every 30 s instead of starting. `0` turns the guard off |
 | `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every HTTP download and segment. `0` is unlimited |
 | `TORRENT_ENABLED` | `true` | Torrent routes and the monitor. Off, torrent routes answer 503 and nothing polls |
 | `TORRENT_API_URL` | `http://torrent-anydm-api:3030` | rqbit's control API. `http://127.0.0.1:8031` when running the API on the host |
@@ -141,6 +142,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /health/check` — health probe
     - `POST /extract` — resolve a URL into stream metadata (YouTube only)
     - `GET /settings` — how this API is configured, secrets left out; read-only, since changing a setting means editing `api/.env` and restarting
+    - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
     - `POST /download/youtube` — enqueue a YouTube download for a preset
     - `POST /download/url` — enqueue a direct URL download

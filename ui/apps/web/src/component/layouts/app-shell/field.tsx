@@ -23,6 +23,7 @@ import {
 } from "@/component/features/settings-modal";
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
+import type { Disk } from "@/lib/api/disk";
 import type { Connection } from "@/lib/connection";
 import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
@@ -46,6 +47,7 @@ export interface AppShellProps {
     onApiKeySave: (key: string) => void;
     now: number;
     connection: Connection;
+    disk: Disk | null;
     summary: TaskSummary | null;
     page: number;
     totalPages: number;
@@ -110,6 +112,7 @@ export const AppShell = component$<AppShellProps>(
         onApiKeySave,
         now,
         connection,
+        disk,
         summary,
         page,
         totalPages,
@@ -255,6 +258,7 @@ export const AppShell = component$<AppShellProps>(
                     totalDownloaded={stats.totalDownloaded}
                     totalPeers={stats.totalPeers}
                     connection={connection}
+                    disk={disk}
                 />
 
                 <Toaster toasts={toasts} onDismiss={onDismissToast} />

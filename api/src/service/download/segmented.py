@@ -130,12 +130,17 @@ class SegmentedDownloader:
         *,
         count: int,
         reconcile: Reconcile,
+        on_probe: Callable[[int | None], Awaitable[None]] | None = None,
         on_sample: Callable[[AggregateSample], Awaitable[None]] | None = None,
         on_discard: Callable[[], Awaitable[None]] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> int:
         url = await source.current()
         found = await probe(self._client, url)
+        # Before anything is written: the caller's last chance to refuse a
+        # source whose size it has only just learned.
+        if on_probe is not None:
+            await on_probe(found.total_bytes)
         # Segments should not each re-walk the redirect chain.
         source.pin(found.resolved_url)
 

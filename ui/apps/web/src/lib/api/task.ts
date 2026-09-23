@@ -297,6 +297,9 @@ export type RetryView = {
     detail?: string;
 };
 
+/** The error code of a task waiting for disk space rather than retrying. */
+const DISK_WAIT_CODE = "insufficient_storage";
+
 function attemptsPhrase(attempts: number): string {
     return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
 }
@@ -327,6 +330,19 @@ export function retryLabel(task: UiTask, now: number): RetryView | null {
     }
 
     const remaining = Math.ceil((task.nextAttemptAt - now) / 1000);
+
+    // Nothing failed: the API parked the task until the disk has room, and
+    // handed back the attempt, so a retry count would only mislead.
+    if (task.errorCode === DISK_WAIT_CODE) {
+        const check =
+            remaining > 0 ? `checking again in ${remaining}s` : "checking…";
+        return {
+            tone: "warning",
+            headline: `Waiting for disk space · ${check}`,
+            detail: task.error,
+        };
+    }
+
     const budget = task.maxAttempts ? ` of ${task.maxAttempts}` : "";
     const wait = remaining > 0 ? `Retrying in ${remaining}s` : "Retrying…";
 

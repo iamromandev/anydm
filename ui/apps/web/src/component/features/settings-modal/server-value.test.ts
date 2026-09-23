@@ -11,6 +11,12 @@ describe("serverLabel", () => {
             "Download rate limit",
         );
     });
+
+    it("drops the unit from a size too", () => {
+        expect(serverLabel("download_min_free_bytes")).toBe(
+            "Download min free",
+        );
+    });
 });
 
 describe("serverValue", () => {
@@ -22,6 +28,16 @@ describe("serverValue", () => {
         expect(serverValue("download_rate_limit_bps", 262144)).toBe(
             "256.0 KB/s",
         );
+    });
+
+    it("gives a size in readable units", () => {
+        expect(serverValue("download_min_free_bytes", 1073741824)).toBe(
+            "1.0 GB",
+        );
+    });
+
+    it("says a zero floor is off rather than zero bytes", () => {
+        expect(serverValue("download_min_free_bytes", 0)).toBe("Off");
     });
 
     it("leaves everything else as the API said it", () => {

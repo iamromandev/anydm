@@ -25,6 +25,7 @@ from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
+from src.service.download.disk import DiskGuard
 
 
 class TorrentService(BaseService):
@@ -36,6 +37,7 @@ class TorrentService(BaseService):
         hub: EventHub,
         torrent_root: Path,
         enabled: bool,
+        disk: DiskGuard | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -44,6 +46,7 @@ class TorrentService(BaseService):
         self._hub = hub
         self._root = torrent_root
         self._enabled = enabled
+        self._disk = disk
 
     async def resolve(self, raw: str) -> TorrentResolveResponse:
         """What this magnet contains, without downloading any of it.
@@ -87,6 +90,12 @@ class TorrentService(BaseService):
         # would otherwise be a silently empty download.
         details = await self._client.resolve(source)
         selected = self._validated_selection(details, files)
+        total_bytes = sum(file.size_bytes for file in details.files if file.index in selected)
+
+        # Before ``add``: once the engine has the torrent it starts writing, and
+        # a refusal after that would leave rqbit filling the disk with no row.
+        if self._disk is not None:
+            self._disk.require(total_bytes)
 
         await self._client.add(
             source,
@@ -111,7 +120,7 @@ class TorrentService(BaseService):
             audio_itag=None,
             info_hash=details.info_hash,
             file_path=details.output_folder or str(self._root),
-            total_bytes=sum(file.size_bytes for file in details.files if file.index in selected),
+            total_bytes=total_bytes,
             status=TaskStatus.PENDING,
             progress=0,
         )

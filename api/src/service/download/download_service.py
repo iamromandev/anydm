@@ -23,6 +23,7 @@ from src.lib.youtube import (
 )
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
+from src.service.download.disk import DiskGuard
 from src.service.download.download_worker import remove_task_files
 from src.service.download.torrent_service import TorrentService
 
@@ -49,6 +50,7 @@ class DownloadService(BaseService):
         hub: EventHub,
         downloads_root: Path,
         torrents: TorrentService,
+        disk: DiskGuard | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -58,6 +60,11 @@ class DownloadService(BaseService):
         self._hub = hub
         self._root = downloads_root
         self._torrents = torrents
+        self._disk = disk
+
+    def _require_space(self, extra_bytes: int | None = None) -> None:
+        if self._disk is not None:
+            self._disk.require(extra_bytes or 0)
 
     async def enqueue_youtube(self, url: str, preset: Preset) -> TaskSchema:
         """Resolve the plan now, move the bytes later.
@@ -72,6 +79,10 @@ class DownloadService(BaseService):
 
         info = await self._client.fetch_info(video_id)
         plan = select_plan(info.streams, preset)
+        # Refused before the row exists, so a 507 leaves nothing behind. An
+        # unknown size is checked against the minimum alone; the worker checks
+        # again once the transfer says how big it is.
+        self._require_space(plan.expected_bytes)
         suffix = "" if preset == Preset.MP3 else plan.quality
 
         task = await self._repo.create(
@@ -102,6 +113,9 @@ class DownloadService(BaseService):
         has no quality dimension.
         """
         ensure_fetchable(url)
+        # The size is not known until a worker probes the source, so only the
+        # minimum can be checked here.
+        self._require_space()
         name = filename_from_url(url)
         task = await self._repo.create(
             source_url=url,
