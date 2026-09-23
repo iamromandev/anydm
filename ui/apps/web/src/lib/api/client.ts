@@ -1,11 +1,46 @@
 import { ApiError, unwrap } from "./envelope";
+import { loadApiKey } from "./key";
+
+export type ApiUrlOptions = {
+    /**
+     * Put the key in the query. Only for URLs the browser opens by itself,
+     * which cannot carry a header: an `EventSource`, a download started by
+     * navigation, and what a `<video>` fetches. Everything else sends the
+     * header, so the key stays out of history and logs.
+     */
+    withKey?: boolean;
+};
 
 /** The API. One service: extract, downloads, and — once ported — torrents. */
-export function apiUrl(path: string): string {
+export function apiUrl(path: string, options: ApiUrlOptions = {}): string {
     const base =
         import.meta.env.PUBLIC_API_URL ||
         (import.meta.env.DEV ? "http://localhost:8030" : "");
-    return `${base}${path}`;
+    const key = options.withKey ? loadApiKey() : "";
+    if (!key) return `${base}${path}`;
+
+    const join = path.includes("?") ? "&" : "?";
+    return `${base}${path}${join}api_key=${encodeURIComponent(key)}`;
+}
+
+/** The header every `fetch` carries, when a key is stored. */
+export function authHeaders(): Record<string, string> {
+    const key = loadApiKey();
+    return key ? { "X-API-Key": key } : {};
+}
+
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+/**
+ * Hear about any 401, from any request. Returns the way to stop listening.
+ *
+ * A registry rather than a thrown error type because a 401 is the same news
+ * wherever it happens, and the page wants it once, not at every call site.
+ */
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+    unauthorizedListeners.add(listener);
+    return () => unauthorizedListeners.delete(listener);
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -24,7 +59,10 @@ async function requestEnvelope(
 ): Promise<unknown> {
     let response: Response;
     try {
-        response = await fetch(url, init);
+        response = await fetch(url, {
+            ...init,
+            headers: { ...authHeaders(), ...init?.headers },
+        });
     } catch {
         // A refused connection, DNS, CORS, an offline laptop. The browser's own
         // "Failed to fetch" says nothing a person can act on.
@@ -33,6 +71,10 @@ async function requestEnvelope(
 
     if (response.status === 204) {
         return undefined;
+    }
+
+    if (response.status === 401) {
+        for (const listener of unauthorizedListeners) listener();
     }
 
     let payload: unknown;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from loguru import logger
@@ -13,6 +14,14 @@ def configure_logging():
     settings = get_settings()
 
     logger.remove()
+
+    # uvicorn's access log is stdlib logging, not loguru, and it prints each
+    # request's full path. A key in the query would otherwise land there.
+    from src.core.auth import RedactApiKey
+
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactApiKey) for f in access.filters):
+        access.addFilter(RedactApiKey())
 
     level = "DEBUG" if settings.debug else "INFO"
 

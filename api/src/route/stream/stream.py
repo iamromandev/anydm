@@ -2,10 +2,11 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, Response
 from sse_starlette import EventSourceResponse
 
+from src.core.auth import query_key, with_segment_key
 from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
@@ -61,14 +62,18 @@ async def stream_events(hub: Annotated[EventHub, Depends(get_event_hub)]) -> Eve
 
 @router.get(path="/stream/{session_id}/playlist.m3u8")
 async def get_playlist(
+    request: Request,
     session_id: str,
     stream_service: Annotated[StreamService, Depends(get_stream_service)],
 ) -> Response:
     session = stream_service.get_session(session_id)
-    return Response(
-        content=stream_service.playlist_text(session),
-        media_type="application/vnd.apple.mpegurl",
-    )
+    text = stream_service.playlist_text(session)
+    # A player that could only put the key in this URL fetches the segments
+    # the same way, by the relative URIs below, which carry no query. hls.js
+    # sends a header instead and gets the playlist untouched.
+    if key := query_key(request):
+        text = with_segment_key(text, key)
+    return Response(content=text, media_type="application/vnd.apple.mpegurl")
 
 
 @router.get(path="/stream/{session_id}/segment_{index}.ts")

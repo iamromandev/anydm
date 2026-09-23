@@ -8,6 +8,7 @@ from loguru import logger
 
 from src.config import get_settings
 from src.config.logging import configure_logging
+from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
@@ -86,6 +87,8 @@ def create_app() -> FastAPI:
         )
 
     init_global_errors(app)
+    # Whether a key is required, never the key itself.
+    logger.info("create_app|API key {}", "required" if expected_key() else "not set; every route is open")
 
     _routers = [
         _router

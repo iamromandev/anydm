@@ -8,6 +8,7 @@ import {
 import { LuX } from "@/component/core/icons";
 import {
     apiUrl,
+    authHeaders,
     isTorrentKind,
     normalizeStreamStatusEvent,
     startStream,
@@ -140,7 +141,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                         // playback, which is what feeds the HUD's live stats.
                         ready = await new Promise<boolean>((resolve) => {
                             const events = new EventSource(
-                                apiUrl("/stream/events"),
+                                apiUrl("/stream/events", { withKey: true }),
                             );
                             streamEventsRef.current = events;
                             let resolved = false;
@@ -284,18 +285,35 @@ export const PlayerModal = component$<PlayerModalProps>(
                             // stereo AAC audio. Hls.isSupported() (real MSE
                             // availability) is the reliable signal; native <video src>
                             // is the fallback for the few browsers without it (Safari).
-                            const playlistUrl = apiUrl(session.playlistUrl);
                             const { default: Hls } = await import("hls.js");
                             if (Hls.isSupported()) {
-                                hls = new Hls();
-                                hls.loadSource(playlistUrl);
+                                // hls.js makes its own requests, so it can
+                                // send the key as a header and keep it out of
+                                // every playlist and segment URL.
+                                const headers = authHeaders();
+                                hls = new Hls({
+                                    xhrSetup: (xhr) => {
+                                        for (const [
+                                            name,
+                                            value,
+                                        ] of Object.entries(headers)) {
+                                            xhr.setRequestHeader(name, value);
+                                        }
+                                    },
+                                });
+                                hls.loadSource(apiUrl(session.playlistUrl));
                                 hls.attachMedia(video);
                             } else if (
                                 video.canPlayType(
                                     "application/vnd.apple.mpegurl",
                                 )
                             ) {
-                                video.src = playlistUrl;
+                                // Native playback fetches for itself and cannot
+                                // add a header. The API hands a key found here
+                                // on to every segment URI in the playlist.
+                                video.src = apiUrl(session.playlistUrl, {
+                                    withKey: true,
+                                });
                             } else {
                                 store.error =
                                     "This browser cannot play HLS streams.";
