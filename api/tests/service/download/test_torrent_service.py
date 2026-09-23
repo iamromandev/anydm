@@ -1,4 +1,5 @@
 import uuid
+from collections import namedtuple
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from src.core.type import Code
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.torrent.protocol import FileInfo, TorrentDetails
+from src.service.download.disk import DiskGuard
 from src.service.download.torrent_service import TorrentService
 
 MAGNET = "magnet:?xt=urn:btih:abc123"
@@ -130,6 +132,7 @@ def _service(
     repo: FakeTaskRepo | None = None,
     file_repo: FakeFileRepo | None = None,
     enabled: bool = True,
+    disk: DiskGuard | None = None,
 ) -> TorrentService:
     return TorrentService(
         repo=repo or FakeTaskRepo(),  # ty: ignore[invalid-argument-type]
@@ -138,7 +141,40 @@ def _service(
         hub=EventHub(),
         torrent_root=Path("/workdir/download/torrent"),
         enabled=enabled,
+        disk=disk,
     )
+
+
+_Usage = namedtuple("_Usage", ["total", "used", "free"])
+
+
+def _disk(free: int, min_free: int = 50) -> DiskGuard:
+    """Sizes in bytes to match DETAILS: 900 for the video, 100 for the readme."""
+    return DiskGuard("/data", min_free, usage=lambda _path: _Usage(10_000, 0, free))
+
+
+@pytest.mark.asyncio
+async def test_enqueue_refuses_a_selection_that_would_not_fit_before_the_engine_starts() -> None:
+    client = FakeTorrentClient()
+    repo = FakeTaskRepo()
+
+    # The video alone is 900 bytes; with the 50-byte minimum it needs 950.
+    with pytest.raises(Error) as caught:
+        await _service(client, repo=repo, disk=_disk(free=949)).enqueue(MAGNET, [0])
+
+    assert caught.value.code == Code.INSUFFICIENT_STORAGE
+    assert client.added == []
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_counts_only_the_selected_files() -> None:
+    client = FakeTorrentClient()
+
+    # All 1000 bytes would not fit in 950, but the 900-byte video does.
+    await _service(client, disk=_disk(free=950)).enqueue(MAGNET, [0])
+
+    assert len(client.added) == 1
 
 
 @pytest.mark.asyncio

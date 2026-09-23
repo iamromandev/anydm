@@ -89,6 +89,7 @@ class ErrorType(StrEnum):
     FILE_UPLOAD_ERROR = "file_upload_error"
     FILE_FORMAT_ERROR = "file_format_error"
     FILE_TOO_LARGE = "file_too_large"
+    INSUFFICIENT_STORAGE = "insufficient_storage"
 
     # Email / Notifications
     EMAIL_SEND_FAILED = "email_send_failed"

@@ -12,6 +12,8 @@ from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
 from src.service.download import TorrentService as TorrentService
 from src.service.download.control import DownloadControl
+from src.service.download.disk import DiskGuard as DiskGuard
+from src.service.download.disk_monitor import DiskMonitor
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.post_process import FfmpegPostProcessor
@@ -44,6 +46,18 @@ def get_download_control() -> DownloadControl:
     return DownloadControl()
 
 
+@lru_cache
+def get_disk_guard() -> DiskGuard:
+    settings = get_settings()
+    return DiskGuard(settings.download_dir, settings.download_min_free_bytes)
+
+
+@lru_cache
+def get_disk_monitor() -> DiskMonitor:
+    """One monitor per process, because it is a singleton background loop."""
+    return DiskMonitor(get_disk_guard(), get_event_hub())
+
+
 def get_download_service() -> DownloadService:
     settings = get_settings()
     return DownloadService(
@@ -54,6 +68,7 @@ def get_download_service() -> DownloadService:
         hub=get_event_hub(),
         downloads_root=Path(settings.download_dir),
         torrents=get_torrent_service(),
+        disk=get_disk_guard(),
     )
 
 
@@ -86,6 +101,7 @@ def get_torrent_service() -> TorrentService:
         hub=get_event_hub(),
         torrent_root=Path(settings.torrent_dir).resolve(),
         enabled=settings.torrent_enabled,
+        disk=get_disk_guard(),
     )
 
 
@@ -157,6 +173,7 @@ def build_worker_pool() -> WorkerPool:
             downloads_root=Path(settings.download_dir),
             max_attempts=settings.download_max_attempts,
             segments=settings.download_segments,
+            disk=get_disk_guard(),
         )
         for index in range(settings.download_workers)
     ]

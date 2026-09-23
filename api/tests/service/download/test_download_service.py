@@ -1,14 +1,18 @@
 import uuid
+from collections import namedtuple
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from src.core.error import Error
 from src.core.success import Meta
+from src.core.type import Code
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
 from src.lib.youtube.protocol import StreamInfo, VideoInfo
 from src.service.download.control import DownloadControl
+from src.service.download.disk import DiskGuard
 from src.service.download.download_service import DownloadService
 
 VIDEO_ID = "dQw4w9WgXcQ"
@@ -135,6 +139,7 @@ class FakeTorrentService:
 
 def _service(
     downloads_dir: Path | None = None,
+    disk: DiskGuard | None = None,
 ) -> tuple[DownloadService, FakeRepo, FakeTorrentService]:
     repo = FakeRepo()
     torrents = FakeTorrentService()
@@ -146,8 +151,33 @@ def _service(
         hub=EventHub(),
         downloads_root=downloads_dir or Path("/tmp/anydm-test"),
         torrents=torrents,  # ty: ignore[invalid-argument-type]
+        disk=disk,
     )
     return service, repo, torrents
+
+
+GIB = 1024**3
+_Usage = namedtuple("_Usage", ["total", "used", "free"])
+
+
+def _disk(free: int, min_free: int = GIB) -> DiskGuard:
+    return DiskGuard("/data", min_free, usage=lambda _path: _Usage(100 * GIB, 0, free))
+
+
+class SizedClient(FakeClient):
+    """Streams whose sizes YouTube reported: 3 GiB of video and 1 GiB of audio."""
+
+    async def fetch_info(self, video_id: str) -> VideoInfo:
+        info = await super().fetch_info(video_id)
+        video, audio = info.streams
+        return VideoInfo(
+            video_id=info.video_id,
+            title=info.title,
+            streams=[
+                replace(video, content_length=3 * GIB),
+                replace(audio, content_length=GIB),
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -516,6 +546,62 @@ async def test_enqueue_url_rejects_a_non_http_scheme(tmp_path: Path) -> None:
     with pytest.raises(Error) as caught:
         await service.enqueue_url("file:///etc/passwd")
     assert caught.value.code == 400
+
+
+# --- disk space -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enqueue_url_refuses_when_free_space_is_below_the_minimum() -> None:
+    service, repo, _ = _service(disk=_disk(free=GIB // 2))
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    assert caught.value.code == Code.INSUFFICIENT_STORAGE
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_url_needs_only_the_minimum_since_its_size_is_not_known_yet() -> None:
+    service, repo, _ = _service(disk=_disk(free=GIB + 1))
+
+    await service.enqueue_url("https://cdn.test/files/huge.iso")
+
+    assert len(repo.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_youtube_refuses_a_plan_that_would_not_fit() -> None:
+    # 4 GiB of streams plus the 1 GiB minimum is 5 GiB; 4.5 GiB is free.
+    service, repo, _ = _service(disk=_disk(free=9 * GIB // 2))
+    service._client = SizedClient()
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+
+    assert caught.value.code == Code.INSUFFICIENT_STORAGE
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_youtube_accepts_a_plan_that_fits() -> None:
+    service, repo, _ = _service(disk=_disk(free=5 * GIB))
+    service._client = SizedClient()
+
+    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+
+    assert repo.created[0]["total_bytes"] == 4 * GIB
+
+
+@pytest.mark.asyncio
+async def test_enqueue_youtube_of_unknown_size_needs_only_the_minimum() -> None:
+    # FakeClient reports no content_length, so the plan's size is unknown.
+    service, repo, _ = _service(disk=_disk(free=GIB + 1))
+
+    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+
+    assert repo.created[0]["total_bytes"] is None
 
 
 # --- bulk actions -----------------------------------------------------------

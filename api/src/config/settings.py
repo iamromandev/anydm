@@ -60,6 +60,17 @@ class Settings(BaseSettings):
         int,
         Field(default=3, ge=1, description="Total tries per task, including the first"),
     ]
+    download_min_free_bytes: Annotated[
+        int,
+        Field(
+            default=1073741824,
+            ge=0,
+            description=(
+                "Free space DOWNLOAD_DIR must keep. Enqueues that would dip below it "
+                "answer 507 and queued tasks wait. 0 turns the guard off"
+            ),
+        ),
+    ]
     download_rate_limit_bps: Annotated[
         int,
         Field(default=0, ge=0, description="Shared cap across every HTTP download, 0 = unlimited"),

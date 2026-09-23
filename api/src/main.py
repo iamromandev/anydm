@@ -17,6 +17,8 @@ from src.route import router as _router
 from src.service import (
     build_worker_pool,
     close_torrent_client,
+    get_disk_guard,
+    get_disk_monitor,
     get_stream_sweeper,
     get_torrent_monitor,
     get_torrent_reaper,
@@ -57,9 +59,17 @@ async def lifespan(_app: FastAPI):
     await sweeper.start()
     reaper = get_torrent_reaper()
     await reaper.start()
+    disk_monitor = get_disk_monitor()
+    await disk_monitor.start()
+    guard = get_disk_guard()
+    if guard.min_free_bytes:
+        logger.info("lifespan|keeping {} bytes free in {}", guard.min_free_bytes, settings.download_dir)
+    else:
+        logger.info("lifespan|disk space guard is off")
     try:
         yield
     finally:
+        await disk_monitor.stop()
         await reaper.stop()
         await sweeper.stop()
         await monitor.stop()

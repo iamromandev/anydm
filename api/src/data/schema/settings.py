@@ -20,6 +20,7 @@ class ServerSettingsSchema(BaseSchema):
     download_segments: int = 0
     download_max_attempts: int = 0
     download_rate_limit_bps: int = 0
+    download_min_free_bytes: int = 0
     torrent_enabled: bool = False
     torrent_dir: str = ""
     torrent_download_limit_bps: int = 0

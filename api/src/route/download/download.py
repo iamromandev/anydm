@@ -1,6 +1,7 @@
 import json
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -19,7 +20,7 @@ from src.data.schema.download import (
 )
 from src.data.type import TaskGroup, TaskSort
 from src.lib.event import EventHub, get_event_hub
-from src.service import DownloadService, get_download_service
+from src.service import DiskGuard, DownloadService, get_disk_guard, get_download_service
 
 router = APIRouter()
 
@@ -107,19 +108,24 @@ async def task_summary(
 async def stream_events(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
     hub: Annotated[EventHub, Depends(get_event_hub)],
+    disk: Annotated[DiskGuard, Depends(get_disk_guard)],
 ) -> EventSourceResponse:
     """Live task updates.
 
     A browser reconnects on its own, so every connection opens with the full
     list before any incremental event — otherwise a client that reconnected
-    mid-download would show nothing until the next progress tick.
+    mid-download would show nothing until the next progress tick. The disk
+    reading follows it for the same reason: the monitor only reports every 30 s.
     """
     subscription = hub.subscribe()
     tasks, _ = await download_service.list_tasks(page=1, page_size=200)
+    usage = disk.usage()
 
     async def publisher() -> AsyncIterator[dict[str, str]]:
         try:
             yield {"event": "tasks", "data": json.dumps([task.to_json() for task in tasks])}
+            if usage is not None:
+                yield {"event": "disk", "data": json.dumps(asdict(usage))}
             async for event, data in subscription:
                 yield {"event": event, "data": json.dumps(data)}
         finally:

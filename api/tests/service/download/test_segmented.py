@@ -90,6 +90,27 @@ async def test_four_segments_reconstruct_the_file_exactly(tmp_path: Path) -> Non
     assert dest.read_bytes() == BODY
 
 
+async def test_on_probe_learns_the_size_before_anything_is_written(tmp_path: Path) -> None:
+    dest = tmp_path / "out.part"
+    seen: list[tuple[int, int]] = []
+    probed: list[int | None] = []
+
+    async def refuse(total: int | None) -> None:
+        probed.append(total)
+        raise Error.conflict(message="no room")
+
+    async with _client(_range_handler(seen=seen)) as client:
+        with pytest.raises(Error):
+            await _engine(client).fetch(
+                _source(), dest, count=4, reconcile=_fresh, on_probe=refuse
+            )
+
+    assert probed == [len(BODY)]
+    # Only the probe's one-byte request went out, and no file was created.
+    assert seen == [(0, 0)]
+    assert not dest.exists()
+
+
 async def test_the_ranges_requested_are_the_plan(tmp_path: Path) -> None:
     seen: list[tuple[int, int]] = []
     async with _client(_range_handler(seen=seen)) as client:

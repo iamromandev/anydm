@@ -27,6 +27,7 @@ from src.lib.event import EventHub
 from src.lib.youtube import YouTubeClient
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
+from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
 from src.service.download.paths import final_path, part_path, task_dir
 from src.service.download.post_process import PostProcessor
@@ -36,6 +37,8 @@ from src.service.download.segmented import SegmentedDownloader
 from src.service.download.url_source import UrlProvider, UrlSource
 
 _IDLE_POLL_SECONDS = 5.0
+#: How long a task waits before checking the disk again.
+_SPACE_RECHECK_SECONDS = 30
 
 
 class DownloadWorker:
@@ -53,7 +56,9 @@ class DownloadWorker:
         downloads_root: Path,
         max_attempts: int,
         segments: int,
+        disk: DiskGuard | None = None,
     ) -> None:
+        self._disk = disk
         self._name = name
         self._repo = repo
         self._segment_repo = segment_repo
@@ -84,6 +89,15 @@ class DownloadWorker:
             await self.run_task(task)
 
     async def run_task(self, task: Task) -> None:
+        # Checked before the attempt is counted: a task that never started has
+        # not used any of its retries.
+        if self._disk is not None:
+            try:
+                self._disk.require()
+            except Error as error:
+                await self._wait_for_space(task, error)
+                return
+
         logger.info("{}|starting {} ({})", self._name, task.id, task.filename)
         task.attempts += 1
         # ``update_fields`` throughout this class, not decoration: ``task`` was
@@ -110,10 +124,19 @@ class DownloadWorker:
                 remove_task_files(self._root, task.id)
             self._emit(task)
         except Error as error:
-            await self._mark_failed(task, error)
+            if is_insufficient_storage(error):
+                await self._wait_for_space(task, error, refund=True)
+            else:
+                await self._mark_failed(task, error)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            # A full disk surfaces from the writer as a bare ``OSError``. It is
+            # the one write error worth waiting out rather than failing on.
+            storage = storage_error(exc) if isinstance(exc, OSError) else None
+            if storage is not None:
+                await self._wait_for_space(task, storage, refund=True)
+                return
             logger.exception("{}|unexpected failure on {}", self._name, task.id)
             await self._mark_failed(task, Error.internal(message=str(exc)))
 
@@ -196,11 +219,21 @@ class DownloadWorker:
             await self._segment_repo.clear(task_id, part)
 
         already = await self._segment_repo.progress(task_id, part)
+
+        async def on_probe(total: int | None) -> None:
+            # The first moment a direct download's size is known. Counting what
+            # the segment watermarks say is already on disk; an unsegmented
+            # resume has none, so it is checked as if starting over, which errs
+            # toward refusing.
+            if self._disk is not None and total:
+                self._disk.require(max(0, total - already))
+
         await self._engine.fetch(
             UrlSource(provider),
             destination,
             count=self._segment_count(task.attempts, already),
             reconcile=reconcile,
+            on_probe=on_probe,
             on_discard=discard,
             on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
             should_stop=lambda: self._control.is_stopping(task_id),
@@ -296,6 +329,33 @@ class DownloadWorker:
         await self._segment_repo.clear(task.id)
         self._emit(task)
         logger.success("{}|completed {} -> {}", self._name, task.id, task.file_path)
+
+    async def _wait_for_space(self, task: Task, error: Error, *, refund: bool = False) -> None:
+        """Back to the queue until the disk has room, keeping whatever is on disk.
+
+        Not a failure: the retry budget is for sources that misbehave, and a
+        full disk is neither the source's fault nor something a retry fixes.
+        ``refund`` hands back the attempt ``run_task`` counted, when the check
+        tripped after it.
+        """
+        if refund:
+            task.attempts = max(0, task.attempts - 1)
+        task.status = TaskStatus.PENDING
+        task.error = error.message
+        task.error_code = error.type.value if error.type else None
+        task.speed_bps = 0
+        task.eta_seconds = None
+        task.next_attempt_at = now() + timedelta(seconds=_SPACE_RECHECK_SECONDS)
+        await task.save(
+            update_fields=[
+                "status", "error", "error_code", "speed_bps", "eta_seconds",
+                "next_attempt_at", "attempts",
+            ]
+        )
+        logger.warning(
+            "{}|waiting for disk space for {}: {}", self._name, task.id, error.message
+        )
+        self._emit(task)
 
     async def _mark_failed(self, task: Task, error: Error) -> None:
         decision = retry_policy.decide(error, attempts=task.attempts, max_attempts=self._max_attempts)
