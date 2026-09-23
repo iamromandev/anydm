@@ -181,7 +181,7 @@ export const StatusBar = component$<StatusBarProps>(
                         </span>
                     )}
                     <span
-                        class="speed-meter-stat"
+                        class="speed-meter-stat speed-meter-stat--total"
                         aria-label={`Downloaded total ${formatBytes(totalDownloaded)}`}
                     >
                         <svg

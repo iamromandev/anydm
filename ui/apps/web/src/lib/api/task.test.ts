@@ -433,6 +433,38 @@ describe("retryLabel", () => {
         });
     });
 
+    it("calls a wait for disk space a wait, not a retry", () => {
+        // The API hands the attempt back, so no count belongs in this line.
+        const view = retryLabel(
+            task({
+                attempts: 0,
+                maxAttempts: 3,
+                nextAttemptAt: NOW + 30_000,
+                errorCode: "insufficient_storage",
+                error: "Not enough disk space: 0.5 GB free, 1.0 GB must stay free",
+            }),
+            NOW,
+        );
+
+        expect(view).toEqual({
+            tone: "warning",
+            headline: "Waiting for disk space · checking again in 30s",
+            detail: "Not enough disk space: 0.5 GB free, 1.0 GB must stay free",
+        });
+    });
+
+    it("says it is checking once the disk wait is over", () => {
+        const view = retryLabel(
+            task({
+                nextAttemptAt: NOW - 1,
+                errorCode: "insufficient_storage",
+            }),
+            NOW,
+        );
+
+        expect(view?.headline).toBe("Waiting for disk space · checking…");
+    });
+
     it("rounds the wait up, so it never reads zero while still waiting", () => {
         const view = retryLabel(
             task({ attempts: 1, maxAttempts: 3, nextAttemptAt: NOW + 200 }),

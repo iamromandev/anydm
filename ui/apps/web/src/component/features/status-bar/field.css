@@ -242,6 +242,14 @@
     .speed-gauge-value {
         font-size: 0.75rem;
     }
+
+    /* No room for a fifth pill at phone width. Free space shows only once it
+       needs attention, and then in place of the running total, which does not. */
+    .speed-meter-disk--ok,
+    .speed-meter-stats:has(.speed-meter-disk--low, .speed-meter-disk--critical)
+        .speed-meter-stat--total {
+        display: none;
+    }
 }
 
 .speed-meter-link {
