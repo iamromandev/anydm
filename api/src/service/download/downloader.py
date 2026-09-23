@@ -12,6 +12,7 @@ from loguru import logger
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.service.download.progress import ProgressSample, ProgressTracker
+from src.service.download.rate_limit import Limiter, Unlimited
 from src.service.download.writer import SegmentWriter
 
 #: Statuses worth trying again. 403 is here because an expired stream URL
@@ -53,8 +54,10 @@ class Downloader:
         chunk_size: int,
         flush_interval_ms: int,
         write_buffer_bytes: int = 1 << 20,
+        limiter: Limiter | None = None,
     ) -> None:
         self._client = client
+        self._limiter = limiter or Unlimited()
         self._chunk_size = chunk_size
         self._flush_interval_ms = flush_interval_ms
         self._write_buffer_bytes = write_buffer_bytes
@@ -114,6 +117,7 @@ class Downloader:
                     async for chunk in response.aiter_bytes(self._chunk_size):
                         if should_stop is not None and should_stop():
                             raise Stopped
+                        await self._limiter.acquire(len(chunk))
                         await writer.write(0, position, chunk)
                         position += len(chunk)
                         sample = tracker.record(len(chunk), at=time.monotonic())

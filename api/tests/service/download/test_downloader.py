@@ -178,3 +178,21 @@ async def test_fetch_never_preallocates(tmp_path: Path) -> None:
 
     assert sizes == [-1]
     assert dest.read_bytes() == BODY
+
+
+class _RecordingLimiter:
+    def __init__(self) -> None:
+        self.acquired: list[int] = []
+
+    async def acquire(self, size: int) -> None:
+        self.acquired.append(size)
+
+
+@pytest.mark.asyncio
+async def test_every_chunk_passes_through_the_limiter(tmp_path: Path) -> None:
+    limiter = _RecordingLimiter()
+    async with _client(_ok) as client:
+        await Downloader(client, chunk_size=16, flush_interval_ms=0, limiter=limiter).fetch(
+            "https://cdn.test/f", tmp_path / "out.bin"
+        )
+    assert sum(limiter.acquired) == len(BODY)

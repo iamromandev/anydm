@@ -30,6 +30,7 @@ from src.service.download.progress import (
     ProgressSample,
     ProgressTracker,
 )
+from src.service.download.rate_limit import Limiter, Unlimited
 from src.service.download.segment import Segment, plan_segments, should_segment
 from src.service.download.url_source import UrlSource
 from src.service.download.writer import SegmentWriter
@@ -110,8 +111,10 @@ class SegmentedDownloader:
         write_buffer_bytes: int,
         max_segment_attempts: int = 3,
         segment_backoff: tuple[float, ...] = (0.5, 2.0),
+        limiter: Limiter | None = None,
     ) -> None:
         self._client = client
+        self._limiter = limiter or Unlimited()
         self._fallback = fallback
         self._chunk_size = chunk_size
         self._flush_interval_ms = flush_interval_ms
@@ -340,6 +343,7 @@ class SegmentedDownloader:
                 if room <= 0:
                     break
                 chunk = chunk[:room]
+                await self._limiter.acquire(len(chunk))
                 high = await writer.write(segment.index, position, chunk)
                 position += len(chunk)
                 sample = tracker.record(len(chunk), at=time.monotonic())

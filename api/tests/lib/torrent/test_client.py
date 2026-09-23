@@ -223,3 +223,36 @@ async def test_ping_is_false_rather_than_raising() -> None:
         raise httpx.ConnectError("connection refused")
 
     assert await _client(handler).ping() is False
+
+
+@pytest.mark.asyncio
+async def test_set_rate_limits_posts_both_caps() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = request.read()
+        return httpx.Response(200, json={})
+
+    await _client(handler).set_rate_limits(download_bps=262144, upload_bps=65536)
+
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/torrents/limits"
+    assert httpx.Response(200, content=seen["body"]).json() == {
+        "download_bps": 262144,
+        "upload_bps": 65536,
+    }
+
+
+@pytest.mark.asyncio
+async def test_zero_is_sent_as_null_because_rqbit_refuses_zero() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.read()
+        return httpx.Response(200, json={})
+
+    await _client(handler).set_rate_limits(download_bps=0, upload_bps=0)
+
+    assert httpx.Response(200, content=seen["body"]).json() == {"download_bps": None, "upload_bps": None}

@@ -126,6 +126,23 @@ class RqbitClient:
             rows.append(progress_from_stats(str(entry.get("info_hash") or ""), stats))
         return rows
 
+    async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None:
+        """Replace both session-wide caps; ``0`` lifts one.
+
+        ``POST /torrents/limits`` is missing from rqbit's own endpoint listing
+        but present in the pinned 9.0.1 image. It takes a nonzero integer or
+        ``null``: a ``0`` is a 422, and the same value as a process flag stops
+        rqbit from starting at all, which is why this is set at runtime.
+        """
+        try:
+            response = await self._http.post(
+                f"{self._base}/torrents/limits",
+                json={"download_bps": download_bps or None, "upload_bps": upload_bps or None},
+            )
+        except httpx.HTTPError as exc:
+            raise torrent_error.engine_unavailable(str(exc)) from exc
+        self._decoded(response)
+
     async def pause(self, info_hash: str) -> None:
         await self._request("POST", f"/torrents/{info_hash}/pause")
 

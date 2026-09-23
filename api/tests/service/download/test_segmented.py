@@ -392,3 +392,43 @@ async def test_a_part_that_was_segmented_is_discarded_when_it_no_longer_is(tmp_p
 
     assert written == len(BODY)
     assert dest.read_bytes() == BODY
+
+
+class _RecordingLimiter:
+    def __init__(self) -> None:
+        self.acquired: list[int] = []
+
+    async def acquire(self, size: int) -> None:
+        self.acquired.append(size)
+
+
+async def test_every_segment_shares_the_one_limiter(tmp_path: Path) -> None:
+    limiter = _RecordingLimiter()
+    async with _client(_range_handler()) as client:
+        engine = SegmentedDownloader(
+            client,
+            Downloader(client, chunk_size=64, flush_interval_ms=0, limiter=limiter),
+            chunk_size=64,
+            flush_interval_ms=0,
+            min_segment_bytes=0,
+            write_buffer_bytes=128,
+            limiter=limiter,
+        )
+        await engine.fetch(_source(), tmp_path / "out.part", count=4, reconcile=_fresh)
+    assert sum(limiter.acquired) == len(BODY)
+
+
+async def test_the_unsegmented_fallback_is_limited_too(tmp_path: Path) -> None:
+    limiter = _RecordingLimiter()
+    async with _client(_range_handler(accept_ranges=False)) as client:
+        engine = SegmentedDownloader(
+            client,
+            Downloader(client, chunk_size=64, flush_interval_ms=0, limiter=limiter),
+            chunk_size=64,
+            flush_interval_ms=0,
+            min_segment_bytes=0,
+            write_buffer_bytes=128,
+            limiter=limiter,
+        )
+        await engine.fetch(_source(), tmp_path / "out.part", count=4, reconcile=_fresh)
+    assert sum(limiter.acquired) == len(BODY)

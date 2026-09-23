@@ -98,3 +98,18 @@ def test_torrent_defaults() -> None:
 def test_torrent_poll_ms_has_a_floor() -> None:
     with pytest.raises(ValidationError):
         _settings(torrent_poll_ms=100)
+
+
+def test_rate_limits_default_to_unlimited() -> None:
+    settings = _settings()
+    assert settings.download_rate_limit_bps == 0
+    assert settings.torrent_download_limit_bps == 0
+    assert settings.torrent_upload_limit_bps == 0
+
+
+@pytest.mark.parametrize(
+    "name", ["download_rate_limit_bps", "torrent_download_limit_bps", "torrent_upload_limit_bps"]
+)
+def test_a_rate_limit_cannot_be_negative(name: str) -> None:
+    with pytest.raises(ValidationError):
+        _settings(**{name: -1})
