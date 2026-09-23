@@ -29,6 +29,21 @@ downloads, but delegates torrent transfers to rqbit and all media work to
 ffmpeg. Everything lands on one shared volume, which is why running the API on
 the host while rqbit runs in Docker leaves the two disagreeing about paths.
 
+Throughput caps follow the same split. HTTP downloads share **one** limiter,
+built once in [`api/src/service/__init__.py`](../api/src/service/__init__.py)
+and handed to every worker and every segment, so `DOWNLOAD_RATE_LIMIT_BPS` caps
+their total rather than each one's share. It paces the read side: a chunk
+waits for its allowance before the next read, the socket's receive window
+fills, and TCP slows the sender. Torrents are rqbit's to pace. The API only
+tells it `TORRENT_DOWNLOAD_LIMIT_BPS` and `TORRENT_UPLOAD_LIMIT_BPS` (see the
+torrent monitor below).
+
+The UI's Settings modal has two halves. The preferences are the browser's own
+and never reach the API. The server half is `GET /settings`, fetched when the
+modal opens and shown read-only, since changing any of it means editing
+`api/.env` and restarting. `SettingsService` names each field it reports by
+hand, so a new setting, or a secret, never appears there by accident.
+
 ## What runs in the background
 
 Four loops start with the app and stop with it, in
@@ -45,6 +60,11 @@ The reaper exists because the sweeper only knows about sessions this process
 still holds in memory. A torrent orphaned by a lost `DELETE` or an API restart
 would otherwise seed forever, so the reaper asks rqbit directly what it is
 holding and compares that against the database.
+
+The monitor also owns the torrent caps. rqbit keeps its limits in memory, so a
+restart forgets them. The monitor pushes them on the first tick that reaches
+the engine, and pushes them again whenever the engine has stopped answering
+since, because from the API an unreachable engine is how a restart looks.
 
 Startup also requeues orphans: with one process, every row left `downloading`
 at boot belongs to a process that is gone, so it goes back in the queue and
@@ -71,6 +91,30 @@ Workers move a task through the middle of that diagram; people move it along
 the edges. A retry is the one transition that looks like nothing happened: the
 status returns to `pending` with `next_attempt_at` set, which is why the card
 shows a countdown rather than the word "queued".
+
+Removing is allowed from any status, not only the `downloading` edge drawn
+above. It is a soft delete: the row becomes `canceled` with `deleted_at` set
+and drops out of every list. The files go with it unless the request says
+`delete_files=false`, which is accepted only for a `complete` or `seeding`
+task and answered 409 otherwise. A half-finished `.part` would outlive its row
+as bytes nothing can describe: the per-segment watermarks that say which ranges
+are sound are cleared along with it.
+
+`POST /download/bulk` is not a second path through this diagram. It picks the
+rows an action applies to, then runs each through the same pause, resume or
+remove a single click would, so a torrent is still handled by rqbit and a
+direct download by its worker.
+
+| Action | Rows |
+|---|---|
+| `pause_all` | `pending`, `downloading`, `seeding` |
+| `resume_all` | `paused`, `failed` |
+| `clear_finished` | `complete`, `failed`; a failure's files always go, a finished download's only with `delete_files` |
+
+The server chooses the rows, not the client, and the choice lives in one place,
+`BULK_SCOPES`. A row that refuses, most likely because its status changed a
+moment earlier, is logged and skipped rather than failing the whole sweep. The
+response reports how many rows were affected.
 
 Torrents take the same statuses by a different route. The monitor writes them
 from whatever rqbit reports, and adds `seeding`, which a finished torrent stays

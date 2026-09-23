@@ -149,7 +149,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/{task_id}` — one task
     - `GET /download/{task_id}/file` — serve the finished file
     - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
-    - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row
+    - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise
     - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
   - Torrents
     - `POST /download/torrent/resolve` — inspect a magnet or `.torrent` without downloading
