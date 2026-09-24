@@ -27,6 +27,70 @@ async def test_fetch_writes_the_whole_body(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_fresh_download_asks_for_a_range_too(tmp_path: Path) -> None:
+    """YouTube paces a GET with no Range to ~33 KB/s, and answers any range at full speed (#72)."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("range"))
+        return httpx.Response(206, content=BODY, headers={"content-range": f"bytes 0-99/{len(BODY)}"})
+
+    dest = tmp_path / "out.bin"
+    async with _client(handler) as client:
+        written = await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch("https://cdn.test/f", dest)
+
+    assert seen == ["bytes=0-"]
+    assert written == 100
+    assert dest.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_a_200_to_a_fresh_range_is_simply_the_whole_file(tmp_path: Path) -> None:
+    # Most servers without range support ignore the header. From zero that is
+    # not an ignored resume, just the file.
+    dest = tmp_path / "out.bin"
+    async with _client(_ok) as client:
+        written = await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch("https://cdn.test/f", dest)
+
+    assert written == 100
+    assert dest.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_a_416_to_a_fresh_range_retries_without_it(tmp_path: Path) -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("range"))
+        if "range" in request.headers:
+            return httpx.Response(416, headers={"content-range": "bytes */0"})
+        return _ok(request)
+
+    dest = tmp_path / "out.bin"
+    async with _client(handler) as client:
+        written = await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch("https://cdn.test/f", dest)
+
+    assert seen == ["bytes=0-", None]
+    assert written == 100
+
+
+@pytest.mark.asyncio
+async def test_a_416_to_a_resume_is_still_an_error(tmp_path: Path) -> None:
+    # Only the fresh request falls back: a resume past the end means the part
+    # on disk is not what the server has, and pretending otherwise corrupts it.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(416, headers={"content-range": "bytes */100"})
+
+    dest = tmp_path / "out.bin"
+    dest.write_bytes(BODY[:40])
+    async with _client(handler) as client:
+        with pytest.raises(Error):
+            await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch(
+                "https://cdn.test/f", dest, resume_from=40
+            )
+
+
+@pytest.mark.asyncio
 async def test_fetch_sends_a_range_header_when_resuming(tmp_path: Path) -> None:
     seen: list[str | None] = []
 

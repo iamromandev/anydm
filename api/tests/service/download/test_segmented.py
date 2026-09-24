@@ -158,7 +158,8 @@ async def test_a_small_file_is_not_worth_splitting(tmp_path: Path) -> None:
     async with _client(_range_handler(seen=seen)) as client:
         await _engine(client, min_bytes=1 << 30).fetch(_source(), dest, count=4, reconcile=_fresh)
     assert dest.read_bytes() == BODY
-    assert len(seen) == 1  # the probe, and nothing else ranged
+    # The probe, then one request for the whole file: ranged from 0 (#72), not split.
+    assert seen == [(0, 0), (0, len(BODY) - 1)]
 
 
 async def test_count_of_one_is_the_off_switch(tmp_path: Path) -> None:
@@ -167,7 +168,7 @@ async def test_count_of_one_is_the_off_switch(tmp_path: Path) -> None:
     async with _client(_range_handler(seen=seen)) as client:
         await _engine(client).fetch(_source(), dest, count=1, reconcile=_fresh)
     assert dest.read_bytes() == BODY
-    assert len(seen) == 1
+    assert seen == [(0, 0), (0, len(BODY) - 1)]
 
 
 async def test_samples_carry_every_segment(tmp_path: Path) -> None:
