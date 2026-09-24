@@ -1,3 +1,4 @@
+import type { AddType } from "@/lib/api/site";
 import { component$, $, useStore } from "@qwik.dev/core";
 import {
     LuMagnet,
@@ -15,7 +16,7 @@ export interface AddTorrentModalProps {
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
     onPlay: (value: string, kind: string) => void | Promise<void>;
     onAdd: (input: {
-        type: "magnet" | "file" | "url";
+        type: AddType;
         value: string;
         preset?: string;
         files?: number[];
@@ -114,7 +115,9 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
             store.isAdding = true;
             try {
                 await onAdd({
-                    type: inputType,
+                    // Its URL tab has no preview, so the page asks what the
+                    // link is and routes it: a site page or a plain file.
+                    type: inputType === "url" ? "link" : inputType,
                     value: inputValue,
                     preset: inputType !== "url" ? undefined : inputPreset,
                     files: inputType === "url" ? undefined : selected,
@@ -267,7 +270,7 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                     <line x1="2" y1="12" x2="22" y2="12" />
                                     <path d="M12 2a20 20 0 0 1 4 10 20 20 0 0 1-4 10 20 20 0 0 1-4-10 20 20 0 0 1 4-10z" />
                                 </svg>
-                                <span>URL (YouTube, etc.)</span>
+                                <span>Link (any site or file)</span>
                             </button>
                         </section>
 
@@ -331,7 +334,7 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                     <input
                                         type="url"
                                         class="url-input-field"
-                                        placeholder="https://www.youtube.com/watch?v=..."
+                                        placeholder="A video page, or any file link"
                                         value={store.inputValue}
                                         onInput$={(e: Event) => {
                                             const target =

@@ -8,6 +8,7 @@
  */
 
 import type { UiTask } from "./task";
+import { siteName } from "./site";
 
 export type DetailRow = {
     label: string;
@@ -69,7 +70,8 @@ export function detailRows(task: UiTask, now: number): DetailRow[] {
     ];
 
     const type = [
-        task.platform,
+        // A site task's platform is just "site"; the site itself says more.
+        siteName(task.extractor) || task.platform,
         task.kind,
         task.preset,
     ].filter(Boolean);

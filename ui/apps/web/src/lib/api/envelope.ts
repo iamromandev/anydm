@@ -14,11 +14,14 @@
  */
 export class ApiError extends Error {
     readonly code?: number | string;
+    /** The service's error type, such as `unsupported_url`, when it sent one. */
+    readonly type?: string;
 
-    constructor(message: string, code?: number | string) {
+    constructor(message: string, code?: number | string, type?: string) {
         super(message);
         this.name = "ApiError";
         this.code = code;
+        this.type = type;
     }
 }
 
@@ -36,6 +39,7 @@ export function unwrap<T>(payload: unknown): T {
         throw new ApiError(
             (body.message as string) || "Request failed",
             body.code as number | string | undefined,
+            typeof body.type === "string" ? body.type : undefined,
         );
     }
 

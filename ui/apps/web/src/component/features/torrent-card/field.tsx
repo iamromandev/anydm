@@ -17,6 +17,7 @@ import {
     LuRotateCcw,
     LuUpload,
     LuCircle,
+    SiYoutube,
 } from "@/component/core/icons";
 import {
     canPause,
@@ -25,6 +26,7 @@ import {
     canStopSeeding,
     isActive,
     retryLabel,
+    siteName,
     statusView,
     type StatusView,
     type TaskKind,
@@ -128,7 +130,12 @@ export const TorrentCard = component$<TorrentCardProps>(
     }) => {
         const status = statusView(task.status);
         const retry = retryLabel(task, now);
-        const PlatformIcon = PLATFORM_ICONS[task.kind] ?? LuMagnet;
+        // YouTube keeps its own mark; any other site draws what the task is.
+        const PlatformIcon =
+            task.extractor === "Youtube"
+                ? SiYoutube
+                : (PLATFORM_ICONS[task.kind] ?? LuMagnet);
+        const site = siteName(task.extractor);
         const StatusIcon = STATUS_ICONS[status.key];
         const showProgressDetail =
             isActive(task.status) || task.status === "paused";
@@ -163,6 +170,9 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 {task.title}
                             </h3>
                             <div class="torrent-meta">
+                                {site && (
+                                    <span class="torrent-site">{site}</span>
+                                )}
                                 {showProgressDetail && task.totalBytes > 0 && (
                                     <span class="torrent-size">
                                         {formatBytes(task.downloadedBytes)} /{" "}

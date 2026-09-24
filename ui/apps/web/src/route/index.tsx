@@ -17,6 +17,8 @@ import {
     onUnauthorized,
     type TaskSummary,
     type UiTask,
+    addLink,
+    type AddType,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
@@ -642,27 +644,29 @@ export default component$(() => {
 
     const handleAdd = $(
         async (input: {
-            type: "magnet" | "file" | "url";
+            type: AddType;
             value: string;
             preset?: string;
             files?: number[];
         }) => {
             try {
-                if (input.type === "url") {
-                    const url = input.value.trim().toLowerCase();
-                    const isYouTube =
-                        url.includes("youtube.com") ||
-                        url.includes("youtu.be") ||
-                        url.includes("music.youtube.com");
-
-                    // unwrap() throws with the service's own message on either
-                    // envelope, so there is no response.ok check to write here.
-                    await (isYouTube
-                        ? postApi("/download/youtube", {
-                              url: input.value,
-                              preset: input.preset || "best",
-                          })
-                        : postApi("/download/url", { url: input.value }));
+                // unwrap() throws with the service's own message on either
+                // envelope, so there is no response.ok check to write here.
+                if (input.type === "site") {
+                    // The add box already asked the API about this page and
+                    // picked a preset it offers.
+                    await postApi("/download/media", {
+                        url: input.value,
+                        preset: input.preset || "best",
+                    });
+                } else if (input.type === "url") {
+                    await postApi("/download/url", { url: input.value });
+                } else if (input.type === "link") {
+                    // A link nobody has looked at yet: ask, then route it.
+                    await addLink(
+                        input.value,
+                        input.preset || store.prefs.defaultPreset,
+                    );
                 } else {
                     await addTorrent(input.value, input.files ?? []);
                 }

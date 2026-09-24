@@ -1,3 +1,4 @@
+import type { AddType } from "@/lib/api/site";
 import { component$, $ } from "@qwik.dev/core";
 import {
     aggregateStats,
@@ -86,7 +87,7 @@ export interface AppShellProps {
     onBulkConfirm: () => void;
     onStopSeeding: (id: string) => void;
     onAdd: (input: {
-        type: "magnet" | "file" | "url";
+        type: AddType;
         value: string;
         preset?: string;
         files?: number[];
@@ -206,7 +207,7 @@ export const AppShell = component$<AppShellProps>(
                             defaultPreset={prefs.defaultPreset}
                             onSubmit={$(
                                 async (input: {
-                                    type: "magnet" | "file" | "url";
+                                    type: AddType;
                                     value: string;
                                     preset?: string;
                                 }) => {

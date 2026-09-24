@@ -35,6 +35,14 @@ describe("normalizeApiTask", () => {
         error: null,
     };
 
+    it("keeps the site a task came from", () => {
+        expect(
+            normalizeApiTask({ ...raw, platform: "site", extractor: "Vimeo" })
+                .extractor,
+        ).toBe("Vimeo");
+        expect(normalizeApiTask(raw).extractor).toBeUndefined();
+    });
+
     it("maps snake_case onto the UI shape", () => {
         const task = normalizeApiTask(raw);
         expect(task.id).toBe("abc");
