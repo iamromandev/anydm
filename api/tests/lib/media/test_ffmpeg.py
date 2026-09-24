@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from src.core.error import Error
 from src.lib.media.ffmpeg import mp3_args, mux_args, run, segment_args
+from src.lib.media.source import MediaInput
 
 
 def test_mux_args_copies_both_streams_without_re_encoding() -> None:
@@ -41,7 +42,7 @@ def test_the_configured_binary_is_used() -> None:
 
 def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
     args = segment_args(
-        "ffmpeg", "http://example.com/movie.mkv", 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
+        "ffmpeg", [MediaInput("http://example.com/movie.mkv")], 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
     )
     assert args[0] == "ffmpeg"
     assert args[args.index("-ss") + 1] == "12.0"
@@ -57,14 +58,14 @@ def test_segment_args_does_not_offset_output_timestamps() -> None:
     # Deliberately not offset — see the docstring on segment_args(). The
     # playlist's #EXT-X-DISCONTINUITY markers are what handle this instead.
     args = segment_args(
-        "ffmpeg", "http://example.com/movie.mkv", 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
+        "ffmpeg", [MediaInput("http://example.com/movie.mkv")], 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True
     )
     assert "-output_ts_offset" not in args
 
 
 def test_segment_args_drops_video_flags_for_audio_only() -> None:
     args = segment_args(
-        "ffmpeg", "http://example.com/song.mp3", 6.0, 6.0, Path("/t/segment_1.ts"), has_video=False
+        "ffmpeg", [MediaInput("http://example.com/song.mp3")], 6.0, 6.0, Path("/t/segment_1.ts"), has_video=False
     )
     assert "-vn" in args
     assert "-c:v" not in args
@@ -72,7 +73,7 @@ def test_segment_args_drops_video_flags_for_audio_only() -> None:
 
 
 def test_segment_args_uses_the_configured_binary() -> None:
-    args = segment_args("/opt/bin/ffmpeg", "http://x/y.mp4", 0.0, 6.0, Path("/t/o.ts"), has_video=True)
+    args = segment_args("/opt/bin/ffmpeg", [MediaInput("http://x/y.mp4")], 0.0, 6.0, Path("/t/o.ts"), has_video=True)
     assert args[0] == "/opt/bin/ffmpeg"
 
 
@@ -81,14 +82,44 @@ def test_segment_args_downmixes_audio_to_stereo() -> None:
     # reliably fails to append into Chromium's MediaSource. Stereo is the
     # safe, universally-supported target — see the docstring on segment_args().
     video = segment_args(
-        "ffmpeg", "http://example.com/movie.mkv", 0.0, 6.0, Path("/t/s.ts"), has_video=True
+        "ffmpeg", [MediaInput("http://example.com/movie.mkv")], 0.0, 6.0, Path("/t/s.ts"), has_video=True
     )
     assert video[video.index("-ac") + 1] == "2"
 
     audio_only = segment_args(
-        "ffmpeg", "http://example.com/song.flac", 0.0, 6.0, Path("/t/s.ts"), has_video=False
+        "ffmpeg", [MediaInput("http://example.com/song.flac")], 0.0, 6.0, Path("/t/s.ts"), has_video=False
     )
     assert audio_only[audio_only.index("-ac") + 1] == "2"
+
+
+def test_segment_args_sends_no_headers_and_maps_nothing_for_one_plain_input() -> None:
+    args = segment_args("ffmpeg", [MediaInput("http://x/y.mp4")], 0.0, 6.0, Path("/t/o.ts"), has_video=True)
+    assert "-headers" not in args
+    assert "-map" not in args
+
+
+def test_segment_args_gives_each_input_its_own_seek_and_headers() -> None:
+    # An input option applies only to the -i that follows it, so the audio
+    # input needs its own -ss, or its segment would always start at zero.
+    video = MediaInput("https://media.test/v", {"User-Agent": "UA", "Referer": "https://site.test/"})
+    audio = MediaInput("https://media.test/a", {"User-Agent": "UA"})
+    args = segment_args("ffmpeg", [video, audio], 12.0, 6.0, Path("/t/segment_2.ts"), has_video=True)
+
+    inputs = [i for i, arg in enumerate(args) if arg == "-i"]
+    assert [args[i + 1] for i in inputs] == ["https://media.test/v", "https://media.test/a"]
+    for i, headers in zip(inputs, ["User-Agent: UA\r\nReferer: https://site.test/\r\n", "User-Agent: UA\r\n"], strict=True):
+        assert args[i - 2 : i] == ["-headers", headers]
+        assert args[i - 4 : i - 2] == ["-ss", "12.0"]
+
+
+def test_segment_args_takes_video_from_the_first_input_and_audio_from_the_second() -> None:
+    args = segment_args(
+        "ffmpeg", [MediaInput("https://media.test/v"), MediaInput("https://media.test/a")],
+        0.0, 6.0, Path("/t/o.ts"), has_video=True,
+    )
+    maps = [args[i + 1] for i, arg in enumerate(args) if arg == "-map"]
+    assert maps == ["0:v:0", "1:a:0"]
+    assert args.index("-map") > max(i for i, arg in enumerate(args) if arg == "-i")
 
 
 @pytest.mark.asyncio

@@ -237,3 +237,19 @@ def fetchable_presets(formats: list[Format]) -> list[Preset]:
     if not presets and usable_presets(formats):
         raise streaming_formats_only()
     return presets
+
+
+#: The tallest the player streams. Segments are transcoded as they are asked
+#: for, and 4K on demand costs a great deal for nothing a browser player shows.
+PLAYBACK_PRESET = Preset.P1080
+
+
+def playback_plan(formats: list[Format]) -> Plan:
+    """What the player streams: video at up to 1080p, or an audio-only site's audio.
+
+    Drawn from the formats a download could fetch, so a page the player takes
+    is one the add box could save as well, and #58 opens both at once.
+    """
+    presets = fetchable_presets(formats)
+    preset = Preset.MP3 if presets and Preset.BEST not in presets else PLAYBACK_PRESET
+    return fetchable_plan(formats, preset)

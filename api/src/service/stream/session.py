@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from src.lib.media.source import MediaInput
+
 
 class SegmentState(Enum):
     NOT_STARTED = "not_started"
@@ -24,10 +26,20 @@ class SegmentState(Enum):
     READY = "ready"
 
 
+@dataclass(frozen=True, slots=True)
+class SiteOrigin:
+    """The page a site session's inputs came from, to ask again when they expire."""
+
+    page_url: str
+    #: One per input, in the same order.
+    format_ids: tuple[str, ...]
+
+
 @dataclass
 class StreamSession:
     id: str
-    source_url: str
+    #: One source, or a site's separate video and audio; see ``segment_args``.
+    inputs: list[MediaInput]
     duration_seconds: float
     has_video: bool
     segment_seconds: int
@@ -58,6 +70,13 @@ class StreamSession:
     #: ``start_session`` already probes synchronously before returning one.
     status: str = "ready"
     error: str | None = None
+    #: Set only for a page on a site, whose media URLs expire.
+    origin: SiteOrigin | None = None
+    #: Bumped each time ``inputs`` is resolved again. An encode notes it before
+    #: it starts, so of the segments refused together, only the first to take
+    #: ``refresh_lock`` asks the site again; the rest find it already done.
+    inputs_version: int = 0
+    refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def segment_count(self) -> int:

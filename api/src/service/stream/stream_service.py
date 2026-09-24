@@ -6,8 +6,10 @@ import asyncio
 import contextlib
 import shutil
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
+from typing import Protocol
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -19,13 +21,33 @@ from src.lib.event import EventHub
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
+from src.lib.media.source import MediaInput
+from src.lib.site import error as site_error
+from src.lib.site.client import SiteClient
+from src.lib.site.format import playback_plan
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
-from src.service.stream.session import SegmentState, StreamSession, StreamSessionStore
-from src.service.stream.torrent_source import pick_media_file
+from src.service.stream.session import SegmentState, SiteOrigin, StreamSession, StreamSessionStore
+from src.service.stream.torrent_source import MEDIA_EXTENSIONS, pick_media_file
 
-Prober = Callable[[str, str], Awaitable[ProbeResult]]
+
+class Prober(Protocol):
+    def __call__(
+        self, ffprobe: str, source: str, /, *, headers: Mapping[str, str] | None = None
+    ) -> Awaitable[ProbeResult]: ...
+
+
 Encoder = Callable[[list[str]], Awaitable[None]]
+
+
+def _is_media_file(url: str) -> bool:
+    """A link to a file the player can read as it is, with nothing to extract."""
+    return urlparse(url).path.lower().endswith(MEDIA_EXTENSIONS)
+
+
+def _refused(error: Error) -> bool:
+    """Whether ffmpeg's server said 403: how a site's expired media URL fails."""
+    return "403 forbidden" in (error.message or "").lower()
 
 
 class StreamService(BaseService):
@@ -47,6 +69,7 @@ class StreamService(BaseService):
         torrent_enabled: bool = True,
         event_hub: EventHub | None = None,
         progress_poll_s: float = 1.0,
+        site_client: SiteClient | None = None,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -65,23 +88,50 @@ class StreamService(BaseService):
         self._torrent_enabled = torrent_enabled
         self._event_hub = event_hub
         self._progress_poll_s = progress_poll_s
+        self._site_client = site_client
 
-    async def start_session(self, source_url: str) -> StreamSession:
-        result = await self._prober(self._ffprobe_path, source_url)
+    async def start_session(self, url: str) -> StreamSession:
+        """Play ``url``: a page on a site, or a media file as it is.
+
+        A page is read from the formats its site offers; anything no site
+        claims is played directly, the same fallback the add box makes.
+        """
+        opened = await self._open_page(url)
+        inputs, origin = opened if opened is not None else ([MediaInput(url)], None)
+        first = inputs[0]
+        result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
         session = StreamSession(
             id=session_id,
-            source_url=source_url,
+            inputs=inputs,
             duration_seconds=result.duration_seconds,
             has_video=result.has_video,
             segment_seconds=self._segment_seconds,
             session_dir=session_dir,
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
+            origin=origin,
         )
         self._sessions.add(session)
         return session
+
+    async def _open_page(self, url: str) -> tuple[list[MediaInput], SiteOrigin] | None:
+        """The inputs a page's site offers for playback, or ``None`` for a plain file."""
+        if self._site_client is None or _is_media_file(url):
+            return None
+        try:
+            info, resolved = await self._site_client.open(url)
+        except Error as error:
+            if error.type == ErrorType.UNSUPPORTED_URL:
+                return None
+            raise
+        if info.is_live:
+            raise site_error.live_not_supported()
+        plan = playback_plan(info.formats)
+        parts = [part for part in (plan.video, plan.audio) if part is not None]
+        inputs = [MediaInput(resolved[part.id].url, resolved[part.id].headers) for part in parts]
+        return inputs, SiteOrigin(info.webpage_url or url, tuple(part.id for part in parts))
 
     async def start_torrent_session(self, torrent_raw: str) -> StreamSession:
         if not self._torrent_enabled:
@@ -115,7 +165,7 @@ class StreamService(BaseService):
         session_dir.mkdir(parents=True, exist_ok=True)
         session = StreamSession(
             id=session_id,
-            source_url=stream_url,
+            inputs=[MediaInput(stream_url)],
             duration_seconds=0.0,
             has_video=True,
             segment_seconds=self._segment_seconds,
@@ -133,7 +183,7 @@ class StreamService(BaseService):
         poll_task = asyncio.create_task(self._publish_progress_until_cancelled(session))
         session.progress_task = poll_task
         try:
-            result = await self._prober(self._ffprobe_path, session.source_url)
+            result = await self._prober(self._ffprobe_path, session.inputs[0].url)
         except Error as error:
             session.status = "error"
             session.error = error.message
@@ -241,17 +291,42 @@ class StreamService(BaseService):
         # StreamSession's docstring for why that makes this race-free.
         session.states[index] = SegmentState.GENERATING
         async with session.encode_semaphore:
-            args = segment_args(
-                self._ffmpeg_path,
-                session.source_url,
-                start_seconds=index * session.segment_seconds,
-                duration_seconds=session.segment_duration(index),
-                destination=session.segment_path(index),
-                has_video=session.has_video,
-            )
-            await self._encoder(args)
+            await self._encode(session, index)
         session.states[index] = SegmentState.READY
         event.set()
+
+    async def _encode(self, session: StreamSession, index: int) -> None:
+        """Encode one segment; a site's expired URLs are resolved again, once."""
+        version = session.inputs_version
+        try:
+            await self._encoder(self._segment_args(session, index))
+        except Error as error:
+            if session.origin is None or not _refused(error):
+                raise
+            logger.info("StreamService|{} refused segment {}; resolving its URLs again", session.id, index)
+            await self._refresh_inputs(session, version)
+            await self._encoder(self._segment_args(session, index))
+
+    def _segment_args(self, session: StreamSession, index: int) -> list[str]:
+        return segment_args(
+            self._ffmpeg_path,
+            session.inputs,
+            start_seconds=index * session.segment_seconds,
+            duration_seconds=session.segment_duration(index),
+            destination=session.segment_path(index),
+            has_video=session.has_video,
+        )
+
+    async def _refresh_inputs(self, session: StreamSession, seen_version: int) -> None:
+        """Ask the site for fresh URLs, unless a segment refused alongside already has."""
+        assert session.origin is not None and self._site_client is not None
+        async with session.refresh_lock:
+            if session.inputs_version != seen_version:
+                return
+            origin = session.origin
+            resolved = await self._site_client.resolve(origin.page_url, origin.format_ids)
+            session.inputs = [MediaInput(resolved[i].url, resolved[i].headers) for i in origin.format_ids]
+            session.inputs_version += 1
 
     async def stop_session(self, session_id: str) -> None:
         session = self._sessions.remove(session_id)

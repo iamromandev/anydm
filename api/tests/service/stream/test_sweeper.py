@@ -7,7 +7,7 @@ from src.service.stream.stream_service import StreamService
 from src.service.stream.sweeper import StreamIdleSweeper
 
 
-async def _fake_prober(_ffprobe: str, _source: str) -> ProbeResult:
+async def _fake_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
     return ProbeResult(duration_seconds=12.0, has_video=True)
 
 

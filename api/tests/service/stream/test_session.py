@@ -2,13 +2,14 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from src.lib.media.source import MediaInput
 from src.service.stream.session import SegmentState, StreamSession, StreamSessionStore
 
 
 def _session(**overrides: object) -> StreamSession:
     base: dict[str, object] = {
         "id": "abc123",
-        "source_url": "http://example.com/movie.mkv",
+        "inputs": [MediaInput("http://example.com/movie.mkv")],
         "duration_seconds": 20.0,
         "has_video": True,
         "segment_seconds": 6,

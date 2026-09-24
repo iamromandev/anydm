@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from loguru import logger
 
 from src.core.error import Error
 from src.core.type import Code, ErrorType
+from src.lib.media.source import headers_args
 
 _STDERR_TAIL = 2000
 
@@ -24,13 +26,14 @@ class ProbeResult:
     has_video: bool
 
 
-def probe_args(ffprobe: str, source: str) -> list[str]:
+def probe_args(ffprobe: str, source: str, headers: Mapping[str, str] | None = None) -> list[str]:
     return [
         ffprobe,
         "-v", "quiet",
         "-print_format", "json",
         "-show_format",
         "-show_streams",
+        *headers_args(headers),
         source,
     ]
 
@@ -97,5 +100,11 @@ def parse_probe_output(raw: str) -> ProbeResult:
     return ProbeResult(duration_seconds=duration, has_video=has_video)
 
 
-async def probe(ffprobe: str, source: str, timeout_s: float | None = None) -> ProbeResult:
-    return parse_probe_output(await capture(probe_args(ffprobe, source), timeout_s=timeout_s))
+async def probe(
+    ffprobe: str,
+    source: str,
+    timeout_s: float | None = None,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> ProbeResult:
+    return parse_probe_output(await capture(probe_args(ffprobe, source, headers), timeout_s=timeout_s))

@@ -5,16 +5,21 @@ import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.lib.media.ffprobe import ProbeResult
+from src.lib.media.source import MediaInput
+from src.lib.site import error as site_error
+from src.lib.site.format import playback_plan
 from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
-from src.service.stream.session import SegmentState, StreamSessionStore
+from src.service.stream.session import SegmentState, SiteOrigin, StreamSessionStore
 from src.service.stream.stream_service import Prober, StreamService
+
+from tests.sites import HEADERS, FakeSiteClient, media_url, site_info
 
 
 def _service(tmp_path: Path, **overrides: object) -> tuple[StreamService, list[list[str]]]:
     encoded_calls: list[list[str]] = []
 
-    async def fake_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def fake_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         return ProbeResult(duration_seconds=20.0, has_video=True)
 
     async def fake_encoder(args: list[str]) -> None:
@@ -112,7 +117,7 @@ async def test_concurrent_requests_for_the_same_segment_encode_only_once(tmp_pat
     release_encode = asyncio.Event()
     calls: list[list[str]] = []
 
-    async def slow_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def slow_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         return ProbeResult(duration_seconds=20.0, has_video=True)
 
     async def slow_encoder(args: list[str]) -> None:
@@ -186,7 +191,7 @@ async def test_stop_session_does_not_hang_on_a_still_running_readahead_encode(
     # those tasks were still writing into. On a slow filesystem that can hang
     # the whole process. The fake encoder here never returns on its own —
     # only cancellation ends it — so this proves stop_session actually waits.
-    async def fake_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def fake_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         return ProbeResult(duration_seconds=20.0, has_video=True)
 
     never_finishes = asyncio.Event()
@@ -277,7 +282,7 @@ def _torrent_service(
 ) -> tuple[StreamService, list[list[str]]]:
     encoded_calls: list[list[str]] = []
 
-    async def default_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def default_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         return ProbeResult(duration_seconds=20.0, has_video=True)
 
     async def fake_encoder(args: list[str]) -> None:
@@ -323,7 +328,7 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
 async def test_start_torrent_session_returns_immediately_as_connecting(tmp_path: Path) -> None:
     never_returns = asyncio.Event()
 
-    async def hanging_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def hanging_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         await never_returns.wait()
         raise AssertionError("unreachable")
 
@@ -345,7 +350,7 @@ async def test_start_torrent_session_returns_immediately_as_connecting(tmp_path:
 async def test_start_torrent_session_builds_the_rqbit_stream_url(tmp_path: Path) -> None:
     calls: list[str] = []
 
-    async def recording_prober(_ffprobe: str, source: str) -> ProbeResult:
+    async def recording_prober(_ffprobe: str, source: str, **_: object) -> ProbeResult:
         calls.append(source)
         return ProbeResult(duration_seconds=20.0, has_video=True)
 
@@ -388,7 +393,7 @@ async def test_start_torrent_session_publishes_peer_progress_while_connecting(
     probe_started = asyncio.Event()
     release_probe = asyncio.Event()
 
-    async def slow_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def slow_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         probe_started.set()
         await release_probe.wait()
         return ProbeResult(duration_seconds=20.0, has_video=True)
@@ -470,7 +475,7 @@ async def test_progress_polling_survives_past_ready_and_stops_when_session_stops
 
 @pytest.mark.asyncio
 async def test_start_torrent_session_marks_status_error_when_probe_fails(tmp_path: Path) -> None:
-    async def failing_prober(_ffprobe: str, _source: str) -> ProbeResult:
+    async def failing_prober(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
         raise Error.create(
             code=Code.REQUEST_TIMEOUT,
             message="ffprobe did not finish within 600s",
@@ -554,3 +559,233 @@ async def test_stop_session_does_not_raise_when_the_engine_delete_fails(tmp_path
 
     torrent_client.fail = Error.service_unavailable("down")
     await service.stop_session(session.id)  # must not raise
+
+
+# --- pages on a site --------------------------------------------------------------
+
+YOUTUBE_PAGE = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+FORBIDDEN = "ffmpeg exited with 8: [https @ 0x1] HTTP error 403 Forbidden"
+
+
+def _site_service(
+    tmp_path: Path, client: FakeSiteClient, *, encoder: object = None, **overrides: object
+) -> tuple[StreamService, list[tuple[str, object]], list[list[str]]]:
+    probed: list[tuple[str, object]] = []
+    encoded: list[list[str]] = []
+
+    async def recording_prober(_ffprobe: str, source: str, *, headers: object = None) -> ProbeResult:
+        probed.append((source, headers))
+        return ProbeResult(duration_seconds=20.0, has_video=True)
+
+    async def recording_encoder(args: list[str]) -> None:
+        encoded.append(args)
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service, _ = _service(
+        tmp_path,
+        prober=recording_prober,
+        encoder=encoder or recording_encoder,
+        site_client=client,
+        readahead_segments=0,
+        **overrides,
+    )
+    return service, probed, encoded
+
+
+def _plan_ids(site: str) -> tuple[str, ...]:
+    plan = playback_plan(site_info(site).formats)
+    return tuple(part.id for part in (plan.video, plan.audio) if part is not None)
+
+
+def _forbidden() -> Error:
+    return Error.create(code=Code.INTERNAL_SERVER_ERROR, message=FORBIDDEN, error_type=ErrorType.DEPENDENCY_FAILURE)
+
+
+@pytest.mark.asyncio
+async def test_a_page_link_plays_its_formats_instead_of_probing_the_page(tmp_path: Path) -> None:
+    # The 502: ffprobe was handed the watch page itself and exited with 1.
+    client = FakeSiteClient(site_info("youtube"))
+    service, probed, _ = _site_service(tmp_path, client)
+
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    video, audio = _plan_ids("youtube")
+    assert client.opened == [YOUTUBE_PAGE]
+    assert session.inputs == [
+        MediaInput(media_url("youtube", video), HEADERS),
+        MediaInput(media_url("youtube", audio), HEADERS),
+    ]
+    assert session.origin == SiteOrigin(site_info("youtube").webpage_url, (video, audio))
+    assert probed == [(media_url("youtube", video), HEADERS)]
+
+
+@pytest.mark.asyncio
+async def test_a_segment_of_a_page_link_reads_both_inputs_with_their_headers(tmp_path: Path) -> None:
+    service, _, encoded = _site_service(tmp_path, FakeSiteClient(site_info("youtube")))
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    await service.get_segment(session, 1)
+
+    video, audio = _plan_ids("youtube")
+    args = encoded[0]
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-i"] == [
+        media_url("youtube", video),
+        media_url("youtube", audio),
+    ]
+    assert args.count("-headers") == 2
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-ss"] == ["6", "6"]
+
+
+@pytest.mark.asyncio
+async def test_an_audio_only_site_plays_its_audio(tmp_path: Path) -> None:
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("soundcloud")))
+
+    session = await service.start_session("https://soundcloud.com/someone/a-track")
+
+    assert session.inputs == [MediaInput(media_url("soundcloud", "http_mp3_0_0"), HEADERS)]
+
+
+@pytest.mark.asyncio
+async def test_a_link_no_site_claims_plays_as_a_direct_file(tmp_path: Path) -> None:
+    client = FakeSiteClient(site_info("youtube"), fail=site_error.unsupported_url("not a site"))
+    service, probed, _ = _site_service(tmp_path, client)
+
+    session = await service.start_session("https://files.test/stream?id=42")
+
+    assert session.inputs == [MediaInput("https://files.test/stream?id=42")]
+    assert session.origin is None
+    assert probed == [("https://files.test/stream?id=42", {})]
+
+
+@pytest.mark.asyncio
+async def test_a_media_file_link_is_not_extracted(tmp_path: Path) -> None:
+    client = FakeSiteClient(site_info("youtube"))
+    service, _, _ = _site_service(tmp_path, client)
+
+    session = await service.start_session("https://files.test/movie.MKV?token=1")
+
+    assert client.opened == []
+    assert session.inputs == [MediaInput("https://files.test/movie.MKV?token=1")]
+
+
+@pytest.mark.asyncio
+async def test_a_live_page_is_refused(tmp_path: Path) -> None:
+    service, probed, _ = _site_service(tmp_path, FakeSiteClient(site_info("youtube", is_live=True)))
+
+    with pytest.raises(Error) as caught:
+        await service.start_session(YOUTUBE_PAGE)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert probed == []
+
+
+@pytest.mark.asyncio
+async def test_a_streaming_only_page_is_refused_as_downloads_are(tmp_path: Path) -> None:
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
+
+    with pytest.raises(Error) as caught:
+        await service.start_session("https://www.dailymotion.com/video/x8")
+
+    assert "streaming formats" in (caught.value.message or "")
+
+
+@pytest.mark.asyncio
+async def test_an_extraction_failure_is_not_retried_as_a_direct_file(tmp_path: Path) -> None:
+    client = FakeSiteClient(site_info("youtube"), fail=site_error.media_unavailable("Video unavailable"))
+    service, probed, _ = _site_service(tmp_path, client)
+
+    with pytest.raises(Error) as caught:
+        await service.start_session(YOUTUBE_PAGE)
+
+    assert caught.value.code == Code.NOT_FOUND
+    assert probed == []
+
+
+def _stale(session_inputs: list[MediaInput]) -> list[MediaInput]:
+    return [MediaInput(source.url.replace("media.test", "stale.test"), source.headers) for source in session_inputs]
+
+
+@pytest.mark.asyncio
+async def test_an_expired_link_is_resolved_again_and_the_segment_retried(tmp_path: Path) -> None:
+    encoded: list[list[str]] = []
+
+    async def encoder(args: list[str]) -> None:
+        encoded.append(args)
+        if any("stale.test" in arg for arg in args):
+            raise _forbidden()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    client = FakeSiteClient(site_info("youtube"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder)
+    session = await service.start_session(YOUTUBE_PAGE)
+    session.inputs = _stale(session.inputs)
+
+    await service.get_segment(session, 0)
+
+    video, audio = _plan_ids("youtube")
+    assert client.resolved == [(site_info("youtube").webpage_url, [video, audio])]
+    assert len(encoded) == 2
+    assert media_url("youtube", video) in encoded[1]
+    assert session.inputs_version == 1
+    assert session.state_of(0) == SegmentState.READY
+
+
+@pytest.mark.asyncio
+async def test_a_link_refused_again_after_resolving_is_the_error(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    async def encoder(args: list[str]) -> None:
+        calls.append(args)
+        raise _forbidden()
+
+    client = FakeSiteClient(site_info("youtube"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder)
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 0)
+
+    assert FORBIDDEN in (caught.value.message or "")
+    assert len(client.resolved) == 1
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_segments_refused_together_share_one_refresh(tmp_path: Path) -> None:
+    both_failing = asyncio.Event()
+    failing = 0
+
+    async def encoder(args: list[str]) -> None:
+        nonlocal failing
+        if any("stale.test" in arg for arg in args):
+            failing += 1
+            if failing == 2:
+                both_failing.set()
+            await both_failing.wait()
+            raise _forbidden()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    client = FakeSiteClient(site_info("youtube"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder)
+    session = await service.start_session(YOUTUBE_PAGE)
+    session.inputs = _stale(session.inputs)
+
+    await asyncio.gather(service.get_segment(session, 0), service.get_segment(session, 1))
+
+    assert len(client.resolved) == 1
+    assert session.inputs_version == 1
+
+
+@pytest.mark.asyncio
+async def test_a_direct_file_refused_is_the_error_without_asking_a_site(tmp_path: Path) -> None:
+    async def encoder(_args: list[str]) -> None:
+        raise _forbidden()
+
+    client = FakeSiteClient(site_info("youtube"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder)
+    session = await service.start_session("https://files.test/movie.mp4")
+
+    with pytest.raises(Error):
+        await service.get_segment(session, 0)
+
+    assert client.resolved == []

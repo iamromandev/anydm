@@ -19,6 +19,13 @@ def test_probe_args_uses_the_configured_binary() -> None:
     assert probe_args("/opt/bin/ffprobe", "http://x/y.mp4")[0] == "/opt/bin/ffprobe"
 
 
+def test_probe_args_sends_headers_only_when_there_are_some() -> None:
+    assert "-headers" not in probe_args("ffprobe", "http://x/y.mp4")
+
+    args = probe_args("ffprobe", "https://media.test/v", {"User-Agent": "UA", "Referer": "https://site.test/"})
+    assert args[-3:] == ["-headers", "User-Agent: UA\r\nReferer: https://site.test/\r\n", "https://media.test/v"]
+
+
 @pytest.mark.asyncio
 async def test_capture_returns_stdout_on_success() -> None:
     stdout = await capture(["python3", "-c", "print('hello')"])

@@ -81,6 +81,14 @@ class SiteClient(Protocol):
         """
         ...
 
+    async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
+        """``extract`` and a ``Resolved`` for every format, from one extraction.
+
+        For the player, which chooses and fetches in the same request and
+        would otherwise wait on two extractions of seconds each.
+        """
+        ...
+
 
 def classify(exc: Exception) -> Error:
     """A yt-dlp failure as an ``Error``, with the retry decision attached.
@@ -120,6 +128,15 @@ def _to_site_info(url: str, info: dict[str, Any]) -> SiteInfo:
         is_live=bool(info.get("is_live")),
         formats=[Format.from_ytdlp(raw) for raw in _raw_formats(info)],
     )
+
+
+def _resolved(info: dict[str, Any]) -> dict[str, Resolved]:
+    """Every format's URL and headers, by format id."""
+    return {
+        str(raw.get("format_id")): Resolved(str(raw["url"]), dict(raw.get("http_headers") or {}))
+        for raw in _raw_formats(info)
+        if raw.get("url")
+    }
 
 
 class _Log:
@@ -164,15 +181,15 @@ class YtDlpClient(SiteClient):
         return _to_site_info(url, await self._info(url))
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
-        offered = {
-            str(raw.get("format_id")): Resolved(str(raw["url"]), dict(raw.get("http_headers") or {}))
-            for raw in _raw_formats(await self._info(url))
-            if raw.get("url")
-        }
+        offered = _resolved(await self._info(url))
         missing = [format_id for format_id in format_ids if format_id not in offered]
         if missing:
             raise site_error.no_format_for_preset(missing[0])
         return {format_id: offered[format_id] for format_id in format_ids}
+
+    async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
+        info = await self._info(url)
+        return _to_site_info(url, info), _resolved(info)
 
     async def _info(self, url: str) -> dict[str, Any]:
         try:
