@@ -31,10 +31,13 @@ const PAGE_EXTENSIONS = new Set([
     "jsp",
 ]);
 
+// A site page is resolved by the API first, and a link no site claims falls
+// back to playing directly, so "site" is playable too.
 const PLAYABLE_KINDS = new Set<InputKind>([
     "magnet",
     "torrent",
     "media",
+    "site",
 ]);
 
 export function isPlayableKind(kind: InputKind): boolean {

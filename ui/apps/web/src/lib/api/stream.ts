@@ -1,4 +1,4 @@
-/** Start, and stop, an ephemeral on-demand HLS session for a direct media URL. */
+/** Start, and stop, an ephemeral on-demand HLS session for a site page, media URL or torrent. */
 
 import { deleteApi, postApi } from "./client";
 
