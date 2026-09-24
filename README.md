@@ -185,7 +185,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - `POST /extract` handles YouTube only; other URLs are rejected.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
-- The API has no authentication. CORS is the only gate, which does nothing for a direct request, so do not expose it beyond a trusted network.
+- Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.
 
 ## CI
 
@@ -193,6 +193,6 @@ GitHub Actions runs on pushes to `main` and on pull requests, in three parallel 
 
 - **api** — `uv sync`, then ruff, ty, and the unit suite.
 - **api-integration** — brings up Postgres as a service, applies the migrations with `python -m scripts.migrate`, and runs the tests marked `integration`. The schema comes from the migrations rather than from `generate_schemas`, so a migration that does not do what it claims fails here.
-- **ui** — a frozen Bun lockfile, then the format check, typecheck, and production build.
+- **ui** — a frozen Bun lockfile, then the format check, typecheck, unit tests, and production build.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
