@@ -11,9 +11,9 @@ dependencies = [
     ### db ###
     "tortoise-orm[asyncpg, accel]==1.1.8",
     ### media ###
-    # yt-dlp moves fast because sites do; bump both on purpose (see README).
+    # yt-dlp moves fast because sites do; bump it on purpose (see README).
+    # yt-dlp-ejs follows: yt-dlp's `default` extra pins the one it needs.
     "yt-dlp[default]==2026.8.19",
-    "yt-dlp-ejs==0.8.0",
     "httpx[http2]==0.28.1",
     "sse-starlette==3.4.11",
 ]

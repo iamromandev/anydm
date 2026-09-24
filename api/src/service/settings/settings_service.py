@@ -6,6 +6,7 @@ from src.config import get_settings
 from src.core.base import BaseService
 from src.core.common import get_app_version
 from src.data.schema.settings import ServerSettingsSchema
+from src.lib.site.client import ytdlp_version
 
 
 class SettingsService(BaseService):
@@ -20,6 +21,7 @@ class SettingsService(BaseService):
 
         return ServerSettingsSchema(
             version=get_app_version(),
+            yt_dlp_version=ytdlp_version(),
             env=str(settings.env.value if hasattr(settings.env, "value") else settings.env),
             download_dir=settings.download_dir,
             download_workers=settings.download_workers,

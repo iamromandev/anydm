@@ -142,7 +142,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
   - Health, extract and settings
     - `GET /health/check` — health probe
     - `POST /extract` — what a page on any site yt-dlp supports offers: title, duration, thumbnail, formats, and the `presets` that can be downloaded from it today. An unsupported link answers 400 `unsupported_url`; a live stream, a playlist, or a page with only HLS/DASH formats answers 422
-    - `GET /settings` — how this API is configured, secrets left out; read-only, since changing a setting means editing `api/.env` and restarting
+    - `GET /settings` — how this API is configured, secrets left out, and the running yt-dlp version; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
     - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset
@@ -181,6 +181,16 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - **Routes:** `/` (home — URL/torrent input, task list, sidebar filters); `routesDir` is `src/route`
 - **Entry:** `src/entry.ssr.tsx`, `src/entry.csr.tsx`, `src/root.tsx`
 - **API client:** `src/lib/api` — envelope unwrapping, task normalization; the home route fetches `GET /download` on load and after each action, and takes live updates from `/download/events`
+
+## Keeping sites working
+
+Sites change how they serve media, and yt-dlp releases to keep up, sometimes several times a month. When a site that used to work stops extracting, the usual cause is a yt-dlp that has fallen behind.
+
+- **Pinned on purpose:** `api/pyproject.toml` pins yt-dlp exactly, so it never changes under a running stack without someone deciding. yt-dlp-ejs, which solves YouTube's challenges with Deno, follows it: yt-dlp's `default` extra pins the version it needs.
+- **Moved on purpose:** Dependabot ([.github/dependabot.yml](.github/dependabot.yml)) opens a pull request each week when a new yt-dlp is out, and for nothing else. CI runs the suite against it. Merge it, then rebuild with `make api-build` and `make api-up`.
+- **By hand,** for a fix that cannot wait: in `api/`, `uv add "yt-dlp[default]==<version>"` moves the pin, then rebuild the image. `uv lock --upgrade-package yt-dlp` does not move it, because the pin is exact.
+- **Deno** is pinned by its image tag in `api/dockerfile` (`denoland/deno:bin-…`) and moves by hand.
+- **What is running:** `GET /settings` reports `yt_dlp_version`, which the Settings modal shows as "yt-dlp version".
 
 ## Current limitations
 

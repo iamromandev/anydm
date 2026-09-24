@@ -14,6 +14,9 @@ class ServerSettingsSchema(BaseSchema):
     """
 
     version: str = ""
+    #: The first thing to check when a site stops working: yt-dlp keeps up
+    #: with sites by releasing, and this is the one that is running.
+    yt_dlp_version: str = ""
     env: str = ""
     download_dir: str = ""
     download_workers: int = 0

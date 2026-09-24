@@ -17,6 +17,10 @@ describe("serverLabel", () => {
             "Download min free",
         );
     });
+
+    it("spells yt-dlp the way the project does, not as the key splits", () => {
+        expect(serverLabel("yt_dlp_version")).toBe("yt-dlp version");
+    });
 });
 
 describe("serverValue", () => {

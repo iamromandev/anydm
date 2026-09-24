@@ -4,6 +4,9 @@ The point of this endpoint is to save someone reading `api/.env` over SSH. The
 point of this test is that it never saves them reading the password too.
 """
 
+import tomllib
+from pathlib import Path
+
 from src.config import get_settings
 from src.service.settings import SettingsService
 
@@ -68,3 +71,16 @@ def test_it_reports_the_disk_space_floor() -> None:
     settings = get_settings()
 
     assert SettingsService().describe().download_min_free_bytes == settings.download_min_free_bytes
+
+
+def test_it_reports_the_yt_dlp_version_that_is_pinned() -> None:
+    # Sites break when yt-dlp falls behind, so the first question is which
+    # one is running. It should be the pin: the lock installs exactly that.
+    pyproject = tomllib.loads((Path(__file__).parents[3] / "pyproject.toml").read_text())
+    pinned = next(
+        dependency.split("==", 1)[1]
+        for dependency in pyproject["project"]["dependencies"]
+        if dependency.startswith("yt-dlp[default]==")
+    )
+
+    assert SettingsService().describe().yt_dlp_version == pinned
