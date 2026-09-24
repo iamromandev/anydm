@@ -28,7 +28,7 @@ from loguru import logger
 
 from src.core.error import Error
 from src.lib.site import error as site_error
-from src.lib.site.format import Format
+from src.lib.site.format import Format, is_fragmented
 
 #: A blocking ``url -> info dict`` call; yt-dlp's in production, a fake in tests.
 Extract = Callable[[str], dict[str, Any]]
@@ -67,6 +67,9 @@ class Resolved:
 
     url: str
     headers: dict[str, str] = field(default_factory=dict)
+    #: A playlist of fragments (HLS, DASH...), which only yt-dlp's downloader
+    #: fetches. The worker routes the part by this.
+    fragmented: bool = False
 
 
 class SiteClient(Protocol):
@@ -132,9 +135,13 @@ def _to_site_info(url: str, info: dict[str, Any]) -> SiteInfo:
 
 
 def _resolved(info: dict[str, Any]) -> dict[str, Resolved]:
-    """Every format's URL and headers, by format id."""
+    """Every format's URL, headers and kind, by format id."""
     return {
-        str(raw.get("format_id")): Resolved(str(raw["url"]), dict(raw.get("http_headers") or {}))
+        str(raw.get("format_id")): Resolved(
+            str(raw["url"]),
+            dict(raw.get("http_headers") or {}),
+            fragmented=is_fragmented(raw.get("protocol")),
+        )
         for raw in _raw_formats(info)
         if raw.get("url")
     }

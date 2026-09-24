@@ -12,6 +12,7 @@ from src.lib.site.format import (
     container_for,
     fetchable_plan,
     fetchable_presets,
+    is_fragmented,
     playback_plan,
     select_plan,
     usable_presets,
@@ -338,3 +339,30 @@ def test_every_recorded_two_part_plan_stays_mp4() -> None:
             plan = fetchable_plan(formats, preset)
             if plan.video is not None and plan.audio is not None:
                 assert plan.extension == "mp4", (site, preset)
+
+
+# --- fragmented protocols -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("protocol", "fragmented"),
+    [
+        ("m3u8_native", True),
+        ("m3u8", True),
+        ("http_dash_segments", True),
+        ("f4m", True),
+        ("ism", True),
+        ("https", False),
+        ("http", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_the_fragmented_protocols_are_named_once(protocol: str | None, fragmented: bool) -> None:
+    assert is_fragmented(protocol) is fragmented
+
+
+def test_hls_is_the_m3u8_kind_of_fragmented() -> None:
+    assert _one("twitch", "720p-1").hls
+    assert _one("twitch", "720p-1").fragmented
+    assert not _one("youtube", "137").hls

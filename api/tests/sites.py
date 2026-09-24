@@ -68,7 +68,7 @@ class FakeSiteClient:
         self.opened.append(url)
         if self.fail is not None:
             raise self.fail
-        return self.info, {f.id: Resolved(media_url(self.site, f.id), dict(HEADERS)) for f in self.info.formats}
+        return self.info, {f.id: self._resolved(f.id) for f in self.info.formats}
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
         self.resolved.append((url, list(format_ids)))
@@ -78,4 +78,8 @@ class FakeSiteClient:
         missing = [format_id for format_id in format_ids if format_id not in offered]
         if missing:
             raise site_error.no_format_for_preset(missing[0])
-        return {format_id: Resolved(media_url(self.site, format_id), dict(HEADERS)) for format_id in format_ids}
+        return {format_id: self._resolved(format_id) for format_id in format_ids}
+
+    def _resolved(self, format_id: str) -> Resolved:
+        fmt = next(f for f in self.info.formats if f.id == format_id)
+        return Resolved(media_url(self.site, format_id), dict(HEADERS), fragmented=fmt.fragmented)

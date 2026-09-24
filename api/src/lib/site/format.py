@@ -29,6 +29,12 @@ from src.lib.site.error import no_format_for_preset, streaming_formats_only
 #: Protocols made of fragments: playlists the segmented engine cannot fetch.
 _FRAGMENTED = ("m3u8", "dash", "f4m", "ism")
 
+
+def is_fragmented(protocol: str | None) -> bool:
+    """Whether a yt-dlp protocol is a playlist of fragments, which only yt-dlp's downloader fetches."""
+    return any(tag in (protocol or "") for tag in _FRAGMENTED)
+
+
 #: The height presets, tallest first, in the order they are offered.
 _HEIGHTS = (Preset.P2160, Preset.P1440, Preset.P1080, Preset.P720, Preset.P480)
 
@@ -83,7 +89,12 @@ class Format:
 
     @property
     def fragmented(self) -> bool:
-        return any(tag in self.protocol for tag in _FRAGMENTED)
+        return is_fragmented(self.protocol)
+
+    @property
+    def hls(self) -> bool:
+        """An HLS playlist: the one fragmented kind ffmpeg plays from its URL."""
+        return "m3u8" in self.protocol
 
     @property
     def best_size(self) -> tuple[int | None, bool]:

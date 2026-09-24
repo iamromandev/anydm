@@ -143,6 +143,14 @@ async def test_resolve_gives_each_part_its_url_and_headers_from_one_extraction()
 
 
 @pytest.mark.asyncio
+async def test_resolve_says_which_formats_are_fragmented() -> None:
+    resolved = await _client(_info("reddit")).resolve("https://reddit.test/post", ["hls-1875", "dash-VIDEO-1"])
+
+    assert resolved["hls-1875"].fragmented is True
+    assert resolved["dash-VIDEO-1"].fragmented is False
+
+
+@pytest.mark.asyncio
 async def test_open_gives_the_page_and_every_formats_url_from_one_extraction() -> None:
     # The player needs both at once, and a YouTube extraction takes seconds.
     calls: list[str] = []
