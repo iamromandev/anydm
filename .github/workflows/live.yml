@@ -1,0 +1,43 @@
+name: Live sites
+
+# Real sites, over the network, through the calls a download makes: the one
+# check that notices a site changing. Weekly and on demand, never on pull
+# requests: sites break on their own schedule, and that should not block
+# unrelated work. A red run is the cue to bump yt-dlp; see "Keeping sites
+# working" in the README. When a scheduled run fails, GitHub emails whoever
+# last changed the schedule below.
+
+on:
+    schedule:
+        # Mondays, 06:00 UTC.
+        - cron: "0 6 * * 1"
+    workflow_dispatch:
+
+jobs:
+    sites:
+        runs-on: ubuntu-latest
+        # Every step here waits on someone else's server.
+        timeout-minutes: 15
+        defaults:
+            run:
+                working-directory: api
+        steps:
+            - uses: actions/checkout@v4
+            - uses: astral-sh/setup-uv@v5
+              with:
+                  enable-cache: true
+            - run: uv python install 3.14.6
+            - run: uv sync
+            # yt-dlp solves YouTube's challenges with Deno. Read the version
+            # the image ships from the dockerfile, so the two cannot drift.
+            - id: deno
+              run: |
+                  version=$(sed -nE 's|.*denoland/deno:bin-([0-9.]+).*|\1|p' dockerfile)
+                  test -n "$version" || { echo "no denoland/deno:bin-<version> in api/dockerfile" >&2; exit 1; }
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+            - uses: denoland/setup-deno@v2
+              with:
+                  deno-version: ${{ steps.deno.outputs.version }}
+            # -rs lists why anything skipped: a site that asked the runner to
+            # sign in says so there, rather than turning the run red.
+            - run: uv run pytest -m network -v -rs

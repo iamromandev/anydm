@@ -6,7 +6,7 @@ UVX := $(UV)x
 SERVER_CONTAINER := server-anydm-fastapi
 
 # phony targets
-.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all run export add logs migrate help
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate help
 
 ## operation
 # system cleanup
@@ -61,8 +61,11 @@ check: # Run lint + type checks
 test: # Run the unit test suite
 	$(UV) run pytest
 
-test-all: # Run every test, integration included (needs `make up`)
-	$(UV) run pytest -m ""
+test-all: # Run every test, integration included (needs `make up`); not the live-site ones
+	$(UV) run pytest -m "not network"
+
+test-live: # Run the live-site tests: real sites, over the internet
+	$(UV) run pytest -m network -v -rs
 
 run: # Run FastAPI dev server
 	make check
