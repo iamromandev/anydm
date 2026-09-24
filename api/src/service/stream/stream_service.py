@@ -409,14 +409,21 @@ class StreamService(BaseService):
         return cuts
 
     async def _refresh_inputs(self, session: StreamSession, seen_version: int) -> None:
-        """Ask the site for fresh URLs, unless a segment refused alongside already has."""
+        """Ask the site for fresh URLs, unless a segment refused alongside already has.
+
+        An HLS session reads its playlists again too, since its fragments'
+        URLs are in them. Both are replaced only once everything has loaded.
+        """
         assert session.origin is not None and self._site_client is not None
         async with session.refresh_lock:
             if session.inputs_version != seen_version:
                 return
             origin = session.origin
             resolved = await self._site_client.resolve(origin.page_url, origin.format_ids)
-            session.inputs = [MediaInput(resolved[i].url, resolved[i].headers) for i in origin.format_ids]
+            inputs = [MediaInput(resolved[i].url, resolved[i].headers) for i in origin.format_ids]
+            if session.playlists:
+                session.playlists = await self._fetch_playlists(inputs)
+            session.inputs = inputs
             session.inputs_version += 1
 
     async def stop_session(self, session_id: str) -> None:

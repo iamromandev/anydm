@@ -1046,6 +1046,31 @@ async def test_a_segment_of_an_hls_page_is_cut_from_a_playlist_per_input(tmp_pat
     assert "-headers" not in args
 
 
+@pytest.mark.asyncio
+async def test_an_hls_fragment_refused_reads_the_page_and_its_playlist_again(tmp_path: Path) -> None:
+    # The fragments' URLs are in the playlist, so a fresh page URL alone would
+    # cut the next attempt from the same expired fragments.
+    playlists = FakePlaylists(_media_playlist(name="stale"))
+
+    async def encoder(args: list[str]) -> None:
+        if "stale" in Path(args[args.index("-i") + 1]).read_text():
+            raise _forbidden()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    client = FakeSiteClient(site_info("dailymotion"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder, playlist_fetcher=playlists)
+    session = await service.start_session(DAILYMOTION_PAGE)
+    playlists.text = _media_playlist(name="fresh")
+
+    await service.get_segment(session, 1)
+
+    assert client.resolved == [(site_info("dailymotion").webpage_url, ["hls-1080"])]
+    assert len(playlists.fetched) == 2
+    assert session.inputs_version == 1
+    assert session.state_of(1) == SegmentState.READY
+    assert "https://media.test/dailymotion/fresh3.ts" in (session.session_dir / "segment_1.0.m3u8").read_text()
+
+
 # --- fetching a playlist ------------------------------------------------------
 
 
