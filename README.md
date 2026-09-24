@@ -194,16 +194,16 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 Sites change how they serve media, and yt-dlp releases to keep up, sometimes several times a month. When a site that used to work stops extracting, the usual cause is a yt-dlp that has fallen behind.
 
 - **Pinned on purpose:** `api/pyproject.toml` pins yt-dlp exactly, so it never changes under a running stack without someone deciding. yt-dlp-ejs, which solves YouTube's challenges with Deno, follows it: yt-dlp's `default` extra pins the version it needs.
+- **Impersonating a browser:** yt-dlp's `curl-cffi` extra brings `curl_cffi`, so yt-dlp can present itself as a browser when a site refuses its own requests. Dailymotion does that from some networks, and without it about half of its extractions failed. `curl_cffi` floats within the range the pinned yt-dlp supports.
 - **Noticed weekly:** the live-site check (see [CI](#ci)) goes to the sites themselves every Monday. A red run is the cue to move the pin.
 - **Moved on purpose:** Dependabot ([.github/dependabot.yml](.github/dependabot.yml)) opens a pull request each week when a new yt-dlp is out, and for nothing else. CI runs the suite against it. Merge it, then rebuild with `make api-build` and `make api-up`.
-- **By hand,** for a fix that cannot wait: in `api/`, `uv add "yt-dlp[default]==<version>"` moves the pin, then rebuild the image. `uv lock --upgrade-package yt-dlp` does not move it, because the pin is exact.
+- **By hand,** for a fix that cannot wait: in `api/`, `uv add "yt-dlp[default,curl-cffi]==<version>"` moves the pin, then rebuild the image. `uv lock --upgrade-package yt-dlp` does not move it, because the pin is exact.
 - **Deno** is pinned by its image tag in `api/dockerfile` (`denoland/deno:bin-…`) and moves by hand.
 - **What is running:** `GET /settings` reports `yt_dlp_version`, which the Settings modal shows as "yt-dlp version".
 
 ## Current limitations
 
 - HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player doesn't play them yet. Its seek into HLS clips the start of each segment, and hangs on fMP4 streams (#87). A page offering nothing else answers 422 in the player, and still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
-- Dailymotion refuses about half of yt-dlp's requests for a stream from some networks. yt-dlp then wants to impersonate a browser, which needs `curl_cffi`, and the image doesn't have it (#88). The failure is retried like any other.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
 - Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.

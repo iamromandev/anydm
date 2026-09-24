@@ -13,7 +13,9 @@ dependencies = [
     ### media ###
     # yt-dlp moves fast because sites do; bump it on purpose (see README).
     # yt-dlp-ejs follows: yt-dlp's `default` extra pins the one it needs.
-    "yt-dlp[default]==2026.8.19",
+    # `curl-cffi` lets it impersonate a browser when a site refuses its own
+    # requests, as Dailymotion does from some networks (#88).
+    "yt-dlp[default,curl-cffi]==2026.8.19",
     "httpx[http2]==0.28.1",
     "sse-starlette==3.4.11",
 ]
