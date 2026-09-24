@@ -86,4 +86,5 @@ jobs:
             - run: bun install --frozen-lockfile
             - run: bun run web:format.check
             - run: bun run web:check
+            - run: bun run web:test
             - run: bun run web:build
