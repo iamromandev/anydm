@@ -1,6 +1,6 @@
 """The boundary between this project and whatever library talks to YouTube.
 
-Nothing outside ``client.py`` imports pytubefix. Everything else codes against
+Nothing outside ``client.py`` imports yt-dlp. Everything else codes against
 these dataclasses and this Protocol, which is also what lets the tests run
 without a network.
 """

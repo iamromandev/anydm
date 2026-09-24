@@ -42,7 +42,7 @@ async def test_a_refresh_replaces_the_stale_url() -> None:
 
 async def test_segments_that_expire_together_refresh_once() -> None:
     """Four segments get their 403 within milliseconds of each other. Four
-    independent pytubefix resolves is slow and earns a rate limit."""
+    independent yt-dlp extractions is slow and earns a rate limit."""
     provider = Counter()
     source = UrlSource(provider)
     stale = await source.current()

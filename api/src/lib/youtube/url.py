@@ -1,4 +1,4 @@
-"""YouTube URL parsing. Pure — no network, no pytubefix."""
+"""YouTube URL parsing. Pure — no network, no yt-dlp."""
 
 from __future__ import annotations
 
