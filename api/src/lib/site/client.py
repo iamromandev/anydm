@@ -209,6 +209,21 @@ def _progress(status: dict[str, Any]) -> FormatProgress:
     )
 
 
+#: How often yt-dlp retries a request, and a fragment, before the attempt fails:
+#: the default of its command line, which as a library it does not apply.
+_RETRIES = 10
+
+
+def _retry_sleep(n: int) -> float:
+    """Seconds before yt-dlp's retry after ``n`` others: 1, 2, 4, then 5 at most.
+
+    A CDN answering 503 usually recovers within seconds, and asking again at
+    once, as yt-dlp does by default, finds it still overloaded. The cap keeps
+    a pause or a cancel prompt, since those wait for the next progress call.
+    """
+    return min(2.0**n, 5.0)
+
+
 def _chain(exc: BaseException) -> list[BaseException]:
     """``exc`` and everything it wraps: causes, contexts, and yt-dlp's ``exc_info``."""
     found: list[BaseException] = []
@@ -325,6 +340,10 @@ class YtDlpClient(SiteClient):
             # A fragment that cannot be had fails the download. Skipping it
             # would leave a gap nobody is told about.
             "skip_unavailable_fragments": False,
+            # Without these, one 503 from a CDN fails the whole attempt.
+            "retries": _RETRIES,
+            "fragment_retries": _RETRIES,
+            "retry_sleep_functions": {"http": _retry_sleep, "fragment": _retry_sleep},
             # yt-dlp's own fragment downloaders, never an ffmpeg subprocess:
             # the hooks, stopping and resuming were all probed on these.
             "external_downloader": {"m3u8": "native", "dash": "native"},

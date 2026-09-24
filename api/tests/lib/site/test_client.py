@@ -323,6 +323,20 @@ def test_download_format_asks_yt_dlp_for_that_format_into_our_path(tmp_path: Pat
     assert "ratelimit" not in params
 
 
+def test_a_failing_fragment_is_retried_with_a_short_backoff(tmp_path: Path) -> None:
+    # yt-dlp's command line retries ten times, but as a library it retries
+    # nothing unless asked: one 503 from a CDN failed a whole attempt.
+    fake = FakeDownload()
+    _download(fake, tmp_path)
+
+    params = fake.params
+    assert (params["retries"], params["fragment_retries"]) == (10, 10)
+    for kind in ("http", "fragment"):
+        sleep = params["retry_sleep_functions"][kind]
+        # yt-dlp passes the number of retries already made.
+        assert [sleep(n=n) for n in range(6)] == [1, 2, 4, 5, 5, 5]
+
+
 def test_a_rate_limit_is_passed_only_when_set(tmp_path: Path) -> None:
     fake = FakeDownload()
     _download(fake, tmp_path, rate_bps=500_000)
