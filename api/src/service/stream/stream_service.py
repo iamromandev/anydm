@@ -87,6 +87,10 @@ def _refused(error: Error) -> bool:
     return "403 forbidden" in (error.message or "").lower()
 
 
+def _session_not_found() -> Error:
+    return Error.not_found("Stream session not found")
+
+
 class StreamService(BaseService):
     def __init__(
         self,
@@ -293,7 +297,7 @@ class StreamService(BaseService):
     def get_session(self, session_id: str) -> StreamSession:
         session = self._sessions.get(session_id)
         if session is None:
-            raise Error.not_found("Stream session not found")
+            raise _session_not_found()
         return session
 
     def playlist_text(self, session: StreamSession) -> str:
@@ -320,7 +324,17 @@ class StreamService(BaseService):
         if index < 0 or index >= session.segment_count:
             raise Error.not_found(f"Segment {index} does not exist")
         session.touch()
-        await self._ensure_segment(session, index)
+        # The player may close while this waits. stop_session takes the
+        # session out of the store, then deletes its folder, so whatever the
+        # encode made of that is answered as the session having gone.
+        try:
+            await self._ensure_segment(session, index)
+        except (Error, OSError) as error:
+            if self._is_open(session):
+                raise
+            raise _session_not_found() from error
+        if not self._is_open(session):
+            raise _session_not_found()
         for ahead in range(1, self._readahead + 1):
             next_index = index + ahead
             if (
@@ -330,6 +344,9 @@ class StreamService(BaseService):
                 task = asyncio.create_task(self._ensure_segment_quietly(session, next_index))
                 session.background_tasks.append(task)
         return session.segment_path(index)
+
+    def _is_open(self, session: StreamSession) -> bool:
+        return self._sessions.get(session.id) is session
 
     async def _ensure_segment_quietly(self, session: StreamSession, index: int) -> None:
         try:
@@ -373,6 +390,9 @@ class StreamService(BaseService):
 
     async def _encode(self, session: StreamSession, index: int) -> None:
         """Encode one segment; a site's expired URLs are resolved again, once."""
+        if not self._is_open(session):
+            # Stopped while this waited its turn: nothing to encode into.
+            raise _session_not_found()
         version = session.inputs_version
         try:
             await self._encoder(await self._segment_args(session, index))

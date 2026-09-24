@@ -1115,3 +1115,69 @@ async def test_a_playlist_that_will_not_load_is_a_bad_gateway_worth_retrying(
 
     assert (caught.value.code, caught.value.retry_able) == (Code.BAD_GATEWAY, True)
     assert caught.value.message == f"Couldn't read the stream's playlist: {reason}"
+
+
+# --- a session stopped mid-request --------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["https://files.test/movie.mkv", DAILYMOTION_PAGE], ids=["file", "hls"])
+async def test_a_segment_asked_for_once_its_session_stopped_is_not_found(tmp_path: Path, url: str) -> None:
+    # A request that got its session just before the player closed. Nothing
+    # is encoded into the folder stop_session deleted.
+    service, _, encoded = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
+    session = await service.start_session(url)
+    await service.stop_session(session.id)
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 1)
+
+    assert (caught.value.code, caught.value.message) == (Code.NOT_FOUND, "Stream session not found")
+    assert encoded == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [_encode_failure, lambda: FileNotFoundError("segment_0.0.m3u8")],
+    ids=["ffmpeg-failed", "cut-not-written"],
+)
+async def test_an_encode_that_fails_as_its_session_stops_is_not_found(
+    tmp_path: Path, failure: Callable[[], Exception]
+) -> None:
+    # The player closes mid-encode, and the encode then fails in the deleted
+    # folder. A 404 keeps ffmpeg's complaint out of the response and the log.
+    services: list[StreamService] = []
+
+    async def encoder(args: list[str]) -> None:
+        await services[0].stop_session(Path(args[-1]).parent.name)
+        raise failure()
+
+    service, _ = _service(tmp_path, encoder=encoder, readahead_segments=0)
+    services.append(service)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 0)
+
+    assert (caught.value.code, caught.value.message) == (Code.NOT_FOUND, "Stream session not found")
+
+
+@pytest.mark.asyncio
+async def test_a_segment_finished_after_its_session_stopped_is_not_found(tmp_path: Path) -> None:
+    # ffmpeg can finish into a file unlinked with its folder. Serving that path
+    # would fail on a file that isn't there.
+    services: list[StreamService] = []
+
+    async def encoder(args: list[str]) -> None:
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+        await services[0].stop_session(Path(args[-1]).parent.name)
+
+    service, _ = _service(tmp_path, encoder=encoder, readahead_segments=0)
+    services.append(service)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 0)
+
+    assert caught.value.code == Code.NOT_FOUND
