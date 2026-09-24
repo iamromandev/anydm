@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import glob
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -224,6 +225,20 @@ def _retry_sleep(n: int) -> float:
     return min(2.0**n, 5.0)
 
 
+def _drop_unfinished_fragments(destination: Path) -> None:
+    """Delete the fragments an earlier attempt left mid-download beside ``destination``.
+
+    yt-dlp cannot resume one whose ``.part`` already holds all of it, which a
+    stop leaves when it lands between a fragment's last byte and its rename:
+    it asks for the bytes past the end, and its fallback for the 416 sends
+    the same range again. Starting those few afresh costs one fragment per
+    concurrent download at most. Finished fragments, and the ones already
+    joined, stay.
+    """
+    for unfinished in destination.parent.glob(f"{glob.escape(destination.name)}.part-Frag*.part"):
+        unfinished.unlink(missing_ok=True)
+
+
 def _chain(exc: BaseException) -> list[BaseException]:
     """``exc`` and everything it wraps: causes, contexts, and yt-dlp's ``exc_info``."""
     found: list[BaseException] = []
@@ -359,6 +374,7 @@ class YtDlpClient(SiteClient):
 
         if should_stop():
             raise DownloadStopped
+        _drop_unfinished_fragments(destination)
         try:
             self._download(params, page_url)
         except Exception as exc:

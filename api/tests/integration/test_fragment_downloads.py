@@ -41,16 +41,42 @@ DURATION_S = 20
 
 
 def _handler(delay_s: float) -> type[SimpleHTTPRequestHandler]:
-    """A quiet file handler that waits ``delay_s`` before each fragment, so a test can stop mid-way."""
+    """A quiet file handler for fragments, as a CDN serves them.
+
+    It waits ``delay_s`` before each one, so a test can stop mid-way, and it
+    honours ``Range``, which the standard library's handler ignores, answering
+    416 past the end.
+    """
 
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
             return None
 
         def do_GET(self) -> None:
-            if delay_s and self.path.endswith((".ts", ".m4s")):
-                time.sleep(delay_s)
+            if self.path.endswith((".ts", ".m4s")):
+                if delay_s:
+                    time.sleep(delay_s)
+                wanted = self.headers.get("Range")
+                if wanted:
+                    self._send_range(wanted)
+                    return
             super().do_GET()
+
+        def _send_range(self, wanted: str) -> None:
+            body = Path(self.translate_path(self.path)).read_bytes()
+            first, _, last = wanted.removeprefix("bytes=").partition("-")
+            start, end = int(first), int(last) if last else len(body) - 1
+            if start >= len(body):
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{len(body)}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(body)}")
+            self.send_header("Content-Length", str(end + 1 - start))
+            self.end_headers()
+            self.wfile.write(body[start : end + 1])
 
     return Handler
 
@@ -163,6 +189,29 @@ async def test_a_download_stopped_mid_way_resumes_into_a_whole_file(slow: str, t
             url, format_id, part, on_sample=note, should_stop=lambda: bool(seen and seen[-1] > 0)
         )
     assert any(tmp_path.iterdir()), "a stop keeps what was fetched"
+
+    await _downloader(client).fetch(url, format_id, part, on_sample=_ignore, should_stop=lambda: False)
+
+    assert abs(_probe(part)[2] - DURATION_S) < 1
+
+
+@pytest.mark.asyncio
+async def test_a_fragment_whole_on_disk_but_never_renamed_does_not_block_the_resume(
+    fast: str, streams: Path, tmp_path: Path
+) -> None:
+    # A stop can land between a fragment's last byte and yt-dlp renaming its
+    # ``.part``. Resuming that fragment asks for the bytes past its end, and
+    # yt-dlp's fallback for the 416 sends the same range again, so the
+    # download could never finish (a Twitch VOD, in the real image).
+    client = YtDlpClient()
+    url = f"{fast}/ts/index.m3u8"
+    format_id = await _format_id(client, url)
+    part = tmp_path / "video.part"
+    # What yt-dlp leaves: fragment 1 appended and recorded, fragment 2 whole
+    # but still named as in progress.
+    Path(f"{part}.part").write_bytes((streams / "ts" / "index0.ts").read_bytes())
+    Path(f"{part}.ytdl").write_text(json.dumps({"downloader": {"current_fragment": {"index": 1}, "extra_state": {}}}))
+    Path(f"{part}.part-Frag2.part").write_bytes((streams / "ts" / "index1.ts").read_bytes())
 
     await _downloader(client).fetch(url, format_id, part, on_sample=_ignore, should_stop=lambda: False)
 

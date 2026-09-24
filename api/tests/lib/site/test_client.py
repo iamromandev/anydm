@@ -337,6 +337,30 @@ def test_a_failing_fragment_is_retried_with_a_short_backoff(tmp_path: Path) -> N
         assert [sleep(n=n) for n in range(6)] == [1, 2, 4, 5, 5, 5]
 
 
+def test_fragments_left_mid_download_start_afresh(tmp_path: Path) -> None:
+    # yt-dlp cannot resume a fragment whose ``.part`` already holds all of it
+    # (the integration test shows how), so those start over. Finished
+    # fragments, and what is already joined into the part, stay.
+    for name in ("video.part.part", "video.part.ytdl", "video.part.part-Frag2", "video.part.part-Frag3.part"):
+        (tmp_path / name).write_bytes(b"x")
+    present: list[str] = []
+
+    def download(params: dict[str, Any], url: str) -> None:
+        present.extend(sorted(p.name for p in tmp_path.iterdir()))
+
+    YtDlpClient(extract=lambda _url: {}, download=download).download_format(
+        PAGE,
+        "hls-1080",
+        tmp_path / "video.part",
+        concurrency=4,
+        rate_bps=0,
+        on_progress=lambda _progress: None,
+        should_stop=lambda: False,
+    )
+
+    assert present == ["video.part.part", "video.part.part-Frag2", "video.part.ytdl"]
+
+
 def test_a_rate_limit_is_passed_only_when_set(tmp_path: Path) -> None:
     fake = FakeDownload()
     _download(fake, tmp_path, rate_bps=500_000)
