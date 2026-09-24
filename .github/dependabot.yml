@@ -1,0 +1,20 @@
+# Only yt-dlp, and on purpose. Sites change and yt-dlp releases to keep up, so
+# a pin nobody moves breaks sites one at a time; every other dependency stays
+# where it is pinned until someone decides to move it. See "Keeping sites
+# working" in the README.
+#
+# `pip` rather than `uv`: the API's pins live in api/pyproject.toml's
+# [project] table (PEP 621), uv.lock is not committed, and the image installs
+# with `uv pip install -r pyproject.toml`. That is the setup Dependabot's pip
+# updater documents. yt-dlp-ejs needs no entry: yt-dlp pins it.
+version: 2
+updates:
+    - package-ecosystem: "pip"
+      directory: "/api"
+      schedule:
+          interval: "weekly"
+      allow:
+          - dependency-name: "yt-dlp"
+      commit-message:
+          prefix: "chore"
+          include: "scope"

@@ -8,8 +8,15 @@ const SIZE_SUFFIX = "_bytes";
 
 const UNIT = new RegExp(`(${RATE_SUFFIX}|${SIZE_SUFFIX})$`);
 
+/** Keys whose words, split at the underscores, would misspell a name. */
+const LABELS: Record<string, string> = {
+    yt_dlp_version: "yt-dlp version",
+};
+
 /** Turn `download_workers` into something worth reading. */
 export function serverLabel(key: string): string {
+    const named = LABELS[key];
+    if (named) return named;
     const words = key.replace(UNIT, "").replace(/_/g, " ");
     return words.charAt(0).toUpperCase() + words.slice(1);
 }

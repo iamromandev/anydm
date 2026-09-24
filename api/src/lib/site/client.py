@@ -21,6 +21,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib import metadata
 from typing import Any, Protocol
 
 from loguru import logger
@@ -217,3 +218,15 @@ class YtDlpClient(SiteClient):
 @lru_cache
 def get_site_client() -> SiteClient:
     return YtDlpClient()
+
+
+def ytdlp_version() -> str:
+    """The installed yt-dlp's version, or ``""`` when it is not installed.
+
+    Read from the package's metadata: importing any part of yt-dlp loads the
+    whole package, and ``GET /settings`` asks for this every time it opens.
+    """
+    try:
+        return metadata.version("yt-dlp")
+    except metadata.PackageNotFoundError:
+        return ""

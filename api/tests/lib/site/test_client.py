@@ -5,13 +5,14 @@ The fixtures carry no URLs or header values, so the tests add them.
 
 import json
 import time
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.lib.site.client import Resolved, YtDlpClient, classify
+from src.lib.site.client import Resolved, YtDlpClient, classify, ytdlp_version
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "ytdlp"
 HEADERS = {"User-Agent": "Mozilla/5.0 (test)", "Accept": "*/*"}
@@ -227,3 +228,16 @@ def test_only_the_unknown_is_retryable() -> None:
     assert classify(RuntimeError("Unsupported URL: x")).retry_able is False
     assert classify(RuntimeError("Private video")).retry_able is False
     assert classify(RuntimeError("who knows")).retry_able is True
+
+
+# --- version -------------------------------------------------------------------
+
+
+def test_the_version_is_empty_when_yt_dlp_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # GET /settings reports it; a missing package is a blank there, not a 500.
+    def not_installed(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", not_installed)
+
+    assert ytdlp_version() == ""
