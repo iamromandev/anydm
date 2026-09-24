@@ -7,10 +7,12 @@ import contextlib
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
+import httpx
 from loguru import logger
 
 from src.core.base import BaseService
@@ -21,6 +23,7 @@ from src.lib.event import EventHub
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
+from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist
 from src.lib.media.source import MediaInput
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
@@ -38,6 +41,40 @@ class Prober(Protocol):
 
 
 Encoder = Callable[[list[str]], Awaitable[None]]
+
+#: Fetches a media playlist with its format's headers. Returns the URL it was
+#: read from in the end, which its relative URIs resolve against, and its text.
+PlaylistFetcher = Callable[[str, Mapping[str, str]], Awaitable[tuple[str, str]]]
+
+_PLAYLIST_TIMEOUT_S = 20.0
+
+
+async def fetch_playlist(
+    url: str, headers: Mapping[str, str], *, transport: httpx.AsyncBaseTransport | None = None
+) -> tuple[str, str]:
+    """The default ``PlaylistFetcher``. A playlist that won't load is a retryable 502."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=_PLAYLIST_TIMEOUT_S, follow_redirects=True, transport=transport
+        ) as client:
+            response = await client.get(url, headers=dict(headers))
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise site_error.playlist_failed(f"status {exc.response.status_code}") from exc
+    except httpx.HTTPError as exc:
+        raise site_error.playlist_failed(str(exc) or type(exc).__name__) from exc
+    return str(response.url), response.text
+
+
+@dataclass(frozen=True, slots=True)
+class _Page:
+    """What a page's site offers the player."""
+
+    inputs: list[MediaInput]
+    origin: SiteOrigin
+    #: Its inputs are HLS media playlists: read rather than probed, and cut from.
+    hls: bool
+    has_video: bool
 
 
 def _is_media_file(url: str) -> bool:
@@ -70,6 +107,7 @@ class StreamService(BaseService):
         event_hub: EventHub | None = None,
         progress_poll_s: float = 1.0,
         site_client: SiteClient | None = None,
+        playlist_fetcher: PlaylistFetcher = fetch_playlist,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -89,35 +127,45 @@ class StreamService(BaseService):
         self._event_hub = event_hub
         self._progress_poll_s = progress_poll_s
         self._site_client = site_client
+        self._playlist_fetcher = playlist_fetcher
 
     async def start_session(self, url: str) -> StreamSession:
         """Play ``url``: a page on a site, or a media file as it is.
 
         A page is read from the formats its site offers; anything no site
-        claims is played directly, the same fallback the add box makes.
+        claims is played directly, the same fallback the add box makes. An HLS
+        page isn't probed: its playlists say how long it is, and its segments
+        are cut from them.
         """
-        opened = await self._open_page(url)
-        inputs, origin = opened if opened is not None else ([MediaInput(url)], None)
-        first = inputs[0]
-        result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
+        page = await self._open_page(url)
+        inputs = page.inputs if page is not None else [MediaInput(url)]
+        playlists: list[MediaPlaylist] = []
+        if page is not None and page.hls:
+            playlists = await self._fetch_playlists(inputs)
+            duration, has_video = playlists[0].duration, page.has_video
+        else:
+            first = inputs[0]
+            result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
+            duration, has_video = result.duration_seconds, result.has_video
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
         session = StreamSession(
             id=session_id,
             inputs=inputs,
-            duration_seconds=result.duration_seconds,
-            has_video=result.has_video,
+            duration_seconds=duration,
+            has_video=has_video,
             segment_seconds=self._segment_seconds,
             session_dir=session_dir,
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
-            origin=origin,
+            origin=page.origin if page is not None else None,
+            playlists=playlists,
         )
         self._sessions.add(session)
         return session
 
-    async def _open_page(self, url: str) -> tuple[list[MediaInput], SiteOrigin] | None:
-        """The inputs a page's site offers for playback, or ``None`` for a plain file."""
+    async def _open_page(self, url: str) -> _Page | None:
+        """What a page's site offers for playback, or ``None`` for a plain file."""
         if self._site_client is None or _is_media_file(url):
             return None
         try:
@@ -130,8 +178,23 @@ class StreamService(BaseService):
             raise site_error.live_not_supported()
         plan = playback_plan(info.formats)
         parts = [part for part in (plan.video, plan.audio) if part is not None]
-        inputs = [MediaInput(resolved[part.id].url, resolved[part.id].headers) for part in parts]
-        return inputs, SiteOrigin(info.webpage_url or url, tuple(part.id for part in parts))
+        return _Page(
+            inputs=[MediaInput(resolved[part.id].url, resolved[part.id].headers) for part in parts],
+            origin=SiteOrigin(info.webpage_url or url, tuple(part.id for part in parts)),
+            hls=all(part.hls for part in parts),
+            has_video=plan.video is not None,
+        )
+
+    async def _fetch_playlists(self, inputs: list[MediaInput]) -> list[MediaPlaylist]:
+        """Each input's media playlist, fetched together."""
+        return list(await asyncio.gather(*(self._fetch_playlist(source) for source in inputs)))
+
+    async def _fetch_playlist(self, source: MediaInput) -> MediaPlaylist:
+        final_url, text = await self._playlist_fetcher(source.url, source.headers)
+        try:
+            return parse_media_playlist(final_url, text)
+        except PlaylistRefused as refused:
+            raise (site_error.live_not_supported() if refused.live else site_error.stream_not_playable()) from refused
 
     async def start_torrent_session(self, torrent_raw: str) -> StreamSession:
         if not self._torrent_enabled:
