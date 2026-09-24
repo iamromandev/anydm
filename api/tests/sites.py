@@ -7,14 +7,14 @@ tests can recognise.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from src.core.error import Error
 from src.lib.site import error as site_error
-from src.lib.site.client import Resolved, SiteInfo
+from src.lib.site.client import FormatProgress, Resolved, SiteInfo
 from src.lib.site.format import Format
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ytdlp"
@@ -56,6 +56,7 @@ class FakeSiteClient:
         self.extracted: list[str] = []
         self.resolved: list[tuple[str, list[str]]] = []
         self.opened: list[str] = []
+        self.downloaded: list[tuple[str, str]] = []
         self.site = info.extractor.lower()
 
     async def extract(self, url: str) -> SiteInfo:
@@ -68,7 +69,7 @@ class FakeSiteClient:
         self.opened.append(url)
         if self.fail is not None:
             raise self.fail
-        return self.info, {f.id: Resolved(media_url(self.site, f.id), dict(HEADERS)) for f in self.info.formats}
+        return self.info, {f.id: self._resolved(f.id) for f in self.info.formats}
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
         self.resolved.append((url, list(format_ids)))
@@ -78,4 +79,24 @@ class FakeSiteClient:
         missing = [format_id for format_id in format_ids if format_id not in offered]
         if missing:
             raise site_error.no_format_for_preset(missing[0])
-        return {format_id: Resolved(media_url(self.site, format_id), dict(HEADERS)) for format_id in format_ids}
+        return {format_id: self._resolved(format_id) for format_id in format_ids}
+
+    def download_format(
+        self,
+        page_url: str,
+        format_id: str,
+        destination: Path,
+        *,
+        concurrency: int,
+        rate_bps: int,
+        on_progress: Callable[[FormatProgress], None],
+        should_stop: Callable[[], bool],
+    ) -> None:
+        self.downloaded.append((page_url, format_id))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"f" * 10)
+        on_progress(FormatProgress(downloaded_bytes=10, total_bytes=10, speed_bps=None, eta_seconds=None))
+
+    def _resolved(self, format_id: str) -> Resolved:
+        fmt = next(f for f in self.info.formats if f.id == format_id)
+        return Resolved(media_url(self.site, format_id), dict(HEADERS), fragmented=fmt.fragmented)

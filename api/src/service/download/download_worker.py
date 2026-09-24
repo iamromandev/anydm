@@ -29,6 +29,7 @@ from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
+from src.service.download.fragment import FragmentDownloader
 from src.service.download.paths import final_path, part_path, task_dir
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
@@ -57,8 +58,10 @@ class DownloadWorker:
         max_attempts: int,
         segments: int,
         disk: DiskGuard | None = None,
+        fragments: FragmentDownloader | None = None,
     ) -> None:
         self._disk = disk
+        self._fragments = fragments
         self._name = name
         self._repo = repo
         self._segment_repo = segment_repo
@@ -107,9 +110,9 @@ class DownloadWorker:
         await task.save(update_fields=["attempts"])
 
         try:
-            parts = await self._download_parts(task)
+            parts, fragmented = await self._download_parts(task)
             destination = final_path(self._root, task.id, task.filename)
-            await self._post_processor.run(task, parts, destination)
+            await self._post_processor.run(task, parts, destination, fragmented=fragmented)
             await self._mark_complete(task, destination)
         except Stopped:
             # A pause or a cancel already set the row's status, so it is not
@@ -143,8 +146,12 @@ class DownloadWorker:
     def _emit(self, task: Task) -> None:
         self._hub.publish("task", TaskSchema.model_validate(task).to_json())
 
-    async def _download_parts(self, task: Task) -> dict[str, Path]:
-        """Fetch every stream the plan names, resuming any ``.part`` already there."""
+    async def _download_parts(self, task: Task) -> tuple[dict[str, Path], frozenset[str]]:
+        """Fetch every stream the plan names, resuming any ``.part`` already there.
+
+        Returns the parts by name, and the names of those yt-dlp's downloader
+        fetched.
+        """
         if task.platform == Platform.DIRECT:
             destination = part_path(self._root, task.id, "file")
             source_url = task.source_url
@@ -153,7 +160,7 @@ class DownloadWorker:
                 return source_url
 
             await self._fetch(task, "file", direct, destination, offset=0)
-            return {"file": destination}
+            return {"file": destination}, frozenset()
 
         wanted = [
             (name, format_id)
@@ -171,24 +178,33 @@ class DownloadWorker:
         batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
 
         parts: dict[str, Path] = {}
+        fragmented: set[str] = set()
         # Bytes already on disk from earlier parts. Without this the second part
         # would restart the percentage at zero and the UI would run backwards.
         offset = 0
         for name, format_id in wanted:
             destination = part_path(self._root, task.id, name)
-            handed = [batch[format_id]]
+            if batch[format_id].fragmented:
+                # HLS, DASH and the like: only yt-dlp's downloader fetches these,
+                # and it extracts the page itself, so the batch URL goes unused.
+                await self._fetch_fragments(task, name, source_url, format_id, destination, offset=offset)
+                fragmented.add(name)
+            else:
+                handed = [batch[format_id]]
 
-            # The batch answers the first ask; a URL that expires mid-transfer
-            # is resolved again, for this part alone. Bound as defaults because
-            # the loop variables would otherwise be read at call time.
-            async def provider(format_id: str = format_id, handed: list[Resolved] = handed) -> Target:
-                resolved = handed.pop() if handed else (await self._client.resolve(source_url, [format_id]))[format_id]
-                return Target(resolved.url, resolved.headers)
+                # The batch answers the first ask; a URL that expires mid-transfer
+                # is resolved again, for this part alone. Bound as defaults because
+                # the loop variables would otherwise be read at call time.
+                async def provider(format_id: str = format_id, handed: list[Resolved] = handed) -> Target:
+                    resolved = (
+                        handed.pop() if handed else (await self._client.resolve(source_url, [format_id]))[format_id]
+                    )
+                    return Target(resolved.url, resolved.headers)
 
-            await self._fetch(task, name, provider, destination, offset=offset)
+                await self._fetch(task, name, provider, destination, offset=offset)
             parts[name] = destination
             offset += destination.stat().st_size
-        return parts
+        return parts, frozenset(fragmented)
 
     def _segment_count(self, attempts: int, downloaded: int) -> int:
         """Halve the connections on every retry: 4, then 2, then 1.
@@ -242,6 +258,21 @@ class DownloadWorker:
             reconcile=reconcile,
             on_probe=on_probe,
             on_discard=discard,
+            on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
+            should_stop=lambda: self._control.is_stopping(task_id),
+        )
+
+    async def _fetch_fragments(
+        self, task: Task, part: str, page_url: str, format_id: str, destination: Path, *, offset: int
+    ) -> None:
+        if self._fragments is None:
+            raise Error.internal(message="This worker has no fragment downloader")
+        task_id = task.id
+        expected_total = task.total_bytes
+        await self._fragments.fetch(
+            page_url,
+            format_id,
+            destination,
             on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
             should_stop=lambda: self._control.is_stopping(task_id),
         )

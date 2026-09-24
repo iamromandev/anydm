@@ -17,7 +17,7 @@ from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.filename import safe_filename
-from src.lib.site.format import fetchable_plan
+from src.lib.site.format import select_plan
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
@@ -74,7 +74,7 @@ class DownloadService(BaseService):
         info = await self._client.extract(url)
         if info.is_live:
             raise site_error.live_not_supported()
-        plan = fetchable_plan(info.formats, preset)
+        plan = select_plan(info.formats, preset)
         # Refused before the row exists, so a 507 leaves nothing behind. An
         # estimated size counts here; an unknown one is checked against the
         # minimum alone, and the worker checks again once the probe knows.

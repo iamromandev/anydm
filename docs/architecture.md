@@ -43,17 +43,28 @@ challenges.
 
 Which format a preset means is decided in
 [`api/src/lib/site/format.py`](../api/src/lib/site/format.py): the tallest
-format not over the preset, plain HTTPS before HLS or DASH. The bytes of a
-plain format go through the same segmented engine as a direct link. HLS and
-DASH formats are left out until the fragment path exists, so a site that
-offers nothing else is refused.
+format not over the preset, plain HTTPS before HLS or DASH at the same height.
+The bytes of a plain format go through the same segmented engine as a direct
+link. HLS, DASH and the other fragmented formats go to `FragmentDownloader`
+([`api/src/service/download/fragment.py`](../api/src/service/download/fragment.py)).
+It runs yt-dlp's own downloader in a thread, for that one format, into the
+same part path. yt-dlp never merges or fixes up: the post-processor muxes a
+fragmented part with its partner like any other, and remuxes one that stands
+alone out of the container it arrived in (MPEG-TS, for most HLS).
 
 Throughput caps follow the same split. HTTP downloads share **one** limiter,
 built once in [`api/src/service/__init__.py`](../api/src/service/__init__.py)
 and handed to every worker and every segment, so `DOWNLOAD_RATE_LIMIT_BPS` caps
-their total rather than each one's share. It paces the read side: a chunk
-waits for its allowance before the next read, the socket's receive window
-fills, and TCP slows the sender. Torrents are rqbit's to pace. The API only
+their total rather than each one's share. yt-dlp's reads cannot pass through
+that limiter. With a cap set, a fragment download gets
+`DOWNLOAD_RATE_LIMIT_BPS ÷ DOWNLOAD_WORKERS` through yt-dlp's own limit, one
+fragment at a time (its limit does not hold across parallel fragments), and
+what it reads is charged to the shared limiter after the fact, so HTTP
+downloads running alongside slow down to make room. Bytes an earlier attempt
+left on disk are not charged again. The shared limiter paces
+the read side: a chunk waits for its allowance before the next read, the
+socket's receive window fills, and TCP slows the sender. Torrents are rqbit's
+to pace. The API only
 tells it `TORRENT_DOWNLOAD_LIMIT_BPS` and `TORRENT_UPLOAD_LIMIT_BPS` (see the
 torrent monitor below).
 

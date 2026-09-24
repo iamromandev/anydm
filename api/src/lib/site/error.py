@@ -42,11 +42,11 @@ def live_not_supported() -> Error:
     )
 
 
-def streaming_formats_only() -> Error:
-    """Every usable format is HLS or DASH, which the engine cannot fetch until #58."""
+def stream_not_playable() -> Error:
+    """Every format is a DASH, f4m or ISM manifest, which ffmpeg does not play by URL."""
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,
-        message="This site only offers streaming formats, which are not supported yet",
+        message="The player can't read this site's streams yet; it can still be downloaded",
         error_type=ErrorType.UNSUPPORTED_OPERATION,
     )
 
@@ -72,6 +72,16 @@ def extraction_failed(reason: str) -> Error:
     return Error.create(
         code=Code.BAD_GATEWAY,
         message=f"Extraction failed: {reason}",
+        error_type=ErrorType.EXTERNAL_API_ERROR,
+        retry_able=True,
+    )
+
+
+def transfer_failed(reason: str) -> Error:
+    """Retryable: a fragment still failing after yt-dlp's own retries, most often an expired URL."""
+    return Error.create(
+        code=Code.BAD_GATEWAY,
+        message=f"Download failed: {reason}",
         error_type=ErrorType.EXTERNAL_API_ERROR,
         retry_able=True,
     )

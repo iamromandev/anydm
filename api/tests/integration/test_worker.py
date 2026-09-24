@@ -31,6 +31,9 @@ class FakeSite:
     async def open(self, url: str) -> Any:
         raise AssertionError("downloads never open a page for playback")
 
+    def download_format(self, *args: Any, **kwargs: Any) -> None:
+        raise AssertionError("these tests download direct links only")
+
 
 def _worker(
     tmp_path: Path,

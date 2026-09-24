@@ -120,3 +120,23 @@ async def test_an_mp3_is_made_from_any_audio_codec(audio: str, clips: dict[str, 
     await FfmpegPostProcessor("ffmpeg").run(SimpleNamespace(kind=Kind.AUDIO), parts, destination)
 
     assert _probe(destination)[1] == ["mp3"]
+
+
+@pytest.mark.asyncio
+async def test_an_hls_part_is_remuxed_into_a_playable_mp4(tmp_path: Path) -> None:
+    # What yt-dlp's HLS downloader writes: raw MPEG-TS, H.264 and ADTS AAC.
+    part = tmp_path / "video.part"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=1",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        "-c:v", "libx264", "-c:a", "aac", "-f", "mpegts", str(part),
+    )
+    destination = tmp_path / "out.mp4"
+
+    await FfmpegPostProcessor("ffmpeg").run(
+        SimpleNamespace(kind=Kind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
+    )
+
+    format_name, codecs = _probe(destination)
+    assert "mp4" in format_name
+    assert codecs == ["aac", "h264"]

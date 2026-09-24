@@ -4,7 +4,7 @@ from src.core.base import BaseService
 from src.data.schema.extract import ExtractSchema, FormatSchema
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.format import Format, fetchable_presets
+from src.lib.site.format import Format, usable_presets
 
 
 def _to_format(fmt: Format) -> FormatSchema:
@@ -30,13 +30,12 @@ class ExtractService(BaseService):
         """What a page offers, and which presets can be downloaded from it today.
 
         Refuses what enqueueing would refuse, so a preview never offers a
-        download that is bound to fail: live streams, and sites whose formats
-        are all HLS or DASH until the fragment path lands.
+        download that is bound to fail: live streams.
         """
         info = await self._client.extract(url)
         if info.is_live:
             raise site_error.live_not_supported()
-        presets = fetchable_presets(info.formats)
+        presets = usable_presets(info.formats)
 
         return ExtractSchema(
             extractor=info.extractor,

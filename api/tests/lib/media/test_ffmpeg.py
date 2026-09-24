@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
-from src.lib.media.ffmpeg import mp3_args, mux_args, run, segment_args
+from src.lib.media.ffmpeg import mp3_args, mux_args, remux_args, run, segment_args
 from src.lib.media.source import MediaInput
 
 
@@ -44,6 +44,17 @@ def test_mp3_args_drop_video_and_encode_audio() -> None:
     assert args[-1] == "/t/out.mp3"
 
 
+def test_remux_args_copy_every_stream_into_the_destination_s_container() -> None:
+    mp4 = remux_args("ffmpeg", Path("/t/video.part"), Path("/t/out.mp4"))
+    assert mp4[mp4.index("-i") + 1] == "/t/video.part"
+    assert mp4[mp4.index("-c") + 1] == "copy"
+    assert mp4[mp4.index("-movflags") + 1] == "+faststart"
+    assert mp4[-1] == "/t/out.mp4"
+
+    mkv = remux_args("ffmpeg", Path("/t/video.part"), Path("/t/out.mkv"))
+    assert "-movflags" not in mkv
+
+
 def test_the_configured_binary_is_used() -> None:
     assert mp3_args("/opt/bin/ffmpeg", Path("/t/a"), Path("/t/o"))[0] == "/opt/bin/ffmpeg"
 
@@ -60,6 +71,17 @@ def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
     assert args[args.index("-c:a") + 1] == "aac"
     assert args[args.index("-f") + 1] == "mpegts"
     assert args[-1] == "/t/segment_2.ts"
+
+
+def test_the_first_segment_reads_from_the_start_rather_than_seeking_to_it() -> None:
+    # ffmpeg's HLS demuxer drops packets until a keyframe at or past the seek
+    # target. Dailymotion's first keyframe decodes 0.03 s before the stream's
+    # start, so seeking to 0 dropped it: three seconds without a picture.
+    inputs = [MediaInput("https://media.test/v"), MediaInput("https://media.test/a")]
+    args = segment_args("ffmpeg", inputs, 0.0, 6.0, Path("/t/segment_0.ts"), has_video=True)
+
+    assert "-ss" not in args
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-i"] == ["https://media.test/v", "https://media.test/a"]
 
 
 def test_segment_args_does_not_offset_output_timestamps() -> None:

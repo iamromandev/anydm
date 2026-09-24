@@ -40,6 +40,24 @@ def mux_args(ffmpeg: str, video: Path, audio: Path, destination: Path) -> list[s
     return [*args, str(destination)]
 
 
+def remux_args(ffmpeg: str, source: Path, destination: Path) -> list[str]:
+    """Copy every stream of ``source`` into the container the destination names.
+
+    For a part that came down as HLS. MPEG-TS is not MP4, and an fMP4 part is
+    better with a normal index at the front. ffmpeg inserts ``aac_adtstoasc``
+    itself when AAC moves from TS into MP4.
+    """
+    args = [
+        ffmpeg,
+        "-y",
+        "-i", str(source),
+        "-c", "copy",
+    ]
+    if destination.suffix == ".mp4":
+        args += ["-movflags", "+faststart"]
+    return [*args, str(destination)]
+
+
 def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
     """Transcode an audio stream to MP3 at V2 (roughly 190 kbps VBR)."""
     return [
@@ -93,8 +111,14 @@ def segment_args(
     attempt. Stereo is the safe, universally-supported target.
     """
     args = [ffmpeg, "-y"]
+    # The first segment reads from the start rather than seeking to it.
+    # ffmpeg's HLS demuxer drops packets until a keyframe at or past the seek
+    # target, and a first keyframe that decodes a moment before the stream's
+    # start (Dailymotion's does) would go, and the picture with it until the
+    # next one.
+    seek = ["-ss", str(start_seconds)] if start_seconds > 0 else []
     for source in inputs:
-        args += ["-ss", str(start_seconds), *headers_args(source.headers), "-i", source.url]
+        args += [*seek, *headers_args(source.headers), "-i", source.url]
     args += ["-t", str(duration_seconds)]
     if len(inputs) > 1:
         args += ["-map", "0:v:0", "-map", "1:a:0"]

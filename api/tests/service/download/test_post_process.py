@@ -45,6 +45,25 @@ async def test_a_direct_download_part_is_also_just_renamed(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_fragmented_single_part_is_remuxed_not_renamed(tmp_path: Path) -> None:
+    # HLS arrives as MPEG-TS. Renamed to .mp4 it would be a TS file in disguise.
+    part = tmp_path / "video.part"
+    part.write_bytes(b"ts")
+    destination = tmp_path / "clip.mp4"
+    runner = SpyRunner()
+
+    task = SimpleNamespace(kind=Kind.VIDEO, audio_format=None, video_format="hls-1080")
+    await FfmpegPostProcessor("ffmpeg", runner).run(task, {"video": part}, destination, fragmented=frozenset({"video"}))
+
+    assert len(runner.calls) == 1
+    args = runner.calls[0]
+    assert args[args.index("-i") + 1] == str(part)
+    assert args[args.index("-c") + 1] == "copy"
+    assert args[-1] == str(destination)
+    assert not part.exists()
+
+
+@pytest.mark.asyncio
 async def test_video_plus_audio_is_muxed(tmp_path: Path) -> None:
     video, audio = tmp_path / "video.part", tmp_path / "audio.part"
     video.write_bytes(b"v")
