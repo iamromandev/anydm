@@ -59,8 +59,9 @@ their total rather than each one's share. yt-dlp's reads cannot pass through
 that limiter. With a cap set, a fragment download gets
 `DOWNLOAD_RATE_LIMIT_BPS ÷ DOWNLOAD_WORKERS` through yt-dlp's own limit, one
 fragment at a time (its limit does not hold across parallel fragments), and
-every byte it reports is charged to the shared limiter after the fact, so HTTP
-downloads running alongside slow down to make room. The shared limiter paces
+what it reads is charged to the shared limiter after the fact, so HTTP
+downloads running alongside slow down to make room. Bytes an earlier attempt
+left on disk are not charged again. The shared limiter paces
 the read side: a chunk waits for its allowance before the next read, the
 socket's receive window fills, and TCP slows the sender. Torrents are rqbit's
 to pace. The API only

@@ -198,6 +198,21 @@ async def test_every_byte_is_charged_to_the_shared_limiter(tmp_path: Path) -> No
     assert all(size > 0 for size in limiter.acquired)
 
 
+@pytest.mark.asyncio
+async def test_bytes_already_on_disk_are_not_charged_again(tmp_path: Path) -> None:
+    # A resumed download's first report counts what earlier attempts left on
+    # disk. Charging it all at a 1 MB/s cap would hold every HTTP download
+    # sharing the cap for as long as those bytes took to fetch: 15 minutes.
+    limiter = RecordingLimiter()
+    steps = [FormatProgress(900_000_000, None, None, None), FormatProgress(900_010_000, None, None, None)]
+
+    await _downloader(ScriptedClient(steps), limiter=limiter, rate_bps=1_000_000).fetch(
+        PAGE, "hls-1080", tmp_path / "video.part", on_sample=_ignore, should_stop=lambda: False
+    )
+
+    assert sum(limiter.acquired) < 1_000_000
+
+
 def test_without_a_cap_fragments_download_as_many_at_a_time_as_segments() -> None:
     assert fragment_limits(0, workers=2, segments=4) == (4, 0)
 

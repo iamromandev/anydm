@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from src.lib.site.client import DownloadStopped, FormatProgress, SiteClient
 from src.service.download.downloader import Stopped
 from src.service.download.progress import AggregateSample
 from src.service.download.rate_limit import Limiter
+
+#: How far past its own limit yt-dlp may read in one poll. The probe measured it
+#: at 0.96 of the limit, so this covers the loop's timing more than yt-dlp.
+_SLACK = 1.25
 
 
 def fragment_limits(cap_bps: int, workers: int, segments: int) -> tuple[int, int]:
@@ -75,7 +80,8 @@ class FragmentDownloader:
     ) -> int:
         latest: list[FormatProgress] = []
         shutdown = threading.Event()
-        charged = 0
+        seen = 0
+        seen_at = time.monotonic()
 
         def on_progress(progress: FormatProgress) -> None:
             # Called from yt-dlp's threads. One slot, replaced whole, so the
@@ -88,18 +94,26 @@ class FragmentDownloader:
             return shutdown.is_set() or should_stop()
 
         async def report() -> None:
-            nonlocal charged
+            nonlocal seen, seen_at
             # Once a stop is asked, the pause or cancel has written the row's
             # last numbers, and the engine reports nothing after it either.
             if not latest or should_stop():
                 return
             progress = latest[0]
-            fresh = progress.downloaded_bytes - charged
+            now = time.monotonic()
+            fresh = progress.downloaded_bytes - seen
+            if self._rate_bps > 0:
+                # A resumed download's first report counts what earlier attempts
+                # left on disk, and fragments they finished count again as they
+                # are joined. Only what this one could have read at its own
+                # limit is new. Charging the rest would hold every HTTP download
+                # behind bytes nobody is fetching.
+                fresh = min(fresh, int(self._rate_bps * (now - seen_at) * _SLACK))
+            seen, seen_at = progress.downloaded_bytes, now
             if fresh > 0:
                 # yt-dlp's reads cannot pass through the shared limiter, so its
                 # bytes are charged after the fact. HTTP downloads running
                 # alongside then slow down to leave room.
-                charged = progress.downloaded_bytes
                 await self._limiter.acquire(fresh)
             await on_sample(_sample(progress))
 
