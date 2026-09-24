@@ -75,3 +75,13 @@ def extraction_failed(reason: str) -> Error:
         error_type=ErrorType.EXTERNAL_API_ERROR,
         retry_able=True,
     )
+
+
+def transfer_failed(reason: str) -> Error:
+    """Retryable: a fragment still failing after yt-dlp's own retries, most often an expired URL."""
+    return Error.create(
+        code=Code.BAD_GATEWAY,
+        message=f"Download failed: {reason}",
+        error_type=ErrorType.EXTERNAL_API_ERROR,
+        retry_able=True,
+    )

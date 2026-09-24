@@ -18,10 +18,12 @@ JavaScript, which it has deprecated and which offers fewer formats.
 from __future__ import annotations
 
 import asyncio
+import errno
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import metadata
+from pathlib import Path
 from typing import Any, Protocol
 
 from loguru import logger
@@ -32,6 +34,10 @@ from src.lib.site.format import Format, is_fragmented
 
 #: A blocking ``url -> info dict`` call; yt-dlp's in production, a fake in tests.
 Extract = Callable[[str], dict[str, Any]]
+
+#: Runs yt-dlp's documented ``download()`` for one page with the given params.
+#: yt-dlp's in production, a fake in tests.
+Download = Callable[[dict[str, Any], str], None]
 
 _UNSUPPORTED_MARKERS = ("unsupported url", "is not a valid url")
 _MISSING_MARKERS = ("private", "unavailable", "removed", "deleted", "does not exist", "http error 404")
@@ -72,6 +78,21 @@ class Resolved:
     fragmented: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class FormatProgress:
+    """How far a ``download_format`` has got, in yt-dlp-free terms."""
+
+    downloaded_bytes: int
+    #: Exact on the last call. yt-dlp's fragment-based estimate before it.
+    total_bytes: int | None
+    speed_bps: int | None
+    eta_seconds: int | None
+
+
+class DownloadStopped(Exception):
+    """Raised through yt-dlp by the progress hook when the caller asked to stop."""
+
+
 class SiteClient(Protocol):
     async def extract(self, url: str) -> SiteInfo:
         """What the page at ``url`` offers."""
@@ -90,6 +111,26 @@ class SiteClient(Protocol):
 
         For the player, which chooses and fetches in the same request and
         would otherwise wait on two extractions of seconds each.
+        """
+        ...
+
+    def download_format(
+        self,
+        page_url: str,
+        format_id: str,
+        destination: Path,
+        *,
+        concurrency: int,
+        rate_bps: int,
+        on_progress: Callable[[FormatProgress], None],
+        should_stop: Callable[[], bool],
+    ) -> None:
+        """Download one format of ``page_url`` into ``destination``, with yt-dlp's own downloader.
+
+        Blocking, so callers run it in a thread. For the parts only yt-dlp can
+        fetch: HLS, DASH and the rest of the fragmented protocols. It resumes
+        from what an earlier call left beside ``destination``, and raises
+        ``DownloadStopped`` once ``should_stop`` says so.
         """
         ...
 
@@ -147,6 +188,37 @@ def _resolved(info: dict[str, Any]) -> dict[str, Resolved]:
     }
 
 
+def _progress(status: dict[str, Any]) -> FormatProgress:
+    """A yt-dlp progress-hook dict as a ``FormatProgress``."""
+    downloaded = int(status.get("downloaded_bytes") or 0)
+    total = status.get("total_bytes") or status.get("total_bytes_estimate")
+    speed = status.get("speed")
+    eta = status.get("eta")
+    return FormatProgress(
+        downloaded_bytes=downloaded,
+        # An estimate can trail what has already arrived, and a total below the
+        # bytes on disk would put the percentage past 100.
+        total_bytes=max(int(total), downloaded) if total else None,
+        speed_bps=int(speed) if speed else None,
+        eta_seconds=int(eta) if eta is not None else None,
+    )
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and everything it wraps: causes, contexts, and yt-dlp's ``exc_info``."""
+    found: list[BaseException] = []
+    pending = [exc]
+    while pending:
+        current = pending.pop()
+        if any(current is seen for seen in found):
+            continue
+        found.append(current)
+        info = getattr(current, "exc_info", None)
+        wrapped = info[1] if isinstance(info, tuple) and len(info) > 1 else None
+        pending.extend(e for e in (current.__cause__, current.__context__, wrapped) if isinstance(e, BaseException))
+    return found
+
+
 class _Log:
     """Routes yt-dlp's own messages into loguru; its chatter stays out."""
 
@@ -180,9 +252,23 @@ def _ytdlp_extract(url: str) -> dict[str, Any]:
         return ydl.extract_info(url, download=False)
 
 
+def _ytdlp_download(params: dict[str, Any], url: str) -> None:
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL(params) as ydl:
+        ydl.download([url])
+
+
 class YtDlpClient(SiteClient):
-    def __init__(self, extract: Extract = _ytdlp_extract, *, timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        extract: Extract = _ytdlp_extract,
+        *,
+        download: Download = _ytdlp_download,
+        timeout_s: float = 60.0,
+    ) -> None:
         self._extract = extract
+        self._download = download
         self._timeout_s = timeout_s
 
     async def extract(self, url: str) -> SiteInfo:
@@ -198,6 +284,75 @@ class YtDlpClient(SiteClient):
     async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
         info = await self._info(url)
         return _to_site_info(url, info), _resolved(info)
+
+    def download_format(
+        self,
+        page_url: str,
+        format_id: str,
+        destination: Path,
+        *,
+        concurrency: int,
+        rate_bps: int,
+        on_progress: Callable[[FormatProgress], None],
+        should_stop: Callable[[], bool],
+    ) -> None:
+        started = False
+
+        def hook(status: dict[str, Any]) -> None:
+            # yt-dlp may call this from several fragment threads at once. The
+            # flag only ever goes from False to True.
+            nonlocal started
+            started = True
+            on_progress(_progress(status))
+            if should_stop():
+                raise DownloadStopped
+
+        params: dict[str, Any] = {
+            "format": format_id,
+            "outtmpl": str(destination),
+            "noplaylist": True,
+            # A later attempt picks up from yt-dlp's own record of the
+            # fragments already on disk (``<destination>.ytdl``).
+            "continuedl": True,
+            # yt-dlp only downloads. Muxing and remuxing are the post-processor's.
+            "fixup": "never",
+            "postprocessors": [],
+            # A fragment that cannot be had fails the download. Skipping it
+            # would leave a gap nobody is told about.
+            "skip_unavailable_fragments": False,
+            # yt-dlp's own fragment downloaders, never an ffmpeg subprocess:
+            # the hooks, stopping and resuming were all probed on these.
+            "external_downloader": {"m3u8": "native", "dash": "native"},
+            "concurrent_fragment_downloads": concurrency,
+            "progress_hooks": [hook],
+            "quiet": True,
+            "noprogress": True,
+            "socket_timeout": 20,
+            "logger": _Log(),
+        }
+        if rate_bps > 0:
+            params["ratelimit"] = rate_bps
+
+        if should_stop():
+            raise DownloadStopped
+        try:
+            self._download(params, page_url)
+        except Exception as exc:
+            chain = _chain(exc)
+            stopped = next((e for e in chain if isinstance(e, DownloadStopped)), None)
+            if stopped is not None:
+                raise stopped from None
+            full = next((e for e in chain if isinstance(e, OSError) and e.errno == errno.ENOSPC), None)
+            if full is not None:
+                raise full from None
+            if not started:
+                # Nothing downloaded yet, so this is yt-dlp reading the page.
+                logger.error("YtDlpClient|{} {}: {}", page_url, format_id, exc)
+                raise classify(exc) from exc
+            # Mid-download: expired fragment URLs answer 403 or 404, and the
+            # next attempt extracts fresh ones.
+            logger.error("YtDlpClient|{} {} failed mid-download: {}", page_url, format_id, exc)
+            raise site_error.transfer_failed(str(exc)) from exc
 
     async def _info(self, url: str) -> dict[str, Any]:
         try:
