@@ -92,6 +92,11 @@ class Format:
         return is_fragmented(self.protocol)
 
     @property
+    def hls(self) -> bool:
+        """An HLS playlist: the one fragmented kind the player cuts segments from."""
+        return "m3u8" in self.protocol
+
+    @property
     def best_size(self) -> tuple[int | None, bool]:
         """The size to count, and whether it is only an estimate."""
         if self.size:
@@ -271,15 +276,21 @@ PLAYBACK_PRESET = Preset.P1080
 def playback_plan(formats: list[Format]) -> Plan:
     """What the player streams: video at up to 1080p, or an audio-only site's audio.
 
-    Plain files only, for now. Each segment is cut by seeking into the input,
-    and ffmpeg's seek into HLS clips the start of a TS segment and hangs on
-    fMP4, reading on for minutes into output nothing can play (#87). A DASH,
-    f4m or ISM URL is a manifest of every rendition besides. Downloads take
-    all of them.
+    Plain files first, and HLS only when a page has nothing else that plays:
+    an HLS segment costs a playlist fetch and a cut (#87). A plan is all one
+    or all the other, since the player reads both of its inputs the same way.
+    Within each kind, video comes first, so a page's HLS video beats its plain
+    audio. A DASH, f4m or ISM URL is a manifest of every rendition, which
+    ffmpeg would not narrow to the one chosen. Downloads take all of them.
     """
-    playable = [f for f in formats if not f.fragmented]
-    presets = usable_presets(playable)
-    if not presets and usable_presets(formats):
+    plain = [f for f in formats if not f.fragmented]
+    hls = [f for f in formats if f.hls]
+    for pool in (plain, hls):
+        if Preset.BEST in usable_presets(pool):
+            return select_plan(pool, PLAYBACK_PRESET)
+    for pool in (plain, hls):
+        if Preset.MP3 in usable_presets(pool):
+            return select_plan(pool, Preset.MP3)
+    if usable_presets(formats):
         raise stream_not_playable()
-    preset = Preset.MP3 if presets and Preset.BEST not in presets else PLAYBACK_PRESET
-    return select_plan(playable, preset)
+    return select_plan(formats, PLAYBACK_PRESET)

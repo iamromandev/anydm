@@ -16,9 +16,13 @@ from loguru import logger
 
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.lib.media.source import MediaInput, headers_args
+from src.lib.media.source import MediaInput, PlaylistCut, headers_args
 
 _STDERR_TAIL = 2000
+
+#: What a cut's local playlist may open: itself, its fragments over HTTP(S),
+#: and the crypto protocol that decrypts AES-128 ones.
+_CUT_PROTOCOLS = "file,http,https,tcp,tls,crypto"
 
 
 def mux_args(ffmpeg: str, video: Path, audio: Path, destination: Path) -> list[str]:
@@ -73,7 +77,7 @@ def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
 
 def segment_args(
     ffmpeg: str,
-    inputs: Sequence[MediaInput],
+    inputs: Sequence[MediaInput] | Sequence[PlaylistCut],
     start_seconds: float,
     duration_seconds: float,
     destination: Path,
@@ -85,6 +89,15 @@ def segment_args(
     ``inputs`` is one source, or a site's separate video and audio. With two,
     video comes from the first and audio from the second, and each gets its own
     ``-ss`` and headers: input options apply only to the ``-i`` they precede.
+
+    An HLS source comes as ``PlaylistCut``s instead, never mixed with plain
+    inputs: a local playlist of just the fragments the segment overlaps, read
+    from their start. Seeking into HLS drops every stream's packets until a
+    keyframe at or past the target, which clips TS audio and misreads fMP4
+    (#87). Each cut is shifted by how much later its first fragment starts
+    than the earliest cut's, which lines up two playlists whose fragments
+    don't, and the output is trimmed to the segment. ffmpeg can't pass headers
+    on from a local playlist, so the fragments go without the site's.
 
     Always re-encoding (never ``-c copy``) is deliberate: it lets ``-ss`` cut
     at any exact timestamp cleanly, because ffmpeg decodes from the nearest
@@ -110,15 +123,28 @@ def segment_args(
     6-channel AAC segment raised CHUNK_DEMUXER_ERROR_APPEND_FAILED on every
     attempt. Stereo is the safe, universally-supported target.
     """
+    cuts = [source for source in inputs if isinstance(source, PlaylistCut)]
+    plain = [source for source in inputs if isinstance(source, MediaInput)]
+    if cuts and plain:
+        raise ValueError("a segment reads plain inputs or playlist cuts, never both")
     args = [ffmpeg, "-y"]
-    # The first segment reads from the start rather than seeking to it.
-    # ffmpeg's HLS demuxer drops packets until a keyframe at or past the seek
-    # target, and a first keyframe that decodes a moment before the stream's
-    # start (Dailymotion's does) would go, and the picture with it until the
-    # next one.
-    seek = ["-ss", str(start_seconds)] if start_seconds > 0 else []
-    for source in inputs:
-        args += [*seek, *headers_args(source.headers), "-i", source.url]
+    if cuts:
+        origin = min(cut.starts_at for cut in cuts)
+        for cut in cuts:
+            args += [
+                "-itsoffset", f"{cut.starts_at - origin:.3f}",
+                "-protocol_whitelist", _CUT_PROTOCOLS,
+                "-allowed_extensions", "ALL",
+                "-i", str(cut.path),
+            ]
+        args += ["-ss", f"{start_seconds - origin:.3f}"]
+    else:
+        # The first segment reads from the start rather than seeking to it: a
+        # seek there can only lose a first keyframe that decodes a moment
+        # before zero, and the picture with it until the next one.
+        seek = ["-ss", str(start_seconds)] if start_seconds > 0 else []
+        for source in plain:
+            args += [*seek, *headers_args(source.headers), "-i", source.url]
     args += ["-t", str(duration_seconds)]
     if len(inputs) > 1:
         args += ["-map", "0:v:0", "-map", "1:a:0"]

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from src.core.error import Error
 from src.lib.media.ffmpeg import mp3_args, mux_args, remux_args, run, segment_args
-from src.lib.media.source import MediaInput
+from src.lib.media.source import MediaInput, PlaylistCut
 
 
 def test_mux_args_copies_both_streams_without_re_encoding() -> None:
@@ -192,3 +192,70 @@ async def test_run_kills_the_subprocess_when_its_task_is_cancelled() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert time.monotonic() - started < 5.0
+
+
+def _inputs(args: list[str]) -> list[str]:
+    return [args[i + 1] for i, arg in enumerate(args) if arg == "-i"]
+
+
+def test_plain_inputs_come_out_as_they_always_have() -> None:
+    # Pins today's arguments for plain files while cuts arrive beside them.
+    video = MediaInput("https://media.test/v", {"User-Agent": "UA"})
+    audio = MediaInput("https://media.test/a")
+
+    assert segment_args("ffmpeg", [video, audio], 12.0, 6.0, Path("/t/s.ts"), has_video=True) == [
+        "ffmpeg", "-y",
+        "-ss", "12.0", "-headers", "User-Agent: UA\r\n", "-i", "https://media.test/v",
+        "-ss", "12.0", "-i", "https://media.test/a",
+        "-t", "6.0",
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2",
+        "-f", "mpegts", "/t/s.ts",
+    ]
+
+
+def test_a_cut_is_read_whole_and_trimmed_on_the_way_out() -> None:
+    # Seeking into HLS drops packets until a keyframe past the target (#87),
+    # so a cut's fragments are read from their start and the output trimmed.
+    cut = PlaylistCut(Path("/s/segment_2.0.m3u8"), starts_at=10.0)
+    args = segment_args("ffmpeg", [cut], 12.0, 6.0, Path("/s/segment_2.ts"), has_video=True)
+
+    i = args.index("-i")
+    assert args[i + 1] == "/s/segment_2.0.m3u8"
+    assert args[i - 6 : i] == [
+        "-itsoffset", "0.000",
+        "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+        "-allowed_extensions", "ALL",
+    ]
+    assert args[i + 2 : i + 6] == ["-ss", "2.000", "-t", "6.0"]
+    assert args.count("-ss") == 1
+    # ffmpeg can't pass headers on from a local playlist to its fragments.
+    assert "-headers" not in args
+
+
+def test_two_cuts_line_up_on_the_earlier_one() -> None:
+    # Dailymotion's video fragments run 3.00 s and its audio's 2.90 s, so a
+    # segment's first video and audio fragments rarely start together.
+    video = PlaylistCut(Path("/s/segment_10.0.m3u8"), starts_at=60.0)
+    audio = PlaylistCut(Path("/s/segment_10.1.m3u8"), starts_at=58.0)
+    args = segment_args("ffmpeg", [video, audio], 60.0, 6.0, Path("/s/segment_10.ts"), has_video=True)
+
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-itsoffset"] == ["2.000", "0.000"]
+    assert _inputs(args) == ["/s/segment_10.0.m3u8", "/s/segment_10.1.m3u8"]
+    assert args[args.index("-ss") + 1] == "2.000"
+    assert args.index("-ss") > max(i for i, arg in enumerate(args) if arg == "-i")
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-map"] == ["0:v:0", "1:a:0"]
+
+
+def test_a_cut_of_audio_alone_is_encoded_as_audio() -> None:
+    args = segment_args("ffmpeg", [PlaylistCut(Path("/s/c.m3u8"), 0.0)], 0.0, 6.0, Path("/s/o.ts"), has_video=False)
+
+    assert "-vn" in args
+    assert "-c:v" not in args
+
+
+def test_plain_inputs_and_cuts_are_never_mixed() -> None:
+    inputs = [MediaInput("https://media.test/v"), PlaylistCut(Path("/s/a.m3u8"), 0.0)]
+
+    with pytest.raises(ValueError):
+        segment_args("ffmpeg", inputs, 6.0, 6.0, Path("/s/o.ts"), has_video=True)  # ty: ignore[invalid-argument-type]

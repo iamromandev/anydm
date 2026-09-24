@@ -1,17 +1,21 @@
 import asyncio
+import math
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
+import httpx
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.lib.media.ffprobe import ProbeResult
 from src.lib.media.source import MediaInput
 from src.lib.site import error as site_error
+from src.lib.site.client import SiteInfo
 from src.lib.site.format import playback_plan
 from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSessionStore
-from src.service.stream.stream_service import Prober, StreamService
+from src.service.stream.stream_service import Prober, StreamService, fetch_playlist
 
 from tests.sites import HEADERS, FakeSiteClient, media_url, site_info
 
@@ -685,12 +689,48 @@ async def test_stop_session_does_not_raise_when_the_engine_delete_fails(tmp_path
 # --- pages on a site --------------------------------------------------------------
 
 YOUTUBE_PAGE = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+DAILYMOTION_PAGE = "https://www.dailymotion.com/video/x8"
+VIMEO_PAGE = "https://vimeo.com/channels/keypeele/75629013"
 FORBIDDEN = "ffmpeg exited with 8: [https @ 0x1] HTTP error 403 Forbidden"
+
+
+def _media_playlist(fragments: int = 10, seconds: float = 2.0, *, name: str = "frag") -> str:
+    """A finished media playlist of TS fragments, named relative to wherever it's served."""
+    lines = ["#EXTM3U", f"#EXT-X-TARGETDURATION:{math.ceil(seconds)}"]
+    for n in range(fragments):
+        lines += [f"#EXTINF:{seconds:.3f},", f"{name}{n}.ts"]
+    return "\n".join([*lines, "#EXT-X-ENDLIST"]) + "\n"
+
+
+class FakePlaylists:
+    """A ``PlaylistFetcher`` serving one playlist for any URL, unredirected; records each fetch."""
+
+    def __init__(self, text: str | None = None, *, fail: Error | None = None) -> None:
+        self.text = text or _media_playlist()
+        self.fail = fail
+        self.fetched: list[tuple[str, dict[str, str]]] = []
+
+    async def __call__(self, url: str, headers: Mapping[str, str]) -> tuple[str, str]:
+        self.fetched.append((url, dict(headers)))
+        if self.fail is not None:
+            raise self.fail
+        return url, self.text
+
+
+def _hls_only(site: str) -> SiteInfo:
+    """A recorded site with its plain files taken away, so the player has to use its HLS."""
+    return site_info(site, formats=[f for f in site_info(site).formats if f.hls])
+
+
+def _ids(info: SiteInfo) -> tuple[str, ...]:
+    plan = playback_plan(info.formats)
+    return tuple(part.id for part in (plan.video, plan.audio) if part is not None)
 
 
 def _site_service(
     tmp_path: Path, client: FakeSiteClient, *, encoder: object = None, **overrides: object
 ) -> tuple[StreamService, list[tuple[str, object]], list[list[str]]]:
+    overrides.setdefault("playlist_fetcher", FakePlaylists())
     probed: list[tuple[str, object]] = []
     encoded: list[list[str]] = []
 
@@ -714,8 +754,7 @@ def _site_service(
 
 
 def _plan_ids(site: str) -> tuple[str, ...]:
-    plan = playback_plan(site_info(site).formats)
-    return tuple(part.id for part in (plan.video, plan.audio) if part is not None)
+    return _ids(site_info(site))
 
 
 def _forbidden() -> Error:
@@ -738,6 +777,7 @@ async def test_a_page_link_plays_its_formats_instead_of_probing_the_page(tmp_pat
     ]
     assert session.origin == SiteOrigin(site_info("youtube").webpage_url, (video, audio))
     assert probed == [(media_url("youtube", video), HEADERS)]
+    assert session.playlists == []
 
 
 @pytest.mark.asyncio
@@ -801,14 +841,12 @@ async def test_a_live_page_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_hls_only_page_is_refused_for_playback_for_now(tmp_path: Path) -> None:
-    # Until #87 cuts HLS segments without seeking into the stream.
+async def test_an_hls_only_page_plays_its_hls(tmp_path: Path) -> None:
     service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
 
-    with pytest.raises(Error) as caught:
-        await service.start_session("https://www.dailymotion.com/video/x8")
+    session = await service.start_session(DAILYMOTION_PAGE)
 
-    assert "can still be downloaded" in (caught.value.message or "")
+    assert session.inputs == [MediaInput(media_url("dailymotion", "hls-1080"), HEADERS)]
 
 
 @pytest.mark.asyncio
@@ -911,3 +949,235 @@ async def test_a_direct_file_refused_is_the_error_without_asking_a_site(tmp_path
         await service.get_segment(session, 0)
 
     assert client.resolved == []
+
+
+# --- HLS pages ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_hls_page_reads_its_playlist_instead_of_probing(tmp_path: Path) -> None:
+    playlists = FakePlaylists(_media_playlist(fragments=7))  # 14 s, where the prober would say 20
+    client = FakeSiteClient(site_info("dailymotion"))
+    service, probed, _ = _site_service(tmp_path, client, playlist_fetcher=playlists)
+
+    session = await service.start_session(DAILYMOTION_PAGE)
+
+    assert playlists.fetched == [(media_url("dailymotion", "hls-1080"), HEADERS)]
+    assert probed == []
+    assert (session.duration_seconds, session.segment_count, session.has_video) == (14.0, 3, True)
+    assert [len(playlist.fragments) for playlist in session.playlists] == [7]
+
+
+@pytest.mark.asyncio
+async def test_an_hls_page_of_audio_alone_plays_as_audio(tmp_path: Path) -> None:
+    # Whether there's a picture comes from the plan: nothing probes an HLS page,
+    # and the fake prober would have said there was.
+    info = _hls_only("soundcloud")
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(info))
+
+    session = await service.start_session("https://soundcloud.com/someone/a-track")
+
+    assert session.has_video is False
+    assert session.inputs == [MediaInput(media_url("soundcloud", _ids(info)[0]), HEADERS)]
+
+
+@pytest.mark.asyncio
+async def test_each_input_of_an_hls_page_reads_its_own_playlist(tmp_path: Path) -> None:
+    info = _hls_only("vimeo")
+    playlists = FakePlaylists()
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(info), playlist_fetcher=playlists)
+
+    session = await service.start_session(VIMEO_PAGE)
+
+    video, audio = _ids(info)
+    assert playlists.fetched == [(media_url("vimeo", video), HEADERS), (media_url("vimeo", audio), HEADERS)]
+    assert len(session.playlists) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_hls_playlist_that_will_not_load_leaves_no_session_behind(tmp_path: Path) -> None:
+    store = StreamSessionStore()
+    playlists = FakePlaylists(fail=site_error.playlist_failed("status 403"))
+    client = FakeSiteClient(site_info("dailymotion"))
+    service, _, _ = _site_service(tmp_path, client, playlist_fetcher=playlists, sessions=store)
+
+    with pytest.raises(Error) as caught:
+        await service.start_session(DAILYMOTION_PAGE)
+
+    assert (caught.value.code, caught.value.retry_able) == (Code.BAD_GATEWAY, True)
+    assert store.all() == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlow/index.m3u8\n", "can still be downloaded"),
+        ("#EXTM3U\n#EXTINF:2,\nfrag0.ts\n", "Live streams"),
+    ],
+    ids=["master", "live"],
+)
+async def test_an_hls_playlist_the_player_cannot_cut_is_refused(tmp_path: Path, text: str, message: str) -> None:
+    client = FakeSiteClient(site_info("dailymotion"))
+    service, _, _ = _site_service(tmp_path, client, playlist_fetcher=FakePlaylists(text))
+
+    with pytest.raises(Error) as caught:
+        await service.start_session(DAILYMOTION_PAGE)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert message in (caught.value.message or "")
+
+
+@pytest.mark.asyncio
+async def test_a_segment_of_an_hls_page_is_cut_from_a_playlist_per_input(tmp_path: Path) -> None:
+    service, _, encoded = _site_service(tmp_path, FakeSiteClient(_hls_only("vimeo")))
+    session = await service.start_session(VIMEO_PAGE)
+
+    await service.get_segment(session, 1)
+
+    args = encoded[0]
+    cuts = [session.session_dir / "segment_1.0.m3u8", session.session_dir / "segment_1.1.m3u8"]
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-i"] == [str(cut) for cut in cuts]
+    for cut in cuts:
+        # Segment 1 is 6 to 12 s: fragments 3 to 5, of 2 s each.
+        fragments = [line for line in cut.read_text().splitlines() if not line.startswith("#")]
+        assert fragments == [f"https://media.test/vimeo/frag{n}.ts" for n in (3, 4, 5)]
+    assert "-headers" not in args
+
+
+@pytest.mark.asyncio
+async def test_an_hls_fragment_refused_reads_the_page_and_its_playlist_again(tmp_path: Path) -> None:
+    # The fragments' URLs are in the playlist, so a fresh page URL alone would
+    # cut the next attempt from the same expired fragments.
+    playlists = FakePlaylists(_media_playlist(name="stale"))
+
+    async def encoder(args: list[str]) -> None:
+        if "stale" in Path(args[args.index("-i") + 1]).read_text():
+            raise _forbidden()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    client = FakeSiteClient(site_info("dailymotion"))
+    service, _, _ = _site_service(tmp_path, client, encoder=encoder, playlist_fetcher=playlists)
+    session = await service.start_session(DAILYMOTION_PAGE)
+    playlists.text = _media_playlist(name="fresh")
+
+    await service.get_segment(session, 1)
+
+    assert client.resolved == [(site_info("dailymotion").webpage_url, ["hls-1080"])]
+    assert len(playlists.fetched) == 2
+    assert session.inputs_version == 1
+    assert session.state_of(1) == SegmentState.READY
+    assert "https://media.test/dailymotion/fresh3.ts" in (session.session_dir / "segment_1.0.m3u8").read_text()
+
+
+# --- fetching a playlist ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_playlist_is_fetched_with_its_headers_from_wherever_it_redirects() -> None:
+    requests: list[httpx.Request] = []
+
+    def cdn(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "media.test":
+            return httpx.Response(302, headers={"Location": "https://cdn.test/v/index.m3u8"})
+        return httpx.Response(200, text="#EXTM3U\n")
+
+    final, text = await fetch_playlist(
+        "https://media.test/hls-1080", {"User-Agent": "UA"}, transport=httpx.MockTransport(cdn)
+    )
+
+    # Its relative URIs resolve against where it came from.
+    assert (final, text) == ("https://cdn.test/v/index.m3u8", "#EXTM3U\n")
+    assert [request.headers["User-Agent"] for request in requests] == ["UA", "UA"]
+
+
+def _refuse_connection(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        (lambda request: httpx.Response(403), "status 403"),
+        (lambda request: httpx.Response(503), "status 503"),
+        (_refuse_connection, "connection refused"),
+    ],
+    ids=["403", "503", "network"],
+)
+async def test_a_playlist_that_will_not_load_is_a_bad_gateway_worth_retrying(
+    answer: Callable[[httpx.Request], httpx.Response], reason: str
+) -> None:
+    with pytest.raises(Error) as caught:
+        await fetch_playlist("https://media.test/hls-1080", {}, transport=httpx.MockTransport(answer))
+
+    assert (caught.value.code, caught.value.retry_able) == (Code.BAD_GATEWAY, True)
+    assert caught.value.message == f"Couldn't read the stream's playlist: {reason}"
+
+
+# --- a session stopped mid-request --------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["https://files.test/movie.mkv", DAILYMOTION_PAGE], ids=["file", "hls"])
+async def test_a_segment_asked_for_once_its_session_stopped_is_not_found(tmp_path: Path, url: str) -> None:
+    # A request that got its session just before the player closed. Nothing
+    # is encoded into the folder stop_session deleted.
+    service, _, encoded = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
+    session = await service.start_session(url)
+    await service.stop_session(session.id)
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 1)
+
+    assert (caught.value.code, caught.value.message) == (Code.NOT_FOUND, "Stream session not found")
+    assert encoded == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [_encode_failure, lambda: FileNotFoundError("segment_0.0.m3u8")],
+    ids=["ffmpeg-failed", "cut-not-written"],
+)
+async def test_an_encode_that_fails_as_its_session_stops_is_not_found(
+    tmp_path: Path, failure: Callable[[], Exception]
+) -> None:
+    # The player closes mid-encode, and the encode then fails in the deleted
+    # folder. A 404 keeps ffmpeg's complaint out of the response and the log.
+    services: list[StreamService] = []
+
+    async def encoder(args: list[str]) -> None:
+        await services[0].stop_session(Path(args[-1]).parent.name)
+        raise failure()
+
+    service, _ = _service(tmp_path, encoder=encoder, readahead_segments=0)
+    services.append(service)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 0)
+
+    assert (caught.value.code, caught.value.message) == (Code.NOT_FOUND, "Stream session not found")
+
+
+@pytest.mark.asyncio
+async def test_a_segment_finished_after_its_session_stopped_is_not_found(tmp_path: Path) -> None:
+    # ffmpeg can finish into a file unlinked with its folder. Serving that path
+    # would fail on a file that isn't there.
+    services: list[StreamService] = []
+
+    async def encoder(args: list[str]) -> None:
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+        await services[0].stop_session(Path(args[-1]).parent.name)
+
+    service, _ = _service(tmp_path, encoder=encoder, readahead_segments=0)
+    services.append(service)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.get_segment(session, 0)
+
+    assert caught.value.code == Code.NOT_FOUND

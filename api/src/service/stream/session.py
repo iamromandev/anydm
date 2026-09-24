@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from src.lib.media.hls import MediaPlaylist
 from src.lib.media.source import MediaInput
 
 
@@ -79,6 +80,9 @@ class StreamSession:
     #: ``refresh_lock`` asks the site again; the rest find it already done.
     inputs_version: int = 0
     refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: An HLS session's media playlists, one per input in the same order,
+    #: which each segment is cut from. Empty for any other session.
+    playlists: list[MediaPlaylist] = field(default_factory=list)
 
     @property
     def segment_count(self) -> int:

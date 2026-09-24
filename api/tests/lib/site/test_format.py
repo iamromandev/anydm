@@ -33,6 +33,11 @@ def _picked(site: str, preset: Preset) -> tuple[str | None, str | None]:
     return (plan.video.id if plan.video else None, plan.audio.id if plan.audio else None)
 
 
+def _played(site: str) -> tuple[str | None, str | None]:
+    plan = playback_plan(_formats(site))
+    return (plan.video.id if plan.video else None, plan.audio.id if plan.audio else None)
+
+
 # --- reading a format ---------------------------------------------------------
 
 
@@ -253,15 +258,53 @@ def test_playback_of_an_audio_only_site_is_its_audio() -> None:
     assert plan.audio is not None and plan.audio.id == "http_mp3_0_0"
 
 
-def test_playback_refuses_an_hls_only_page_for_now() -> None:
-    # Seeking into HLS hangs on fMP4 streams and clips TS ones (#87), so the
-    # player takes plain files alone until it cuts segments another way. The
-    # page still downloads.
-    with pytest.raises(Error) as caught:
-        playback_plan(_formats("dailymotion"))
+def test_playback_of_an_hls_only_page_is_its_hls() -> None:
+    # Dailymotion and Twitch offer nothing else. Each segment is cut from a
+    # playlist of the fragments it overlaps (#87).
+    assert _played("dailymotion") == ("hls-1080", None)
+    assert _played("twitch") == ("720p-1", None)
 
-    assert caught.value.type == ErrorType.UNSUPPORTED_OPERATION
-    assert "can still be downloaded" in (caught.value.message or "")
+
+@pytest.mark.parametrize("site", ["reddit", "vimeo", "youtube", "twitter"])
+def test_playback_takes_plain_files_whenever_a_page_has_them(site: str) -> None:
+    plan = playback_plan(_formats(site))
+
+    assert plan.video is not None
+    assert not plan.fragmented
+
+
+def test_playback_takes_hls_video_before_plain_audio() -> None:
+    # Plain first within each kind, but a page's video, even from HLS, beats its audio alone.
+    audio = Format("a", protocol="https", ext="m4a", vcodec="none", acodec="mp4a.40.2", bitrate=128_000)
+    video = Format("hls-720", protocol="m3u8_native", ext="mp4", vcodec="avc1.64001f", acodec="mp4a.40.2", height=720)
+
+    plan = playback_plan([audio, video])
+
+    assert (plan.video, plan.audio) == (video, None)
+
+
+def test_playback_never_mixes_hls_and_plain_parts() -> None:
+    # HLS video with no HLS audio of its own won't borrow a plain file's: the
+    # player reads both inputs the same way. The plain audio plays alone.
+    video = Format("hls-720", protocol="m3u8_native", ext="mp4", vcodec="avc1.64001f", acodec="none", height=720)
+    audio = Format("a", protocol="https", ext="m4a", vcodec="none", acodec="mp4a.40.2", bitrate=128_000)
+
+    plan = playback_plan([video, audio])
+
+    assert (plan.video, plan.audio) == (None, audio)
+    # A download still takes both.
+    assert (select_plan([video, audio], Preset.BEST).video, select_plan([video, audio], Preset.BEST).audio) == (
+        video,
+        audio,
+    )
+
+
+def test_playback_takes_hls_audio_when_that_is_all_there_is() -> None:
+    audio = Format("hls-aac", protocol="m3u8_native", ext="m4a", vcodec="none", acodec="mp4a.40.2", bitrate=96_000)
+
+    plan = playback_plan([audio])
+
+    assert (plan.video, plan.audio) == (None, audio)
 
 
 def test_playback_of_a_page_with_both_takes_its_plain_files() -> None:
@@ -368,3 +411,10 @@ def test_an_hls_combined_plan_is_named_for_its_codecs() -> None:
 )
 def test_the_fragmented_protocols_are_named_once(protocol: str | None, fragmented: bool) -> None:
     assert is_fragmented(protocol) is fragmented
+
+
+def test_hls_is_the_m3u8_kind_of_fragmented() -> None:
+    assert _one("twitch", "720p-1").hls
+    assert _one("twitch", "720p-1").fragmented
+    assert not _one("youtube", "137").hls
+    assert not Format("dash-720", protocol="http_dash_segments").hls
