@@ -1,0 +1,60 @@
+{
+  "extractor": "Soundcloud",
+  "id": "62986583",
+  "title": "Lostin Powers - She so Heavy (SneakPreview) Adrian Ackers Blueprint 1",
+  "duration": 143.206,
+  "webpage_url": "https://soundcloud.com/ethmusic/lostin-powers-she-so-heavy",
+  "formats": [
+    {
+      "format_id": "hls_mp3_0_0",
+      "protocol": "m3u8_native",
+      "ext": "mp3",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "tbr": 128,
+      "vbr": 0,
+      "abr": 128,
+      "filesize_approx": 2291296,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http_mp3_0_0",
+      "protocol": "http",
+      "ext": "mp3",
+      "vcodec": "none",
+      "acodec": "mp3",
+      "tbr": 128,
+      "vbr": 0,
+      "abr": 128,
+      "filesize_approx": 2291296,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls_aac_96k",
+      "protocol": "m3u8_native",
+      "ext": "m4a",
+      "vcodec": "none",
+      "acodec": "mp4a.40.2",
+      "tbr": 96,
+      "vbr": 0,
+      "abr": 96,
+      "filesize_approx": 1718471,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}
