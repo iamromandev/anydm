@@ -279,19 +279,32 @@ class StreamService(BaseService):
             logger.warning("StreamService|read-ahead failed for segment {}", index)
 
     async def _ensure_segment(self, session: StreamSession, index: int) -> None:
-        state = session.state_of(index)
-        if state == SegmentState.READY:
-            return
-        event = session.event_for(index)
-        if state == SegmentState.GENERATING:
+        # A loop, because waking up is not the same as the segment being
+        # ready: an encode that fails wakes its waiters too, and each then
+        # makes an attempt of its own.
+        while True:
+            state = session.state_of(index)
+            if state == SegmentState.READY:
+                return
+            event = session.event_for(index)
+            if state != SegmentState.GENERATING:
+                break
             await event.wait()
-            return
 
         # No ``await`` between the check above and this assignment — see
         # StreamSession's docstring for why that makes this race-free.
         session.states[index] = SegmentState.GENERATING
-        async with session.encode_semaphore:
-            await self._encode(session, index)
+        try:
+            async with session.encode_semaphore:
+                await self._encode(session, index)
+        except BaseException:
+            # Cancellation included. Left GENERATING, the segment would make
+            # every later request wait on an event nothing would ever set. The
+            # next attempt gets a fresh event; this one wakes the waiters.
+            session.states[index] = SegmentState.NOT_STARTED
+            session.events.pop(index, None)
+            event.set()
+            raise
         session.states[index] = SegmentState.READY
         event.set()
 
