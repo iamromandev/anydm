@@ -4,8 +4,10 @@ No two segments for the same index are ever generated concurrently:
 ``StreamService._ensure_segment`` checks a segment's state and flips it to
 ``GENERATING`` with no ``await`` in between, so a second caller for the same
 index always observes the flip before it can start its own encode — it waits
-on the segment's ``asyncio.Event`` instead. See that method for the
-mechanism; this module only holds the data it operates on.
+on the segment's ``asyncio.Event`` instead. An encode that fails puts the
+segment back to ``NOT_STARTED`` with a fresh event and wakes the waiters, which
+check again and try for themselves. See that method for the mechanism; this
+module only holds the data it operates on.
 """
 
 from __future__ import annotations

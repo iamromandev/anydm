@@ -149,6 +149,127 @@ async def test_concurrent_requests_for_the_same_segment_encode_only_once(tmp_pat
     assert len(calls) == 1
 
 
+def _encode_failure() -> Error:
+    return Error.create(
+        code=Code.INTERNAL_SERVER_ERROR, message="ffmpeg exited with 1", error_type=ErrorType.DEPENDENCY_FAILURE
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_segment_whose_encode_failed_is_encoded_again_when_asked_again(tmp_path: Path) -> None:
+    # Regression (#81): a failed encode left the segment GENERATING for good,
+    # so the player's retry waited on an event nothing would ever set.
+    calls: list[list[str]] = []
+
+    async def fails_once(args: list[str]) -> None:
+        calls.append(args)
+        if len(calls) == 1:
+            raise _encode_failure()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service, _ = _service(tmp_path, encoder=fails_once, readahead_segments=0)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error):
+        await service.get_segment(session, 0)
+    path = await asyncio.wait_for(service.get_segment(session, 0), timeout=1.0)
+
+    assert path.exists()
+    assert session.state_of(0) == SegmentState.READY
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_request_waiting_on_a_failed_encode_tries_again_rather_than_hanging(tmp_path: Path) -> None:
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls: list[list[str]] = []
+
+    async def first_fails_late(args: list[str]) -> None:
+        calls.append(args)
+        if len(calls) == 1:
+            first_started.set()
+            await release_first.wait()
+            raise _encode_failure()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service, _ = _service(tmp_path, encoder=first_fails_late, readahead_segments=0)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    first = asyncio.create_task(service.get_segment(session, 0))
+    await first_started.wait()
+    waiting = asyncio.create_task(service.get_segment(session, 0))
+    await asyncio.sleep(0.01)  # let it reach the GENERATING branch and wait
+    release_first.set()
+
+    with pytest.raises(Error):
+        await first
+    path = await asyncio.wait_for(waiting, timeout=1.0)
+
+    assert path.exists()
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_requests_waiting_on_a_failed_encode_share_one_retry(tmp_path: Path) -> None:
+    # The retry gets a fresh event: the failed attempt's is already set, and a
+    # second waiter handed that one would never wait for the retry at all.
+    releases = [asyncio.Event(), asyncio.Event()]
+    started = [asyncio.Event(), asyncio.Event()]
+    calls: list[list[str]] = []
+
+    async def fails_then_succeeds(args: list[str]) -> None:
+        attempt = len(calls)
+        calls.append(args)
+        started[attempt].set()
+        await releases[attempt].wait()
+        if attempt == 0:
+            raise _encode_failure()
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service, _ = _service(tmp_path, encoder=fails_then_succeeds, readahead_segments=0)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    first = asyncio.create_task(service.get_segment(session, 0))
+    await started[0].wait()
+    waiters = [asyncio.create_task(service.get_segment(session, 0)) for _ in range(2)]
+    await asyncio.sleep(0.01)
+    releases[0].set()
+    with pytest.raises(Error):
+        await first
+    await asyncio.wait_for(started[1].wait(), timeout=1.0)
+    releases[1].set()
+
+    paths = await asyncio.wait_for(asyncio.gather(*waiters), timeout=1.0)
+    assert all(path.exists() for path in paths)
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_read_ahead_leaves_its_segment_to_be_encoded(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    calls: list[list[str]] = []
+
+    async def hangs_first(args: list[str]) -> None:
+        calls.append(args)
+        if len(calls) == 1:
+            started.set()
+            await asyncio.Event().wait()  # only cancellation ends this
+        Path(args[-1]).write_bytes(b"fake-ts-data")
+
+    service, _ = _service(tmp_path, encoder=hangs_first, readahead_segments=0)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    read_ahead = asyncio.create_task(service.get_segment(session, 1))
+    await started.wait()
+    read_ahead.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await read_ahead
+
+    path = await asyncio.wait_for(service.get_segment(session, 1), timeout=1.0)
+    assert path.exists()
+
+
 @pytest.mark.asyncio
 async def test_requesting_a_segment_triggers_readahead(tmp_path: Path) -> None:
     service, _encoded_calls = _service(tmp_path)
