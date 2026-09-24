@@ -217,8 +217,17 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         }}
                         aria-label="Playback speed"
                     >
+                        {/* `selected` as well as the select's `value`: the
+                            value is applied before these options exist, so
+                            on first render it matches nothing and the menu
+                            showed "0.5x", the first option, whatever the
+                            rate. `value` still carries later changes. */}
                         {PLAYBACK_RATES.map((rate) => (
-                            <option key={rate} value={rate}>
+                            <option
+                                key={rate}
+                                value={rate}
+                                selected={rate === playbackRate}
+                            >
                                 {`${rate}x`}
                             </option>
                         ))}
