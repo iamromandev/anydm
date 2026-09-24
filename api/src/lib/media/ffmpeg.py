@@ -111,8 +111,14 @@ def segment_args(
     attempt. Stereo is the safe, universally-supported target.
     """
     args = [ffmpeg, "-y"]
+    # The first segment reads from the start rather than seeking to it.
+    # ffmpeg's HLS demuxer drops packets until a keyframe at or past the seek
+    # target, and a first keyframe that decodes a moment before the stream's
+    # start (Dailymotion's does) would go, and the picture with it until the
+    # next one.
+    seek = ["-ss", str(start_seconds)] if start_seconds > 0 else []
     for source in inputs:
-        args += ["-ss", str(start_seconds), *headers_args(source.headers), "-i", source.url]
+        args += [*seek, *headers_args(source.headers), "-i", source.url]
     args += ["-t", str(duration_seconds)]
     if len(inputs) > 1:
         args += ["-map", "0:v:0", "-map", "1:a:0"]

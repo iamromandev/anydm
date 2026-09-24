@@ -73,6 +73,17 @@ def test_segment_args_seeks_and_bounds_a_video_segment() -> None:
     assert args[-1] == "/t/segment_2.ts"
 
 
+def test_the_first_segment_reads_from_the_start_rather_than_seeking_to_it() -> None:
+    # ffmpeg's HLS demuxer drops packets until a keyframe at or past the seek
+    # target. Dailymotion's first keyframe decodes 0.03 s before the stream's
+    # start, so seeking to 0 dropped it: three seconds without a picture.
+    inputs = [MediaInput("https://media.test/v"), MediaInput("https://media.test/a")]
+    args = segment_args("ffmpeg", inputs, 0.0, 6.0, Path("/t/segment_0.ts"), has_video=True)
+
+    assert "-ss" not in args
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-i"] == ["https://media.test/v", "https://media.test/a"]
+
+
 def test_segment_args_does_not_offset_output_timestamps() -> None:
     # Deliberately not offset — see the docstring on segment_args(). The
     # playlist's #EXT-X-DISCONTINUITY markers are what handle this instead.
