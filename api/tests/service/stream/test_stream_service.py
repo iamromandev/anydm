@@ -685,7 +685,8 @@ async def test_stop_session_does_not_raise_when_the_engine_delete_fails(tmp_path
 # --- pages on a site --------------------------------------------------------------
 
 YOUTUBE_PAGE = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-FORBIDDEN = "ffmpeg exited with 8: [https @ 0x1] HTTP error 403 Forbidden"
+DAILYMOTION_PAGE = "https://www.dailymotion.com/video/x8"
+FORBIDDEN ="ffmpeg exited with 8: [https @ 0x1] HTTP error 403 Forbidden"
 
 
 def _site_service(
@@ -801,14 +802,12 @@ async def test_a_live_page_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_hls_only_page_is_refused_for_playback_for_now(tmp_path: Path) -> None:
-    # Until #87 cuts HLS segments without seeking into the stream.
+async def test_an_hls_only_page_plays_its_hls(tmp_path: Path) -> None:
     service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
 
-    with pytest.raises(Error) as caught:
-        await service.start_session("https://www.dailymotion.com/video/x8")
+    session = await service.start_session(DAILYMOTION_PAGE)
 
-    assert "can still be downloaded" in (caught.value.message or "")
+    assert session.inputs == [MediaInput(media_url("dailymotion", "hls-1080"), HEADERS)]
 
 
 @pytest.mark.asyncio

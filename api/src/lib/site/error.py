@@ -43,7 +43,7 @@ def live_not_supported() -> Error:
 
 
 def stream_not_playable() -> Error:
-    """Every format is HLS, DASH or another playlist of fragments, which the player can't seek yet (#87)."""
+    """Nothing the player reads: only DASH, f4m or ISM, each a manifest of every rendition."""
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,
         message="The player can't read this site's streams yet; it can still be downloaded",
