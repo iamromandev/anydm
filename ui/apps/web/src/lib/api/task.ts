@@ -403,3 +403,67 @@ export function appendPage(existing: UiTask[], incoming: UiTask[]): UiTask[] {
         ...incoming.filter((row) => !seen.has(row.id)),
     ];
 }
+
+/**
+ * New copies of rows, with the segment strip the held copies had.
+ *
+ * Segments ride progress frames only: the task row that the REST list and
+ * the `task` event return has no `segments` field at all. Without this, every
+ * refresh would blank the strip, and the bars would flicker in and out for
+ * the whole download.
+ */
+export function keepSegments(rows: UiTask[], held: UiTask[]): UiTask[] {
+    const prior = new Map(
+        held.map((row) => [
+            row.id,
+            row,
+        ]),
+    );
+    return rows.map((row) => {
+        const segments = prior.get(row.id)?.segments;
+        return segments ? { ...row, segments } : row;
+    });
+}
+
+/**
+ * A fetched page, minus anything the stream has said since it was requested.
+ *
+ * The server reads a page before the answer arrives, and the stream keeps
+ * talking in between. A row it wrote in that gap is newer than the page's copy
+ * — a download that finished there would otherwise go back to "downloading",
+ * and a finished task sends nothing more to put it right. So for each id in
+ * `touched`, what is on screen wins: its current copy, or its absence if the
+ * stream removed it, or a row the page was read too early to include.
+ * Everything else is the page's, which is how a fallback poll still corrects
+ * the list while the stream is down and touching nothing.
+ */
+export function settlePage(
+    fetched: UiTask[],
+    held: UiTask[],
+    touched: ReadonlySet<string>,
+): UiTask[] {
+    const live = new Map(
+        held.map((row) => [
+            row.id,
+            row,
+        ]),
+    );
+    const listed = new Set(fetched.map((row) => row.id));
+    const settled = fetched.flatMap((row) => {
+        if (!touched.has(row.id))
+            return [
+                row,
+            ];
+        const current = live.get(row.id);
+        return current
+            ? [
+                  current,
+              ]
+            : [];
+    });
+
+    return [
+        ...held.filter((row) => touched.has(row.id) && !listed.has(row.id)),
+        ...settled,
+    ];
+}

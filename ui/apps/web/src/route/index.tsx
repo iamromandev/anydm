@@ -11,7 +11,9 @@ import {
     normalizeApiTask,
     normalizeSegments,
     postApi,
+    keepSegments,
     resolveTorrent,
+    settlePage,
     type ResolvedTorrent,
     normalizeSummary,
     onUnauthorized,
@@ -103,6 +105,12 @@ export default component$(() => {
         playerModalOpen: false as boolean,
         playerUrl: "" as string,
         playerKind: "" as string,
+        // A count of stream writes, and the count at each task's latest one:
+        // what lets a page fetch tell which rows went stale while it was out.
+        // Only ids the stream has written are here, so it grows with the
+        // tasks seen this session and no faster.
+        streamSeq: 0,
+        streamTouched: {} as Record<string, number>,
     });
 
     const notify = $((tone: ToastTone, message: string) => {
@@ -117,15 +125,17 @@ export default component$(() => {
     });
 
     /**
-     * Announce any row whose status moved since the copy already on screen.
+     * Announce any row whose status moved since `before`, the list as it was
+     * just before the write that brought `rows` in.
      *
-     * Called by both update paths before either writes, so whichever arrives
-     * first announces and the other finds nothing changed. A row that is new to
-     * the list says nothing, which is what keeps a reload quiet.
+     * Each update path reads the list, writes it, and only then calls this with
+     * what it read, so whichever path lands first announces and the other finds
+     * nothing changed. A row that is new to the list says nothing, which is
+     * what keeps a reload quiet.
      */
-    const noteTransitions = $((rows: UiTask[]) => {
+    const noteTransitions = $((rows: UiTask[], before: UiTask[]) => {
         const previous = new Map(
-            store.tasks.map((t) => [
+            before.map((t) => [
                 t.id,
                 t.status,
             ]),
@@ -157,27 +167,6 @@ export default component$(() => {
         if (announced) loadSummary();
     });
 
-    /**
-     * Keep the segment strip across a refresh.
-     *
-     * Segments ride progress frames only — the task row the REST list and the
-     * `task` event return has no `segments` field at all. Without this, the
-     * 2.5s poll would blank the strip on every tick and the bars would flicker
-     * in and out for the whole download.
-     */
-    const carrySegments = $((rows: UiTask[]) => {
-        const prior = new Map(
-            store.tasks.map((task) => [
-                task.id,
-                task,
-            ]),
-        );
-        return rows.map((row) => {
-            const held = prior.get(row.id)?.segments;
-            return held ? { ...row, segments: held } : row;
-        });
-    });
-
     const loadSummary = $(async () => {
         const summary = await getApi<any>("/download/summary").catch(
             () => null,
@@ -192,23 +181,37 @@ export default component$(() => {
      * never landed leaves everything exactly as it is — the list is the only
      * record of what was running, and emptying it during an outage throws away
      * the very thing the connection indicator is saying is merely stale.
+     *
+     * Everything from reading the list to writing it happens without an
+     * `await`: a stream frame applied in between would be overwritten.
      */
     const loadPage = $(async (page: number) => {
         const query =
             `page=${page}&page_size=${PAGE_SIZE}` +
             `&group=${store.filter}&sort=${store.sort}`;
+        const since = store.streamSeq;
         const result = await getPageApi<any[]>(`/download?${query}`).catch(
             () => null,
         );
         if (result === null) return;
 
-        const rows = result.data.map(normalizeApiTask);
-        await noteTransitions(rows);
-
-        const carried = await carrySegments(rows);
-        store.tasks = page === 1 ? carried : appendPage(store.tasks, carried);
+        const before = store.tasks;
+        // Rows the stream wrote while this was in flight are newer than the
+        // page's copies of them.
+        const touched = new Set(
+            Object.entries(store.streamTouched)
+                .filter((entry) => entry[1] > since)
+                .map((entry) => entry[0]),
+        );
+        const rows = keepSegments(
+            settlePage(result.data.map(normalizeApiTask), before, touched),
+            before,
+        );
+        store.tasks = page === 1 ? rows : appendPage(before, rows);
         store.page = result.meta.page;
         store.totalPages = result.meta.totalPages;
+
+        await noteTransitions(rows, before);
     });
 
     /** Back to the top of the current filter. */
@@ -227,9 +230,19 @@ export default component$(() => {
         }
     });
 
-    /** Fold rows from an SSE frame into the list, replacing what they match. */
+    /**
+     * Fold rows from an SSE frame into the list, replacing what they match.
+     *
+     * Like `loadPage`, it reads, marks and writes without an `await`, so a
+     * page landing mid-merge sees either none of this frame or all of it.
+     */
     const mergeTasks = $(async (rows: UiTask[]) => {
-        await noteTransitions(rows);
+        const before = store.tasks;
+
+        // What lets a page fetch in flight know these rows are newer than its
+        // copies of them.
+        store.streamSeq += 1;
+        for (const row of rows) store.streamTouched[row.id] = store.streamSeq;
 
         // A canceled row is soft-deleted, and the list endpoint never returns
         // one — but cancelling publishes the row it just removed, so without
@@ -244,13 +257,15 @@ export default component$(() => {
         const live = rows.filter((row) => row.status !== "canceled");
 
         const incoming = new Set(live.map((row) => row.id));
-        const kept = store.tasks.filter(
+        const kept = before.filter(
             (t) => !incoming.has(t.id) && !removed.has(t.id),
         );
         store.tasks = [
-            ...(await carrySegments(live)),
+            ...keepSegments(live, before),
             ...kept,
         ];
+
+        await noteTransitions(rows, before);
     });
 
     /**
