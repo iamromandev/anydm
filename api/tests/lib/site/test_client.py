@@ -252,6 +252,13 @@ def test_the_version_is_empty_when_yt_dlp_is_not_installed(monkeypatch: pytest.M
     assert ytdlp_version() == ""
 
 
+def test_yt_dlp_can_impersonate_a_browser() -> None:
+    # When Dailymotion refuses yt-dlp's own requests, yt-dlp retries while
+    # impersonating a browser, which needs curl_cffi from its curl-cffi extra.
+    # Without it, about half of Dailymotion's extractions failed (#88).
+    assert metadata.version("curl-cffi")
+
+
 # --- download_format -------------------------------------------------------------
 
 PAGE = "https://www.dailymotion.com/video/x8"

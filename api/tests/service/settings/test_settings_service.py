@@ -80,7 +80,8 @@ def test_it_reports_the_yt_dlp_version_that_is_pinned() -> None:
     pinned = next(
         dependency.split("==", 1)[1]
         for dependency in pyproject["project"]["dependencies"]
-        if dependency.startswith("yt-dlp[default]==")
+        # The package's name, whatever extras follow it.
+        if dependency.split("==", 1)[0].split("[", 1)[0] == "yt-dlp"
     )
 
     assert SettingsService().describe().yt_dlp_version == pinned
