@@ -33,9 +33,10 @@ tortoise_orm = "src.data.db.DB_CONFIG"
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-m 'not integration'"
+addopts = "-m 'not integration and not network'"
 markers = [
     "integration: needs a live Postgres and disk; excluded from the default run",
+    "network: goes to real sites over the internet; excluded from the default run, run weekly by .github/workflows/live.yml",
 ]
 
 # Tortoise's ``Field`` is a typed descriptor: ``fields.CharField(...)`` returns a

@@ -58,7 +58,8 @@ Common root targets — run `make help` for the full list, `make -C api help` fo
 |--------|-------------|
 | `make check` | Lint + typecheck both stacks |
 | `make api-test` | API unit tests |
-| `make api-test-all` | Every API test, integration included (needs `make api-up`) |
+| `make api-test-all` | Every API test, integration included (needs `make api-up`); not the live-site ones |
+| `make api-test-live` | The live-site tests: real sites, over the internet |
 | `make api-migrate` | Run database migrations in the server container |
 | `make api-logs` / `api-ps` | Follow logs / list containers |
 | `make api-clean-volumes` | Drop the project's volumes (db, download, torrent) |
@@ -187,6 +188,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 Sites change how they serve media, and yt-dlp releases to keep up, sometimes several times a month. When a site that used to work stops extracting, the usual cause is a yt-dlp that has fallen behind.
 
 - **Pinned on purpose:** `api/pyproject.toml` pins yt-dlp exactly, so it never changes under a running stack without someone deciding. yt-dlp-ejs, which solves YouTube's challenges with Deno, follows it: yt-dlp's `default` extra pins the version it needs.
+- **Noticed weekly:** the live-site check (see [CI](#ci)) goes to the sites themselves every Monday. A red run is the cue to move the pin.
 - **Moved on purpose:** Dependabot ([.github/dependabot.yml](.github/dependabot.yml)) opens a pull request each week when a new yt-dlp is out, and for nothing else. CI runs the suite against it. Merge it, then rebuild with `make api-build` and `make api-up`.
 - **By hand,** for a fix that cannot wait: in `api/`, `uv add "yt-dlp[default]==<version>"` moves the pin, then rebuild the image. `uv lock --upgrade-package yt-dlp` does not move it, because the pin is exact.
 - **Deno** is pinned by its image tag in `api/dockerfile` (`denoland/deno:bin-…`) and moves by hand.
@@ -208,3 +210,5 @@ GitHub Actions runs on pushes to `main` and on pull requests, in three parallel 
 - **ui** — a frozen Bun lockfile, then the format check, typecheck, unit tests, and production build.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+A separate workflow, [.github/workflows/live.yml](.github/workflows/live.yml), runs the tests marked `network` against real sites, weekly (Mondays, 06:00 UTC) and on demand, but never on pull requests: sites break on their own schedule, and that should not block unrelated work. For each site it extracts one page and fetches the first MiB of what a download would, through the same engine. Sites that only offer HLS are checked for extraction alone until the fragment downloader lands. A red run is the cue to bump yt-dlp. A site that asks the runner to sign in (YouTube does this to cloud IPs) skips with that reason, since no bump clears it. Run the same tests by hand with `make api-test-live`.

@@ -13,7 +13,7 @@ UI_PORT := 3030
 
 # phony targets
 .PHONY: check down restart clean-volumes help \
-	api-check api-test api-test-all api-run api-up api-down api-build api-restart api-ps api-logs \
+	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-install api-export api-clean-all api-clean-volumes api-clean-host \
 	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format
 
@@ -33,8 +33,11 @@ api-check: # Lint + typecheck the API
 api-test: # Run the API unit tests
 	$(MAKE) -C $(API) test
 
-api-test-all: # Run every API test, integration included (needs api-up)
+api-test-all: # Run every API test, integration included (needs api-up); not the live-site ones
 	$(MAKE) -C $(API) test-all
+
+api-test-live: # Run the live-site tests: real sites, over the internet
+	$(MAKE) -C $(API) test-live
 
 api-run: # Run the API dev server on the host
 	$(MAKE) -C $(API) run
