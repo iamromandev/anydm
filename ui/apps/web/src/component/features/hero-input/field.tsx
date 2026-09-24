@@ -335,30 +335,17 @@ export const HeroInput = component$<HeroInputProps>(
                     <div class="hero-input-divider" aria-hidden="true" />
 
                     <div class="hero-input-actions">
-                        {(isPlayableKind(activeKind) ||
-                            activeKind === "site") && (
+                        {isPlayableKind(activeKind) && (
                             <button
                                 type="button"
                                 class="hero-input-play"
-                                disabled={
-                                    activeKind === "site" || store.isLoading
-                                }
-                                title={
-                                    activeKind === "site"
-                                        ? "Playing from sites isn't supported yet"
-                                        : undefined
-                                }
-                                aria-disabled={activeKind === "site"}
-                                onClick$={
-                                    activeKind === "site"
-                                        ? undefined
-                                        : $(() =>
-                                              onPlay?.(
-                                                  store.value.trim(),
-                                                  activeKind,
-                                              ),
-                                          )
-                                }
+                                // Held back on the same terms as Download: a
+                                // page still being looked up, or one the API
+                                // has refused, would only fail in the player.
+                                disabled={store.isLoading || siteBlocked}
+                                onClick$={$(() =>
+                                    onPlay?.(store.value.trim(), activeKind),
+                                )}
                             >
                                 <LuPlay
                                     width="18"

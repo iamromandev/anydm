@@ -9,12 +9,14 @@ the length of the transcode.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 
 from loguru import logger
 
 from src.core.error import Error
 from src.core.type import Code, ErrorType
+from src.lib.media.source import MediaInput, headers_args
 
 _STDERR_TAIL = 2000
 
@@ -47,7 +49,7 @@ def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
 
 def segment_args(
     ffmpeg: str,
-    source: str,
+    inputs: Sequence[MediaInput],
     start_seconds: float,
     duration_seconds: float,
     destination: Path,
@@ -55,6 +57,10 @@ def segment_args(
     has_video: bool,
 ) -> list[str]:
     """One HLS-compatible segment, always re-encoded.
+
+    ``inputs`` is one source, or a site's separate video and audio. With two,
+    video comes from the first and audio from the second, and each gets its own
+    ``-ss`` and headers: input options apply only to the ``-i`` they precede.
 
     Always re-encoding (never ``-c copy``) is deliberate: it lets ``-ss`` cut
     at any exact timestamp cleanly, because ffmpeg decodes from the nearest
@@ -80,13 +86,12 @@ def segment_args(
     6-channel AAC segment raised CHUNK_DEMUXER_ERROR_APPEND_FAILED on every
     attempt. Stereo is the safe, universally-supported target.
     """
-    args = [
-        ffmpeg,
-        "-y",
-        "-ss", str(start_seconds),
-        "-i", source,
-        "-t", str(duration_seconds),
-    ]
+    args = [ffmpeg, "-y"]
+    for source in inputs:
+        args += ["-ss", str(start_seconds), *headers_args(source.headers), "-i", source.url]
+    args += ["-t", str(duration_seconds)]
+    if len(inputs) > 1:
+        args += ["-map", "0:v:0", "-map", "1:a:0"]
     if has_video:
         args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2"]
     else:

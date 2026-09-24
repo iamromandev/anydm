@@ -10,7 +10,14 @@ from src.core.base import BaseSchema
 class StreamStartRequest(BaseSchema):
     url: Annotated[
         str | None,
-        Field(default=None, min_length=1, description="A direct http or https URL to a media file"),
+        Field(
+            default=None,
+            min_length=1,
+            description=(
+                "A page on a site yt-dlp supports, played at up to 1080p, "
+                "or a direct http or https URL to a media file"
+            ),
+        ),
     ]
     torrent: Annotated[
         str | None,

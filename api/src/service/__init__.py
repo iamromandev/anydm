@@ -202,6 +202,7 @@ def get_stream_service() -> StreamService:
         torrent_api_url=settings.torrent_api_url,
         torrent_enabled=settings.torrent_enabled,
         event_hub=get_event_hub(),
+        site_client=get_site_client(),
     )
 
 

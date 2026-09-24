@@ -28,6 +28,9 @@ class FakeSite:
     async def resolve(self, url: str, format_ids: Any) -> dict[str, Resolved]:
         return {format_id: Resolved(f"https://cdn.test/x/{format_id}") for format_id in format_ids}
 
+    async def open(self, url: str) -> Any:
+        raise AssertionError("downloads never open a page for playback")
+
 
 def _worker(
     tmp_path: Path,

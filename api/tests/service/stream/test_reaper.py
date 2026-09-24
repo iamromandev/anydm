@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from src.lib.media.source import MediaInput
 from src.lib.torrent.protocol import TorrentProgress
 from src.service.stream.reaper import TorrentReaper
 from src.service.stream.session import StreamSession, StreamSessionStore
@@ -74,7 +75,7 @@ async def test_sweep_keeps_torrents_backing_a_live_stream_session() -> None:
     sessions.add(
         StreamSession(
             id="s1",
-            source_url="http://example.com/a.mp4",
+            inputs=[MediaInput("http://example.com/a.mp4")],
             duration_seconds=12.0,
             has_video=True,
             segment_seconds=6,

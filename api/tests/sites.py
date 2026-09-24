@@ -55,6 +55,7 @@ class FakeSiteClient:
         self.fail = fail
         self.extracted: list[str] = []
         self.resolved: list[tuple[str, list[str]]] = []
+        self.opened: list[str] = []
         self.site = info.extractor.lower()
 
     async def extract(self, url: str) -> SiteInfo:
@@ -62,6 +63,12 @@ class FakeSiteClient:
         if self.fail is not None:
             raise self.fail
         return self.info
+
+    async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
+        self.opened.append(url)
+        if self.fail is not None:
+            raise self.fail
+        return self.info, {f.id: Resolved(media_url(self.site, f.id), dict(HEADERS)) for f in self.info.formats}
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
         self.resolved.append((url, list(format_ids)))

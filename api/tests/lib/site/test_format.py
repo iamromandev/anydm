@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
-from src.core.type import Code
+from src.core.type import Code, ErrorType
 from src.data.type import Kind, Preset
-from src.lib.site.format import Format, select_plan, usable_presets
+from src.lib.site.format import Format, fetchable_plan, playback_plan, select_plan, usable_presets
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "ytdlp"
 
@@ -244,3 +244,34 @@ def test_one_unknown_part_size_makes_the_total_unknown() -> None:
     plan = select_plan([_video("137", 1080, size=80_000_000), _audio("140", 128_000)], Preset.P1080)
 
     assert plan.expected_bytes is None
+
+
+# --- playback -----------------------------------------------------------------
+
+
+def test_playback_is_capped_at_1080p() -> None:
+    # Segments are transcoded as the player asks for them; 4K would cost a
+    # great deal for nothing a browser player shows.
+    formats = _formats("youtube")
+    plan = playback_plan(formats)
+
+    assert max(f.height or 0 for f in formats) > 1080
+    assert plan == fetchable_plan(formats, Preset.P1080)
+    assert plan.video is not None and plan.video.height == 1080
+    assert plan.audio is not None
+
+
+def test_playback_of_an_audio_only_site_is_its_audio() -> None:
+    plan = playback_plan(_formats("soundcloud"))
+
+    assert plan.video is None
+    assert plan.audio is not None and plan.audio.id == "http_mp3_0_0"
+
+
+def test_playback_of_a_streaming_only_site_is_refused_as_downloads_are() -> None:
+    # One rule for both: #58 opens HLS and DASH to playback and download at once.
+    with pytest.raises(Error) as caught:
+        playback_plan(_formats("dailymotion"))
+
+    assert caught.value.type == ErrorType.UNSUPPORTED_OPERATION
+    assert "streaming formats" in (caught.value.message or "")

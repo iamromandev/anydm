@@ -53,8 +53,8 @@ describe("isPlayableKind", () => {
         expect(isPlayableKind("media")).toBe(true);
     });
 
-    it("is false for sites until playing them is supported", () => {
-        expect(isPlayableKind("site")).toBe(false);
+    it("is true for a page on a site, which the API resolves first", () => {
+        expect(isPlayableKind("site")).toBe(true);
     });
 
     it("is false for generic url and auto", () => {

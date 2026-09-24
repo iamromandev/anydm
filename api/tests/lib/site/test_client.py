@@ -142,6 +142,33 @@ async def test_resolve_gives_each_part_its_url_and_headers_from_one_extraction()
 
 
 @pytest.mark.asyncio
+async def test_open_gives_the_page_and_every_formats_url_from_one_extraction() -> None:
+    # The player needs both at once, and a YouTube extraction takes seconds.
+    calls: list[str] = []
+
+    def extract(url: str) -> dict[str, Any]:
+        calls.append(url)
+        return _info("reddit")
+
+    info, resolved = await YtDlpClient(extract=extract).open("https://reddit.test/post")
+
+    assert info.extractor == _info("reddit")["extractor_key"]
+    assert set(resolved) == {f.id for f in info.formats}
+    assert resolved["dash-AUDIO-1"] == Resolved("https://media.test/reddit/dash-AUDIO-1", HEADERS)
+    assert calls == ["https://reddit.test/post"]
+
+
+@pytest.mark.asyncio
+async def test_open_refuses_what_extract_refuses() -> None:
+    playlist = {"_type": "playlist", "id": "PL1", "title": "A list", "entries": [_info("youtube")]}
+
+    with pytest.raises(Error) as caught:
+        await _client(playlist).open("https://www.youtube.com/playlist?list=PL1")
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
 async def test_resolve_refuses_a_format_the_site_no_longer_offers() -> None:
     with pytest.raises(Error) as caught:
         await _client(_info("vimeo")).resolve("http://vimeo.com/1", ["http-4320p"])
