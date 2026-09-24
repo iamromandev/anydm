@@ -6,7 +6,8 @@ answered with a 4 GB 4K file has not been answered. A combined format wins when
 it is at least as tall as the best video-only one, since it needs no mux.
 
 Ties at the same height go to a plain HTTP(S) format over HLS or DASH, which
-only yt-dlp's downloader can fetch, then to the higher bitrate.
+the segmented engine fetches faster and resumes by the byte, then to the higher
+bitrate.
 
 Three things the #53 recording showed about yt-dlp's formats:
 
@@ -22,9 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.core.error import Error
 from src.data.type import Kind, Preset
-from src.lib.site.error import no_format_for_preset, streaming_formats_only
+from src.lib.site.error import no_format_for_preset, stream_not_playable
 
 #: Protocols made of fragments: playlists the segmented engine cannot fetch.
 _FRAGMENTED = ("m3u8", "dash", "f4m", "ism")
@@ -125,8 +125,8 @@ class Plan:
         return any(part.fragmented for part in (self.video, self.audio) if part is not None)
 
 
-def _eligible(formats: list[Format], allow_fragmented: bool) -> list[Format]:
-    return [f for f in formats if f.media and (allow_fragmented or not f.fragmented)]
+def _eligible(formats: list[Format]) -> list[Format]:
+    return [f for f in formats if f.media]
 
 
 def _by_height(formats: list[Format]) -> list[Format]:
@@ -209,13 +209,9 @@ def container_for(vcodec: str | None, acodec: str | None) -> tuple[str, str]:
     return "mkv", "video/x-matroska"
 
 
-def select_plan(formats: list[Format], preset: Preset, *, allow_fragmented: bool = True) -> Plan:
-    """The plan ``preset`` means for these formats.
-
-    ``allow_fragmented=False`` leaves HLS and DASH out entirely, for callers
-    that can only fetch plain files.
-    """
-    combined, video_only, audio_only = _split(_eligible(formats, allow_fragmented))
+def select_plan(formats: list[Format], preset: Preset) -> Plan:
+    """The plan ``preset`` means for these formats."""
+    combined, video_only, audio_only = _split(_eligible(formats))
 
     if preset == Preset.MP3:
         if not audio_only:
@@ -232,8 +228,14 @@ def select_plan(formats: list[Format], preset: Preset, *, allow_fragmented: bool
     if best_combined is not None and (best_video is None or (best_combined.height or 0) >= (best_video.height or 0)):
         size, estimate = _size(best_combined)
         quality = f"{best_combined.height}p" if best_combined.height else preset.value
-        ext = best_combined.ext or "mp4"
-        return Plan(Kind.VIDEO, best_combined, None, f"video/{_subtype(ext)}", ext, quality, size, estimate)
+        if best_combined.fragmented:
+            # Remuxed after download anyway (MPEG-TS is not MP4), so into the
+            # container its codecs fit.
+            extension, mime_type = container_for(best_combined.vcodec, best_combined.acodec)
+        else:
+            extension = best_combined.ext or "mp4"
+            mime_type = f"video/{_subtype(extension)}"
+        return Plan(Kind.VIDEO, best_combined, None, mime_type, extension, quality, size, estimate)
 
     if best_video is not None and best_audio is not None:
         size, estimate = _size(best_video, best_audio)
@@ -244,7 +246,7 @@ def select_plan(formats: list[Format], preset: Preset, *, allow_fragmented: bool
     raise no_format_for_preset(preset.value)
 
 
-def usable_presets(formats: list[Format], *, allow_fragmented: bool = True) -> list[Preset]:
+def usable_presets(formats: list[Format]) -> list[Preset]:
     """The presets these formats can satisfy, in the order they are offered.
 
     A height preset is offered only up to the tallest format, where it would
@@ -252,7 +254,7 @@ def usable_presets(formats: list[Format], *, allow_fragmented: bool = True) -> l
     "best" would be the untranscoded file, which the post-processor cannot yet
     keep as it is.
     """
-    combined, video_only, audio_only = _split(_eligible(formats, allow_fragmented))
+    combined, video_only, audio_only = _split(_eligible(formats))
     offered: list[Preset] = []
 
     if combined or (video_only and audio_only):
@@ -266,36 +268,6 @@ def usable_presets(formats: list[Format], *, allow_fragmented: bool = True) -> l
     return offered
 
 
-#: Whether HLS and DASH formats can be fetched yet. They cannot until #58 adds
-#: yt-dlp's downloader as the fragment path; flipping this is that issue's job.
-FRAGMENTS_SUPPORTED = False
-
-
-def fetchable_plan(formats: list[Format], preset: Preset) -> Plan:
-    """The plan for ``preset`` that the download paths can fetch today.
-
-    A preset that only streaming formats could satisfy is refused with a
-    message that says so, rather than as a mere "no stream for this preset".
-    """
-    if FRAGMENTS_SUPPORTED:
-        return select_plan(formats, preset)
-    try:
-        return select_plan(formats, preset, allow_fragmented=False)
-    except Error:
-        select_plan(formats, preset)  # still raises when nothing at all fits
-        raise streaming_formats_only() from None
-
-
-def fetchable_presets(formats: list[Format]) -> list[Preset]:
-    """The presets offered today; ``streaming_formats_only`` when fragments alone could serve."""
-    if FRAGMENTS_SUPPORTED:
-        return usable_presets(formats)
-    presets = usable_presets(formats, allow_fragmented=False)
-    if not presets and usable_presets(formats):
-        raise streaming_formats_only()
-    return presets
-
-
 #: The tallest the player streams. Segments are transcoded as they are asked
 #: for, and 4K on demand costs a great deal for nothing a browser player shows.
 PLAYBACK_PRESET = Preset.P1080
@@ -304,9 +276,13 @@ PLAYBACK_PRESET = Preset.P1080
 def playback_plan(formats: list[Format]) -> Plan:
     """What the player streams: video at up to 1080p, or an audio-only site's audio.
 
-    Drawn from the formats a download could fetch, so a page the player takes
-    is one the add box could save as well, and #58 opens both at once.
+    ffmpeg reads each input from its URL. A plain file or an HLS playlist is
+    one rendition, but a DASH, f4m or ISM URL is a manifest of all of them,
+    so those stay out of playback, though downloads take them.
     """
-    presets = fetchable_presets(formats)
+    playable = [f for f in formats if not f.fragmented or f.hls]
+    presets = usable_presets(playable)
+    if not presets and usable_presets(formats):
+        raise stream_not_playable()
     preset = Preset.MP3 if presets and Preset.BEST not in presets else PLAYBACK_PRESET
-    return fetchable_plan(formats, preset)
+    return select_plan(playable, preset)

@@ -220,24 +220,23 @@ async def test_a_taller_preset_than_available_falls_back_to_the_tallest() -> Non
 
 
 @pytest.mark.asyncio
-async def test_a_site_with_only_streaming_formats_is_refused_until_they_are_supported() -> None:
+async def test_a_site_with_only_streaming_formats_is_queued_for_the_fragment_path() -> None:
     service, repo, _ = _service(client=FakeSiteClient(site_info("dailymotion")))
 
-    with pytest.raises(Error) as caught:
-        await service.enqueue_media("https://dailymotion.com/video/x", Preset.BEST)
+    await service.enqueue_media("https://dailymotion.com/video/x", Preset.BEST)
 
-    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
-    assert "streaming formats" in (caught.value.message or "")
-    assert repo.created == []
+    created = repo.created[0]
+    assert created["video_format"] == "hls-1080"
+    assert created["filename"].endswith(".mp4")
 
 
 @pytest.mark.asyncio
-async def test_https_formats_are_chosen_over_taller_streaming_ones_for_now() -> None:
+async def test_the_tallest_format_wins_even_when_it_is_streaming_only() -> None:
     # Reddit's tallest is HLS-only at 640p; its HTTPS formats stop at 480p.
     service, repo, _ = _service(client=FakeSiteClient(site_info("reddit")))
     await service.enqueue_media("https://reddit.com/r/x", Preset.BEST)
 
-    assert (repo.created[0]["video_format"], repo.created[0]["audio_format"]) == ("dash-VIDEO-1", "dash-AUDIO-1")
+    assert (repo.created[0]["video_format"], repo.created[0]["audio_format"]) == ("hls-1875", "dash-AUDIO-1")
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ class FormatSchema(BaseSchema):
     height: int | None = None
     has_video: bool = False
     has_audio: bool = False
-    #: HLS or DASH, which only the fragment path (#58) can fetch.
+    #: HLS, DASH and the like, which yt-dlp's downloader fetches rather than the engine.
     fragmented: bool = False
     size: int | None = None
     size_approx: int | None = None

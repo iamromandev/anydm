@@ -10,8 +10,6 @@ from src.data.type import Kind, Preset
 from src.lib.site.format import (
     Format,
     container_for,
-    fetchable_plan,
-    fetchable_presets,
     is_fragmented,
     playback_plan,
     select_plan,
@@ -30,8 +28,8 @@ def _one(site: str, format_id: str) -> Format:
     return next(f for f in _formats(site) if f.id == format_id)
 
 
-def _picked(site: str, preset: Preset, *, allow_fragmented: bool = True) -> tuple[str | None, str | None]:
-    plan = select_plan(_formats(site), preset, allow_fragmented=allow_fragmented)
+def _picked(site: str, preset: Preset) -> tuple[str | None, str | None]:
+    plan = select_plan(_formats(site), preset)
     return (plan.video.id if plan.video else None, plan.audio.id if plan.audio else None)
 
 
@@ -108,18 +106,6 @@ def test_each_preset_on_each_site(site: str, preset: Preset, expected: tuple[str
     assert _picked(site, preset) == expected
 
 
-def test_without_fragments_reddit_falls_back_to_its_https_formats() -> None:
-    # Until the fragment path exists (#58), a plan must be fetchable by the engine.
-    assert _picked("reddit", Preset.BEST, allow_fragmented=False) == ("dash-VIDEO-1", "dash-AUDIO-1")
-
-
-def test_without_fragments_an_hls_only_site_has_no_plan() -> None:
-    with pytest.raises(Error) as caught:
-        select_plan(_formats("dailymotion"), Preset.BEST, allow_fragmented=False)
-
-    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
-
-
 def test_a_plan_says_whether_it_needs_the_fragment_path() -> None:
     assert select_plan(_formats("twitch"), Preset.BEST).fragmented is True
     assert select_plan(_formats("youtube"), Preset.BEST).fragmented is False
@@ -183,16 +169,6 @@ def test_an_unknown_size_is_unknown() -> None:
 )
 def test_usable_presets(site: str, expected: list[Preset]) -> None:
     assert usable_presets(_formats(site)) == expected
-
-
-def test_usable_presets_without_fragments() -> None:
-    assert usable_presets(_formats("dailymotion"), allow_fragmented=False) == []
-    assert usable_presets(_formats("vimeo"), allow_fragmented=False) == [
-        Preset.BEST,
-        Preset.P1080,
-        Preset.P720,
-        Preset.P480,
-    ]
 
 
 # --- the rule, on made-up formats ------------------------------------------------
@@ -265,7 +241,7 @@ def test_playback_is_capped_at_1080p() -> None:
     plan = playback_plan(formats)
 
     assert max(f.height or 0 for f in formats) > 1080
-    assert plan == fetchable_plan(formats, Preset.P1080)
+    assert plan == select_plan(formats, Preset.P1080)
     assert plan.video is not None and plan.video.height == 1080
     assert plan.audio is not None
 
@@ -277,13 +253,23 @@ def test_playback_of_an_audio_only_site_is_its_audio() -> None:
     assert plan.audio is not None and plan.audio.id == "http_mp3_0_0"
 
 
-def test_playback_of_a_streaming_only_site_is_refused_as_downloads_are() -> None:
-    # One rule for both: #58 opens HLS and DASH to playback and download at once.
+def test_playback_takes_hls() -> None:
+    plan = playback_plan(_formats("dailymotion"))
+
+    assert plan.video is not None and plan.video.id == "hls-1080"
+
+
+def test_playback_refuses_a_page_of_dash_manifests_alone() -> None:
+    # A DASH URL is a manifest of every rendition, which ffmpeg would not
+    # narrow to the one chosen. Downloads can still take it.
+    dash = Format("dash-720", protocol="http_dash_segments", vcodec="avc1", acodec="mp4a", ext="mp4", height=720)
+
     with pytest.raises(Error) as caught:
-        playback_plan(_formats("dailymotion"))
+        playback_plan([dash])
 
     assert caught.value.type == ErrorType.UNSUPPORTED_OPERATION
-    assert "streaming formats" in (caught.value.message or "")
+    assert "can still be downloaded" in (caught.value.message or "")
+    assert select_plan([dash], Preset.BEST).video == dash
 
 
 # --- the container two parts are muxed into -------------------------------------
@@ -331,14 +317,21 @@ def test_a_two_part_plan_is_named_for_its_container() -> None:
     assert (plan.extension, plan.mime_type) == ("webm", "video/webm")
 
 
-def test_every_recorded_two_part_plan_stays_mp4() -> None:
-    # Today's sites all pair codecs MP4 carries; nothing they download moves.
-    for site in ("youtube", "reddit", "vimeo", "twitter", "soundcloud"):
+def test_every_recorded_plan_is_mp4_or_mp3() -> None:
+    # All seven recorded sites, HLS ones included, pair codecs MP4 carries.
+    for site in ("youtube", "reddit", "vimeo", "twitter", "soundcloud", "dailymotion", "twitch"):
         formats = _formats(site)
-        for preset in fetchable_presets(formats):
-            plan = fetchable_plan(formats, preset)
-            if plan.video is not None and plan.audio is not None:
-                assert plan.extension == "mp4", (site, preset)
+        for preset in usable_presets(formats):
+            assert select_plan(formats, preset).extension in ("mp4", "mp3"), (site, preset)
+
+
+def test_an_hls_combined_plan_is_named_for_its_codecs() -> None:
+    # Remuxed after download anyway, so the container follows the codecs.
+    plan = select_plan(_formats("dailymotion"), Preset.BEST)
+    assert (plan.video.id if plan.video else None, plan.extension, plan.mime_type) == ("hls-1080", "mp4", "video/mp4")
+
+    unnamed = Format("hls-0", protocol="m3u8_native", ext="mp4", height=720)
+    assert select_plan([unnamed], Preset.BEST).extension == "mkv"
 
 
 # --- fragmented protocols -----------------------------------------------------

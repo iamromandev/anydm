@@ -26,11 +26,11 @@ async def test_extract_describes_the_page() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_offers_only_what_can_be_fetched_today() -> None:
+async def test_extract_offers_every_preset_the_formats_can_serve() -> None:
     data = await _service("vimeo").extract("http://vimeo.com/75629013")
 
-    # Vimeo's audio exists only as HLS, so MP3 is not on offer until #58.
-    assert data.presets == [Preset.BEST, Preset.P1080, Preset.P720, Preset.P480]
+    # Vimeo's separate audio exists only as HLS, which the fragment path fetches.
+    assert data.presets == [Preset.BEST, Preset.P1080, Preset.P720, Preset.P480, Preset.MP3]
 
 
 @pytest.mark.asyncio
@@ -52,12 +52,10 @@ async def test_an_audio_site_offers_mp3() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_streaming_only_site_is_refused_until_it_is_supported() -> None:
-    with pytest.raises(Error) as caught:
-        await _service("dailymotion").extract("https://dailymotion.com/video/x")
+async def test_a_streaming_only_site_offers_its_presets() -> None:
+    data = await _service("dailymotion").extract("https://dailymotion.com/video/x")
 
-    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
-    assert "streaming formats" in (caught.value.message or "")
+    assert data.presets == [Preset.BEST, Preset.P1080, Preset.P720, Preset.P480]
 
 
 @pytest.mark.asyncio

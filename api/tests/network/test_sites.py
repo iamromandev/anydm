@@ -22,7 +22,7 @@ import httpx
 import pytest
 from src.core.error import Error
 from src.lib.site.client import YtDlpClient
-from src.lib.site.format import fetchable_plan, fetchable_presets
+from src.lib.site.format import select_plan, usable_presets
 from src.service.download.downloader import Downloader, Stopped
 from src.service.download.probe import probe
 from src.service.download.progress import ProgressSample
@@ -96,9 +96,9 @@ async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, 
     with _unless_refused():
         info = await client.extract(url)
         # What the add box would start on: Best, or MP3 for an audio-only site.
-        presets = fetchable_presets(info.formats)
+        presets = usable_presets(info.formats)
         assert presets, "no format a download can fetch"
-        plan = fetchable_plan(info.formats, presets[0])
+        plan = select_plan(info.formats, presets[0])
         parts = [part for part in (plan.video, plan.audio) if part is not None]
         # A fresh extraction, as the worker makes for each attempt.
         resolved = await client.resolve(url, [part.id for part in parts])

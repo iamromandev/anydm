@@ -42,11 +42,11 @@ def live_not_supported() -> Error:
     )
 
 
-def streaming_formats_only() -> Error:
-    """Every usable format is HLS or DASH, which the engine cannot fetch until #58."""
+def stream_not_playable() -> Error:
+    """Every format is a DASH, f4m or ISM manifest, which ffmpeg does not play by URL."""
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,
-        message="This site only offers streaming formats, which are not supported yet",
+        message="The player can't read this site's streams yet; it can still be downloaded",
         error_type=ErrorType.UNSUPPORTED_OPERATION,
     )
 

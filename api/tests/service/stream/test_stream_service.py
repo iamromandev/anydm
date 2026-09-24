@@ -801,13 +801,12 @@ async def test_a_live_page_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_streaming_only_page_is_refused_as_downloads_are(tmp_path: Path) -> None:
+async def test_an_hls_only_page_plays_its_playlist(tmp_path: Path) -> None:
     service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
 
-    with pytest.raises(Error) as caught:
-        await service.start_session("https://www.dailymotion.com/video/x8")
+    session = await service.start_session("https://www.dailymotion.com/video/x8")
 
-    assert "streaming formats" in (caught.value.message or "")
+    assert session.inputs == [MediaInput(media_url("dailymotion", "hls-1080"), HEADERS)]
 
 
 @pytest.mark.asyncio
