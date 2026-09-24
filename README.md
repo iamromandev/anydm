@@ -101,7 +101,7 @@ cp api/.env.example api/.env
 | `DOWNLOAD_PROGRESS_FLUSH_MS` | `1000` | How often progress reaches the database (min 100) |
 | `DOWNLOAD_MAX_ATTEMPTS` | `3` | Total tries per task, the first included (min 1) |
 | `DOWNLOAD_MIN_FREE_BYTES` | `1073741824` | Free space `DOWNLOAD_DIR`'s disk must keep. Adding a download that would dip below it (counting its size, when known) answers 507, and a queued task waits and re-checks every 30 s instead of starting. `0` turns the guard off |
-| `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every HTTP download and segment. `0` is unlimited |
+| `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every download. HTTP downloads and their segments draw from one limiter. An HLS or DASH download gets `DOWNLOAD_RATE_LIMIT_BPS ÷ DOWNLOAD_WORKERS` through yt-dlp, one fragment at a time, and what it reads is charged to that limiter, so HTTP downloads alongside make room. `0` is unlimited |
 | `TORRENT_ENABLED` | `true` | Torrent routes and the monitor. Off, torrent routes answer 503 and nothing polls |
 | `TORRENT_API_URL` | `http://torrent-anydm-api:3030` | rqbit's control API. `http://127.0.0.1:8031` when running the API on the host |
 | `TORRENT_DIR` | `./download/torrent` | Where rqbit writes, under `DOWNLOAD_DIR` |
@@ -142,7 +142,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - **Endpoints:**
   - Health, extract and settings
     - `GET /health/check` — health probe
-    - `POST /extract` — what a page on any site yt-dlp supports offers: title, duration, thumbnail, formats, and the `presets` that can be downloaded from it today. An unsupported link answers 400 `unsupported_url`; a live stream, a playlist, or a page with only HLS/DASH formats answers 422
+    - `POST /extract` — what a page on any site yt-dlp supports offers: title, duration, thumbnail, formats, and the `presets` that can be downloaded from it today. An unsupported link answers 400 `unsupported_url`; a live stream or a playlist answers 422
     - `GET /settings` — how this API is configured, secrets left out, and the running yt-dlp version; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
@@ -169,7 +169,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request
     - `DELETE /stream/{session_id}` — end the session
 - **Workers:** a pool started in the app lifespan claims queued tasks, resumes from `.part` files, and requeues orphans left in-flight by a previous process
-- **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch.
+- **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch. HLS and DASH formats are playlists of fragments rather than one file, so they go through yt-dlp's own downloader instead, which resumes from its own record of the fragments on disk.
 
   How much this wins depends entirely on where the bottleneck is. Against a server that caps each connection it is close to linear (measured 0.12 → 0.49 MB/s, 4.1×, on a test server throttled to 120 KB/s per connection). Against a mirror that does not, it is nearly nothing, because one connection already saturates the link (measured 9.09 → 10.37 MB/s on a Debian mirror, with 8 segments no better than 4).
 - **Assembling a download:** a site's separate video and audio are muxed without re-encoding, into the container that carries both codecs:
@@ -177,7 +177,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
   - WebM for VP8, VP9 or AV1 with Opus or Vorbis
   - MKV for anything else, a codec yt-dlp does not name included
 
-  The file's extension says which. Every site recorded so far comes out as MP4. An MP3 is transcoded from any audio codec.
+  The file's extension says which. Every site recorded so far comes out as MP4. An HLS download that is a single part arrives as MPEG-TS and is remuxed, also without re-encoding, into the container its codecs fit. An MP3 is transcoded from any audio codec.
 - **Torrents:** a pinned rqbit runs as its own Compose service and owns every torrent transfer. The API resolves a magnet to a file list, creates one task per torrent with child `file` rows, and a monitor polls the engine and mirrors progress onto them. A finished torrent seeds until it is told to stop. rqbit's control API has no authentication, so it is published on loopback only; port 4240 is published for incoming peers. Torrents never occupy a download worker slot.
 - **Streaming:** playing is a separate path from downloading and keeps nothing. A page on a site is extracted first and played from its formats, video and audio as separate inputs, and its URLs are resolved again if they expire mid-play. A session probes the source, then serves HLS whose segments are transcoded when a player asks for them, `STREAM_READAHEAD_SEGMENTS` ahead of the one being fetched. Idle sessions are swept after `STREAM_IDLE_TIMEOUT_S`, and a reaper deletes rqbit torrents no task or session owns.
 - **Migrations:** Tortoise's built-in migrations under `src/data/db/migration`, applied by `python -m scripts.migrate` — the compose command runs it before uvicorn
@@ -202,7 +202,7 @@ Sites change how they serve media, and yt-dlp releases to keep up, sometimes sev
 
 ## Current limitations
 
-- Sites whose formats are all HLS or DASH (Dailymotion and Twitch VODs, for instance) are refused, for playing as well as downloading, until the fragment downloader lands, and where a site has both, the HTTPS formats are used even when an HLS one is taller. Playlists, channels, live streams, and videos that need a login are not supported.
+- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player reads HLS, but not DASH, f4m or ISM, whose URL is a manifest of every rendition. A page offering only those still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
 - Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.
@@ -217,4 +217,4 @@ GitHub Actions runs on pushes to `main` and on pull requests, in three parallel 
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
-A separate workflow, [.github/workflows/live.yml](.github/workflows/live.yml), runs the tests marked `network` against real sites, weekly (Mondays, 06:00 UTC) and on demand, but never on pull requests: sites break on their own schedule, and that should not block unrelated work. For each site it extracts one page and fetches the first MiB of what a download would, through the same engine. Sites that only offer HLS are checked for extraction alone until the fragment downloader lands. A red run is the cue to bump yt-dlp. A site that refuses the runner and asks it to sign in skips with that reason, since no bump clears it: YouTube does this to cloud IPs at times, and Reddit blocks them outright, so from CI Reddit is only checked when it lets the runner through. Run the same tests by hand with `make api-test-live`.
+A separate workflow, [.github/workflows/live.yml](.github/workflows/live.yml), runs the tests marked `network` against real sites, weekly (Mondays, 06:00 UTC) and on demand, but never on pull requests: sites break on their own schedule, and that should not block unrelated work. For each site it extracts one page and fetches the first MiB of what a download would, through the same engine, or, for a fragmented format, through yt-dlp's downloader. A red run is the cue to bump yt-dlp. A site that refuses the runner and asks it to sign in skips with that reason, since no bump clears it: YouTube does this to cloud IPs at times, and Reddit blocks them outright, so from CI Reddit is only checked when it lets the runner through. Run the same tests by hand with `make api-test-live`.

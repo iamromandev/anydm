@@ -24,8 +24,10 @@ from src.core.error import Error
 from src.lib.site.client import YtDlpClient
 from src.lib.site.format import select_plan, usable_presets
 from src.service.download.downloader import Downloader, Stopped
+from src.service.download.fragment import FragmentDownloader
 from src.service.download.probe import probe
-from src.service.download.progress import ProgressSample
+from src.service.download.progress import AggregateSample, ProgressSample
+from src.service.download.rate_limit import Unlimited
 
 pytestmark = pytest.mark.network
 
@@ -36,10 +38,6 @@ DOWNLOADABLE = {
     "soundcloud": "https://soundcloud.com/ethmusic/lostin-powers-she-so-heavy",
     "x": "https://twitter.com/captainamerica/status/719944021058060289",
     "reddit": "https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/",
-}
-
-#: Sites that only offer HLS. Extraction only, until #58 can fetch them.
-STREAMING_ONLY = {
     "dailymotion": "https://geo.dailymotion.com/player.html?video=x89eyek",
     "twitch": "http://www.twitch.tv/riotgames/v/6528877",
 }
@@ -89,6 +87,24 @@ async def _first_bytes(http: httpx.AsyncClient, url: str, headers: dict[str, str
         pytest.fail(f"{received} bytes in {FETCH_LIMIT_S:g} s: throttled, the way #72 was?")
 
 
+async def _first_fragment_bytes(client: YtDlpClient, page_url: str, format_id: str, dest: Path) -> int:
+    """The start of a fragmented format, through yt-dlp's downloader, then stop."""
+    received = 0
+
+    async def count(sample: AggregateSample) -> None:
+        nonlocal received
+        received = sample.downloaded_bytes
+
+    fragments = FragmentDownloader(client, concurrency=4, rate_bps=0, limiter=Unlimited(), poll_s=0.25)
+    fetch = fragments.fetch(page_url, format_id, dest, on_sample=count, should_stop=lambda: received >= FIRST_BYTES)
+    try:
+        return await asyncio.wait_for(fetch, timeout=FETCH_LIMIT_S)
+    except Stopped:
+        return received
+    except TimeoutError:
+        pytest.fail(f"{received} bytes in {FETCH_LIMIT_S:g} s: throttled, the way #72 was?")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("url", DOWNLOADABLE.values(), ids=DOWNLOADABLE.keys())
 async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, tmp_path: Path) -> None:
@@ -106,19 +122,16 @@ async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), http2=True) as http:
         for part in parts:
             target = resolved[part.id]
-            probed = await probe(http, target.url, target.headers)
-            received = await _first_bytes(http, target.url, target.headers, tmp_path / f"{part.id}.part")
-
-            expected = min(FIRST_BYTES, probed.total_bytes or FIRST_BYTES)
+            dest = tmp_path / f"{part.id}.part"
+            if target.fragmented:
+                # Its size is unknown until the end, so the check is that bytes
+                # flowed. The stop fires at FIRST_BYTES all the same. yt-dlp
+                # reads the page again first, and may be refused there too.
+                with _unless_refused():
+                    received = await _first_fragment_bytes(client, url, part.id, dest)
+                expected = 1
+            else:
+                probed = await probe(http, target.url, target.headers)
+                received = await _first_bytes(http, target.url, target.headers, dest)
+                expected = min(FIRST_BYTES, probed.total_bytes or FIRST_BYTES)
             assert received >= expected, f"format {part.id}: {received} of {expected} bytes"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("url", STREAMING_ONLY.values(), ids=STREAMING_ONLY.keys())
-async def test_a_streaming_only_site_still_extracts(url: str) -> None:
-    # The add box explains why these cannot be downloaded yet, and it needs a
-    # working extraction to say so.
-    with _unless_refused():
-        info = await YtDlpClient().extract(url)
-
-    assert any(f.media for f in info.formats), "no media formats"
