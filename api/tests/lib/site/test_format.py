@@ -7,7 +7,15 @@ import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.type import Kind, Preset
-from src.lib.site.format import Format, fetchable_plan, playback_plan, select_plan, usable_presets
+from src.lib.site.format import (
+    Format,
+    container_for,
+    fetchable_plan,
+    fetchable_presets,
+    playback_plan,
+    select_plan,
+    usable_presets,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "ytdlp"
 
@@ -275,3 +283,58 @@ def test_playback_of_a_streaming_only_site_is_refused_as_downloads_are() -> None
 
     assert caught.value.type == ErrorType.UNSUPPORTED_OPERATION
     assert "streaming formats" in (caught.value.message or "")
+
+
+# --- the container two parts are muxed into -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("vcodec", "acodec", "container"),
+    [
+        # yt-dlp's own strings, as the recorded sites report them.
+        ("avc1.640028", "mp4a.40.2", "mp4"),
+        ("vp9", "mp4a.40.2", "mp4"),
+        ("vp09.00.50.08", "opus", "mp4"),
+        ("av01.0.12M.08", "mp4a.40.2", "mp4"),
+        ("hev1.1.6.L93.B0", "ac-3", "mp4"),
+        ("avc1.4d401f", "mp3", "mp4"),
+        # VP8 has no place in MP4, and Vorbis none a player accepts there.
+        ("vp8", "vorbis", "webm"),
+        ("vp8.0", "opus", "webm"),
+        ("vp9", "vorbis", "webm"),
+        # Neither fits both.
+        ("avc1.640028", "vorbis", "mkv"),
+        ("vp8", "mp4a.40.2", "mkv"),
+        # A codec nobody named goes where anything fits.
+        (None, "mp4a.40.2", "mkv"),
+        ("avc1.640028", None, "mkv"),
+        ("theora", "vorbis", "mkv"),
+    ],
+)
+def test_the_container_fits_both_codecs(vcodec: str | None, acodec: str | None, container: str) -> None:
+    assert container_for(vcodec, acodec)[0] == container
+
+
+def test_each_container_names_its_mime_type() -> None:
+    assert container_for("avc1", "mp4a") == ("mp4", "video/mp4")
+    assert container_for("vp8", "vorbis") == ("webm", "video/webm")
+    assert container_for("avc1", "vorbis") == ("mkv", "video/x-matroska")
+
+
+def test_a_two_part_plan_is_named_for_its_container() -> None:
+    video = Format("vp8-480", vcodec="vp8", acodec="none", ext="webm", height=480)
+    audio = Format("vorbis", vcodec="none", acodec="vorbis", ext="webm", bitrate=128_000)
+
+    plan = select_plan([video, audio], Preset.BEST)
+
+    assert (plan.extension, plan.mime_type) == ("webm", "video/webm")
+
+
+def test_every_recorded_two_part_plan_stays_mp4() -> None:
+    # Today's sites all pair codecs MP4 carries; nothing they download moves.
+    for site in ("youtube", "reddit", "vimeo", "twitter", "soundcloud"):
+        formats = _formats(site)
+        for preset in fetchable_presets(formats):
+            plan = fetchable_plan(formats, preset)
+            if plan.video is not None and plan.audio is not None:
+                assert plan.extension == "mp4", (site, preset)

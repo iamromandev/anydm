@@ -110,7 +110,7 @@ cp api/.env.example api/.env
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
 | `TORRENT_DOWNLOAD_LIMIT_BPS` | `0` | rqbit's total download cap in bytes per second. `0` is unlimited. Pushed to rqbit by the API, again after rqbit restarts |
 | `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
-| `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux YouTube's separate video and audio, and to transcode stream segments |
+| `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux a site's separate video and audio, to make MP3s, and to transcode stream segments |
 | `FFPROBE_PATH` | `ffprobe` | ffprobe executable; reads a source's duration and streams before a session starts |
 | `STREAM_DIR` | `./stream` | Scratch directory for on-demand HLS segments |
 | `STREAM_SEGMENT_SECONDS` | `6` | Fixed HLS segment duration |
@@ -172,6 +172,12 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch.
 
   How much this wins depends entirely on where the bottleneck is. Against a server that caps each connection it is close to linear (measured 0.12 → 0.49 MB/s, 4.1×, on a test server throttled to 120 KB/s per connection). Against a mirror that does not, it is nearly nothing, because one connection already saturates the link (measured 9.09 → 10.37 MB/s on a Debian mirror, with 8 segments no better than 4).
+- **Assembling a download:** a site's separate video and audio are muxed without re-encoding, into the container that carries both codecs:
+  - MP4 for H.264, HEVC, AV1 or VP9 with AAC, MP3, Opus, AC-3 or E-AC-3
+  - WebM for VP8, VP9 or AV1 with Opus or Vorbis
+  - MKV for anything else, a codec yt-dlp does not name included
+
+  The file's extension says which. Every site recorded so far comes out as MP4. An MP3 is transcoded from any audio codec.
 - **Torrents:** a pinned rqbit runs as its own Compose service and owns every torrent transfer. The API resolves a magnet to a file list, creates one task per torrent with child `file` rows, and a monitor polls the engine and mirrors progress onto them. A finished torrent seeds until it is told to stop. rqbit's control API has no authentication, so it is published on loopback only; port 4240 is published for incoming peers. Torrents never occupy a download worker slot.
 - **Streaming:** playing is a separate path from downloading and keeps nothing. A page on a site is extracted first and played from its formats, video and audio as separate inputs, and its URLs are resolved again if they expire mid-play. A session probes the source, then serves HLS whose segments are transcoded when a player asks for them, `STREAM_READAHEAD_SEGMENTS` ahead of the one being fetched. Idle sessions are swept after `STREAM_IDLE_TIMEOUT_S`, and a reaper deletes rqbit torrents no task or session owns.
 - **Migrations:** Tortoise's built-in migrations under `src/data/db/migration`, applied by `python -m scripts.migrate` — the compose command runs it before uvicorn
