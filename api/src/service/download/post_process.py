@@ -18,8 +18,14 @@ Runner = Callable[[list[str]], Awaitable[None]]
 
 
 class PostProcessor(Protocol):
-    async def run(self, task: Any, parts: dict[str, Path], destination: Path) -> None:
-        """Turn ``parts`` into the single file at ``destination``."""
+    async def run(
+        self, task: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
+    ) -> None:
+        """Turn ``parts`` into the single file at ``destination``.
+
+        ``fragmented`` names the parts yt-dlp's downloader fetched, which
+        arrive in a container of their own (MPEG-TS for HLS).
+        """
         ...
 
 
@@ -28,15 +34,19 @@ class FfmpegPostProcessor(PostProcessor):
 
     Three cases, in the order they are checked. An MP3 task is transcoded even
     though it has only one part, because the stream YouTube serves is AAC or
-    Opus. Any other single part is already the file and is renamed into place —
-    that covers combined streams and every direct download. Two parts are muxed.
+    Opus. Any other single part is already the file and is renamed into place,
+    which covers combined streams and every direct download. The exception is
+    a part yt-dlp's downloader fetched, which is remuxed out of the container
+    it arrived in. Two parts are muxed.
     """
 
     def __init__(self, ffmpeg: str, runner: Runner = media.run) -> None:
         self._ffmpeg = ffmpeg
         self._run = runner
 
-    async def run(self, task: Any, parts: dict[str, Path], destination: Path) -> None:
+    async def run(
+        self, task: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
+    ) -> None:
         if not parts:
             raise Error.internal(message="Nothing was downloaded")
 
@@ -49,7 +59,12 @@ class FfmpegPostProcessor(PostProcessor):
             return
 
         if len(parts) == 1:
-            next(iter(parts.values())).replace(destination)
+            name, part = next(iter(parts.items()))
+            if name in fragmented:
+                await self._run(media.remux_args(self._ffmpeg, part, destination))
+                part.unlink(missing_ok=True)
+            else:
+                part.replace(destination)
             return
 
         video, audio = parts.get("video"), parts.get("audio")

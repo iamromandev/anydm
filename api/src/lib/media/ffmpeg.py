@@ -40,6 +40,24 @@ def mux_args(ffmpeg: str, video: Path, audio: Path, destination: Path) -> list[s
     return [*args, str(destination)]
 
 
+def remux_args(ffmpeg: str, source: Path, destination: Path) -> list[str]:
+    """Copy every stream of ``source`` into the container the destination names.
+
+    For a part that came down as HLS. MPEG-TS is not MP4, and an fMP4 part is
+    better with a normal index at the front. ffmpeg inserts ``aac_adtstoasc``
+    itself when AAC moves from TS into MP4.
+    """
+    args = [
+        ffmpeg,
+        "-y",
+        "-i", str(source),
+        "-c", "copy",
+    ]
+    if destination.suffix == ".mp4":
+        args += ["-movflags", "+faststart"]
+    return [*args, str(destination)]
+
+
 def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:
     """Transcode an audio stream to MP3 at V2 (roughly 190 kbps VBR)."""
     return [

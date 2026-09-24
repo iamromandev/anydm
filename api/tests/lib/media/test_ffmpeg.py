@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
-from src.lib.media.ffmpeg import mp3_args, mux_args, run, segment_args
+from src.lib.media.ffmpeg import mp3_args, mux_args, remux_args, run, segment_args
 from src.lib.media.source import MediaInput
 
 
@@ -42,6 +42,17 @@ def test_mp3_args_drop_video_and_encode_audio() -> None:
     assert args[args.index("-c:a") + 1] == "libmp3lame"
     assert args[args.index("-q:a") + 1] == "2"
     assert args[-1] == "/t/out.mp3"
+
+
+def test_remux_args_copy_every_stream_into_the_destination_s_container() -> None:
+    mp4 = remux_args("ffmpeg", Path("/t/video.part"), Path("/t/out.mp4"))
+    assert mp4[mp4.index("-i") + 1] == "/t/video.part"
+    assert mp4[mp4.index("-c") + 1] == "copy"
+    assert mp4[mp4.index("-movflags") + 1] == "+faststart"
+    assert mp4[-1] == "/t/out.mp4"
+
+    mkv = remux_args("ffmpeg", Path("/t/video.part"), Path("/t/out.mkv"))
+    assert "-movflags" not in mkv
 
 
 def test_the_configured_binary_is_used() -> None:
