@@ -801,12 +801,14 @@ async def test_a_live_page_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_hls_only_page_plays_its_playlist(tmp_path: Path) -> None:
+async def test_an_hls_only_page_is_refused_for_playback_for_now(tmp_path: Path) -> None:
+    # Until #87 cuts HLS segments without seeking into the stream.
     service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("dailymotion")))
 
-    session = await service.start_session("https://www.dailymotion.com/video/x8")
+    with pytest.raises(Error) as caught:
+        await service.start_session("https://www.dailymotion.com/video/x8")
 
-    assert session.inputs == [MediaInput(media_url("dailymotion", "hls-1080"), HEADERS)]
+    assert "can still be downloaded" in (caught.value.message or "")
 
 
 @pytest.mark.asyncio

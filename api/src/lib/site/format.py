@@ -92,11 +92,6 @@ class Format:
         return is_fragmented(self.protocol)
 
     @property
-    def hls(self) -> bool:
-        """An HLS playlist: the one fragmented kind ffmpeg plays from its URL."""
-        return "m3u8" in self.protocol
-
-    @property
     def best_size(self) -> tuple[int | None, bool]:
         """The size to count, and whether it is only an estimate."""
         if self.size:
@@ -276,11 +271,13 @@ PLAYBACK_PRESET = Preset.P1080
 def playback_plan(formats: list[Format]) -> Plan:
     """What the player streams: video at up to 1080p, or an audio-only site's audio.
 
-    ffmpeg reads each input from its URL. A plain file or an HLS playlist is
-    one rendition, but a DASH, f4m or ISM URL is a manifest of all of them,
-    so those stay out of playback, though downloads take them.
+    Plain files only, for now. Each segment is cut by seeking into the input,
+    and ffmpeg's seek into HLS clips the start of a TS segment and hangs on
+    fMP4, reading on for minutes into output nothing can play (#87). A DASH,
+    f4m or ISM URL is a manifest of every rendition besides. Downloads take
+    all of them.
     """
-    playable = [f for f in formats if not f.fragmented or f.hls]
+    playable = [f for f in formats if not f.fragmented]
     presets = usable_presets(playable)
     if not presets and usable_presets(formats):
         raise stream_not_playable()
