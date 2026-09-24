@@ -135,6 +135,25 @@ async def test_a_stop_reaches_the_worker_as_the_engine_s_stopped(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_nothing_is_reported_once_a_stop_is_asked(tmp_path: Path) -> None:
+    # A pause writes the row's last numbers itself. A sample after it, while
+    # the thread has yet to notice, put a speed back on a paused task.
+    samples: list[AggregateSample] = []
+    stop = threading.Event()
+
+    async def note(sample: AggregateSample) -> None:
+        samples.append(sample)
+        stop.set()
+
+    with pytest.raises(Stopped):
+        await _downloader(EndlessClient()).fetch(
+            PAGE, "hls-1080", tmp_path / "video.part", on_sample=note, should_stop=stop.is_set
+        )
+
+    assert len(samples) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_worker_stops_the_thread_at_its_next_progress(tmp_path: Path) -> None:
     client = EndlessClient()
     fetch = asyncio.create_task(

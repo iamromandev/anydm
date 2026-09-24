@@ -89,7 +89,9 @@ class FragmentDownloader:
 
         async def report() -> None:
             nonlocal charged
-            if not latest:
+            # Once a stop is asked, the pause or cancel has written the row's
+            # last numbers, and the engine reports nothing after it either.
+            if not latest or should_stop():
                 return
             progress = latest[0]
             fresh = progress.downloaded_bytes - charged
