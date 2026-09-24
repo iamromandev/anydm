@@ -10,11 +10,15 @@ import {
     canStopSeeding,
     isActive,
     isSeeding,
+    keepSegments,
     normalizeApiTask,
     normalizeSegments,
     normalizeFiles,
     segmentLayout,
+    settlePage,
     statusView,
+    type SegmentView,
+    type TaskStatus,
     type UiTask,
 } from "./task";
 
@@ -668,6 +672,177 @@ describe("appendPage", () => {
                 ],
             ).map((t) => t.id),
         ).toEqual([
+            "a",
+        ]);
+    });
+});
+
+describe("keepSegments", () => {
+    const row = (id: string, segments?: SegmentView[]): UiTask => ({
+        id,
+        title: id,
+        url: "",
+        kind: "file",
+        status: "downloading",
+        progress: 0,
+        eta: 0,
+        attempts: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+        segments,
+    });
+    const strip: SegmentView[] = [
+        { index: 0, start: 0, end: 9, downloaded: 5, downloadSpeed: 1 },
+    ];
+
+    it("carries the strip a held row has onto its new copy", () => {
+        // Task rows never carry segments; only progress frames do.
+        const kept = keepSegments(
+            [
+                row("a"),
+                row("b"),
+            ],
+            [
+                row("a", strip),
+            ],
+        );
+
+        expect(kept.map((t) => t.segments)).toEqual([
+            strip,
+            undefined,
+        ]);
+    });
+});
+
+describe("settlePage", () => {
+    const row = (id: string, status: TaskStatus = "downloading"): UiTask => ({
+        id,
+        title: id,
+        url: "",
+        kind: "file",
+        status,
+        progress: 0,
+        eta: 0,
+        attempts: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+    });
+
+    it("keeps the stream's copy of a row it changed while the page was in flight", () => {
+        // The bug: a quick download finished between the server reading the
+        // page and the page arriving, and the older row put it back.
+        const settled = settlePage(
+            [
+                row("a", "downloading"),
+            ],
+            [
+                row("a", "complete"),
+            ],
+            new Set([
+                "a",
+            ]),
+        );
+
+        expect(settled.map((t) => t.status)).toEqual([
+            "complete",
+        ]);
+    });
+
+    it("takes the page's copy of every row the stream left alone", () => {
+        const settled = settlePage(
+            [
+                { ...row("a"), progress: 60 },
+                row("b", "complete"),
+            ],
+            [
+                { ...row("a"), progress: 20 },
+                row("b", "downloading"),
+            ],
+            new Set(),
+        );
+
+        expect(
+            settled.map((t) => [
+                t.id,
+                t.status,
+                t.progress,
+            ]),
+        ).toEqual([
+            [
+                "a",
+                "downloading",
+                60,
+            ],
+            [
+                "b",
+                "complete",
+                0,
+            ],
+        ]);
+    });
+
+    it("leaves out a row the stream removed while the page was in flight", () => {
+        // Cancelling in another tab publishes the row, and `mergeTasks` drops
+        // it; a page read before the cancel still has it.
+        const settled = settlePage(
+            [
+                row("a"),
+                row("b"),
+            ],
+            [
+                row("b"),
+            ],
+            new Set([
+                "a",
+            ]),
+        );
+
+        expect(settled.map((t) => t.id)).toEqual([
+            "b",
+        ]);
+    });
+
+    it("keeps a row the stream added that the page was read too early to hold", () => {
+        const settled = settlePage(
+            [
+                row("a"),
+            ],
+            [
+                row("new"),
+                row("a"),
+            ],
+            new Set([
+                "new",
+            ]),
+        );
+
+        expect(settled.map((t) => t.id)).toEqual([
+            "new",
+            "a",
+        ]);
+    });
+
+    it("does not bring back an untouched row the page no longer has", () => {
+        // Rows missing from page 1 because they moved down, or out of the
+        // filter, are the page's call.
+        const settled = settlePage(
+            [
+                row("a"),
+            ],
+            [
+                row("gone"),
+                row("a"),
+            ],
+            new Set(),
+        );
+
+        expect(settled.map((t) => t.id)).toEqual([
             "a",
         ]);
     });
