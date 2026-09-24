@@ -1,0 +1,221 @@
+{
+  "extractor": "Vimeo",
+  "id": "75629013",
+  "title": "Key & Peele: Terrorist Interrogation",
+  "duration": 187,
+  "webpage_url": "http://vimeo.com/channels/keypeele/75629013",
+  "formats": [
+    {
+      "format_id": "hls-akfire_interconnect_quic-audio-low-Original",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Original, low",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-fastly_skyfire-audio-low-Original",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Original, low",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-audio-high-Original",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Original, high",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-fastly_skyfire-audio-high-Original",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Original, high",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-411",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01E",
+      "acodec": "none",
+      "height": 270,
+      "width": 480,
+      "tbr": 411.0,
+      "vbr": 411.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-fastly_skyfire-411",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01E",
+      "acodec": "none",
+      "height": 270,
+      "width": 480,
+      "tbr": 411.0,
+      "vbr": 411.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http-240p",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 270,
+      "width": 480,
+      "fps": 24,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-552",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.64001F",
+      "acodec": "none",
+      "height": 360,
+      "width": 640,
+      "tbr": 552.0,
+      "vbr": 552.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-fastly_skyfire-552",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.64001F",
+      "acodec": "none",
+      "height": 360,
+      "width": 640,
+      "tbr": 552.0,
+      "vbr": 552.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http-360p",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 360,
+      "width": 640,
+      "fps": 24,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-akfire_interconnect_quic-4241",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.640028",
+      "acodec": "none",
+      "height": 1080,
+      "width": 1920,
+      "tbr": 4241.0,
+      "vbr": 4241.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-fastly_skyfire-4241",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.640028",
+      "acodec": "none",
+      "height": 1080,
+      "width": 1920,
+      "tbr": 4241.0,
+      "vbr": 4241.0,
+      "abr": 0,
+      "fps": 23.976,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http-1080p",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 1080,
+      "width": 1920,
+      "fps": 24,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "extractor": "Twitter",
+  "id": "717462543795523584",
+  "title": "Captain America - @King0fNerd Are you sure you made the right choice? Find out in theat...",
+  "duration": 3.17,
+  "webpage_url": "https://twitter.com/captainamerica/status/719944021058060289",
+  "formats": [
+    {
+      "format_id": "http-320",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 180,
+      "width": 320,
+      "tbr": 320,
+      "filesize_approx": 126800,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http-832",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 360,
+      "width": 640,
+      "tbr": 832,
+      "filesize_approx": 329680,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "http-2176",
+      "protocol": "https",
+      "ext": "mp4",
+      "height": 720,
+      "width": 1280,
+      "tbr": 2176,
+      "filesize_approx": 862240,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-2176",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.4d0020",
+      "acodec": "mp4a.40.2",
+      "height": 720,
+      "width": 1280,
+      "tbr": 2176.0,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}

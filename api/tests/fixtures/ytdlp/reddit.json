@@ -1,0 +1,203 @@
+{
+  "extractor": "Reddit",
+  "id": "zv89llsvexdz",
+  "title": "That small heart attack.",
+  "duration": 12,
+  "webpage_url": "https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/",
+  "formats": [
+    {
+      "format_id": "hls-audio-1-Default",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Default, low",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-audio-0-Default",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "vbr": 0,
+      "format_note": "Default, high",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "dash-AUDIO-1",
+      "protocol": "https",
+      "ext": "m4a",
+      "vcodec": "none",
+      "acodec": "mp4a.40.2",
+      "tbr": 131.111,
+      "vbr": 0,
+      "abr": 131.111,
+      "format_note": "DASH audio",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "dash-VIDEO-3",
+      "protocol": "https",
+      "ext": "mp4",
+      "vcodec": "avc1.4d401e",
+      "acodec": "none",
+      "height": 240,
+      "width": 132,
+      "tbr": 609.915,
+      "vbr": 609.915,
+      "abr": 0,
+      "fps": 30,
+      "format_note": "DASH video",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-746",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42001e",
+      "acodec": "none",
+      "height": 320,
+      "width": 176,
+      "tbr": 746.0,
+      "vbr": 746.0,
+      "abr": 0,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-822",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42001e",
+      "acodec": "none",
+      "height": 320,
+      "width": 176,
+      "tbr": 822.0,
+      "vbr": 822.0,
+      "abr": 0,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "dash-VIDEO-2",
+      "protocol": "https",
+      "ext": "mp4",
+      "vcodec": "avc1.4d401e",
+      "acodec": "none",
+      "height": 360,
+      "width": 198,
+      "tbr": 1208.727,
+      "vbr": 1208.727,
+      "abr": 0,
+      "fps": 30,
+      "format_note": "DASH video",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-1274",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.4d001e",
+      "acodec": "none",
+      "height": 432,
+      "width": 238,
+      "tbr": 1274.0,
+      "vbr": 1274.0,
+      "abr": 0,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "fallback",
+      "protocol": "https",
+      "ext": "mp4",
+      "vcodec": "h264",
+      "acodec": "none",
+      "height": 480,
+      "width": 264,
+      "abr": 0,
+      "format_note": "DASH video, mp4_dash",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "dash-VIDEO-1",
+      "protocol": "https",
+      "ext": "mp4",
+      "vcodec": "avc1.4d401f",
+      "acodec": "none",
+      "height": 480,
+      "width": 264,
+      "tbr": 2416.183,
+      "vbr": 2416.183,
+      "abr": 0,
+      "fps": 30,
+      "format_note": "DASH video",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-1875",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.4d001f",
+      "acodec": "none",
+      "height": 640,
+      "width": 352,
+      "tbr": 1875.0,
+      "vbr": 1875.0,
+      "abr": 0,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}

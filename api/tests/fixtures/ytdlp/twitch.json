@@ -1,0 +1,149 @@
+{
+  "extractor": "TwitchVod",
+  "id": "v6528877",
+  "title": "LCK Summer Split - Week 6 Day 1",
+  "duration": 17208,
+  "webpage_url": "http://www.twitch.tv/riotgames/v/6528877?t=5m10s",
+  "formats": [
+    {
+      "format_id": "sb1",
+      "protocol": "mhtml",
+      "ext": "mhtml",
+      "vcodec": "none",
+      "acodec": "none",
+      "height": 62,
+      "width": 110,
+      "vbr": 0,
+      "abr": 0,
+      "fps": 0.011506276150627616,
+      "format_note": "storyboard",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "sb0",
+      "protocol": "mhtml",
+      "ext": "mhtml",
+      "vcodec": "none",
+      "acodec": "none",
+      "height": 124,
+      "width": 220,
+      "vbr": 0,
+      "abr": 0,
+      "fps": 0.011506276150627616,
+      "format_note": "storyboard",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "Audio_Only",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "none",
+      "acodec": "mp4a.40.2",
+      "tbr": 182.725,
+      "vbr": 0,
+      "abr": 182.725,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "226p",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C00D",
+      "acodec": "mp4a.40.2",
+      "height": 226,
+      "width": 400,
+      "tbr": 280.474,
+      "fps": 19.994,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "360p",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01E",
+      "acodec": "mp4a.40.2",
+      "height": 360,
+      "width": 640,
+      "tbr": 628.347,
+      "fps": 23.303,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "480p",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01E",
+      "acodec": "mp4a.40.2",
+      "height": 480,
+      "width": 852,
+      "tbr": 893.387,
+      "fps": 23.303,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "720p-0",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42C01F",
+      "acodec": "mp4a.40.2",
+      "height": 720,
+      "width": 1280,
+      "tbr": 1603.789,
+      "fps": 23.303,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "720p-1",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.100.31",
+      "acodec": "mp4a.40.2",
+      "height": 720,
+      "width": 1280,
+      "tbr": 3214.134,
+      "fps": 29.999,
+      "format_note": "Source",
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "extractor": "Dailymotion",
+  "id": "x89eyek",
+  "title": "En qu\u00eate d'esprit du 27/03/2022",
+  "duration": 2756,
+  "webpage_url": "https://geo.dailymotion.com/player.html?video=x89eyek&mute=true",
+  "formats": [
+    {
+      "format_id": "hls-380",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.42001e",
+      "acodec": "mp4a.40.2",
+      "height": 288,
+      "width": 512,
+      "tbr": 460.56,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-480",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.64001f",
+      "acodec": "mp4a.40.2",
+      "height": 480,
+      "width": 848,
+      "tbr": 836.28,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-720",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.64001f",
+      "acodec": "mp4a.40.2",
+      "height": 720,
+      "width": 1280,
+      "tbr": 2149.28,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    },
+    {
+      "format_id": "hls-1080",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "vcodec": "avc1.640028",
+      "acodec": "mp4a.40.2",
+      "height": 1080,
+      "width": 1920,
+      "tbr": 6221.6,
+      "header_names": [
+        "Accept",
+        "Accept-Language",
+        "Sec-Fetch-Mode",
+        "User-Agent"
+      ]
+    }
+  ]
+}
