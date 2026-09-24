@@ -184,3 +184,63 @@ def test_usable_presets_without_fragments() -> None:
         Preset.P720,
         Preset.P480,
     ]
+
+
+# --- the rule, on made-up formats ------------------------------------------------
+
+
+def _video(format_id: str, height: int, *, audio: bool = False, size: int | None = None) -> Format:
+    return Format(format_id, vcodec="avc1", acodec="mp4a" if audio else "none", ext="mp4", height=height, size=size)
+
+
+def _audio(format_id: str, bitrate: int, *, size: int | None = None) -> Format:
+    return Format(format_id, vcodec="none", acodec="mp4a", ext="m4a", bitrate=bitrate, size=size)
+
+
+def test_mp3_takes_the_highest_bitrate_audio() -> None:
+    plan = select_plan([_audio("139", 48_000), _audio("140", 128_000), _video("137", 1080)], Preset.MP3)
+
+    assert (plan.audio.id if plan.audio else None, plan.video) == ("140", None)
+
+
+def test_mp3_without_audio_is_refused() -> None:
+    with pytest.raises(Error):
+        select_plan([_video("137", 1080)], Preset.MP3)
+
+
+def test_a_combined_format_wins_when_it_is_at_least_as_tall() -> None:
+    plan = select_plan([_video("18", 720, audio=True), _video("136", 720), _audio("140", 128_000)], Preset.P720)
+
+    assert (plan.video.id if plan.video else None, plan.audio) == ("18", None)
+
+
+def test_video_and_audio_when_the_combined_format_is_shorter() -> None:
+    plan = select_plan([_video("18", 360, audio=True), _video("137", 1080), _audio("140", 128_000)], Preset.P1080)
+
+    assert (plan.video.id if plan.video else None, plan.audio.id if plan.audio else None) == ("137", "140")
+
+
+def test_a_height_preset_never_exceeds_the_request() -> None:
+    formats = [_video("313", 2160), _video("137", 1080), _video("135", 480), _audio("140", 128_000)]
+
+    assert select_plan(formats, Preset.P1080).video == formats[1]
+
+
+def test_everything_taller_than_the_target_falls_back_to_the_shortest() -> None:
+    # Asking for 480p and being handed a 4K file is a bug, not a feature.
+    formats = [_video("313", 2160), _video("137", 1080), _audio("140", 128_000)]
+
+    assert select_plan(formats, Preset.P480).video == formats[1]
+
+
+def test_video_only_without_any_audio_is_refused() -> None:
+    with pytest.raises(Error):
+        select_plan([_video("137", 1080)], Preset.P1080)
+
+
+def test_one_unknown_part_size_makes_the_total_unknown() -> None:
+    # Partial knowledge is worse than none: a total without the audio would
+    # make the percentage overshoot and stall at 100.
+    plan = select_plan([_video("137", 1080, size=80_000_000), _audio("140", 128_000)], Preset.P1080)
+
+    assert plan.expected_bytes is None

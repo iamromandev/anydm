@@ -29,6 +29,25 @@ downloads, but delegates torrent transfers to rqbit and all media work to
 ffmpeg. Everything lands on one shared volume, which is why running the API on
 the host while rqbit runs in Docker leaves the two disagreeing about paths.
 
+Pages on media sites, YouTube among them, are read by yt-dlp inside the API,
+behind one small interface in
+[`api/src/lib/site/client.py`](../api/src/lib/site/client.py). It has two
+calls:
+
+- **`extract`** says what a page offers.
+- **`resolve`** turns the chosen format ids into fresh URLs and headers, once
+  per attempt, because those URLs expire and bind to the IP that asked.
+
+The API's image ships Deno, which yt-dlp uses to solve YouTube's JavaScript
+challenges.
+
+Which format a preset means is decided in
+[`api/src/lib/site/format.py`](../api/src/lib/site/format.py): the tallest
+format not over the preset, plain HTTPS before HLS or DASH. The bytes of a
+plain format go through the same segmented engine as a direct link. HLS and
+DASH formats are left out until the fragment path exists, so a site that
+offers nothing else is refused.
+
 Throughput caps follow the same split. HTTP downloads share **one** limiter,
 built once in [`api/src/service/__init__.py`](../api/src/service/__init__.py)
 and handed to every worker and every segment, so `DOWNLOAD_RATE_LIMIT_BPS` caps
@@ -112,9 +131,10 @@ keeps `DOWNLOAD_MIN_FREE_BYTES` free on `DOWNLOAD_DIR`'s disk, which is also
 the disk rqbit writes to. It is checked in two places:
 
 - **When a download is added.** A direct URL is checked against the minimum
-  alone, since its size is unknown until a worker probes it. A YouTube plan
-  counts its size too, and so does a torrent's selection, checked before rqbit
-  is asked. A refusal answers 507, and no row is written.
+  alone, since its size is unknown until a worker probes it. A site's plan
+  counts its size too (exact, or yt-dlp's estimate), and so does a torrent's
+  selection, checked before rqbit is asked. A refusal answers 507, and no row
+  is written.
 - **By the worker.** It checks before starting, again once the probe reveals a
   direct download's size, and when a write fails with `ENOSPC`. Each sends the
   task back to `pending` with `error_code=insufficient_storage` and a re-check

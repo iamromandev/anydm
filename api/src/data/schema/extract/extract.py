@@ -3,39 +3,36 @@ from typing import Annotated
 from pydantic import Field
 
 from src.core.base import BaseSchema
+from src.data.type import Preset
 
 
 class ExtractRequest(BaseSchema):
-    url: Annotated[str, Field(min_length=1, description="The URL to inspect")]
-
-
-class ThumbnailSchema(BaseSchema):
-    url: str
-    width: int = 0
-    height: int = 0
+    url: Annotated[str, Field(min_length=1, description="The page to inspect, on any supported site")]
 
 
 class FormatSchema(BaseSchema):
-    itag: int
-    quality: Annotated[str, Field(default="unknown")]
-    container: Annotated[str, Field(default="unknown")]
+    id: Annotated[str, Field(description="The site's format id; a YouTube itag, as a string")]
+    protocol: str = ""
+    ext: str = ""
+    height: int | None = None
     has_video: bool = False
     has_audio: bool = False
-    content_length: int | None = None
-    mime_type: str | None = None
+    #: HLS or DASH, which only the fragment path (#58) can fetch.
+    fragmented: bool = False
+    size: int | None = None
+    size_approx: int | None = None
 
 
 class ExtractSchema(BaseSchema):
-    platform: Annotated[str, Field(default="youtube")]
-    video_id: str
+    #: yt-dlp's name for the site: "Youtube", "Vimeo", ...
+    extractor: str
+    #: The site's own id for the media.
+    id: str
     title: str = ""
-    author: str = ""
-    channel_id: str = ""
-    description: str = ""
-    length_seconds: int = 0
-    view_count: int = 0
-    upload_date: str = ""
-    is_live: bool = False
+    uploader: str = ""
+    duration: int = 0
     thumbnail: str = ""
-    thumbnails: Annotated[list[ThumbnailSchema], Field(default_factory=list)]
+    webpage_url: str = ""
     formats: Annotated[list[FormatSchema], Field(default_factory=list)]
+    #: The presets that can be downloaded today, in the order to offer them.
+    presets: Annotated[list[Preset], Field(default_factory=list)]

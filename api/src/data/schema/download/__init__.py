@@ -1,9 +1,9 @@
 from .download import BulkActionRequest as BulkActionRequest
 from .download import BulkResultSchema as BulkResultSchema
+from .download import MediaDownloadRequest as MediaDownloadRequest
 from .download import TaskSchema as TaskSchema
 from .download import TaskSummarySchema as TaskSummarySchema
 from .download import UrlDownloadRequest as UrlDownloadRequest
-from .download import YoutubeDownloadRequest as YoutubeDownloadRequest
 from .torrent import FileSchema as FileSchema
 from .torrent import TorrentDownloadRequest as TorrentDownloadRequest
 from .torrent import TorrentResolveRequest as TorrentResolveRequest

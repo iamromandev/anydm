@@ -1,6 +1,6 @@
 """Torrent failures as this project's ``Error``.
 
-Mirrors ``src/lib/youtube/error.py``: every failure that crosses out of the
+Mirrors ``src/lib/site/error.py``: every failure that crosses out of the
 torrent library is one of these, so no caller has to know what an rqbit error
 body looks like. ``retry_able`` carries the transient-or-not decision.
 """

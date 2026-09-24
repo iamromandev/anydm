@@ -12,8 +12,8 @@ from src.data.schema.download.torrent import FileSchema
 from src.data.type import BulkAction, Kind, Platform, Preset, TaskStatus
 
 
-class YoutubeDownloadRequest(BaseSchema):
-    url: Annotated[str, Field(min_length=1, description="A YouTube video URL")]
+class MediaDownloadRequest(BaseSchema):
+    url: Annotated[str, Field(min_length=1, description="A page on any supported site: YouTube, Vimeo, ...")]
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
 
 
@@ -58,6 +58,8 @@ class TaskSchema(BaseSchema):
     id: uuid.UUID
     source_url: str
     platform: Platform
+    #: yt-dlp's name for the site of a ``site`` task: "Youtube", "Vimeo", ...
+    extractor: str | None = None
     video_id: str | None = None
     preset: Preset
     kind: Kind

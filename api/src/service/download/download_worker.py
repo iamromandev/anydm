@@ -24,7 +24,7 @@ from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Platform, TaskStatus
 from src.lib.event import EventHub
-from src.lib.youtube import YouTubeClient
+from src.lib.site.client import Resolved, SiteClient
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
@@ -34,7 +34,7 @@ from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
 from src.service.download.segmented import SegmentedDownloader
-from src.service.download.url_source import UrlProvider, UrlSource
+from src.service.download.url_source import Target, UrlProvider, UrlSource
 
 _IDLE_POLL_SECONDS = 5.0
 #: How long a task waits before checking the disk again.
@@ -48,7 +48,7 @@ class DownloadWorker:
         name: str,
         repo: TaskRepo,
         segment_repo: SegmentRepo,
-        client: YouTubeClient,
+        client: SiteClient,
         engine: SegmentedDownloader,
         post_processor: PostProcessor,
         control: DownloadControl,
@@ -155,30 +155,37 @@ class DownloadWorker:
             await self._fetch(task, "file", direct, destination, offset=0)
             return {"file": destination}
 
-        wanted: list[tuple[str, int]] = []
-        if task.video_itag is not None:
-            wanted.append(("video", task.video_itag))
-        if task.audio_itag is not None:
-            wanted.append(("audio", task.audio_itag))
+        wanted = [
+            (name, format_id)
+            for name, format_id in (("video", task.video_format), ("audio", task.audio_format))
+            if format_id
+        ]
         if not wanted:
-            raise Error.internal(message="Task names no stream to download")
+            raise Error.internal(message="Task names no format to download")
+
+        # Always re-resolved, and once for every part of this attempt: these
+        # URLs expire within hours and bind to the requesting IP, so a stored
+        # one is worthless on a resume, and one extraction per part would double
+        # what the site sees (and what trips YouTube's bot check).
+        source_url = task.source_url
+        batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
 
         parts: dict[str, Path] = {}
         # Bytes already on disk from earlier parts. Without this the second part
         # would restart the percentage at zero and the UI would run backwards.
         offset = 0
-        video_id = task.video_id or ""
-        for name, itag in wanted:
+        for name, format_id in wanted:
             destination = part_path(self._root, task.id, name)
+            handed = [batch[format_id]]
 
-            # Always re-resolved: these URLs expire within hours and bind to the
-            # requesting IP, so a stored one is worthless on a resume. Bound as
-            # defaults because the loop variables would otherwise be read at call
-            # time, and every part would resolve the last itag.
-            async def resolve(itag: int = itag, video_id: str = video_id) -> str:
-                return await self._client.stream_url(video_id, itag)
+            # The batch answers the first ask; a URL that expires mid-transfer
+            # is resolved again, for this part alone. Bound as defaults because
+            # the loop variables would otherwise be read at call time.
+            async def provider(format_id: str = format_id, handed: list[Resolved] = handed) -> Target:
+                resolved = handed.pop() if handed else (await self._client.resolve(source_url, [format_id]))[format_id]
+                return Target(resolved.url, resolved.headers)
 
-            await self._fetch(task, name, resolve, destination, offset=offset)
+            await self._fetch(task, name, provider, destination, offset=offset)
             parts[name] = destination
             offset += destination.stat().st_size
         return parts

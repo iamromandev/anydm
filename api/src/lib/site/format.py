@@ -22,8 +22,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from src.core.error import Error
 from src.data.type import Kind, Preset
-from src.lib.site.error import no_format_for_preset
+from src.lib.site.error import no_format_for_preset, streaming_formats_only
 
 #: Protocols made of fragments: playlists the segmented engine cannot fetch.
 _FRAGMENTED = ("m3u8", "dash", "f4m", "ism")
@@ -206,3 +207,33 @@ def usable_presets(formats: list[Format], *, allow_fragmented: bool = True) -> l
     if audio_only:
         offered.append(Preset.MP3)
     return offered
+
+
+#: Whether HLS and DASH formats can be fetched yet. They cannot until #58 adds
+#: yt-dlp's downloader as the fragment path; flipping this is that issue's job.
+FRAGMENTS_SUPPORTED = False
+
+
+def fetchable_plan(formats: list[Format], preset: Preset) -> Plan:
+    """The plan for ``preset`` that the download paths can fetch today.
+
+    A preset that only streaming formats could satisfy is refused with a
+    message that says so, rather than as a mere "no stream for this preset".
+    """
+    if FRAGMENTS_SUPPORTED:
+        return select_plan(formats, preset)
+    try:
+        return select_plan(formats, preset, allow_fragmented=False)
+    except Error:
+        select_plan(formats, preset)  # still raises when nothing at all fits
+        raise streaming_formats_only() from None
+
+
+def fetchable_presets(formats: list[Format]) -> list[Preset]:
+    """The presets offered today; ``streaming_formats_only`` when fragments alone could serve."""
+    if FRAGMENTS_SUPPORTED:
+        return usable_presets(formats)
+    presets = usable_presets(formats, allow_fragmented=False)
+    if not presets and usable_presets(formats):
+        raise streaming_formats_only()
+    return presets

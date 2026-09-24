@@ -13,7 +13,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 async def _pending(title: str = "t") -> Task:
     return await Task.create(
         source_url="https://youtu.be/x",
-        platform=Platform.YOUTUBE,
+        platform=Platform.SITE,
         preset=Preset.BEST,
         kind=Kind.VIDEO,
         status=TaskStatus.PENDING,
@@ -182,7 +182,7 @@ async def test_torrents_to_watch_returns_live_torrent_rows_only(db: None) -> Non
 async def _task(status: TaskStatus, title: str) -> Task:
     return await Task.create(
         source_url="https://youtu.be/x",
-        platform=Platform.YOUTUBE,
+        platform=Platform.SITE,
         preset=Preset.BEST,
         kind=Kind.VIDEO,
         status=status,
@@ -261,7 +261,7 @@ async def test_summary_ignores_soft_deleted_rows(db: None) -> None:
 async def _sized(title: str, total: int | None, progress: int = 0) -> Task:
     return await Task.create(
         source_url="https://youtu.be/x",
-        platform=Platform.YOUTUBE,
+        platform=Platform.SITE,
         preset=Preset.BEST,
         kind=Kind.VIDEO,
         status=TaskStatus.COMPLETE,

@@ -12,7 +12,8 @@ from tortoise.fields.base import StrEnum
 
 
 class Platform(StrEnum):
-    YOUTUBE = "youtube"
+    #: Any page yt-dlp extracts, YouTube included; ``Task.extractor`` says which.
+    SITE = "site"
     DIRECT = "direct"
     TORRENT = "torrent"
 

@@ -16,6 +16,9 @@ class Task(Base):
     # source
     source_url: str = fields.TextField()
     platform: Platform = fields.CharEnumField(Platform, max_length=16, db_index=True)
+    #: yt-dlp's name for the site a ``site`` task came from: "Youtube", "Vimeo", ...
+    extractor: str | None = fields.CharField(max_length=64, null=True)
+    #: The site's own id for the media. Named for YouTube, which came first.
     video_id: str | None = fields.CharField(max_length=64, null=True, db_index=True)
     #: The torrent's info hash, and the only torrent identifier stored. rqbit
     #: accepts it anywhere it accepts its own numeric id, and that numeric id
@@ -26,13 +29,14 @@ class Task(Base):
     preset: Preset = fields.CharEnumField(Preset, max_length=8)
     kind: Kind = fields.CharEnumField(Kind, max_length=8)
 
-    # resolved plan. The itags rather than a URL: stream URLs expire within
-    # hours and bind to the requesting IP, so a resumed download re-resolves.
+    # resolved plan. The site's format ids rather than a URL: stream URLs expire
+    # within hours and bind to the requesting IP, so a resumed download
+    # re-resolves. A YouTube format id is its itag, as a string.
     title: str = fields.CharField(max_length=512, default="")
     filename: str = fields.CharField(max_length=512, default="")
     mime_type: str | None = fields.CharField(max_length=128, null=True)
-    video_itag: int | None = fields.IntField(null=True)
-    audio_itag: int | None = fields.IntField(null=True)
+    video_format: str | None = fields.CharField(max_length=64, null=True)
+    audio_format: str | None = fields.CharField(max_length=64, null=True)
 
     # progress. Always byte-download progress: it reaches 100 when the last
     # byte lands and stays there through muxing, which ``status`` reports.

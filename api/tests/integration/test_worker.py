@@ -7,6 +7,7 @@ from src.data.db.model import Segment, Task
 from src.data.repo import SegmentDatabaseRepo, TaskDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
+from src.lib.site.client import Resolved
 from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker
 from src.service.download.downloader import Downloader
@@ -18,12 +19,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 BODY = b"z" * 500
 
 
-class FakeYouTube:
-    async def fetch_info(self, video_id: str) -> Any:
-        raise AssertionError("the worker must not re-fetch info")
+class FakeSite:
+    """Resolves any format id to a URL on the mock transport's host."""
 
-    async def stream_url(self, video_id: str, itag: int) -> str:
-        return f"https://cdn.test/{video_id}/{itag}"
+    async def extract(self, url: str) -> Any:
+        raise AssertionError("the worker must not re-extract the page")
+
+    async def resolve(self, url: str, format_ids: Any) -> dict[str, Resolved]:
+        return {format_id: Resolved(f"https://cdn.test/x/{format_id}") for format_id in format_ids}
 
 
 def _worker(
@@ -39,7 +42,7 @@ def _worker(
         name="test-worker",
         repo=TaskDatabaseRepo(),
         segment_repo=SegmentDatabaseRepo(),
-        client=FakeYouTube(),
+        client=FakeSite(),
         engine=SegmentedDownloader(
             client,
             downloader,
@@ -61,14 +64,15 @@ def _worker(
 async def _task(**overrides: Any) -> Task:
     fields: dict[str, Any] = {
         "source_url": "https://youtu.be/x",
-        "platform": Platform.YOUTUBE,
+        "platform": Platform.SITE,
+        "extractor": "Youtube",
         "video_id": "x",
         "preset": Preset.P720,
         "kind": Kind.VIDEO,
         "status": TaskStatus.PENDING,
         "title": "clip",
         "filename": "clip.mp4",
-        "video_itag": 22,
+        "video_format": "22",
     }
     fields.update(overrides)
     return await Task.create(**fields)
@@ -184,7 +188,7 @@ async def test_a_direct_task_downloads_from_its_source_url(db: None, tmp_path: P
         platform=Platform.DIRECT,
         video_id=None,
         kind=Kind.FILE,
-        video_itag=None,
+        video_format=None,
         filename="file.bin",
         source_url="https://cdn.test/file.bin",
     )
@@ -238,7 +242,7 @@ async def _direct_task(**overrides: Any) -> Task:
         platform=Platform.DIRECT,
         video_id=None,
         kind=Kind.FILE,
-        video_itag=None,
+        video_format=None,
         filename="f.bin",
         source_url="https://cdn.test/f.bin",
         **overrides,
@@ -342,7 +346,7 @@ async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None
     service = DownloadService(
         repo=TaskDatabaseRepo(),
         segment_repo=SegmentDatabaseRepo(),
-        client=FakeYouTube(),
+        client=FakeSite(),
         control=DownloadControl(),
         hub=EventHub(),
         downloads_root=tmp_path,
@@ -356,7 +360,7 @@ async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None
 async def test_progress_is_cumulative_across_a_two_part_download(db: None, tmp_path: Path) -> None:
     # The bug this guards: the audio part used to restart the percentage at
     # zero, so the UI ran 0-100 twice and appeared to go backwards.
-    await _task(video_itag=137, audio_itag=140, total_bytes=1000)
+    await _task(video_format="137", audio_format="140", total_bytes=1000)
     seen: list[tuple[int, int]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

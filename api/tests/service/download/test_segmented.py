@@ -8,7 +8,7 @@ from src.service.download.downloader import Downloader, Stopped
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
 from src.service.download.segmented import SegmentedDownloader
-from src.service.download.url_source import UrlSource
+from src.service.download.url_source import Target, UrlSource
 
 pytestmark = pytest.mark.asyncio
 
@@ -454,3 +454,37 @@ async def test_the_unsegmented_fallback_is_limited_too(tmp_path: Path) -> None:
         )
         await engine.fetch(_source(), tmp_path / "out.part", count=4, reconcile=_fresh)
     assert sum(limiter.acquired) == len(BODY)
+
+
+def _headed_source(url: str = "https://cdn.test/f") -> UrlSource:
+    async def provider() -> Target:
+        return Target(url, {"Referer": "https://site.test/"})
+
+    return UrlSource(provider)
+
+
+def _recording(seen: list[str | None]):
+    handler = _range_handler()
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("referer"))
+        return handler(request)
+
+    return record
+
+
+async def test_the_format_s_headers_reach_the_probe_and_every_segment(tmp_path: Path) -> None:
+    seen: list[str | None] = []
+    async with _client(_recording(seen)) as client:
+        await _engine(client).fetch(_headed_source(), tmp_path / "out.part", count=4, reconcile=_fresh)
+
+    assert len(seen) == 5  # the probe and four segments
+    assert set(seen) == {"https://site.test/"}
+
+
+async def test_the_format_s_headers_reach_the_single_stream_too(tmp_path: Path) -> None:
+    seen: list[str | None] = []
+    async with _client(_recording(seen)) as client:
+        await _engine(client, min_bytes=1 << 30).fetch(_headed_source(), tmp_path / "out.part", count=4, reconcile=_fresh)
+
+    assert seen == ["https://site.test/", "https://site.test/"]

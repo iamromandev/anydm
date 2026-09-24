@@ -72,6 +72,8 @@ class ErrorType(StrEnum):
     INVALID_FIELD = "invalid_field"
     INVALID_FORMAT = "invalid_format"
     UNSUPPORTED_OPERATION = "unsupported_operation"
+    #: A link no extractor recognises. The add box falls back to a direct download on it.
+    UNSUPPORTED_URL = "unsupported_url"
 
     # External/3rd-party issues
     EXTERNAL_API_ERROR = "external_api_error"

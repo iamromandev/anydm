@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 import httpx
@@ -68,10 +68,14 @@ class Downloader:
         dest: Path,
         *,
         resume_from: int = 0,
+        headers: Mapping[str, str] | None = None,
         on_sample: Callable[[ProgressSample], Awaitable[None]] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> int:
         """Stream ``url`` into ``dest``, returning the total bytes on disk.
+
+        ``headers`` are the ones the URL's server expects, a site format's say.
+        They go with every request; the ``Range`` is always this method's own.
 
         Every request asks for a ``Range``, a fresh one from ``bytes=0-``.
         YouTube paces a GET with no range to roughly playback speed, about
@@ -83,9 +87,10 @@ class Downloader:
         than silently corrupted by appending a full body to a partial one.
         """
         dest.parent.mkdir(parents=True, exist_ok=True)
-        attempts = [{"Range": f"bytes={resume_from}-"}]
+        base = {key: value for key, value in (headers or {}).items() if key.lower() != "range"}
+        attempts = [{**base, "Range": f"bytes={resume_from}-"}]
         if resume_from == 0:
-            attempts.append({})
+            attempts.append(base)
 
         try:
             for headers in attempts:
@@ -110,7 +115,7 @@ class Downloader:
     ) -> int | None:
         """One request. ``None`` means a fresh range was refused and the caller should ask plainly."""
         async with self._client.stream("GET", url, headers=headers, follow_redirects=True) as response:
-            if response.status_code == 416 and resume_from == 0 and headers:
+            if response.status_code == 416 and resume_from == 0 and "Range" in headers:
                 logger.info("Downloader|fetch(): {} refused a range from 0, asking without one", dest.name)
                 return None
             if response.status_code >= 400:
