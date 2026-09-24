@@ -11,7 +11,9 @@ dependencies = [
     ### db ###
     "tortoise-orm[asyncpg, accel]==1.1.8",
     ### media ###
-    "pytubefix==11.1.0",
+    # yt-dlp moves fast because sites do; bump both on purpose (see README).
+    "yt-dlp[default]==2026.8.19",
+    "yt-dlp-ejs==0.8.0",
     "httpx[http2]==0.28.1",
     "sse-starlette==3.4.11",
 ]

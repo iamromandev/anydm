@@ -28,6 +28,7 @@ streaming works — see [docs/architecture.md](docs/architecture.md).
 - [Bun](https://bun.sh) — runs the UI workspace
 - Docker + Compose — the API stack (`api/docker-compose.yml`) runs the service, Postgres, and rqbit
 - ffmpeg — only when running the API on the host; the Docker image installs it
+- [Deno](https://deno.com) 2.3 or later — only when running the API on the host; the Docker image ships 2.9.7. yt-dlp uses it to solve YouTube's JavaScript challenges. Without it YouTube still works through a deprecated fallback, with fewer formats and a warning in the log
 
 ## Install
 
@@ -136,7 +137,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 
 ### `api/`
 
-- **Stack:** FastAPI, Tortoise ORM + asyncpg (Postgres), pytubefix, httpx, sse-starlette, loguru; managed with uv
+- **Stack:** FastAPI, Tortoise ORM + asyncpg (Postgres), yt-dlp (with Deno for YouTube), httpx, sse-starlette, loguru; managed with uv
 - **Endpoints:**
   - Health, extract and settings
     - `GET /health/check` — health probe

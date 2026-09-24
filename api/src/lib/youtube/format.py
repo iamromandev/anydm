@@ -1,4 +1,4 @@
-"""Preset to stream selection. Pure — no network, no pytubefix.
+"""Preset to stream selection. Pure — no network, no yt-dlp.
 
 A port of ``resolveYouTubeDownload`` from the Bun API, with two deliberate
 differences.

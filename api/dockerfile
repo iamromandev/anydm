@@ -27,6 +27,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Deno solves YouTube's JavaScript challenges for yt-dlp. Without it yt-dlp
+# falls back to a deprecated client with fewer formats. Pinned: bump it with
+# yt-dlp, deliberately (see README).
+COPY --from=denoland/deno:bin-2.9.7 /deno /usr/local/bin/deno
+
 
 FROM base AS builder
 

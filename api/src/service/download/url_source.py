@@ -3,7 +3,7 @@
 YouTube stream URLs expire within hours and bind to the requesting IP. Every
 segment of a part discovers that at the same instant, as a 403 arriving within
 milliseconds of its siblings'. Without the lock below, one expiry means one
-blocking pytubefix resolve per segment — slow, and the shape of request burst
+blocking yt-dlp extraction per segment — slow, and the shape of request burst
 that earns a rate limit.
 
 The generation check is the ``stale`` argument: a caller says which URL failed
