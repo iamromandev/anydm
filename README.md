@@ -202,7 +202,8 @@ Sites change how they serve media, and yt-dlp releases to keep up, sometimes sev
 
 ## Current limitations
 
-- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player reads HLS, but not DASH, f4m or ISM, whose URL is a manifest of every rendition. A page offering only those still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
+- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player reads HLS, but not DASH, f4m or ISM, whose URL is a manifest of every rendition. A page offering only those still downloads. Playing HLS clips a moment from the start of each 6-second segment (#87). Playlists, channels, live streams, and videos that need a login are not supported.
+- Dailymotion refuses about half of yt-dlp's requests for a stream from some networks. yt-dlp then wants to impersonate a browser, which needs `curl_cffi`, and the image doesn't have it (#88). The failure is retried like any other.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
 - Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.
