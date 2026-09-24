@@ -54,6 +54,20 @@ describe("the error unwrap throws", () => {
         }
     });
 
+    it("carries the error's type, so a caller can tell one 400 from another", () => {
+        try {
+            unwrap({
+                status: "error",
+                code: 400,
+                message: "No site supports this link",
+                type: "unsupported_url",
+            });
+            throw new Error("unwrap should have thrown");
+        } catch (error) {
+            expect((error as ApiError).type).toBe("unsupported_url");
+        }
+    });
+
     it("is still an ApiError when the envelope carries no code", () => {
         try {
             unwrap({ success: false, error: "boom" });

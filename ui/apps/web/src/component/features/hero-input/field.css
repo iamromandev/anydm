@@ -213,6 +213,54 @@
     color: var(--color-primary);
 }
 
+/* What the API found at a site link: shown between the bar and the chips. */
+.hero-input-preview {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 44rem;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-muted);
+}
+
+.hero-input-preview-thumb {
+    flex-shrink: 0;
+    width: 96px;
+    height: 54px;
+    object-fit: cover;
+    border-radius: var(--radius-sm, 0.25rem);
+    background: var(--color-border);
+}
+
+.hero-input-preview-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+}
+
+.hero-input-preview-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hero-input-preview-meta,
+.hero-input-preview-note {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .hero-input-error {
     display: inline-flex;
     align-items: center;

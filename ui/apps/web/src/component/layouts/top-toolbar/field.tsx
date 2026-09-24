@@ -217,7 +217,7 @@ export const TopToolbar = component$<TopToolbarProps>(
                                         <line x1="2" y1="12" x2="22" y2="12" />
                                         <path d="M12 2a20 20 0 0 1 4 10 20 20 0 0 1-4 10 20 20 0 0 1-4-10 20 20 0 0 1 4-10z" />
                                     </svg>
-                                    <span>URL (YouTube, etc.)</span>
+                                    <span>Link (any site or file)</span>
                                 </button>
                             </div>
                         )}

@@ -38,6 +38,8 @@ export type UiTask = {
     attempts: number;
     /** Carried for the detail panel rather than the card's own face. */
     platform?: string;
+    /** yt-dlp's name for the site of a `site` task: "Youtube", "Vimeo", ... */
+    extractor?: string;
     preset?: string;
     filename?: string;
     fileSize?: number;
@@ -148,6 +150,7 @@ export function normalizeApiTask(raw: any): UiTask {
         peersConnected: raw.peers_connected ?? 0,
         attempts: raw.attempts ?? 0,
         platform: raw.platform ?? undefined,
+        extractor: raw.extractor ?? undefined,
         preset: raw.preset ?? undefined,
         filename: raw.filename || undefined,
         fileSize: raw.file_size ?? undefined,

@@ -47,12 +47,27 @@ describe("detailRows", () => {
 
     it("describes what kind of thing this is", () => {
         const rows = detailRows(
-            task({ platform: "youtube", kind: "video", preset: "1080" }),
+            task({ platform: "direct", kind: "file", preset: "best" }),
             NOW,
         );
         const type = rows.find((r) => r.label === "Type");
 
-        expect(type?.value).toBe("youtube · video · 1080");
+        expect(type?.value).toBe("direct · file · best");
+    });
+
+    it("names a site task's site rather than the bare platform", () => {
+        const rows = detailRows(
+            task({
+                platform: "site",
+                extractor: "Youtube",
+                kind: "video",
+                preset: "1080",
+            }),
+            NOW,
+        );
+        const type = rows.find((r) => r.label === "Type");
+
+        expect(type?.value).toBe("YouTube · video · 1080");
     });
 
     it("leaves out a time nothing has recorded", () => {
