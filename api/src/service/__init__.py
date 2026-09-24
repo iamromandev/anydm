@@ -7,8 +7,8 @@ from src.config import get_settings
 from src.data.repo import FileDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
+from src.lib.site.client import get_site_client
 from src.lib.torrent.client import RqbitClient
-from src.lib.youtube.client import get_youtube_client
 from src.service.download import DownloadService as DownloadService
 from src.service.download import TorrentService as TorrentService
 from src.service.download.control import DownloadControl
@@ -38,7 +38,7 @@ def get_settings_service() -> SettingsService:
 
 
 def get_extract_service() -> ExtractService:
-    return ExtractService(client=get_youtube_client())
+    return ExtractService(client=get_site_client())
 
 
 @lru_cache
@@ -63,7 +63,7 @@ def get_download_service() -> DownloadService:
     return DownloadService(
         repo=TaskDatabaseRepo(),
         segment_repo=SegmentDatabaseRepo(),
-        client=get_youtube_client(),
+        client=get_site_client(),
         control=get_download_control(),
         hub=get_event_hub(),
         downloads_root=Path(settings.download_dir),
@@ -165,7 +165,7 @@ def build_worker_pool() -> WorkerPool:
             name=f"worker-{index}",
             repo=TaskDatabaseRepo(),
             segment_repo=SegmentDatabaseRepo(),
-            client=get_youtube_client(),
+            client=get_site_client(),
             engine=engine,
             post_processor=FfmpegPostProcessor(settings.ffmpeg_path),
             control=get_download_control(),

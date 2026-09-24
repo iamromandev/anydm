@@ -260,3 +260,21 @@ async def test_every_chunk_passes_through_the_limiter(tmp_path: Path) -> None:
             "https://cdn.test/f", tmp_path / "out.bin"
         )
     assert sum(limiter.acquired) == len(BODY)
+
+
+@pytest.mark.asyncio
+async def test_the_format_s_headers_go_with_every_request(tmp_path: Path) -> None:
+    seen: list[tuple[str | None, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.headers.get("referer"), request.headers.get("range")))
+        return httpx.Response(206, content=BODY[40:], headers={"content-range": f"bytes 40-99/{len(BODY)}"})
+
+    dest = tmp_path / "out.bin"
+    dest.write_bytes(BODY[:40])
+    async with _client(handler) as client:
+        await Downloader(client, chunk_size=16, flush_interval_ms=0).fetch(
+            "https://cdn.test/f", dest, resume_from=40, headers={"Referer": "https://site.test/"}
+        )
+
+    assert seen == [("https://site.test/", "bytes=40-")]

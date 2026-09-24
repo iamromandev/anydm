@@ -99,6 +99,19 @@ async def test_extract_reports_a_live_stream_as_live() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_direct_file_link_is_not_a_site() -> None:
+    # yt-dlp's generic extractor "extracts" any file link, a PDF included, as
+    # one format of unknown codecs. That is a job for the direct download.
+    direct = {"extractor_key": "Generic", "id": "dummy", "title": "dummy", "direct": True,
+              "url": "https://files.test/dummy.pdf", "ext": "unknown_video"}
+
+    with pytest.raises(Error) as caught:
+        await _client(direct).extract("https://files.test/dummy.pdf")
+
+    assert caught.value.type == ErrorType.UNSUPPORTED_URL
+
+
+@pytest.mark.asyncio
 async def test_a_playlist_link_is_refused() -> None:
     playlist = {"_type": "playlist", "id": "PL1", "title": "A list", "entries": [_info("youtube")]}
 
@@ -175,6 +188,8 @@ async def test_a_library_failure_is_classified() -> None:
         # YouTube's bot check clears with time: retry, don't give up.
         ("Sign in to confirm you're not a bot. This helps protect our community.", Code.BAD_GATEWAY),
         ("Unable to download webpage: <urlopen error timed out>", Code.BAD_GATEWAY),
+        # A page that is not there will not be there on a retry either.
+        ("Unable to download webpage: HTTP Error 404: Not Found", Code.NOT_FOUND),
     ],
 )
 def test_classify(message: str, code: Code) -> None:

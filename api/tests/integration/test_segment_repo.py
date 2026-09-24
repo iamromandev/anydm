@@ -59,7 +59,7 @@ async def test_a_changed_plan_discards_the_old_rows(db: None) -> None:
 
 async def test_parts_of_one_task_do_not_collide(db: None) -> None:
     """A YouTube task has two independent segment sets."""
-    task = await _task(platform=Platform.YOUTUBE, kind=Kind.VIDEO)
+    task = await _task(platform=Platform.SITE, kind=Kind.VIDEO)
     repo = SegmentDatabaseRepo()
     await repo.reconcile(task.id, "video", PLAN)
     await repo.reconcile(task.id, "audio", PLAN)

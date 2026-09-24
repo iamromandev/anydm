@@ -9,6 +9,7 @@ advertisement, and costs one round trip.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -35,8 +36,10 @@ def _total_from_content_range(value: str | None) -> int | None:
     return int(tail) if tail.isdigit() else None
 
 
-async def probe(client: httpx.AsyncClient, url: str) -> Probe:
-    async with client.stream("GET", url, headers={"Range": "bytes=0-0"}, follow_redirects=True) as response:
+async def probe(client: httpx.AsyncClient, url: str, headers: Mapping[str, str] | None = None) -> Probe:
+    # The format's headers, with our Range winning over any it carries.
+    request_headers = {**(headers or {}), "Range": "bytes=0-0"}
+    async with client.stream("GET", url, headers=request_headers, follow_redirects=True) as response:
         resolved = str(response.url)
 
         # 416 means the range was understood and rejected. The size in

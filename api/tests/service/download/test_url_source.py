@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from src.service.download.url_source import UrlSource
+from src.service.download.url_source import Target, UrlSource
 
 pytestmark = pytest.mark.asyncio
 
@@ -66,3 +66,35 @@ async def test_pin_adopts_a_url_without_asking_the_provider() -> None:
     source.pin("https://cdn.test/after-redirect")
     assert await source.current() == "https://cdn.test/after-redirect"
     assert provider.calls == 0
+
+
+async def test_a_provider_can_hand_over_headers_with_its_url() -> None:
+    async def provider() -> Target:
+        return Target("https://cdn.test/v1", {"Referer": "https://site.test/"})
+
+    source = UrlSource(provider)
+
+    assert await source.current() == "https://cdn.test/v1"
+    assert source.headers == {"Referer": "https://site.test/"}
+
+
+async def test_a_refresh_replaces_the_headers_with_the_url() -> None:
+    generation = 0
+
+    async def provider() -> Target:
+        nonlocal generation
+        generation += 1
+        return Target(f"https://cdn.test/v{generation}", {"X-Token": f"t{generation}"})
+
+    source = UrlSource(provider)
+    stale = await source.current()
+    await source.refresh(stale)
+
+    assert (await source.current(), source.headers) == ("https://cdn.test/v2", {"X-Token": "t2"})
+
+
+async def test_a_plain_url_provider_has_no_headers() -> None:
+    source = UrlSource(Counter())
+    await source.current()
+
+    assert source.headers == {}

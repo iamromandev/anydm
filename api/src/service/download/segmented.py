@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 import httpx
@@ -136,7 +136,7 @@ class SegmentedDownloader:
         should_stop: Callable[[], bool] | None = None,
     ) -> int:
         url = await source.current()
-        found = await probe(self._client, url)
+        found = await probe(self._client, url, source.headers)
         # Before anything is written: the caller's last chance to refuse a
         # source whose size it has only just learned.
         if on_probe is not None:
@@ -156,7 +156,7 @@ class SegmentedDownloader:
             _, stale = await reconcile([])
             if stale:
                 dest.unlink(missing_ok=True)
-            return await self._single(found.resolved_url, dest, on_sample, should_stop)
+            return await self._single(found.resolved_url, dest, on_sample, should_stop, source.headers)
 
         total = found.total_bytes or 0
         plan = plan_segments(total, count)
@@ -226,7 +226,7 @@ class SegmentedDownloader:
             dest.unlink(missing_ok=True)
             if on_discard is not None:
                 await on_discard()
-            return await self._single(await source.current(), dest, on_sample, should_stop)
+            return await self._single(await source.current(), dest, on_sample, should_stop, source.headers)
 
         # Not ``dest.stat().st_size``: the file was preallocated, so it has
         # reported the full size since before a byte arrived. Completion has to
@@ -242,6 +242,7 @@ class SegmentedDownloader:
         dest: Path,
         on_sample: Callable[[AggregateSample], Awaitable[None]] | None,
         should_stop: Callable[[], bool] | None,
+        headers: Mapping[str, str] | None = None,
     ) -> int:
         """The unsegmented path, reported in the same shape as a segmented one."""
 
@@ -261,7 +262,7 @@ class SegmentedDownloader:
 
         resume_from = dest.stat().st_size if dest.exists() else 0
         return await self._fallback.fetch(
-            url, dest, resume_from=resume_from, on_sample=adapt, should_stop=should_stop
+            url, dest, resume_from=resume_from, headers=headers, on_sample=adapt, should_stop=should_stop
         )
 
     async def _run_segment(
@@ -286,7 +287,7 @@ class SegmentedDownloader:
             url = await source.current()
             resume = writer.high_water(segment.index, default=segment.start + watermark)
             try:
-                await self._transfer(url, writer, aggregator, segment, resume, on_sample, should_stop)
+                await self._transfer(url, source.headers, writer, aggregator, segment, resume, on_sample, should_stop)
                 return
             except (Stopped, _RangeIgnored):
                 raise
@@ -310,6 +311,7 @@ class SegmentedDownloader:
     async def _transfer(
         self,
         url: str,
+        headers: Mapping[str, str],
         writer: SegmentWriter,
         aggregator: ProgressAggregator,
         segment: Segment,
@@ -330,7 +332,8 @@ class SegmentedDownloader:
         async with self._client.stream(
             "GET",
             url,
-            headers={"Range": f"bytes={position}-{segment.end}"},
+            # The format's headers, with our Range winning over any it carries.
+            headers={**headers, "Range": f"bytes={position}-{segment.end}"},
             follow_redirects=True,
         ) as response:
             if response.status_code == 200:

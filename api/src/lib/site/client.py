@@ -33,7 +33,7 @@ from src.lib.site.format import Format
 Extract = Callable[[str], dict[str, Any]]
 
 _UNSUPPORTED_MARKERS = ("unsupported url", "is not a valid url")
-_MISSING_MARKERS = ("private", "unavailable", "removed", "deleted", "does not exist")
+_MISSING_MARKERS = ("private", "unavailable", "removed", "deleted", "does not exist", "http error 404")
 _FORBIDDEN_MARKERS = (
     "age restricted",
     "age-restricted",
@@ -189,6 +189,11 @@ class YtDlpClient(SiteClient):
             raise classify(exc) from exc
         if info.get("_type") == "playlist":
             raise site_error.playlist_not_supported()
+        # yt-dlp's generic extractor "extracts" any file link, a PDF included,
+        # as one format of unknown codecs. That is a direct download, not a
+        # page on a site, and saying so lets the add box fall back to one.
+        if info.get("direct"):
+            raise site_error.unsupported_url(f"{url} is a file, not a page on a site")
         return info
 
 

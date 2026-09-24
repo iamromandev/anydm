@@ -14,13 +14,10 @@ from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema, TaskSummarySchema
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
-from src.lib.youtube import (
-    YouTubeClient,
-    extract_video_id,
-    not_a_youtube_url,
-    safe_filename,
-    select_plan,
-)
+from src.lib.site import error as site_error
+from src.lib.site.client import SiteClient
+from src.lib.site.filename import safe_filename
+from src.lib.site.format import fetchable_plan
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
@@ -45,7 +42,7 @@ class DownloadService(BaseService):
         self,
         repo: TaskRepo,
         segment_repo: SegmentRepo,
-        client: YouTubeClient,
+        client: SiteClient,
         control: DownloadControl,
         hub: EventHub,
         downloads_root: Path,
@@ -66,37 +63,39 @@ class DownloadService(BaseService):
         if self._disk is not None:
             self._disk.require(extra_bytes or 0)
 
-    async def enqueue_youtube(self, url: str, preset: Preset) -> TaskSchema:
-        """Resolve the plan now, move the bytes later.
+    async def enqueue_media(self, url: str, preset: Preset) -> TaskSchema:
+        """Resolve the plan now, move the bytes later, for any site.
 
-        Everything that can fail on the caller's behalf — a bad URL, a private
-        video, a preset with no matching stream — fails here, as a 4xx they see
-        immediately. What reaches the queue is a decision, not a guess.
+        Everything that can fail on the caller's behalf (an unsupported link, a
+        private video, a live stream, a preset the site cannot satisfy) fails
+        here, as a 4xx they see immediately. What reaches the queue is a
+        decision, not a guess.
         """
-        video_id = extract_video_id(url)
-        if video_id is None:
-            raise not_a_youtube_url()
-
-        info = await self._client.fetch_info(video_id)
-        plan = select_plan(info.streams, preset)
+        info = await self._client.extract(url)
+        if info.is_live:
+            raise site_error.live_not_supported()
+        plan = fetchable_plan(info.formats, preset)
         # Refused before the row exists, so a 507 leaves nothing behind. An
-        # unknown size is checked against the minimum alone; the worker checks
-        # again once the transfer says how big it is.
+        # estimated size counts here; an unknown one is checked against the
+        # minimum alone, and the worker checks again once the probe knows.
         self._require_space(plan.expected_bytes)
         suffix = "" if preset == Preset.MP3 else plan.quality
 
         task = await self._repo.create(
             source_url=url,
-            platform=Platform.YOUTUBE,
-            video_id=video_id,
+            platform=Platform.SITE,
+            extractor=info.extractor,
+            video_id=info.id,
             preset=preset,
             kind=plan.kind,
             title=info.title,
             filename=safe_filename(info.title, suffix, plan.extension),
             mime_type=plan.mime_type,
-            video_itag=plan.video_itag,
-            audio_itag=plan.audio_itag,
-            total_bytes=plan.expected_bytes,
+            video_format=plan.video.id if plan.video else None,
+            audio_format=plan.audio.id if plan.audio else None,
+            # Only an exact size: a progress bar measured against an estimate
+            # stalls short of 100 or runs past it. The probe learns the rest.
+            total_bytes=None if plan.size_is_estimate else plan.expected_bytes,
             status=TaskStatus.PENDING,
             progress=0,
         )
@@ -126,8 +125,8 @@ class DownloadService(BaseService):
             title=name,
             filename=name,
             mime_type=None,
-            video_itag=None,
-            audio_itag=None,
+            video_format=None,
+            audio_format=None,
             total_bytes=None,
             status=TaskStatus.PENDING,
             progress=0,

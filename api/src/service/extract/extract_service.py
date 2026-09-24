@@ -1,57 +1,51 @@
 from __future__ import annotations
 
 from src.core.base import BaseService
-from src.data.schema.extract import ExtractSchema, FormatSchema, ThumbnailSchema
-from src.lib.youtube import StreamInfo, VideoInfo, YouTubeClient, extract_video_id, not_a_youtube_url
+from src.data.schema.extract import ExtractSchema, FormatSchema
+from src.lib.site import error as site_error
+from src.lib.site.client import SiteClient
+from src.lib.site.format import Format, fetchable_presets
 
 
-def _container_of(mime_type: str | None) -> str:
-    """``"video/mp4; codecs=..."`` becomes ``"mp4"``."""
-    if not mime_type:
-        return "unknown"
-    subtype = mime_type.split(";")[0].split("/")
-    return subtype[1] if len(subtype) > 1 and subtype[1] else "unknown"
-
-
-def _to_format(stream: StreamInfo) -> FormatSchema:
+def _to_format(fmt: Format) -> FormatSchema:
     return FormatSchema(
-        itag=stream.itag,
-        quality=stream.quality or "unknown",
-        container=_container_of(stream.mime_type),
-        has_video=stream.has_video,
-        has_audio=stream.has_audio,
-        content_length=stream.content_length,
-        mime_type=stream.mime_type,
+        id=fmt.id,
+        protocol=fmt.protocol,
+        ext=fmt.ext,
+        height=fmt.height,
+        has_video=fmt.has_video,
+        has_audio=fmt.has_audio,
+        fragmented=fmt.fragmented,
+        size=fmt.size,
+        size_approx=fmt.size_approx,
     )
 
 
 class ExtractService(BaseService):
-    def __init__(self, client: YouTubeClient) -> None:
+    def __init__(self, client: SiteClient) -> None:
         super().__init__()
         self._client = client
 
     async def extract(self, url: str) -> ExtractSchema:
-        video_id = extract_video_id(url)
-        if video_id is None:
-            raise not_a_youtube_url()
+        """What a page offers, and which presets can be downloaded from it today.
 
-        info: VideoInfo = await self._client.fetch_info(video_id)
-        thumbnails = [ThumbnailSchema(url=t.url, width=t.width, height=t.height) for t in info.thumbnails]
+        Refuses what enqueueing would refuse, so a preview never offers a
+        download that is bound to fail: live streams, and sites whose formats
+        are all HLS or DASH until the fragment path lands.
+        """
+        info = await self._client.extract(url)
+        if info.is_live:
+            raise site_error.live_not_supported()
+        presets = fetchable_presets(info.formats)
 
         return ExtractSchema(
-            platform="youtube",
-            video_id=info.video_id,
+            extractor=info.extractor,
+            id=info.id,
             title=info.title,
-            author=info.author,
-            channel_id=info.channel_id,
-            description=info.description,
-            length_seconds=info.length_seconds,
-            view_count=info.view_count,
-            upload_date=info.upload_date,
-            is_live=info.is_live,
-            # Last wins: the client returns thumbnails smallest-first, and the
-            # UI wants the biggest one it can get.
-            thumbnail=thumbnails[-1].url if thumbnails else "",
-            thumbnails=thumbnails,
-            formats=[_to_format(stream) for stream in info.streams],
+            uploader=info.uploader,
+            duration=info.duration,
+            thumbnail=info.thumbnail,
+            webpage_url=info.webpage_url,
+            formats=[_to_format(fmt) for fmt in info.formats if fmt.media],
+            presets=presets,
         )

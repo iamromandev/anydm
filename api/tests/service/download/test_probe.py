@@ -74,3 +74,16 @@ async def test_a_416_is_treated_as_no_range_support() -> None:
 
     assert result.accepts_ranges is False
     assert result.total_bytes == 2048
+
+
+async def test_the_format_s_headers_go_with_the_probe_but_range_is_ours() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update({"referer": request.headers.get("referer", ""), "range": request.headers["range"]})
+        return httpx.Response(206, content=b"A", headers={"content-range": "bytes 0-0/10"})
+
+    async with _client(handler) as client:
+        await probe(client, "https://cdn.test/f", headers={"Referer": "https://site.test/", "Range": "bytes=5-"})
+
+    assert seen == {"referer": "https://site.test/", "range": "bytes=0-0"}

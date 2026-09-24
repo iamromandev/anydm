@@ -1,6 +1,5 @@
 import uuid
 from collections import namedtuple
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -10,27 +9,14 @@ from src.core.success import Meta
 from src.core.type import Code
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
-from src.lib.youtube.protocol import StreamInfo, VideoInfo
+from src.lib.site import error as site_error
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
 from src.service.download.download_service import DownloadService
 
-VIDEO_ID = "dQw4w9WgXcQ"
+from tests.sites import FakeSiteClient, site_info, sized
 
-
-class FakeClient:
-    async def fetch_info(self, video_id: str) -> VideoInfo:
-        return VideoInfo(
-            video_id=video_id,
-            title="Never Gonna Give You Up",
-            streams=[
-                StreamInfo(itag=137, mime_type="video/mp4", quality="1080p", height=1080, has_video=True),
-                StreamInfo(itag=140, mime_type="audio/mp4", bitrate=128000, has_audio=True),
-            ],
-        )
-
-    async def stream_url(self, video_id: str, itag: int) -> str:
-        raise AssertionError("enqueue must not resolve stream URLs")
+YOUTUBE = "https://youtu.be/dQw4w9WgXcQ"
 
 
 class FakeRepo:
@@ -71,7 +57,8 @@ def _row(task_id: uuid.UUID, **overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "id": task_id,
         "source_url": "https://youtu.be/x",
-        "platform": Platform.YOUTUBE,
+        "platform": Platform.SITE,
+        "extractor": "Youtube",
         "video_id": "x",
         "preset": Preset.BEST,
         "kind": Kind.VIDEO,
@@ -140,13 +127,14 @@ class FakeTorrentService:
 def _service(
     downloads_dir: Path | None = None,
     disk: DiskGuard | None = None,
+    client: FakeSiteClient | None = None,
 ) -> tuple[DownloadService, FakeRepo, FakeTorrentService]:
     repo = FakeRepo()
     torrents = FakeTorrentService()
     service = DownloadService(
         repo=repo,  # ty: ignore[invalid-argument-type]
         segment_repo=FakeSegmentRepo(),  # ty: ignore[invalid-argument-type]
-        client=FakeClient(),
+        client=client or FakeSiteClient(site_info("youtube")),
         control=DownloadControl(),
         hub=EventHub(),
         downloads_root=downloads_dir or Path("/tmp/anydm-test"),
@@ -164,75 +152,126 @@ def _disk(free: int, min_free: int = GIB) -> DiskGuard:
     return DiskGuard("/data", min_free, usage=lambda _path: _Usage(100 * GIB, 0, free))
 
 
-class SizedClient(FakeClient):
-    """Streams whose sizes YouTube reported: 3 GiB of video and 1 GiB of audio."""
-
-    async def fetch_info(self, video_id: str) -> VideoInfo:
-        info = await super().fetch_info(video_id)
-        video, audio = info.streams
-        return VideoInfo(
-            video_id=info.video_id,
-            title=info.title,
-            streams=[
-                replace(video, content_length=3 * GIB),
-                replace(audio, content_length=GIB),
-            ],
-        )
+# --- enqueue from a site ------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_enqueue_writes_a_pending_row() -> None:
+async def test_enqueue_media_writes_a_pending_site_row() -> None:
     service, repo, _ = _service()
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+    task = await service.enqueue_media(YOUTUBE, Preset.P1080)
 
-    assert len(repo.created) == 1
+    assert task.extractor == "Youtube"  # the site reaches the UI too
     row = repo.created[0]
     assert row["status"] == TaskStatus.PENDING
-    assert row["platform"] == Platform.YOUTUBE
-    assert row["video_id"] == VIDEO_ID
-    assert row["preset"] == Preset.P1080
+    assert (row["platform"], row["extractor"], row["video_id"]) == (Platform.SITE, "Youtube", "dQw4w9WgXcQ")
+    assert (row["preset"], row["kind"]) == (Preset.P1080, Kind.VIDEO)
+    assert row["source_url"] == YOUTUBE
     assert row["progress"] == 0
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stores_the_resolved_plan() -> None:
+async def test_enqueue_media_stores_the_plan_s_format_ids() -> None:
     service, repo, _ = _service()
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+    await service.enqueue_media(YOUTUBE, Preset.P1080)
 
     row = repo.created[0]
-    assert row["kind"] == Kind.VIDEO
-    assert row["video_itag"] == 137
-    assert row["audio_itag"] == 140
-    assert row["filename"] == "Never_Gonna_Give_You_Up_1080p.mp4"
-    assert row["title"] == "Never Gonna Give You Up"
+    assert (row["video_format"], row["audio_format"]) == ("137", "140")
+    assert row["title"] == site_info("youtube").title
+    assert row["filename"].endswith("_1080p.mp4")
+    assert row["total_bytes"] == 80_911_999 + 3_449_447
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stores_an_mp3_plan() -> None:
-    service, repo, _ = _service()
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.MP3)
+async def test_a_combined_format_is_one_part() -> None:
+    service, repo, _ = _service(client=FakeSiteClient(site_info("vimeo")))
+    await service.enqueue_media("http://vimeo.com/75629013", Preset.BEST)
 
     row = repo.created[0]
-    assert row["kind"] == Kind.AUDIO
-    assert row["video_itag"] is None
-    assert row["audio_itag"] == 140
-    assert row["filename"] == "Never_Gonna_Give_You_Up.mp3"
+    assert (row["video_format"], row["audio_format"], row["extractor"]) == ("http-1080p", None, "Vimeo")
+    assert row["total_bytes"] is None
 
 
 @pytest.mark.asyncio
-async def test_enqueue_rejects_a_non_youtube_url() -> None:
-    service, _, _ = _service()
-    with pytest.raises(Error) as caught:
-        await service.enqueue_youtube("https://example.com/v", Preset.BEST)
-    assert caught.value.code == 400
+async def test_an_estimated_size_is_not_stored_as_the_total() -> None:
+    # A wrong total would stall or overshoot the progress bar; the probe will
+    # learn the real one. The estimate still counts for the disk guard.
+    service, repo, _ = _service(client=FakeSiteClient(site_info("twitter")))
+    await service.enqueue_media("https://twitter.com/x/status/1", Preset.BEST)
+
+    assert repo.created[0]["total_bytes"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_mp3_from_an_audio_site() -> None:
+    service, repo, _ = _service(client=FakeSiteClient(site_info("soundcloud")))
+    await service.enqueue_media("http://soundcloud.com/x/y", Preset.MP3)
+
+    row = repo.created[0]
+    assert (row["kind"], row["video_format"], row["audio_format"]) == (Kind.AUDIO, None, "http_mp3_0_0")
+    assert row["filename"].endswith(".mp3")
 
 
 @pytest.mark.asyncio
 async def test_a_taller_preset_than_available_falls_back_to_the_tallest() -> None:
-    # 1080p is the tallest on offer, so 2160 degrades rather than failing.
-    service, repo, _ = _service()
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P2160)
-    assert repo.created[0]["video_itag"] == 137
+    service, repo, _ = _service(client=FakeSiteClient(site_info("twitter")))
+    await service.enqueue_media("https://twitter.com/x/status/1", Preset.P2160)
+
+    assert repo.created[0]["video_format"] == "http-2176"
+
+
+@pytest.mark.asyncio
+async def test_a_site_with_only_streaming_formats_is_refused_until_they_are_supported() -> None:
+    service, repo, _ = _service(client=FakeSiteClient(site_info("dailymotion")))
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_media("https://dailymotion.com/video/x", Preset.BEST)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert "streaming formats" in (caught.value.message or "")
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_https_formats_are_chosen_over_taller_streaming_ones_for_now() -> None:
+    # Reddit's tallest is HLS-only at 640p; its HTTPS formats stop at 480p.
+    service, repo, _ = _service(client=FakeSiteClient(site_info("reddit")))
+    await service.enqueue_media("https://reddit.com/r/x", Preset.BEST)
+
+    assert (repo.created[0]["video_format"], repo.created[0]["audio_format"]) == ("dash-VIDEO-1", "dash-AUDIO-1")
+
+
+@pytest.mark.asyncio
+async def test_a_live_stream_is_refused() -> None:
+    service, repo, _ = _service(client=FakeSiteClient(site_info("twitch", is_live=True)))
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_media("https://twitch.tv/x", Preset.BEST)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_preset_the_site_cannot_satisfy_is_refused() -> None:
+    service, repo, _ = _service(client=FakeSiteClient(site_info("soundcloud")))
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_media("http://soundcloud.com/x/y", Preset.P1080)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_an_extraction_failure_reaches_the_caller() -> None:
+    client = FakeSiteClient(site_info("youtube"), fail=site_error.unsupported_url("https://example.test/x"))
+    service, repo, _ = _service(client=client)
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_media("https://example.test/x", Preset.BEST)
+
+    assert caught.value.code == Code.BAD_REQUEST
+    assert repo.created == []
 
 
 @pytest.mark.asyncio
@@ -534,8 +573,8 @@ async def test_enqueue_url_writes_a_direct_task(tmp_path: Path) -> None:
     assert row["platform"] == Platform.DIRECT
     assert row["kind"] == Kind.FILE
     assert row["filename"] == "report.pdf"
-    assert row["video_itag"] is None
-    assert row["audio_itag"] is None
+    assert row["video_format"] is None
+    assert row["audio_format"] is None
     assert row["video_id"] is None
     assert row["status"] == TaskStatus.PENDING
 
@@ -572,36 +611,47 @@ async def test_enqueue_url_needs_only_the_minimum_since_its_size_is_not_known_ye
 
 
 @pytest.mark.asyncio
-async def test_enqueue_youtube_refuses_a_plan_that_would_not_fit() -> None:
+async def test_enqueue_media_refuses_a_plan_that_would_not_fit() -> None:
     # 4 GiB of streams plus the 1 GiB minimum is 5 GiB; 4.5 GiB is free.
-    service, repo, _ = _service(disk=_disk(free=9 * GIB // 2))
-    service._client = SizedClient()
+    info = sized(site_info("youtube"), {"137": 3 * GIB, "140": GIB})
+    service, repo, _ = _service(disk=_disk(free=9 * GIB // 2), client=FakeSiteClient(info))
 
     with pytest.raises(Error) as caught:
-        await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+        await service.enqueue_media(YOUTUBE, Preset.P1080)
 
     assert caught.value.code == Code.INSUFFICIENT_STORAGE
     assert repo.created == []
 
 
 @pytest.mark.asyncio
-async def test_enqueue_youtube_accepts_a_plan_that_fits() -> None:
-    service, repo, _ = _service(disk=_disk(free=5 * GIB))
-    service._client = SizedClient()
+async def test_enqueue_media_accepts_a_plan_that_fits() -> None:
+    info = sized(site_info("youtube"), {"137": 3 * GIB, "140": GIB})
+    service, repo, _ = _service(disk=_disk(free=5 * GIB), client=FakeSiteClient(info))
 
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+    await service.enqueue_media(YOUTUBE, Preset.P1080)
 
     assert repo.created[0]["total_bytes"] == 4 * GIB
 
 
 @pytest.mark.asyncio
-async def test_enqueue_youtube_of_unknown_size_needs_only_the_minimum() -> None:
-    # FakeClient reports no content_length, so the plan's size is unknown.
-    service, repo, _ = _service(disk=_disk(free=GIB + 1))
+async def test_an_estimate_still_counts_for_the_disk_guard() -> None:
+    # X's 720p is estimated at 862,240 bytes; with a 1 GiB minimum, 1 GiB plus
+    # a few bytes is not enough.
+    service, _, _ = _service(disk=_disk(free=GIB + 1000), client=FakeSiteClient(site_info("twitter")))
 
-    await service.enqueue_youtube(f"https://youtu.be/{VIDEO_ID}", Preset.P1080)
+    with pytest.raises(Error) as caught:
+        await service.enqueue_media("https://twitter.com/x/status/1", Preset.BEST)
 
-    assert repo.created[0]["total_bytes"] is None
+    assert caught.value.code == Code.INSUFFICIENT_STORAGE
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_size_needs_only_the_minimum() -> None:
+    service, repo, _ = _service(disk=_disk(free=GIB + 1), client=FakeSiteClient(site_info("vimeo")))
+
+    await service.enqueue_media("http://vimeo.com/75629013", Preset.BEST)
+
+    assert len(repo.created) == 1
 
 
 # --- bulk actions -----------------------------------------------------------

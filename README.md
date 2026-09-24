@@ -141,11 +141,12 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - **Endpoints:**
   - Health, extract and settings
     - `GET /health/check` — health probe
-    - `POST /extract` — resolve a URL into stream metadata (YouTube only)
+    - `POST /extract` — what a page on any site yt-dlp supports offers: title, duration, thumbnail, formats, and the `presets` that can be downloaded from it today. An unsupported link answers 400 `unsupported_url`; a live stream, a playlist, or a page with only HLS/DASH formats answers 422
     - `GET /settings` — how this API is configured, secrets left out; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
-    - `POST /download/youtube` — enqueue a YouTube download for a preset
+    - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset
+    - `POST /download/youtube` — **deprecated**: the same as `POST /download/media`, under its old name; removed in v0.4
     - `POST /download/url` — enqueue a direct URL download
     - `GET /download` — one page of tasks. `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_bytes`, `progress` or `speed_bps`, prefixed with `-` for descending (default `-created_at`)
     - `GET /download/summary` — how many tasks each sidebar filter holds, counted in the database
@@ -183,7 +184,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 
 ## Current limitations
 
-- `POST /extract` handles YouTube only; other URLs are rejected.
+- Sites whose formats are all HLS or DASH (Dailymotion and Twitch VODs, for instance) are refused until the fragment downloader lands, and where a site has both, the HTTPS formats are used even when an HLS one is taller. Playlists, channels, live streams, and videos that need a login are not supported.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
 - Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.

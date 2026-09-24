@@ -27,7 +27,7 @@ def test_active_statuses_are_the_ones_a_restart_must_requeue() -> None:
 
 
 def test_platform_and_kind_values() -> None:
-    assert {p.value for p in Platform} == {"youtube", "direct", "torrent"}
+    assert {p.value for p in Platform} == {"site", "direct", "torrent"}
     assert {k.value for k in Kind} == {"video", "audio", "file", "torrent"}
 
 
