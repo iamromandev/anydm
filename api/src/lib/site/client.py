@@ -190,8 +190,13 @@ def _resolved(info: dict[str, Any]) -> dict[str, Resolved]:
 
 def _progress(status: dict[str, Any]) -> FormatProgress:
     """A yt-dlp progress-hook dict as a ``FormatProgress``."""
-    downloaded = int(status.get("downloaded_bytes") or 0)
     total = status.get("total_bytes") or status.get("total_bytes_estimate")
+    downloaded = status.get("downloaded_bytes")
+    if downloaded is None and status.get("status") == "finished":
+        # The file was already whole on disk from an earlier attempt, and
+        # yt-dlp reports only its size.
+        downloaded = total
+    downloaded = int(downloaded or 0)
     speed = status.get("speed")
     eta = status.get("eta")
     return FormatProgress(

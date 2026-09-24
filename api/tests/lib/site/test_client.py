@@ -348,6 +348,15 @@ def test_an_estimate_below_what_has_arrived_is_raised_to_it(tmp_path: Path) -> N
     assert _download(fake, tmp_path)[0].total_bytes == 500
 
 
+def test_a_part_already_on_disk_counts_as_downloaded(tmp_path: Path) -> None:
+    # A retry after the part finished: yt-dlp skips it and reports only its size.
+    fake = FakeDownload([{"status": "finished", "total_bytes": 950}])
+
+    assert _download(fake, tmp_path) == [
+        FormatProgress(downloaded_bytes=950, total_bytes=950, speed_bps=None, eta_seconds=None)
+    ]
+
+
 def test_asking_to_stop_raises_through_yt_dlp(tmp_path: Path) -> None:
     fake = FakeDownload([
         {"status": "downloading", "downloaded_bytes": 1},
