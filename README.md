@@ -163,7 +163,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
   - Streaming (independent of downloading — nothing is kept)
-    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p), a media URL, a magnet or a `.torrent`
+    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain-file formats), a media URL, a magnet or a `.torrent`
     - `GET /stream/events` — SSE session status, including swarm numbers
     - `GET /stream/{session_id}/playlist.m3u8` — the HLS playlist
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request
@@ -202,7 +202,7 @@ Sites change how they serve media, and yt-dlp releases to keep up, sometimes sev
 
 ## Current limitations
 
-- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player reads HLS, but not DASH, f4m or ISM, whose URL is a manifest of every rendition. A page offering only those still downloads. Playing HLS clips a moment from the start of each 6-second segment (#87). Playlists, channels, live streams, and videos that need a login are not supported.
+- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player doesn't play them yet. Its seek into HLS clips the start of each segment, and hangs on fMP4 streams (#87). A page offering nothing else answers 422 in the player, and still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
 - Dailymotion refuses about half of yt-dlp's requests for a stream from some networks. yt-dlp then wants to impersonate a browser, which needs `curl_cffi`, and the image doesn't have it (#88). The failure is retried like any other.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.

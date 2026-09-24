@@ -202,8 +202,9 @@ wait for the whole file.
 
 A page on a site adds a step in front too. The site client's `open` makes one
 extraction, `playback_plan` picks video at up to 1080p (or an audio-only site's
-audio) from the formats a download could fetch, and the session keeps one or
-two inputs with the headers their server expects. Each segment's ffmpeg reads
+audio) from the plain-file formats, and the session keeps one or two inputs
+with the headers their server expects. HLS and DASH stay out: ffmpeg's seek
+into HLS clips the start of a segment, and hangs on fMP4 (#87). Each segment's ffmpeg reads
 both, with video from the first and audio from the second. Site URLs expire, so
 an encode refused with a 403 resolves the page's formats again, once; segments
 refused together share that refresh. A link to a media file skips the

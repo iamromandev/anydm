@@ -253,10 +253,25 @@ def test_playback_of_an_audio_only_site_is_its_audio() -> None:
     assert plan.audio is not None and plan.audio.id == "http_mp3_0_0"
 
 
-def test_playback_takes_hls() -> None:
-    plan = playback_plan(_formats("dailymotion"))
+def test_playback_refuses_an_hls_only_page_for_now() -> None:
+    # Seeking into HLS hangs on fMP4 streams and clips TS ones (#87), so the
+    # player takes plain files alone until it cuts segments another way. The
+    # page still downloads.
+    with pytest.raises(Error) as caught:
+        playback_plan(_formats("dailymotion"))
 
-    assert plan.video is not None and plan.video.id == "hls-1080"
+    assert caught.value.type == ErrorType.UNSUPPORTED_OPERATION
+    assert "can still be downloaded" in (caught.value.message or "")
+
+
+def test_playback_of_a_page_with_both_takes_its_plain_files() -> None:
+    # Reddit's tallest video is HLS-only at 640p. The player takes the 480p HTTPS one.
+    plan = playback_plan(_formats("reddit"))
+
+    assert (plan.video.id if plan.video else None, plan.audio.id if plan.audio else None) == (
+        "dash-VIDEO-1",
+        "dash-AUDIO-1",
+    )
 
 
 def test_playback_refuses_a_page_of_dash_manifests_alone() -> None:
@@ -353,9 +368,3 @@ def test_an_hls_combined_plan_is_named_for_its_codecs() -> None:
 )
 def test_the_fragmented_protocols_are_named_once(protocol: str | None, fragmented: bool) -> None:
     assert is_fragmented(protocol) is fragmented
-
-
-def test_hls_is_the_m3u8_kind_of_fragmented() -> None:
-    assert _one("twitch", "720p-1").hls
-    assert _one("twitch", "720p-1").fragmented
-    assert not _one("youtube", "137").hls
