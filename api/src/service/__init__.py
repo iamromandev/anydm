@@ -16,6 +16,7 @@ from src.service.download.disk import DiskGuard as DiskGuard
 from src.service.download.disk_monitor import DiskMonitor
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
+from src.service.download.fragment import FragmentDownloader, fragment_limits
 from src.service.download.post_process import FfmpegPostProcessor
 from src.service.download.rate_limit import rate_limiter
 from src.service.download.segmented import SegmentedDownloader
@@ -160,6 +161,19 @@ def build_worker_pool() -> WorkerPool:
         write_buffer_bytes=settings.download_write_buffer_bytes,
         limiter=limiter,
     )
+    # yt-dlp's reads cannot pass through ``limiter``, so the fragment path gets
+    # a share of the cap of its own, and charges what it reads to ``limiter``
+    # after the fact.
+    concurrency, fragment_rate_bps = fragment_limits(
+        settings.download_rate_limit_bps, settings.download_workers, settings.download_segments
+    )
+    fragments = FragmentDownloader(
+        get_site_client(),
+        concurrency=concurrency,
+        rate_bps=fragment_rate_bps,
+        limiter=limiter,
+        poll_s=settings.download_progress_flush_ms / 1000,
+    )
     workers = [
         DownloadWorker(
             name=f"worker-{index}",
@@ -174,6 +188,7 @@ def build_worker_pool() -> WorkerPool:
             max_attempts=settings.download_max_attempts,
             segments=settings.download_segments,
             disk=get_disk_guard(),
+            fragments=fragments,
         )
         for index in range(settings.download_workers)
     ]
