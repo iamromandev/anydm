@@ -10,6 +10,9 @@ from __future__ import annotations
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 
+# Shared with every site's selection; re-exported so YouTube callers keep one import.
+from src.lib.site.error import no_format_for_preset as no_format_for_preset
+
 
 def not_a_youtube_url() -> Error:
     return Error.create(
@@ -32,14 +35,6 @@ def video_forbidden(reason: str) -> Error:
         code=Code.FORBIDDEN,
         message=f"Video not accessible: {reason}",
         error_type=ErrorType.FORBIDDEN,
-    )
-
-
-def no_format_for_preset(preset: str) -> Error:
-    return Error.create(
-        code=Code.UNPROCESSABLE_ENTITY,
-        message=f'No stream available for preset "{preset}"',
-        error_type=ErrorType.UNPROCESSABLE_ENTITY,
     )
 
 
