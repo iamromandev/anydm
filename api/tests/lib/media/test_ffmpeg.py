@@ -24,6 +24,14 @@ def test_mux_args_moves_the_index_to_the_front() -> None:
     assert args[args.index("-movflags") + 1] == "+faststart"
 
 
+def test_mux_args_moves_an_index_only_where_there_is_one() -> None:
+    # `+faststart` is the MP4 muxer's; WebM and MKV have nothing to move.
+    for container in ("webm", "mkv"):
+        args = mux_args("ffmpeg", Path("/t/v.part"), Path("/t/a.part"), Path(f"/t/out.{container}"))
+        assert "-movflags" not in args
+        assert args[-1] == f"/t/out.{container}"
+
+
 def test_mux_args_overwrites_without_prompting() -> None:
     assert "-y" in mux_args("ffmpeg", Path("/t/v"), Path("/t/a"), Path("/t/o"))
 

@@ -22,16 +22,22 @@ _STDERR_TAIL = 2000
 
 
 def mux_args(ffmpeg: str, video: Path, audio: Path, destination: Path) -> list[str]:
-    """Combine a video-only and an audio-only file without re-encoding either."""
-    return [
+    """Combine a video-only and an audio-only file without re-encoding either.
+
+    The destination's extension picks the muxer, and the plan chose it to
+    carry both codecs (``container_for``). Only MP4 has an index to move to the
+    front, so only MP4 is asked to.
+    """
+    args = [
         ffmpeg,
         "-y",
         "-i", str(video),
         "-i", str(audio),
         "-c", "copy",
-        "-movflags", "+faststart",
-        str(destination),
     ]
+    if destination.suffix == ".mp4":
+        args += ["-movflags", "+faststart"]
+    return [*args, str(destination)]
 
 
 def mp3_args(ffmpeg: str, audio: Path, destination: Path) -> list[str]:

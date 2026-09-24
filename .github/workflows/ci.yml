@@ -73,6 +73,9 @@ jobs:
             # `generate_schemas`, so that a migration that does not do what it
             # claims fails here rather than on someone's database.
             - run: uv run python -m scripts.migrate
+            # The post-processor's tests run a real ffmpeg, and skip without
+            # one. Ubuntu's build has every encoder their clips need.
+            - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
             - run: uv run pytest -m integration
 
     ui:

@@ -153,6 +153,51 @@ def _subtype(ext: str) -> str:
     return _SUBTYPE.get(ext, ext) or "mp4"
 
 
+#: yt-dlp's codec strings, by what comes before the first dot. "avc1.640028"
+#: is H.264, "mp4a.40.2" is AAC.
+_CODEC_NAMES = {
+    "avc1": "h264", "avc3": "h264", "h264": "h264",
+    "hev1": "hevc", "hvc1": "hevc", "hevc": "hevc", "h265": "hevc",
+    "av01": "av1", "av1": "av1",
+    "vp09": "vp9", "vp9": "vp9",
+    "vp8": "vp8",
+    "mp4a": "aac", "aac": "aac",
+    "mp3": "mp3",
+    "opus": "opus",
+    "vorbis": "vorbis",
+    "ac-3": "ac3", "ac3": "ac3",
+    "ec-3": "eac3", "eac3": "eac3",
+}
+
+#: The containers two parts can be muxed into, most preferred first, each with
+#: the video and audio codecs it carries well. MP4 plays in the most places.
+#: WebM is where browsers play VP8 and Vorbis: in MP4, ffmpeg refuses VP8
+#: outright and writes Vorbis in a way players reject.
+_CONTAINERS = (
+    ("mp4", "video/mp4", frozenset({"h264", "hevc", "av1", "vp9"}), frozenset({"aac", "mp3", "opus", "ac3", "eac3"})),
+    ("webm", "video/webm", frozenset({"vp8", "vp9", "av1"}), frozenset({"opus", "vorbis"})),
+)
+
+
+def _codec(value: str | None) -> str | None:
+    if not value:
+        return None
+    return _CODEC_NAMES.get(value.split(".", 1)[0].lower())
+
+
+def container_for(vcodec: str | None, acodec: str | None) -> tuple[str, str]:
+    """The extension and MIME type for muxing a video part and an audio part.
+
+    MKV when no other fits both, a codec nobody named included: it carries
+    anything, so the mux cannot fail on the container's account.
+    """
+    video, audio = _codec(vcodec), _codec(acodec)
+    for extension, mime_type, videos, audios in _CONTAINERS:
+        if video in videos and audio in audios:
+            return extension, mime_type
+    return "mkv", "video/x-matroska"
+
+
 def select_plan(formats: list[Format], preset: Preset, *, allow_fragmented: bool = True) -> Plan:
     """The plan ``preset`` means for these formats.
 
@@ -182,7 +227,8 @@ def select_plan(formats: list[Format], preset: Preset, *, allow_fragmented: bool
     if best_video is not None and best_audio is not None:
         size, estimate = _size(best_video, best_audio)
         quality = f"{best_video.height}p" if best_video.height else preset.value
-        return Plan(Kind.VIDEO, best_video, best_audio, "video/mp4", "mp4", quality, size, estimate)
+        extension, mime_type = container_for(best_video.vcodec, best_audio.acodec)
+        return Plan(Kind.VIDEO, best_video, best_audio, mime_type, extension, quality, size, estimate)
 
     raise no_format_for_preset(preset.value)
 
