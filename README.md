@@ -163,7 +163,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
   - Streaming (independent of downloading — nothing is kept)
-    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain-file formats), a media URL, a magnet or a `.torrent`
+    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain files, or its HLS when it has nothing else), a media URL, a magnet or a `.torrent`
     - `GET /stream/events` — SSE session status, including swarm numbers
     - `GET /stream/{session_id}/playlist.m3u8` — the HLS playlist
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request
@@ -179,7 +179,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 
   The file's extension says which. Every site recorded so far comes out as MP4. An HLS download that is a single part arrives as MPEG-TS and is remuxed, also without re-encoding, into the container its codecs fit. An MP3 is transcoded from any audio codec.
 - **Torrents:** a pinned rqbit runs as its own Compose service and owns every torrent transfer. The API resolves a magnet to a file list, creates one task per torrent with child `file` rows, and a monitor polls the engine and mirrors progress onto them. A finished torrent seeds until it is told to stop. rqbit's control API has no authentication, so it is published on loopback only; port 4240 is published for incoming peers. Torrents never occupy a download worker slot.
-- **Streaming:** playing is a separate path from downloading and keeps nothing. A page on a site is extracted first and played from its formats, video and audio as separate inputs, and its URLs are resolved again if they expire mid-play. A session probes the source, then serves HLS whose segments are transcoded when a player asks for them, `STREAM_READAHEAD_SEGMENTS` ahead of the one being fetched. Idle sessions are swept after `STREAM_IDLE_TIMEOUT_S`, and a reaper deletes rqbit torrents no task or session owns.
+- **Streaming:** playing is a separate path from downloading and keeps nothing. A page on a site is extracted first and played from its formats, video and audio as separate inputs, and its URLs are resolved again if they expire mid-play. A session probes the source, then serves HLS whose segments are transcoded when a player asks for them, `STREAM_READAHEAD_SEGMENTS` ahead of the one being fetched. A page with only HLS formats has its playlists read instead of probed, and each segment is cut from a playlist of just the fragments it covers. Idle sessions are swept after `STREAM_IDLE_TIMEOUT_S`, and a reaper deletes rqbit torrents no task or session owns.
 - **Migrations:** Tortoise's built-in migrations under `src/data/db/migration`, applied by `python -m scripts.migrate` — the compose command runs it before uvicorn
 
 ### `ui/apps/web`
@@ -203,7 +203,7 @@ Sites change how they serve media, and yt-dlp releases to keep up, sometimes sev
 
 ## Current limitations
 
-- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player doesn't play them yet. Its seek into HLS clips the start of each segment, and hangs on fMP4 streams (#87). A page offering nothing else answers 422 in the player, and still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
+- HLS, DASH and the other fragmented formats download through yt-dlp's own downloader. Their cards show no segment strip, and their size is an estimate until the end. The player plays HLS when a page has nothing else, but fetches its fragments without the site's headers, which none of the recorded sites needs. It doesn't play DASH, f4m or ISM, whose URL is a manifest of every rendition: a page offering nothing else answers 422 in the player, and still downloads. Playlists, channels, live streams, and videos that need a login are not supported.
 - Running the API on the host with `make api-run` while rqbit runs in Docker means the two disagree about paths. Torrents download, but the host-run API cannot read the finished files. Use `make api-up` for torrent work.
 - Seeders and leechers are never shown: rqbit reports connected peers and does not split a swarm.
 - Authentication is one optional shared key (`API_KEY`), off by default. Without it, CORS is the only gate, which does nothing for a direct request, so do not expose an API with no key set beyond a trusted network.

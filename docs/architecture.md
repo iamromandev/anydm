@@ -192,21 +192,29 @@ schema and the UI both understand it, but no code path sets it.
 Playing something and downloading it are independent. A stream never touches
 the task table, and a download never feeds a player.
 
-`POST /stream/start` probes the source, answers with a session id, and the
-player then asks for `playlist.m3u8` and segments by index. **Segments are
-transcoded when they are requested**, not in advance, with
-`STREAM_READAHEAD_SEGMENTS` generated ahead of the one being fetched and
-`STREAM_MAX_CONCURRENT_ENCODES` capping how many ffmpeg processes a session may
-run at once. Seeking past the buffered edge therefore costs one encode, not a
-wait for the whole file.
+`POST /stream/start` probes the source (an HLS page's playlists are read
+instead), answers with a session id, and the player then asks for
+`playlist.m3u8` and segments by index. **Segments are transcoded when they are
+requested**, not in advance, with `STREAM_READAHEAD_SEGMENTS` generated ahead of
+the one being fetched and `STREAM_MAX_CONCURRENT_ENCODES` capping how many
+ffmpeg processes a session may run at once. Seeking past the buffered edge
+therefore costs one encode, not a wait for the whole file.
 
 A page on a site adds a step in front too. The site client's `open` makes one
-extraction, `playback_plan` picks video at up to 1080p (or an audio-only site's
-audio) from the plain-file formats, and the session keeps one or two inputs
-with the headers their server expects. HLS and DASH stay out: ffmpeg's seek
-into HLS clips the start of a segment, and hangs on fMP4 (#87). Each segment's ffmpeg reads
-both, with video from the first and audio from the second. Site URLs expire, so
-an encode refused with a 403 resolves the page's formats again, once; segments
+extraction, and `playback_plan` picks video at up to 1080p (or an audio-only
+site's audio) from the plain-file formats, or from the HLS ones when the page
+has no plain file that plays. A session is never part one and part the other.
+It keeps one or two inputs with the headers their server expects, and each
+segment's ffmpeg reads both, with video from the first and audio from the
+second. An HLS session fetches its media playlists instead of probing, and cuts
+each segment from a playlist of just the fragments it overlaps, written into
+the session's folder. ffmpeg reads those fragments from their start: seeking
+into the stream would drop packets up to a keyframe, which clips TS audio and
+misreads fMP4. Each cut is shifted by where its first fragment starts, so two
+playlists whose fragments don't line up still do, and the output is trimmed to
+the segment. DASH, f4m and ISM stay out, since each URL is a manifest of every
+rendition. Site URLs expire, so an encode refused with a 403 resolves the
+page's formats again, and an HLS session's playlists with them, once; segments
 refused together share that refresh. A link to a media file skips the
 extraction, and a link no site claims plays directly.
 
