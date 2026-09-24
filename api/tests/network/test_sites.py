@@ -51,18 +51,21 @@ FIRST_BYTES = 1 << 20
 #: YouTube keeps for a request with no range (#72), it takes about 31.
 FETCH_LIMIT_S = 20.0
 
-#: YouTube asks cloud IPs, CI runners among them, to sign in and prove they are
-#: not a bot. That says nothing about yt-dlp, and no bump clears it.
-_BOT_CHECK = "not a bot"
+#: What a site says when it refuses this machine rather than the page. YouTube
+#: asks cloud IPs, CI runners among them, to prove they are not a bot. Reddit
+#: answers them 403 Blocked, which yt-dlp reports as needing an account. Neither
+#: says anything about yt-dlp, and no bump clears them.
+_REFUSALS = ("not a bot", "account authentication is required")
 
 
 @contextmanager
-def _unless_bot_checked() -> Iterator[None]:
+def _unless_refused() -> Iterator[None]:
     """Skip, naming the reason, when the site refused this machine rather than the page."""
     try:
         yield
     except Error as error:
-        if _BOT_CHECK in (error.message or "").lower():
+        message = (error.message or "").lower()
+        if any(refusal in message for refusal in _REFUSALS):
             pytest.skip(f"the site asked this machine to sign in: {error.message}")
         raise
 
@@ -90,7 +93,7 @@ async def _first_bytes(http: httpx.AsyncClient, url: str, headers: dict[str, str
 @pytest.mark.parametrize("url", DOWNLOADABLE.values(), ids=DOWNLOADABLE.keys())
 async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, tmp_path: Path) -> None:
     client = YtDlpClient()
-    with _unless_bot_checked():
+    with _unless_refused():
         info = await client.extract(url)
         # What the add box would start on: Best, or MP3 for an audio-only site.
         presets = fetchable_presets(info.formats)
@@ -115,7 +118,7 @@ async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, 
 async def test_a_streaming_only_site_still_extracts(url: str) -> None:
     # The add box explains why these cannot be downloaded yet, and it needs a
     # working extraction to say so.
-    with _unless_bot_checked():
+    with _unless_refused():
         info = await YtDlpClient().extract(url)
 
     assert any(f.media for f in info.formats), "no media formats"
