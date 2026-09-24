@@ -23,8 +23,8 @@ from src.lib.event import EventHub
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
-from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist
-from src.lib.media.source import MediaInput
+from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist, sub_playlist
+from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.format import playback_plan
@@ -375,23 +375,38 @@ class StreamService(BaseService):
         """Encode one segment; a site's expired URLs are resolved again, once."""
         version = session.inputs_version
         try:
-            await self._encoder(self._segment_args(session, index))
+            await self._encoder(await self._segment_args(session, index))
         except Error as error:
             if session.origin is None or not _refused(error):
                 raise
             logger.info("StreamService|{} refused segment {}; resolving its URLs again", session.id, index)
             await self._refresh_inputs(session, version)
-            await self._encoder(self._segment_args(session, index))
+            await self._encoder(await self._segment_args(session, index))
 
-    def _segment_args(self, session: StreamSession, index: int) -> list[str]:
+    async def _segment_args(self, session: StreamSession, index: int) -> list[str]:
+        start = index * session.segment_seconds
+        duration = session.segment_duration(index)
+        inputs: list[MediaInput] | list[PlaylistCut] = session.inputs
+        if session.playlists:
+            inputs = await self._cut(session, index, start, start + duration)
         return segment_args(
             self._ffmpeg_path,
-            session.inputs,
-            start_seconds=index * session.segment_seconds,
-            duration_seconds=session.segment_duration(index),
+            inputs,
+            start_seconds=start,
+            duration_seconds=duration,
             destination=session.segment_path(index),
             has_video=session.has_video,
         )
+
+    async def _cut(self, session: StreamSession, index: int, start: float, end: float) -> list[PlaylistCut]:
+        """Each input's playlist of the fragments segment ``index`` overlaps, written beside the segment."""
+        cuts: list[PlaylistCut] = []
+        for n, playlist in enumerate(session.playlists):
+            text, first = sub_playlist(playlist, start, end)
+            path = session.session_dir / f"segment_{index}.{n}.m3u8"
+            await asyncio.to_thread(path.write_text, text, encoding="utf-8")
+            cuts.append(PlaylistCut(path, first))
+        return cuts
 
     async def _refresh_inputs(self, session: StreamSession, seen_version: int) -> None:
         """Ask the site for fresh URLs, unless a segment refused alongside already has."""

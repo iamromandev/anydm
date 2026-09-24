@@ -1029,6 +1029,23 @@ async def test_an_hls_playlist_the_player_cannot_cut_is_refused(tmp_path: Path, 
     assert message in (caught.value.message or "")
 
 
+@pytest.mark.asyncio
+async def test_a_segment_of_an_hls_page_is_cut_from_a_playlist_per_input(tmp_path: Path) -> None:
+    service, _, encoded = _site_service(tmp_path, FakeSiteClient(_hls_only("vimeo")))
+    session = await service.start_session(VIMEO_PAGE)
+
+    await service.get_segment(session, 1)
+
+    args = encoded[0]
+    cuts = [session.session_dir / "segment_1.0.m3u8", session.session_dir / "segment_1.1.m3u8"]
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-i"] == [str(cut) for cut in cuts]
+    for cut in cuts:
+        # Segment 1 is 6 to 12 s: fragments 3 to 5, of 2 s each.
+        fragments = [line for line in cut.read_text().splitlines() if not line.startswith("#")]
+        assert fragments == [f"https://media.test/vimeo/frag{n}.ts" for n in (3, 4, 5)]
+    assert "-headers" not in args
+
+
 # --- fetching a playlist ------------------------------------------------------
 
 
