@@ -15,6 +15,10 @@ import {
     isActive,
     isSeeding,
     keepSegments,
+    keepPositions,
+    resumeAt,
+    watchedProgress,
+    withPosition,
     normalizeApiTask,
     normalizeSegments,
     normalizeFiles,
@@ -993,5 +997,169 @@ describe("downloading a finished task's file (#107)", () => {
         expect(canDownloadTorrentFile("complete", file(0))).toBe(true);
         expect(canDownloadTorrentFile("downloading", file(0))).toBe(false);
         expect(canDownloadTorrentFile("complete", file(1, false))).toBe(false);
+    });
+});
+
+describe("where a download was left (#96)", () => {
+    const row = (id: string): UiTask => normalizeApiTask({ id });
+    const pos = (
+        fileIndex: number,
+        positionSeconds: number,
+        watched = false,
+    ) => ({
+        fileIndex,
+        positionSeconds,
+        durationSeconds: 100,
+        watched,
+    });
+    const file = (index: number, path: string, selected = true) => ({
+        index,
+        path,
+        sizeBytes: 1,
+        selected,
+        downloadedBytes: 1,
+    });
+
+    it("reads positions off a task, and leaves them absent when the row has none", () => {
+        const task = normalizeApiTask({
+            id: "t",
+            positions: [
+                {
+                    file_index: 1,
+                    position_seconds: 61.5,
+                    duration_seconds: 1300,
+                    watched: false,
+                },
+            ],
+        });
+        expect(task.positions).toEqual([
+            {
+                fileIndex: 1,
+                positionSeconds: 61.5,
+                durationSeconds: 1300,
+                watched: false,
+            },
+        ]);
+        expect(normalizeApiTask({ id: "t" }).positions).toBeUndefined();
+    });
+
+    it("keeps what's on screen when a stream frame carries no positions", () => {
+        const held = [
+            {
+                ...row("a"),
+                positions: [
+                    pos(0, 10),
+                ],
+            },
+        ];
+        const fresh = [
+            row("a"),
+        ];
+        expect(keepPositions(fresh, held)[0].positions).toEqual([
+            pos(0, 10),
+        ]);
+        const newer = [
+            {
+                ...row("a"),
+                positions: [
+                    pos(0, 20),
+                ],
+            },
+        ];
+        expect(keepPositions(newer, held)[0].positions).toEqual([
+            pos(0, 20),
+        ]);
+    });
+
+    it("resumes where a file was left, or from the start", () => {
+        expect(
+            resumeAt(
+                [
+                    pos(0, 42),
+                    pos(1, 7),
+                ],
+                1,
+            ),
+        ).toBe(7);
+        expect(
+            resumeAt(
+                [
+                    pos(0, 42),
+                ],
+                null,
+            ),
+        ).toBe(42);
+        expect(
+            resumeAt(
+                [
+                    pos(0, 0, true),
+                ],
+                0,
+            ),
+        ).toBe(0);
+        expect(resumeAt(undefined, 0)).toBe(0);
+    });
+
+    it("shows how far a single download got, a watched one as full", () => {
+        expect(
+            watchedProgress({
+                kind: "video",
+                positions: [
+                    pos(0, 25),
+                ],
+            }),
+        ).toEqual({ fraction: 0.25, label: null });
+        expect(
+            watchedProgress({
+                kind: "video",
+                positions: [
+                    pos(0, 0, true),
+                ],
+            }),
+        ).toEqual({ fraction: 1, label: null });
+        expect(watchedProgress({ kind: "video" })).toEqual({
+            fraction: null,
+            label: null,
+        });
+    });
+
+    it("counts a torrent of several episodes as N of M watched", () => {
+        const files = [
+            file(0, "E1.mkv"),
+            file(1, "E2.mkv"),
+            file(2, "E3.mkv"),
+            file(3, "E1.srt"),
+            file(4, "Extras.mkv", false),
+        ];
+        expect(
+            watchedProgress({
+                kind: "torrent",
+                files,
+                positions: [
+                    pos(0, 0, true),
+                    pos(1, 30),
+                ],
+            }),
+        ).toEqual({ fraction: null, label: "1 of 3 watched" });
+        expect(
+            watchedProgress({ kind: "torrent", files, positions: [] }),
+        ).toEqual({ fraction: null, label: null });
+    });
+
+    it("puts a saved position in place of that file's old one", () => {
+        const task = {
+            ...row("a"),
+            positions: [
+                pos(0, 10),
+                pos(1, 5),
+            ],
+        };
+        expect(withPosition(task, pos(1, 50)).positions).toEqual([
+            pos(0, 10),
+            pos(1, 50),
+        ]);
+        expect(withPosition(row("a"), pos(2, 9)).positions).toEqual([
+            pos(2, 9),
+        ]);
     });
 });

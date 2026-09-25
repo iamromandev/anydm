@@ -151,6 +151,25 @@
     gap: 0.5rem;
 }
 
+/* How far a download has been watched (#96): thin, and the accent's colour,
+   so it reads as a second, separate bar under the download's own. */
+.torrent-watched {
+    height: 3px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+    overflow: hidden;
+}
+
+.torrent-watched-fill {
+    height: 100%;
+    background: var(--color-primary);
+}
+
+.torrent-watched-label {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
 .progress-track-wrapper {
     width: 100%;
 }

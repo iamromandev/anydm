@@ -26,6 +26,7 @@ import {
     canStopSeeding,
     canDownloadTorrentFile,
     canPlayTask,
+    watchedProgress,
     downloadAction,
     isActive,
     retryLabel,
@@ -225,6 +226,32 @@ export const TorrentCard = component$<TorrentCardProps>(
                                 />
                             </div>
                         </div>
+
+                        {/* How far it's been watched (#96). */}
+                        {watchedProgress(task).fraction !== null && (
+                            <div
+                                class="torrent-watched"
+                                role="meter"
+                                aria-label={`${task.title} watched`}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={Math.round(
+                                    (watchedProgress(task).fraction ?? 0) * 100,
+                                )}
+                            >
+                                <div
+                                    class="torrent-watched-fill"
+                                    style={{
+                                        width: `${(watchedProgress(task).fraction ?? 0) * 100}%`,
+                                    }}
+                                />
+                            </div>
+                        )}
+                        {watchedProgress(task).label && (
+                            <span class="torrent-watched-label">
+                                {watchedProgress(task).label}
+                            </span>
+                        )}
 
                         {showProgressDetail &&
                             task.segments &&

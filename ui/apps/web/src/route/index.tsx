@@ -12,6 +12,9 @@ import {
     normalizeSegments,
     postApi,
     keepSegments,
+    keepPositions,
+    withPosition,
+    type PositionView,
     resolveTorrent,
     playsFromTorrent,
     settlePage,
@@ -111,6 +114,7 @@ export default component$(() => {
         playerFileIndex: null as number | null,
         playerFiles: [] as PlayableFile[],
         playerFromTorrent: false as boolean,
+        playerPositions: [] as PositionView[],
         // A count of stream writes, and the count at each task's latest one:
         // what lets a page fetch tell which rows went stale while it was out.
         // Only ids the stream has written are here, so it grows with the
@@ -267,7 +271,8 @@ export default component$(() => {
             (t) => !incoming.has(t.id) && !removed.has(t.id),
         );
         store.tasks = [
-            ...keepSegments(live, before),
+            // Stream frames carry neither segments nor positions (#96).
+            ...keepPositions(keepSegments(live, before), before),
             ...kept,
         ];
 
@@ -680,8 +685,27 @@ export default component$(() => {
         store.playerFiles = mediaFiles(task?.files ?? []);
         // Still downloading: its stream, not its partial file (#95).
         store.playerFromTorrent = task ? playsFromTorrent(task) : false;
+        // Where each file was left, to resume there (#96).
+        store.playerPositions = task?.positions ?? [];
         store.playerTaskId = taskId;
         store.playerModalOpen = true;
+    });
+
+    // The player saved where it is: the card's bar follows at once, and the
+    // next Play resumes there (#96). One synchronous read and write of
+    // store.tasks, so no stream frame lands in between.
+    const handlePositionSaved = $((taskId: string, position: PositionView) => {
+        store.tasks = store.tasks.map((task) =>
+            task.id === taskId ? withPosition(task, position) : task,
+        );
+        if (store.playerTaskId === taskId) {
+            store.playerPositions = [
+                ...store.playerPositions.filter(
+                    (p) => p.fileIndex !== position.fileIndex,
+                ),
+                position,
+            ];
+        }
     });
 
     const handlePlayerModalClose = $(() => {
@@ -786,6 +810,8 @@ export default component$(() => {
             playerFileIndex={store.playerFileIndex}
             playerFiles={store.playerFiles}
             playerFromTorrent={store.playerFromTorrent}
+            playerPositions={store.playerPositions}
+            onPositionSaved={handlePositionSaved}
             onPlayClick={handlePlayClick}
             onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}
