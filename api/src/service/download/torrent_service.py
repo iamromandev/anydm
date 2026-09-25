@@ -23,6 +23,7 @@ from src.data.repo.download.interface import FileRepo, TaskRepo
 from src.data.schema.download import FileSchema, TaskSchema, TorrentResolveResponse
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
+from src.lib.torrent.folder import stored_folder, torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
@@ -110,10 +111,13 @@ class TorrentService(BaseService):
         if self._disk is not None:
             self._disk.require(total_bytes)
 
+        # A folder of its own, recorded below as it is given: rqbit writes into
+        # exactly this folder, not one named after the torrent inside it (#107).
+        folder = torrent_folder(self._root, details.name, details.info_hash)
         await self._client.add(
             source,
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
-            output_folder=str(self._root),
+            output_folder=str(folder),
         )
 
         task = await self._repo.create(
@@ -132,7 +136,7 @@ class TorrentService(BaseService):
             video_format=None,
             audio_format=None,
             info_hash=details.info_hash,
-            file_path=details.output_folder or str(self._root),
+            file_path=str(folder),
             total_bytes=total_bytes,
             status=TaskStatus.PENDING,
             progress=0,
@@ -274,7 +278,7 @@ class TorrentService(BaseService):
         if not row.selected:
             raise Error.conflict(message=f"File {index} was not selected for download")
 
-        folder = Path(task.file_path or str(self._root)).resolve()
+        folder = stored_folder(task.file_path, self._root, [row.path]).resolve()
         path = (folder / row.path).resolve()
         # A torrent's file names are written by a stranger. Containment is
         # checked against the resolved folder, not by inspecting the string.

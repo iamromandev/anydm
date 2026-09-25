@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -143,6 +144,7 @@ def _monitor(
     *,
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
+    torrent_root: str = "/workdir/download/torrent",
 ) -> TorrentMonitor:
     return TorrentMonitor(
         repo=repo,
@@ -150,7 +152,7 @@ def _monitor(
         client=client,
         hub=hub or EventHub(),
         poll_ms=1000,
-        torrent_root="/workdir/download/torrent",
+        torrent_root=torrent_root,
         enabled=True,
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
@@ -277,9 +279,26 @@ async def test_a_row_the_engine_has_lost_is_re_added_with_its_selection() -> Non
 
     await _monitor(FakeRepo([row]), client, files).tick()
 
+    # Into the folder the row records, not the root every torrent shared before #107.
     assert client.added == [
-        {"only_files": [0, 2], "output_folder": "/workdir/download/torrent"}
+        {"only_files": [0, 2], "output_folder": "/workdir/download/torrent/Some Release"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_from_before_per_torrent_folders_is_re_added_where_its_files_are(
+    tmp_path: Path,
+) -> None:
+    """Its row records <root>/<name>, but its files were written flat into the root."""
+    (tmp_path / "file0").write_bytes(b"data")
+    row = _row(status=TaskStatus.DOWNLOADING, file_path=str(tmp_path / "Some Release"))
+    client = FakeClient([])
+    files = FakeFileRepo(selected=[0])
+    files.flushed.append((row.id, [4]))  # so list_for reports file0
+
+    await _monitor(FakeRepo([row]), client, files, torrent_root=str(tmp_path)).tick()
+
+    assert client.added == [{"only_files": [0], "output_folder": str(tmp_path)}]
 
 
 @pytest.mark.asyncio

@@ -444,8 +444,9 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
     assert session.info_hash == "deadbeef"
     assert session.status == "ready"
     assert session.duration_seconds == 20.0  # from the fake prober
+    # Its own folder: a streamed file must not overwrite a download's (#107).
     assert torrent_client.added == [
-        {"only_files": [1], "output_folder": str(tmp_path / "torrent")}
+        {"only_files": [1], "output_folder": str(tmp_path / "torrent" / "Some Release")}
     ]
 
 

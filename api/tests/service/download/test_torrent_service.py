@@ -239,9 +239,11 @@ async def test_enqueue_adds_to_the_engine_and_creates_a_task() -> None:
     task = await _service(client, repo=repo, file_repo=files).enqueue(MAGNET, [0])
 
     assert client.added[0]["only_files"] == [0]
-    assert client.added[0]["output_folder"] == "/workdir/download/torrent"
+    # Its own folder, and the row records the one rqbit is told (#107).
+    assert client.added[0]["output_folder"] == "/workdir/download/torrent/Some Release"
 
     created = repo.created[0]
+    assert created["file_path"] == "/workdir/download/torrent/Some Release"
     assert created["platform"].value == "torrent"
     assert created["kind"].value == "torrent"
     assert created["status"].value == "pending"

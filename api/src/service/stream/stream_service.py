@@ -28,6 +28,7 @@ from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.format import playback_plan
+from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSession, StreamSessionStore
@@ -220,10 +221,13 @@ class StreamService(BaseService):
                 error_type=ErrorType.UNPROCESSABLE_ENTITY,
             )
 
+        # A folder of its own, so a streamed file can't overwrite a download's
+        # (#107). A torrent a task already has keeps its own: rqbit ignores a
+        # re-add's options (#93).
         await self._torrent_client.add(
             source,
             only_files=[target.index],
-            output_folder=str(self._torrent_dir),
+            output_folder=str(torrent_folder(self._torrent_dir, details.name, details.info_hash)),
         )
 
         stream_url = f"{self._torrent_api_url}/torrents/{details.info_hash}/stream/{target.index}"
