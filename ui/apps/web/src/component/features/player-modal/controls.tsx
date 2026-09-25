@@ -12,6 +12,7 @@ import {
     seekRatioFromPointerX,
     type ScrubberSegments,
 } from "./scrubber-progress";
+import type { PlayableFile } from "@/lib/media";
 import "./controls.css";
 
 export interface PlayerControlsProps {
@@ -29,6 +30,10 @@ export interface PlayerControlsProps {
     onToggleMute: () => void;
     onPlaybackRateChange: (rate: number) => void;
     onToggleFullscreen: () => void;
+    /** A torrent's media files, when there's more than one to choose from (#98). */
+    files?: PlayableFile[];
+    currentFileIndex?: number | null;
+    onPickFile?: (index: number) => void;
 }
 
 const PLAYBACK_RATES = [
@@ -55,6 +60,9 @@ export const PlayerControls = component$<PlayerControlsProps>(
         onToggleMute,
         onPlaybackRateChange,
         onToggleFullscreen,
+        files,
+        currentFileIndex,
+        onPickFile,
     }) => {
         const trackRef = useSignal<HTMLDivElement>();
         const isDragging = useSignal(false);
@@ -206,6 +214,33 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         {formatClockTime(currentTime)} /{" "}
                         {formatClockTime(duration)}
                     </span>
+
+                    {files && files.length > 1 && (
+                        <select
+                            class="player-controls-file"
+                            value={String(currentFileIndex ?? "")}
+                            onChange$={(e: Event) => {
+                                onPickFile?.(
+                                    Number(
+                                        (e.target as HTMLSelectElement).value,
+                                    ),
+                                );
+                            }}
+                            aria-label="File"
+                        >
+                            {/* `selected` too, for the reason the speed menu
+                                gives below. */}
+                            {files.map((file) => (
+                                <option
+                                    key={file.index}
+                                    value={file.index}
+                                    selected={file.index === currentFileIndex}
+                                >
+                                    {file.path.split("/").pop()}
+                                </option>
+                            ))}
+                        </select>
+                    )}
 
                     <select
                         class="player-controls-rate"

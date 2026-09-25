@@ -53,16 +53,25 @@ export function isTorrentKind(kind: string): boolean {
 export function buildStreamStartBody(
     value: string,
     kind: string,
-): { url: string } | { torrent: string } {
-    return isTorrentKind(kind) ? { torrent: value } : { url: value };
+    fileIndex: number | null = null,
+): { url: string } | { torrent: string; file_index?: number } {
+    if (!isTorrentKind(kind)) return { url: value };
+    // A torrent's file, when one is named (#98); its largest otherwise.
+    return fileIndex === null
+        ? { torrent: value }
+        : { torrent: value, file_index: fileIndex };
 }
 
 export async function startStream(
     value: string,
     kind: string,
+    fileIndex: number | null = null,
 ): Promise<StreamSession> {
     return normalizeStreamSession(
-        await postApi<any>("/stream/start", buildStreamStartBody(value, kind)),
+        await postApi<any>(
+            "/stream/start",
+            buildStreamStartBody(value, kind, fileIndex),
+        ),
     );
 }
 

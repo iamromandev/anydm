@@ -15,6 +15,7 @@ import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
 import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
+import type { PlayableFile } from "@/lib/media";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import { RemoveDialog } from "@/component/features/remove-dialog";
@@ -65,7 +66,15 @@ export interface AppShellProps {
     /** A finished download to play instead of a link, and a torrent's file. */
     playerTaskId: string;
     playerFileIndex: number | null;
-    onPlayClick: (value: string, kind: string) => void;
+    /** A torrent's media files, for the player's file menu (#98). */
+    playerFiles: PlayableFile[];
+    /** Play a link; for a torrent, which file and the files to switch between (#98). */
+    onPlayClick: (
+        value: string,
+        kind: string,
+        fileIndex?: number | null,
+        files?: PlayableFile[],
+    ) => void;
     onPlayerModalClose: () => void;
     onSidebarToggle: () => void;
     onSidebarCollapseToggle: () => void;
@@ -134,6 +143,7 @@ export const AppShell = component$<AppShellProps>(
         playerKind,
         playerTaskId,
         playerFileIndex,
+        playerFiles,
         onPlayClick,
         onPlayerModalClose,
         onSidebarToggle,
@@ -303,8 +313,13 @@ export const AppShell = component$<AppShellProps>(
                     onClose={onAddModalClose}
                     onAdd={onAdd}
                     onResolve={onResolve}
-                    onPlay={$((value: string, kind: string) =>
-                        onPlayClick(value, kind),
+                    onPlay={$(
+                        (
+                            value: string,
+                            kind: string,
+                            fileIndex?: number | null,
+                            files?: PlayableFile[],
+                        ) => onPlayClick(value, kind, fileIndex, files),
                     )}
                 />
 
@@ -314,6 +329,7 @@ export const AppShell = component$<AppShellProps>(
                     kind={playerKind}
                     taskId={playerTaskId}
                     fileIndex={playerFileIndex}
+                    files={playerFiles}
                     onClose={onPlayerModalClose}
                 />
             </div>
