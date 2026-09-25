@@ -36,6 +36,10 @@ class _FakeStream:
         self.calls.append(("start_task_session", (task_id, file_index)))
         return type("S", (), {"id": "s1", "status": "ready", "duration_seconds": 30.0, "has_video": True})()
 
+    async def start_torrent_session(self, raw: str, file_index: int | None = None) -> Any:
+        self.calls.append(("start_torrent_session", (raw, file_index)))
+        return type("S", (), {"id": "s3", "status": "connecting", "duration_seconds": 0.0, "has_video": True})()
+
     async def start_session(self, url: str) -> Any:
         self.calls.append(("start_session", url))
         return type("S", (), {"id": "s2", "status": "ready", "duration_seconds": 1.0, "has_video": True})()
@@ -88,6 +92,15 @@ async def test_a_session_starts_from_a_task(client: httpx.AsyncClient, stream: _
     assert response.status_code == 201
     assert response.json()["data"]["session_id"] == "s1"
     assert stream.calls == [("start_task_session", (TASK, 2))]
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_stream_can_name_its_file(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    """#98: episode 2 from the torrent dialog, not whichever is biggest."""
+    response = await client.post("/stream/start", json={"torrent": "magnet:?xt=urn:btih:abc", "file_index": 1})
+
+    assert response.status_code == 201
+    assert stream.calls == [("start_torrent_session", ("magnet:?xt=urn:btih:abc", 1))]
 
 
 @pytest.mark.asyncio
