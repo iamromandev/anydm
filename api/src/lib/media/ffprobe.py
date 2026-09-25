@@ -24,6 +24,11 @@ _STDERR_TAIL = 2000
 class ProbeResult:
     duration_seconds: float
     has_video: bool
+    #: ffprobe's ``format_name``, e.g. ``"mov,mp4,m4a,3gp,3g2,mj2"``.
+    container: str | None = None
+    #: The first video stream's codec, and the audio track a player opens with.
+    video_codec: str | None = None
+    audio_codec: str | None = None
 
 
 def probe_args(ffprobe: str, source: str, headers: Mapping[str, str] | None = None) -> list[str]:
@@ -88,16 +93,29 @@ def parse_probe_output(raw: str) -> ProbeResult:
     try:
         payload = json.loads(raw)
         duration = float(payload["format"]["duration"])
-        has_video = any(
-            stream.get("codec_type") == "video" for stream in payload.get("streams", [])
-        )
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        streams = payload.get("streams", [])
+        # Cover art is a one-picture video stream: an MP3 with a cover is still audio.
+        videos = [
+            s for s in streams
+            if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")
+        ]
+        audios = [s for s in streams if s.get("codec_type") == "audio"]
+        # The track a player opens with: the one flagged default, else the first.
+        audio = next((s for s in audios if (s.get("disposition") or {}).get("default")), None)
+        audio = audio or (audios[0] if audios else None)
+    except (KeyError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
         raise Error.create(
             code=Code.BAD_GATEWAY,
             message="ffprobe returned an unreadable result",
             error_type=ErrorType.EXTERNAL_API_ERROR,
         ) from exc
-    return ProbeResult(duration_seconds=duration, has_video=has_video)
+    return ProbeResult(
+        duration_seconds=duration,
+        has_video=bool(videos),
+        container=payload["format"].get("format_name"),
+        video_codec=videos[0].get("codec_name") if videos else None,
+        audio_codec=audio.get("codec_name") if audio else None,
+    )
 
 
 async def probe(

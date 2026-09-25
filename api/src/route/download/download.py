@@ -18,9 +18,17 @@ from src.data.schema.download import (
     TaskSummarySchema,
     UrlDownloadRequest,
 )
+from src.data.schema.stream import MediaInfoSchema
 from src.data.type import TaskGroup, TaskSort
 from src.lib.event import EventHub, get_event_hub
-from src.service import DiskGuard, DownloadService, get_disk_guard, get_download_service
+from src.service import (
+    DiskGuard,
+    DownloadService,
+    StreamService,
+    get_disk_guard,
+    get_download_service,
+    get_stream_service,
+)
 
 router = APIRouter()
 
@@ -162,6 +170,26 @@ async def download_file(
     """
     path, filename, media_type = await download_service.resolve_file(task_id)
     return FileResponse(path=path, filename=filename, media_type=media_type)
+
+
+@router.get(path="/download/{task_id}/media", response_model=Success[MediaInfoSchema])
+async def media_info(
+    task_id: uuid.UUID,
+    stream_service: Annotated[StreamService, Depends(get_stream_service)],
+    file_index: Annotated[int | None, Query(ge=0)] = None,
+) -> Response:
+    """What the player needs to play a finished download (#94).
+
+    Its type says whether the browser can play the file itself, from
+    ``file_url``. When it can't, ``POST /stream/start`` with the task plays it
+    through a session. A torrent's file is the one named, else its largest
+    selected media file.
+    """
+    info = await stream_service.media_info(task_id, file_index)
+    file_url = f"/download/{task_id}/file"
+    if info.file_index is not None:
+        file_url = f"{file_url}/{info.file_index}"
+    return Success.ok(data=MediaInfoSchema(**asdict(info), file_url=file_url)).to_resp()
 
 
 @router.post(path="/download/{task_id}/pause", response_model=Success[TaskSchema])

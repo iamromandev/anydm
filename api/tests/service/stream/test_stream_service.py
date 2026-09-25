@@ -1,5 +1,6 @@
 import asyncio
 import math
+import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -1182,3 +1183,80 @@ async def test_a_segment_finished_after_its_session_stopped_is_not_found(tmp_pat
         await service.get_segment(session, 0)
 
     assert caught.value.code == Code.NOT_FOUND
+
+
+class FakeTaskFiles:
+    """Stands in for ``DownloadService.resolve_media_file``: a task's file, by index."""
+
+    def __init__(self, path: Path, index: int | None = None, fail: Error | None = None) -> None:
+        self.path, self.index, self.fail = path, index, fail
+        self.asked: list[tuple[uuid.UUID, int | None]] = []
+
+    async def __call__(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
+        self.asked.append((task_id, file_index))
+        if self.fail:
+            raise self.fail
+        return self.path, self.path.name, self.index if file_index is None else file_index
+
+
+def _local_prober(seen: list[str]) -> Prober:
+    async def prober(_ffprobe: str, source: str, **_: object) -> ProbeResult:
+        seen.append(source)
+        return ProbeResult(duration_seconds=30.0, has_video=True, container="mov,mp4,m4a,3gp,3g2,mj2",
+                           video_codec="h264", audio_codec="aac")
+
+    return prober
+
+
+@pytest.mark.asyncio
+async def test_media_info_probes_the_tasks_file_and_names_its_type(tmp_path: Path) -> None:
+    """Whether the browser can play a download itself (#94)."""
+    probed: list[str] = []
+    files = FakeTaskFiles(tmp_path / "Movie.mp4", index=4)
+    service, _ = _service(tmp_path, prober=_local_prober(probed), task_files=files)
+    task_id = uuid.uuid4()
+
+    info = await service.media_info(task_id, None)
+
+    assert files.asked == [(task_id, None)]
+    assert probed == [str(tmp_path / "Movie.mp4")]
+    assert (info.file_index, info.filename, info.duration_seconds, info.has_video) == (4, "Movie.mp4", 30.0, True)
+    assert info.media_type == 'video/mp4; codecs="avc1.640028, mp4a.40.2"'
+
+
+@pytest.mark.asyncio
+async def test_a_session_from_a_task_reads_its_file_from_disk(tmp_path: Path) -> None:
+    probed: list[str] = []
+    files = FakeTaskFiles(tmp_path / "Movie.mkv")
+    service, _ = _service(tmp_path, prober=_local_prober(probed), task_files=files)
+    task_id = uuid.uuid4()
+
+    session = await service.start_task_session(task_id, 2)
+
+    assert files.asked == [(task_id, 2)]
+    assert [source.url for source in session.inputs] == [str(tmp_path / "Movie.mkv")]
+    assert session.inputs[0].headers == {}
+    assert (session.duration_seconds, session.has_video, session.info_hash) == (30.0, True, None)
+    assert service.get_session(session.id) is session
+
+
+@pytest.mark.asyncio
+async def test_a_task_the_resolver_refuses_starts_nothing(tmp_path: Path) -> None:
+    files = FakeTaskFiles(tmp_path / "x", fail=Error.conflict(message="Task is downloading, not complete"))
+    service, _ = _service(tmp_path, task_files=files)
+
+    with pytest.raises(Error) as caught:
+        await service.start_task_session(uuid.uuid4(), None)
+
+    assert caught.value.code == Code.CONFLICT
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_playing_tasks_needs_a_resolver(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path)
+
+    with pytest.raises(Error) as caught:
+        await service.media_info(uuid.uuid4(), None)
+
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE

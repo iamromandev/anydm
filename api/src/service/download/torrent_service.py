@@ -27,6 +27,7 @@ from src.lib.torrent.folder import stored_folder, torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
+from src.service.stream.torrent_source import MEDIA_EXTENSIONS
 
 
 def task_schema(task: Any, files: Sequence[Any] | None = None) -> TaskSchema:
@@ -289,6 +290,26 @@ class TorrentService(BaseService):
 
         media_type, _ = mimetypes.guess_type(path.name)
         return path, path.name, media_type or "application/octet-stream"
+
+    async def media_file_index(self, task_id: uuid.UUID) -> int:
+        """The file Play opens on a torrent: its largest selected media file (#94).
+
+        The same rule the torrent dialog's Play uses, over what this task is
+        downloading rather than everything in the torrent.
+        """
+        await self._require(task_id)
+        media = [
+            row
+            for row in await self._file_repo.list_for(task_id)
+            if row.selected and row.path.lower().endswith(MEDIA_EXTENSIONS)
+        ]
+        if not media:
+            raise Error.create(
+                code=Code.UNPROCESSABLE_ENTITY,
+                message="This torrent has no media file to play",
+                error_type=ErrorType.UNPROCESSABLE_ENTITY,
+            )
+        return max(media, key=lambda row: row.size_bytes).index
 
     async def resolve_only_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
         """The file of a torrent that has one: what the card's "Download file" asks for (#107).

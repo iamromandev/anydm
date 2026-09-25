@@ -218,6 +218,7 @@ def get_stream_service() -> StreamService:
         torrent_enabled=settings.torrent_enabled,
         event_hub=get_event_hub(),
         site_client=get_site_client(),
+        task_files=get_download_service().resolve_media_file,
     )
 
 
