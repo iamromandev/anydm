@@ -58,6 +58,11 @@ export type UiTask = {
     /** Torrent-only. Absent for every other task. */
     files?: FileView[];
     /**
+     * Where each file was left in the player (#96). Only the list and a single
+     * task carry it; stream frames don't, and `keepPositions` holds it.
+     */
+    positions?: PositionView[];
+    /**
      * Torrent-only, and never filled: the engine reports connected peers and
      * does not split a swarm into seeders and leechers. Kept because the card
      * hides what it has no value for.
@@ -175,6 +180,7 @@ export function normalizeApiTask(raw: any): UiTask {
         ratio:
             downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
         files: normalizeFiles(raw),
+        positions: normalizePositions(raw?.positions),
     };
 }
 
@@ -475,6 +481,116 @@ export function appendPage(existing: UiTask[], incoming: UiTask[]): UiTask[] {
  * refresh would blank the strip, and the bars would flicker in and out for
  * the whole download.
  */
+/** Where one file of a download was left in the player (#96). */
+export type PositionView = {
+    /** A torrent's file; 0 for a download's one file. */
+    fileIndex: number;
+    positionSeconds: number;
+    durationSeconds: number;
+    watched: boolean;
+};
+
+export function normalizePosition(raw: any): PositionView {
+    return {
+        fileIndex: raw?.file_index ?? 0,
+        positionSeconds: raw?.position_seconds ?? 0,
+        durationSeconds: raw?.duration_seconds ?? 0,
+        watched: raw?.watched ?? false,
+    };
+}
+
+/** A task's positions, or `undefined` when the row carries none. */
+export function normalizePositions(raw: any): PositionView[] | undefined {
+    return Array.isArray(raw) ? raw.map(normalizePosition) : undefined;
+}
+
+/**
+ * Positions from what's on screen, for rows that came without them.
+ *
+ * A stream frame has no positions: only the list and a single task do. Like
+ * `keepSegments`, this stops every frame blanking the card's watched bar.
+ */
+export function keepPositions(rows: UiTask[], held: UiTask[]): UiTask[] {
+    const prior = new Map(
+        held.map((row) => [
+            row.id,
+            row,
+        ]),
+    );
+    return rows.map((row) => {
+        if (row.positions !== undefined) return row;
+        const positions = prior.get(row.id)?.positions;
+        return positions ? { ...row, positions } : row;
+    });
+}
+
+/** Where to start a file: where it was left, or 0 (a watched file starts over). */
+export function resumeAt(
+    positions: PositionView[] | undefined,
+    fileIndex: number | null,
+): number {
+    const index = fileIndex ?? 0;
+    return (
+        (positions ?? []).find((position) => position.fileIndex === index)
+            ?.positionSeconds ?? 0
+    );
+}
+
+/**
+ * What the card shows of it (#96): a single download's bar (watched is full),
+ * or a torrent of several media files as "N of M watched". Nothing until
+ * something has been played.
+ */
+export function watchedProgress(
+    task: Pick<UiTask, "kind" | "files" | "positions">,
+): { fraction: number | null; label: string | null } {
+    const positions = task.positions ?? [];
+    if (task.kind === "torrent") {
+        const media = (task.files ?? []).filter(
+            (file) => file.selected && hasMediaExtension(file.path),
+        );
+        if (media.length > 1) {
+            if (positions.length === 0) return { fraction: null, label: null };
+            const watched = media.filter((file) =>
+                positions.some((p) => p.fileIndex === file.index && p.watched),
+            ).length;
+            return {
+                fraction: null,
+                label: `${watched} of ${media.length} watched`,
+            };
+        }
+    }
+    const position = positions[0];
+    if (!position) return { fraction: null, label: null };
+    if (position.watched && position.positionSeconds === 0) {
+        return { fraction: 1, label: null };
+    }
+    return {
+        fraction:
+            position.durationSeconds > 0
+                ? Math.min(
+                      1,
+                      position.positionSeconds / position.durationSeconds,
+                  )
+                : null,
+        label: null,
+    };
+}
+
+/** `task` with `position` in place of that file's old one, after a save. */
+export function withPosition(task: UiTask, position: PositionView): UiTask {
+    const others = (task.positions ?? []).filter(
+        (p) => p.fileIndex !== position.fileIndex,
+    );
+    return {
+        ...task,
+        positions: [
+            ...others,
+            position,
+        ].sort((a, b) => a.fileIndex - b.fileIndex),
+    };
+}
+
 export function keepSegments(rows: UiTask[], held: UiTask[]): UiTask[] {
     const prior = new Map(
         held.map((row) => [

@@ -12,6 +12,26 @@ from src.data.schema.download.torrent import FileSchema
 from src.data.type import BulkAction, Kind, Platform, Preset, TaskStatus
 
 
+class PositionSchema(BaseSchema):
+    """Where one file of a download was left in the player (#96)."""
+
+    #: A torrent's file; 0 for a download's one file.
+    file_index: int = 0
+    position_seconds: float = 0.0
+    duration_seconds: float = 0.0
+    #: Played to within its last seconds, at least once.
+    watched: bool = False
+
+
+class PositionRequest(BaseSchema):
+    file_index: Annotated[
+        int | None,
+        Field(default=None, ge=0, description="A torrent's file; leave out for a download's one file"),
+    ]
+    position_seconds: Annotated[float, Field(ge=0)]
+    duration_seconds: Annotated[float, Field(ge=0)]
+
+
 class MediaDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A page on any supported site: YouTube, Vimeo, ...")]
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
@@ -80,6 +100,9 @@ class TaskSchema(BaseSchema):
     #: ``None`` rather than ``[]`` on purpose: a missing key means "this is not
     #: a torrent", which is the same rule ``segments`` already follows.
     files: list[FileSchema] | None = None
+    #: Where each file was left in the player (#96). Filled on the list and a
+    #: single task, not on the event stream's frames, which the UI merges.
+    positions: list[PositionSchema] | None = None
     file_size: int | None = None
     error: str | None = None
     error_code: str | None = None

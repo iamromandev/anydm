@@ -106,6 +106,39 @@
     animation: player-flash-in 120ms ease-out;
 }
 
+/* "Resumed at 12:34 · Start over" (#96): a note, not a prompt; it goes by itself. */
+.player-resumed {
+    position: absolute;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.player-resumed-restart {
+    border: none;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+}
+
+.player-resumed-restart:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
 @keyframes player-flash-in {
     from {
         opacity: 0;

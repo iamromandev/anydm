@@ -16,6 +16,7 @@ import { TorrentList } from "@/component/features/torrent-list";
 import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
 import type { PlayableFile } from "@/lib/media";
+import type { PositionView } from "@/lib/api";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
 import { RemoveDialog } from "@/component/features/remove-dialog";
@@ -70,6 +71,9 @@ export interface AppShellProps {
     playerFiles: PlayableFile[];
     /** The task is a torrent still downloading, played from its stream (#95). */
     playerFromTorrent: boolean;
+    /** Where the task's files were left, and where a save goes (#96). */
+    playerPositions: PositionView[];
+    onPositionSaved: (taskId: string, position: PositionView) => void;
     /** Play a link; for a torrent, which file and the files to switch between (#98). */
     onPlayClick: (
         value: string,
@@ -147,6 +151,8 @@ export const AppShell = component$<AppShellProps>(
         playerFileIndex,
         playerFiles,
         playerFromTorrent,
+        playerPositions,
+        onPositionSaved,
         onPlayClick,
         onPlayerModalClose,
         onSidebarToggle,
@@ -333,6 +339,8 @@ export const AppShell = component$<AppShellProps>(
                     taskId={playerTaskId}
                     fileIndex={playerFileIndex}
                     fromTorrent={playerFromTorrent}
+                    positions={playerPositions}
+                    onPositionSaved={onPositionSaved}
                     files={playerFiles}
                     onClose={onPlayerModalClose}
                 />

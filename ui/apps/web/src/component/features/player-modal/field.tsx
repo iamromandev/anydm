@@ -15,6 +15,10 @@ import {
     NATIVE_LOAD_TIMEOUT_MS,
     nativeFailed,
     normalizeStreamStatusEvent,
+    POSITION_SAVE_INTERVAL_MS,
+    resumeAt,
+    savePosition,
+    type PositionView,
     startStream,
     startTaskStream,
     stopStream,
@@ -25,7 +29,7 @@ import { defaultFileIndex, type PlayableFile } from "@/lib/media";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
-import { scrubberSegments } from "./scrubber-progress";
+import { formatClockTime, scrubberSegments } from "./scrubber-progress";
 import {
     SHORTCUT_HINTS,
     resolveShortcut,
@@ -52,11 +56,26 @@ export interface PlayerModalProps {
      * with the swarm showing, never from its partial file (#95).
      */
     fromTorrent?: boolean;
+    /** Where the task's files were left, to resume there (#96). */
+    positions?: PositionView[];
+    /** The player saved where it is. */
+    onPositionSaved?: (taskId: string, position: PositionView) => void;
     onClose: () => void;
 }
 
 export const PlayerModal = component$<PlayerModalProps>(
-    ({ open, url, kind, taskId, fileIndex, files, fromTorrent, onClose }) => {
+    ({
+        open,
+        url,
+        kind,
+        taskId,
+        fileIndex,
+        files,
+        fromTorrent,
+        positions,
+        onPositionSaved,
+        onClose,
+    }) => {
         const videoRef = useSignal<HTMLVideoElement>();
         // The file picked in the player's own menu. A signal of this
         // component's rather than a prop, so the task below reliably re-runs
@@ -91,6 +110,8 @@ export const PlayerModal = component$<PlayerModalProps>(
             flashToken: "",
             // Which of a torrent's files is playing, for the file menu (#98).
             currentFileIndex: null as number | null,
+            // Where playback resumed, for the note offering to start over (#96).
+            resumedAt: 0,
         });
 
         useVisibleTask$(
@@ -360,6 +381,73 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     video.removeEventListener(type, handler);
                                 }
                             });
+
+                            // A download resumes where it was left, and says
+                            // so, on any device (#96). A link has no place.
+                            store.resumedAt = 0;
+                            if (sourceTask) {
+                                const startAt = resumeAt(
+                                    positions,
+                                    store.currentFileIndex,
+                                );
+                                if (startAt > 0) {
+                                    video.addEventListener(
+                                        "loadedmetadata",
+                                        () => {
+                                            video.currentTime = startAt;
+                                            store.resumedAt = startAt;
+                                            // A note, not a prompt: it goes.
+                                            setTimeout(() => {
+                                                store.resumedAt = 0;
+                                            }, 6000);
+                                        },
+                                        { once: true },
+                                    );
+                                }
+
+                                const savingFile = store.currentFileIndex;
+                                let lastSaved = -1;
+                                const save = () => {
+                                    const at = video.currentTime;
+                                    const length = video.duration;
+                                    if (
+                                        !Number.isFinite(length) ||
+                                        length <= 0 ||
+                                        at <= 0 ||
+                                        Math.abs(at - lastSaved) < 1
+                                    ) {
+                                        return;
+                                    }
+                                    lastSaved = at;
+                                    savePosition(
+                                        sourceTask,
+                                        savingFile,
+                                        at,
+                                        length,
+                                    )
+                                        .then((saved) =>
+                                            onPositionSaved?.(
+                                                sourceTask,
+                                                saved,
+                                            ),
+                                        )
+                                        .catch(() => {
+                                            // Best-effort: the next save tries again.
+                                        });
+                                };
+                                const timer = setInterval(() => {
+                                    if (!video.paused) save();
+                                }, POSITION_SAVE_INTERVAL_MS);
+                                video.addEventListener("pause", save);
+                                // On close, and on a switch to another file:
+                                // this run's file, where it was.
+                                cleanup(() => {
+                                    clearInterval(timer);
+                                    video.removeEventListener("pause", save);
+                                    save();
+                                });
+                            }
+
                             const attach = async (playing: StreamSession) => {
                                 // hls.js first: Chromium's canPlayType("application/vnd.apple.mpegurl")
                                 // reports "maybe" even though Chrome has no real native
@@ -555,6 +643,13 @@ export const PlayerModal = component$<PlayerModalProps>(
         // starts one on that file (#98).
         const handlePickFile = $((index: number) => {
             chosen.value = index;
+        });
+
+        // From the resume note: back to the beginning (#96).
+        const handleStartOver = $(() => {
+            const video = videoRef.value;
+            if (video) video.currentTime = 0;
+            store.resumedAt = 0;
         });
 
         const handleTogglePlay = $(() => {
@@ -783,6 +878,21 @@ export const PlayerModal = component$<PlayerModalProps>(
                 {store.flash && (
                     <div class="player-flash" aria-live="polite">
                         {store.flash}
+                    </div>
+                )}
+
+                {store.resumedAt > 0 && (
+                    <div class="player-resumed" role="status">
+                        <span>
+                            Resumed at {formatClockTime(store.resumedAt)}
+                        </span>
+                        <button
+                            type="button"
+                            class="player-resumed-restart"
+                            onClick$={handleStartOver}
+                        >
+                            Start over
+                        </button>
                     </div>
                 )}
 

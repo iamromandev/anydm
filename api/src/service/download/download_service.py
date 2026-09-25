@@ -11,8 +11,8 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
-from src.data.repo.download.interface import SegmentRepo, TaskRepo
-from src.data.schema.download import TaskSchema, TaskSummarySchema
+from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
+from src.data.schema.download import PositionSchema, TaskSchema, TaskSummarySchema
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
 from src.lib.site import error as site_error
@@ -57,6 +57,7 @@ class DownloadService(BaseService):
         downloads_root: Path,
         torrents: TorrentService,
         disk: DiskGuard | None = None,
+        positions: PositionRepo | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -67,6 +68,7 @@ class DownloadService(BaseService):
         self._root = downloads_root
         self._torrents = torrents
         self._disk = disk
+        self._positions = positions
 
     def _require_space(self, extra_bytes: int | None = None) -> None:
         if self._disk is not None:
@@ -171,7 +173,7 @@ class DownloadService(BaseService):
         )
         # Through the torrent service, which adds a torrent's files: one query
         # for the whole page (#107).
-        return await self._torrents.schemas(tasks), meta
+        return await self._with_positions(await self._torrents.schemas(tasks)), meta
 
     async def bulk(self, action: str, *, delete_files: bool = False) -> int:
         """Apply one action to every row it makes sense for.
@@ -220,7 +222,52 @@ class DownloadService(BaseService):
         return await self._repo.summary()
 
     async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
-        return await self._torrents.schema(await self._require(task_id))
+        (schema,) = await self._with_positions([await self._torrents.schema(await self._require(task_id))])
+        return schema
+
+    #: Stopping this close to the end counts as having watched it (#96).
+    WATCHED_WITHIN_S = 30.0
+
+    async def save_position(
+        self,
+        task_id: uuid.UUID,
+        file_index: int | None,
+        *,
+        position_seconds: float,
+        duration_seconds: float,
+    ) -> PositionSchema:
+        """Record where a download was left in the player, so it resumes on any device (#96).
+
+        Stopping within ``WATCHED_WITHIN_S`` of the end marks the file watched
+        and clears where to resume, so it opens from the start next time. A
+        file once watched stays watched when played again.
+        """
+        if self._positions is None:
+            raise Error.service_unavailable("Saving positions is not configured")
+        await self._require(task_id)
+        index = file_index or 0
+        previous = next(
+            (row for row in (await self._positions.list_for_tasks([task_id]))[task_id] if row.file_index == index),
+            None,
+        )
+        near_end = duration_seconds > 0 and duration_seconds - position_seconds <= self.WATCHED_WITHIN_S
+        row = await self._positions.save(
+            task_id,
+            index,
+            position_seconds=0.0 if near_end else position_seconds,
+            duration_seconds=duration_seconds,
+            watched=near_end or bool(previous and previous.watched),
+        )
+        return PositionSchema.model_validate(row)
+
+    async def _with_positions(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
+        """Each task with where its files were left in the player, in one query (#96)."""
+        if self._positions is None or not schemas:
+            return schemas
+        by_task = await self._positions.list_for_tasks([schema.id for schema in schemas])
+        for schema in schemas:
+            schema.positions = [PositionSchema.model_validate(row) for row in by_task.get(schema.id, [])]
+        return schemas
 
     async def resolve_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
         """The finished file for ``task_id``.
