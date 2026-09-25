@@ -17,6 +17,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.lib.media.audio import AudioTrack
 from src.lib.media.source import headers_args
+from src.lib.media.subtitle import SubtitleTrack
 
 _STDERR_TAIL = 2000
 
@@ -32,6 +33,8 @@ class ProbeResult:
     audio_codec: str | None = None
     #: Every audio track, in the order ``-map 0:a:N`` counts them (#99).
     audio_tracks: tuple[AudioTrack, ...] = ()
+    #: Every subtitle track, in the order ``-map 0:s:N`` counts them (#100).
+    subtitle_tracks: tuple[SubtitleTrack, ...] = ()
 
 
 def _audio_track(index: int, stream: dict) -> AudioTrack:
@@ -44,6 +47,19 @@ def _audio_track(index: int, stream: dict) -> AudioTrack:
         channels=int(channels) if channels else None,
         codec=stream.get("codec_name") or None,
         default=bool((stream.get("disposition") or {}).get("default")),
+    )
+
+
+def _subtitle_track(index: int, stream: dict) -> SubtitleTrack:
+    tags = stream.get("tags") or {}
+    disposition = stream.get("disposition") or {}
+    return SubtitleTrack(
+        index=index,
+        language=tags.get("language") or None,
+        title=tags.get("title") or None,
+        codec=stream.get("codec_name") or None,
+        default=bool(disposition.get("default")),
+        forced=bool(disposition.get("forced")),
     )
 
 
@@ -120,6 +136,10 @@ def parse_probe_output(raw: str) -> ProbeResult:
         audio = next((s for s in audios if (s.get("disposition") or {}).get("default")), None)
         audio = audio or (audios[0] if audios else None)
         tracks = tuple(_audio_track(index, stream) for index, stream in enumerate(audios))
+        subtitles = tuple(
+            _subtitle_track(index, stream)
+            for index, stream in enumerate(s for s in streams if s.get("codec_type") == "subtitle")
+        )
     except (KeyError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
         raise Error.create(
             code=Code.BAD_GATEWAY,
@@ -133,6 +153,7 @@ def parse_probe_output(raw: str) -> ProbeResult:
         video_codec=videos[0].get("codec_name") if videos else None,
         audio_codec=audio.get("codec_name") if audio else None,
         audio_tracks=tracks,
+        subtitle_tracks=subtitles,
     )
 
 

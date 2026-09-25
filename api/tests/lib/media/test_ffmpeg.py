@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 from src.core.error import Error
-from src.lib.media.ffmpeg import mp3_args, mux_args, remux_args, run, segment_args
+from src.lib.media.ffmpeg import (
+    mp3_args,
+    mux_args,
+    remux_args,
+    run,
+    segment_args,
+    subtitle_args,
+    subtitle_file_args,
+)
 from src.lib.media.source import MediaInput, PlaylistCut
 
 
@@ -296,3 +304,43 @@ def test_segment_args_ignores_an_audio_track_for_a_site_s_two_inputs() -> None:
         0.0, 6.0, Path("/t/o.ts"), has_video=True, audio_track=1,
     )
     assert _maps(args) == ["0:v:0", "1:a:0"]
+
+
+
+def test_subtitle_args_keep_the_source_s_times_and_end_absolutely() -> None:
+    """#93: an input -ss with -t puts cues 0.5 to 1 s late; -copyts with an absolute -to puts them exactly."""
+    args = subtitle_args(
+        "ffmpeg", MediaInput("/d/movie.mkv"), 12.0, 6.0,
+        [(0, Path("/t/subtitles_2.0.vtt")), (1, Path("/t/subtitles_2.1.vtt"))],
+    )
+
+    assert args[:6] == ["ffmpeg", "-y", "-copyts", "-ss", "12.0", "-i"]
+    assert "-t" not in args
+    # Every track from one read, each output with its own map and end.
+    first = args.index("/t/subtitles_2.0.vtt")
+    assert args[args.index("-i") + 2 : first + 1] == [
+        "-map", "0:s:0", "-to", "18.0", "-c:s", "webvtt", "-f", "webvtt", "/t/subtitles_2.0.vtt",
+    ]
+    assert args[first + 1 :] == [
+        "-map", "0:s:1", "-to", "18.0", "-c:s", "webvtt", "-f", "webvtt", "/t/subtitles_2.1.vtt",
+    ]
+
+
+def test_the_first_subtitle_segment_reads_from_the_start() -> None:
+    args = subtitle_args("ffmpeg", MediaInput("/d/movie.mkv"), 0.0, 6.0, [(0, Path("/t/s.vtt"))])
+    assert "-ss" not in args
+    assert args[args.index("-to") + 1] == "6.0"
+
+
+def test_subtitle_args_send_the_input_s_headers() -> None:
+    args = subtitle_args("ffmpeg", MediaInput("https://x/v", {"User-Agent": "UA"}), 6.0, 6.0, [(0, Path("/t/s.vtt"))])
+    assert args[args.index("-i") - 2 : args.index("-i")] == ["-headers", "User-Agent: UA\r\n"]
+
+
+def test_subtitle_file_args_extract_a_whole_track_at_its_own_times() -> None:
+    args = subtitle_file_args("ffmpeg", MediaInput("/d/movie.mkv"), 2, Path("/t/whole.vtt"))
+
+    assert "-copyts" in args
+    assert "-ss" not in args and "-to" not in args
+    assert args[args.index("-map") + 1] == "0:s:2"
+    assert args[-3:] == ["-f", "webvtt", "/t/whole.vtt"]

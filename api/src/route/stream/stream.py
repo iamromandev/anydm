@@ -11,7 +11,13 @@ from src.core.auth import query_key, with_segment_key
 from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.stream import AudioSwitchRequest, AudioTrackSchema, StreamSessionSchema, StreamStartRequest
+from src.data.schema.stream import (
+    AudioSwitchRequest,
+    AudioTrackSchema,
+    StreamSessionSchema,
+    StreamStartRequest,
+    SubtitleTrackSchema,
+)
 from src.lib.event import EventHub, get_event_hub
 from src.service import StreamService, get_stream_service
 from src.service.stream.session import StreamSession
@@ -68,6 +74,8 @@ def _session_schema(session: StreamSession) -> StreamSessionSchema:
         has_video=session.has_video if ready else None,
         audio_tracks=[AudioTrackSchema(**asdict(track)) for track in session.audio_tracks] if ready else None,
         audio_track=session.audio_track if ready else None,
+        subtitle_tracks=[SubtitleTrackSchema(**asdict(track)) for track in session.subtitle_tracks] if ready else None,
+        segment_seconds=session.segment_seconds,
     )
 
 
@@ -115,6 +123,19 @@ async def get_segment(
     session = stream_service.get_session(session_id)
     path = await stream_service.get_segment(session, index)
     return FileResponse(path=path, media_type="video/mp2t")
+
+
+@router.get(path="/stream/{session_id}/subtitles/{track}/segment_{index}.vtt")
+async def get_subtitle_segment(
+    session_id: str,
+    track: int,
+    index: int,
+    stream_service: Annotated[StreamService, Depends(get_stream_service)],
+) -> FileResponse:
+    """One segment's cues for a subtitle track, at the source's own times (#100)."""
+    session = stream_service.get_session(session_id)
+    path = await stream_service.get_subtitle_segment(session, track, index)
+    return FileResponse(path=path, media_type="text/vtt")
 
 
 @router.delete(path="/stream/{session_id}")

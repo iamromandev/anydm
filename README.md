@@ -155,7 +155,8 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/{task_id}` — one task
     - `GET /download/{task_id}/file` — serve the finished file; for a torrent, its one selected file (409 when it has several)
     - `PUT /download/{task_id}/position` — where a download was left in the player (`file_index` for a torrent's file), so it resumes on any device; within its last 30 s it's marked watched instead. Tasks carry these as `positions`
-    - `GET /download/{task_id}/media` — what the player needs to play a finished download: its MIME type for `canPlayType`, duration, and file URL (`?file_index=` for a torrent's file, else its largest media file)
+    - `GET /download/{task_id}/media` — what the player needs to play a finished download: its MIME type for `canPlayType`, duration, and file URL (`?file_index=` for a torrent's file, else its largest media file), with its audio and subtitle tracks
+    - `GET /download/{task_id}/subtitles/{track}.vtt` — one of those subtitle tracks, whole, as WebVTT, for a file the browser plays itself (`?file_index=` as above)
     - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
     - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise
     - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
@@ -170,6 +171,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /stream/events` — SSE session status, including swarm numbers
     - `GET /stream/{session_id}/playlist.m3u8` — the HLS playlist
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request
+    - `GET /stream/{session_id}/subtitles/{track}/segment_{index}.vtt` — one segment's cues for one of `subtitle_tracks`, as WebVTT at the source's own times
     - `DELETE /stream/{session_id}` — end the session
 - **Workers:** a pool started in the app lifespan claims queued tasks, resumes from `.part` files, and requeues orphans left in-flight by a previous process
 - **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch. HLS and DASH formats are playlists of fragments rather than one file, so they go through yt-dlp's own downloader instead, which resumes from its own record of the fragments on disk.

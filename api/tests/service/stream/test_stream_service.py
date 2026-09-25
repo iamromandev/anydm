@@ -11,6 +11,7 @@ from src.core.type import Code, ErrorType
 from src.lib.media.audio import AudioTrack
 from src.lib.media.ffprobe import ProbeResult
 from src.lib.media.source import MediaInput
+from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteInfo
 from src.lib.site.format import Format, playback_plan
@@ -1524,3 +1525,131 @@ async def test_an_hls_page_switch_reads_only_the_new_audio_playlist(tmp_path: Pa
     assert [url for url, _ in playlists.fetched] == [media_url("youtube", "140-es")]
     assert new.playlists[0] is old.playlists[0]
     assert len(new.playlists) == 2
+
+
+
+# --- embedded subtitles (#100) ------------------------------------------------------
+
+SUBTITLED = (
+    SubtitleTrack(0, language="eng", codec="subrip"),
+    SubtitleTrack(1, language="eng", codec="ass"),
+    SubtitleTrack(2, language="eng", codec="hdmv_pgs_subtitle", forced=True),
+)
+
+
+async def _subtitled(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+    return ProbeResult(duration_seconds=20.0, has_video=True, subtitle_tracks=SUBTITLED)
+
+
+def _cut_outputs(args: list[str]) -> list[str]:
+    return [args[i + 1] for i, arg in enumerate(args) if arg == "-map"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_s_session_lists_its_subtitle_tracks(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path, prober=_subtitled)
+
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    assert session.subtitle_tracks == list(SUBTITLED)
+
+
+@pytest.mark.asyncio
+async def test_a_segment_s_cues_are_cut_once_for_every_text_track(tmp_path: Path) -> None:
+    service, encoded = _service(tmp_path, prober=_subtitled, readahead_segments=0)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    first, second, again = await asyncio.gather(
+        service.get_subtitle_segment(session, 0, 1),
+        service.get_subtitle_segment(session, 1, 1),
+        service.get_subtitle_segment(session, 0, 1),
+    )
+
+    assert len(encoded) == 1
+    # The two text tracks, never the picture one.
+    assert _cut_outputs(encoded[0]) == ["0:s:0", "0:s:1"]
+    assert encoded[0][encoded[0].index("-ss") + 1] == "6"
+    assert (first, second, again) == (session.cue_path(1, 0), session.cue_path(1, 1), session.cue_path(1, 0))
+    # No video encoded for it, and the next segment is a cut of its own.
+    await service.get_subtitle_segment(session, 0, 2)
+    assert len(encoded) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("track", "index"), [(2, 0), (5, 0), (0, 4), (0, -1)])
+async def test_a_track_or_segment_that_can_t_be_shown_is_not_found(tmp_path: Path, track: int, index: int) -> None:
+    service, encoded = _service(tmp_path, prober=_subtitled)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.get_subtitle_segment(session, track, index)
+    assert caught.value.code == Code.NOT_FOUND
+    assert encoded == []
+
+
+@pytest.mark.asyncio
+async def test_an_audio_switch_keeps_the_subtitle_tracks(tmp_path: Path) -> None:
+    async def both(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+        return ProbeResult(
+            duration_seconds=20.0, has_video=True, audio_tracks=DUB_THEN_ORIGINAL, subtitle_tracks=SUBTITLED
+        )
+
+    service, _ = _service(tmp_path, prober=both)
+    old = await service.start_session("http://example.com/movie.mkv")
+
+    assert (await service.switch_audio(old, 1)).subtitle_tracks == list(SUBTITLED)
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_s_subtitle_tracks_arrive_when_it_s_probed(tmp_path: Path) -> None:
+    service, _ = _torrent_service(
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(),
+        prober=_subtitled,
+    )
+    from src.lib.event import EventHub
+
+    hub = EventHub()
+    published: list[dict] = []
+    hub.publish = lambda _event, data: published.append(data)  # ty: ignore[invalid-assignment]
+    service._event_hub = hub
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
+    assert session.subtitle_tracks == []
+    await asyncio.gather(*session.background_tasks)
+
+    assert session.subtitle_tracks == list(SUBTITLED)
+    ready = next(data for data in published if data["status"] == "ready")
+    assert [(t["index"], t["text"]) for t in ready["subtitle_tracks"]] == [(0, True), (1, True), (2, False)]
+    await service.stop_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_a_download_s_subtitle_track_is_extracted_whole_once(tmp_path: Path) -> None:
+    movie = tmp_path / "movie.mkv"
+    movie.write_bytes(b"mkv")
+    files = FakeTaskFiles(movie)
+    service, encoded = _service(tmp_path / "stream", prober=_subtitled, task_files=files)
+    task = uuid.uuid4()
+
+    first = await service.subtitle_file(task, None, 1)
+    second = await service.subtitle_file(task, None, 1)
+
+    assert first == second
+    assert first.read_bytes() == b"fake-ts-data"
+    assert len(encoded) == 1
+    assert encoded[0][encoded[0].index("-map") + 1] == "0:s:1"
+    assert "-copyts" in encoded[0]
+    # Nothing half-written left beside it.
+    assert [p.name for p in first.parent.iterdir()] == [first.name]
+
+
+@pytest.mark.asyncio
+async def test_a_download_s_picture_subtitles_are_not_found(tmp_path: Path) -> None:
+    movie = tmp_path / "movie.mkv"
+    movie.write_bytes(b"mkv")
+    service, encoded = _service(tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie))
+
+    with pytest.raises(Error) as caught:
+        await service.subtitle_file(uuid.uuid4(), None, 2)
+    assert caught.value.code == Code.NOT_FOUND
+    assert encoded == []

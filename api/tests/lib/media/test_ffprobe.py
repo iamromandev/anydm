@@ -5,6 +5,7 @@ from src.core.error import Error
 from src.core.type import ErrorType
 from src.lib.media.audio import AudioTrack
 from src.lib.media.ffprobe import ProbeResult, capture, parse_probe_output, probe_args
+from src.lib.media.subtitle import SubtitleTrack
 
 
 def test_probe_args_requests_json_format_and_streams() -> None:
@@ -152,3 +153,26 @@ def test_parse_probe_output_lists_every_audio_track() -> None:
 def test_parse_probe_output_lists_no_audio_tracks_for_a_silent_file() -> None:
     raw = json.dumps({"format": {"duration": "4.0"}, "streams": [{"codec_type": "video"}]})
     assert parse_probe_output(raw).audio_tracks == ()
+
+
+def test_parse_probe_output_lists_every_subtitle_track() -> None:
+    """Counted among subtitle streams only, as ``-map 0:s:N`` counts them (#100)."""
+    raw = json.dumps({
+        "format": {"duration": "20.0"},
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng", "title": "English"}},
+            {"codec_type": "audio", "codec_name": "aac"},
+            {"codec_type": "subtitle", "codec_name": "ass", "disposition": {"default": 1}},
+            {"codec_type": "subtitle", "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 1},
+             "tags": {"language": "eng"}},
+        ],
+    })
+    tracks = parse_probe_output(raw).subtitle_tracks
+
+    assert tracks == (
+        SubtitleTrack(0, language="eng", title="English", codec="subrip"),
+        SubtitleTrack(1, codec="ass", default=True),
+        SubtitleTrack(2, language="eng", codec="hdmv_pgs_subtitle", forced=True),
+    )
+    assert [track.text for track in tracks] == [True, True, False]

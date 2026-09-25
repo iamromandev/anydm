@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -22,11 +23,12 @@ from src.data.repo.download.interface import TaskRepo
 from src.lib.event import EventHub
 from src.lib.media.audio import AudioTrack, pick_audio_track
 from src.lib.media.ffmpeg import run as ffmpeg_run
-from src.lib.media.ffmpeg import segment_args
+from src.lib.media.ffmpeg import segment_args, subtitle_args, subtitle_file_args
 from src.lib.media.ffprobe import ProbeResult, probe
 from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist, sub_playlist
 from src.lib.media.media_type import media_type
 from src.lib.media.source import MediaInput, PlaylistCut
+from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.format import audio_choices, playback_plan
@@ -78,6 +80,8 @@ class MediaInfo:
     #: A browser playing the file itself opens with the one marked default;
     #: any other takes a session (#99).
     audio_tracks: tuple[AudioTrack, ...] = ()
+    #: A browser playing the file itself shows them from whole-track WebVTT (#100).
+    subtitle_tracks: tuple[SubtitleTrack, ...] = ()
 
 
 async def fetch_playlist(
@@ -124,6 +128,43 @@ def _refused(error: Error) -> bool:
 
 def _session_not_found() -> Error:
     return Error.not_found("Stream session not found")
+
+
+async def _produce_once(
+    states: dict[int, SegmentState],
+    events: dict[int, asyncio.Event],
+    index: int,
+    produce: Callable[[], Awaitable[None]],
+) -> None:
+    """Run ``produce`` for ``index`` unless it's done or under way, in which case wait for it.
+
+    A loop, because waking up is not the same as it being ready: an attempt
+    that fails wakes its waiters too, and each then makes an attempt of its
+    own. No ``await`` comes between the check and the flip to ``GENERATING``,
+    which is what makes it race-free; see ``StreamSession``'s docstring.
+    """
+    while True:
+        state = states.get(index, SegmentState.NOT_STARTED)
+        if state == SegmentState.READY:
+            return
+        event = events.setdefault(index, asyncio.Event())
+        if state != SegmentState.GENERATING:
+            break
+        await event.wait()
+
+    states[index] = SegmentState.GENERATING
+    try:
+        await produce()
+    except BaseException:
+        # Cancellation included. Left GENERATING, it would make every later
+        # request wait on an event nothing would ever set. The next attempt
+        # gets a fresh event; this one wakes the waiters.
+        states[index] = SegmentState.NOT_STARTED
+        events.pop(index, None)
+        event.set()
+        raise
+    states[index] = SegmentState.READY
+    event.set()
 
 
 class StreamService(BaseService):
@@ -183,6 +224,7 @@ class StreamService(BaseService):
             has_video=result.has_video,
             media_type=media_type(result.container, result.video_codec, result.audio_codec),
             audio_tracks=result.audio_tracks,
+            subtitle_tracks=result.subtitle_tracks,
         )
 
     async def start_task_session(
@@ -219,6 +261,7 @@ class StreamService(BaseService):
             result.has_video,
             audio_tracks=list(result.audio_tracks),
             audio_track=pick_audio_track(result.audio_tracks, audio_language, audio_track),
+            subtitle_tracks=list(result.subtitle_tracks),
         )
 
     async def _task_file(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
@@ -238,6 +281,7 @@ class StreamService(BaseService):
         audio_track: int | None = None,
         site_audio: list[tuple[str, MediaInput]] | None = None,
         info_hash: str | None = None,
+        subtitle_tracks: list[SubtitleTrack] | None = None,
     ) -> StreamSession:
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
@@ -256,6 +300,7 @@ class StreamService(BaseService):
             audio_track=audio_track,
             site_audio=site_audio or [],
             info_hash=info_hash,
+            subtitle_tracks=subtitle_tracks or [],
         )
         self._sessions.add(session)
         return session
@@ -282,11 +327,14 @@ class StreamService(BaseService):
             first = inputs[0]
             result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
             duration, has_video = result.duration_seconds, result.has_video
+        # A page's own subtitles are #102's; its formats carry none.
+        subtitles: list[SubtitleTrack] = []
         if page is not None:
             tracks, track = page.audio_tracks, page.audio_track
         else:
             tracks = list(result.audio_tracks)
             track = pick_audio_track(tracks, audio_language, audio_track)
+            subtitles = list(result.subtitle_tracks)
         return self._new_session(
             inputs,
             duration,
@@ -296,6 +344,7 @@ class StreamService(BaseService):
             audio_tracks=tracks,
             audio_track=track,
             site_audio=page.site_audio if page is not None else None,
+            subtitle_tracks=subtitles,
         )
 
     async def _open_page(
@@ -456,6 +505,7 @@ class StreamService(BaseService):
         session.duration_seconds = result.duration_seconds
         session.has_video = result.has_video
         session.audio_tracks = list(result.audio_tracks)
+        session.subtitle_tracks = list(result.subtitle_tracks)
         session.audio_track = pick_audio_track(result.audio_tracks, session.audio_language, session.audio_track)
         session.status = "ready"
         self._publish_status(
@@ -463,6 +513,7 @@ class StreamService(BaseService):
             status="ready",
             audio_tracks=[asdict(track) for track in session.audio_tracks],
             audio_track=session.audio_track,
+            subtitle_tracks=[{**asdict(track), "text": track.text} for track in session.subtitle_tracks],
         )
         # poll_task keeps running after this — it's what keeps the player's
         # swarm HUD live during playback, not just while connecting. It
@@ -560,34 +611,73 @@ class StreamService(BaseService):
             logger.warning("StreamService|read-ahead failed for segment {}", index)
 
     async def _ensure_segment(self, session: StreamSession, index: int) -> None:
-        # A loop, because waking up is not the same as the segment being
-        # ready: an encode that fails wakes its waiters too, and each then
-        # makes an attempt of its own.
-        while True:
-            state = session.state_of(index)
-            if state == SegmentState.READY:
-                return
-            event = session.event_for(index)
-            if state != SegmentState.GENERATING:
-                break
-            await event.wait()
-
-        # No ``await`` between the check above and this assignment — see
-        # StreamSession's docstring for why that makes this race-free.
-        session.states[index] = SegmentState.GENERATING
-        try:
+        async def encode() -> None:
             async with session.encode_semaphore:
                 await self._encode(session, index)
-        except BaseException:
-            # Cancellation included. Left GENERATING, the segment would make
-            # every later request wait on an event nothing would ever set. The
-            # next attempt gets a fresh event; this one wakes the waiters.
-            session.states[index] = SegmentState.NOT_STARTED
-            session.events.pop(index, None)
-            event.set()
-            raise
-        session.states[index] = SegmentState.READY
-        event.set()
+
+        await _produce_once(session.states, session.events, index, encode)
+
+    async def get_subtitle_segment(self, session: StreamSession, track: int, index: int) -> Path:
+        """Segment ``index``'s cues for subtitle track ``track``, as WebVTT (#100).
+
+        The first request for a segment cuts every text track's cues at once;
+        the rest are read from disk.
+        """
+        if index < 0 or index >= session.segment_count:
+            raise Error.not_found(f"Segment {index} does not exist")
+        texts = [known for known in session.subtitle_tracks if known.text]
+        if track not in [known.index for known in texts]:
+            raise Error.not_found(f"This stream has no subtitle track {track} to show")
+        session.touch()
+
+        async def cut() -> None:
+            if not self._is_open(session):
+                raise _session_not_found()
+            start = index * session.segment_seconds
+            await self._encoder(
+                subtitle_args(
+                    self._ffmpeg_path,
+                    session.inputs[0],
+                    start,
+                    session.segment_duration(index),
+                    [(known.index, session.cue_path(index, known.index)) for known in texts],
+                )
+            )
+
+        try:
+            await _produce_once(session.cue_states, session.cue_events, index, cut)
+        except (Error, OSError) as error:
+            if self._is_open(session):
+                raise
+            raise _session_not_found() from error
+        if not self._is_open(session):
+            raise _session_not_found()
+        return session.cue_path(index, track)
+
+    async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Path:
+        """A finished task's subtitle track, whole, as WebVTT, for a file played as it is (#100).
+
+        Extracted once and kept under the stream folder, keyed by the file's
+        size and time, so a file replaced on disk is extracted again.
+        """
+        path, _filename, index = await self._task_file(task_id, file_index)
+        stat = await asyncio.to_thread(path.stat)
+        cached = self._stream_dir / "subtitles" / f"{task_id}-{index or 0}-{track}-{stat.st_size}-{stat.st_mtime_ns}.vtt"
+        if await asyncio.to_thread(cached.exists):
+            return cached
+        result = await self._prober(self._ffprobe_path, str(path))
+        if track not in [known.index for known in result.subtitle_tracks if known.text]:
+            raise Error.not_found(f"This file has no subtitle track {track} to show")
+        await asyncio.to_thread(cached.parent.mkdir, parents=True, exist_ok=True)
+        # Written aside and moved into place: two players asking at once must
+        # never read half a file.
+        partial = cached.with_name(f"{cached.stem}.{uuid.uuid4().hex}.part.vtt")
+        try:
+            await self._encoder(subtitle_file_args(self._ffmpeg_path, MediaInput(str(path)), track, partial))
+            await asyncio.to_thread(os.replace, partial, cached)
+        finally:
+            await asyncio.to_thread(partial.unlink, missing_ok=True)
+        return cached
 
     async def _encode(self, session: StreamSession, index: int) -> None:
         """Encode one segment; a site's expired URLs are resolved again, once."""
@@ -679,6 +769,7 @@ class StreamService(BaseService):
             session.has_video,
             origin=origin,
             playlists=playlists,
+            subtitle_tracks=list(session.subtitle_tracks),
             audio_tracks=list(session.audio_tracks),
             audio_track=track,
             site_audio=list(session.site_audio),
