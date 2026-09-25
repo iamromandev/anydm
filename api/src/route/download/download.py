@@ -213,6 +213,22 @@ async def media_info(
     return Success.ok(data=MediaInfoSchema(**asdict(info), file_url=file_url)).to_resp()
 
 
+@router.get(path="/download/{task_id}/subtitles/{track}.vtt")
+async def subtitle_file(
+    task_id: uuid.UUID,
+    track: int,
+    stream_service: Annotated[StreamService, Depends(get_stream_service)],
+    file_index: Annotated[int | None, Query(ge=0)] = None,
+) -> FileResponse:
+    """A subtitle track of a finished download, whole, as WebVTT (#100).
+
+    For a file the browser plays itself: a session serves its cues by the
+    segment instead. Extracted once, then kept.
+    """
+    path = await stream_service.subtitle_file(task_id, file_index, track)
+    return FileResponse(path=path, media_type="text/vtt")
+
+
 @router.post(path="/download/{task_id}/pause", response_model=Success[TaskSchema])
 async def pause_task(
     task_id: uuid.UUID,

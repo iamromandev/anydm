@@ -10,6 +10,8 @@ CI installs.
 """
 
 import json
+import math
+import re
 import shutil
 import subprocess
 from array import array
@@ -18,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from src.lib.media.audio import pick_audio_track
-from src.lib.media.ffmpeg import segment_args
+from src.lib.media.ffmpeg import segment_args, subtitle_args, subtitle_file_args
 from src.lib.media.ffprobe import parse_probe_output
 from src.lib.media.source import MediaInput
 
@@ -201,3 +203,61 @@ def test_a_segment_plays_the_audio_track_it_maps(media: Media, tmp_path: Path, t
     subprocess.run(args, check=True, capture_output=True)
 
     assert _tone_hz(segment) == pytest.approx(hz, rel=0.05)
+
+
+# --- embedded subtitles (#100) ------------------------------------------------------
+
+
+def _vtt_times(text: str) -> list[tuple[float, float, str]]:
+    """A WebVTT file's cues, their tags left out: ASS bold comes through as ``<b>``."""
+
+    def seconds(stamp: str) -> float:
+        parts = [float(part) for part in stamp.split(":")]
+        while len(parts) < 3:
+            parts.insert(0, 0.0)
+        return round(parts[0] * 3600 + parts[1] * 60 + parts[2], 3)
+
+    cues = []
+    for block in text.strip().split("\n\n")[1:]:
+        lines = block.splitlines()
+        timing = next(line for line in lines if " --> " in line)
+        start, end = timing.split(" --> ")
+        body = " ".join(lines[lines.index(timing) + 1 :])
+        cues.append((seconds(start), seconds(end.split()[0]), re.sub(r"<[^>]+>", "", body)))
+    return cues
+
+
+def test_every_segment_s_cues_are_at_the_source_s_times(media: Media, tmp_path: Path) -> None:
+    """Every cue a segment overlaps, at its own times, for all three tracks from one cut each.
+
+    A cue across a seam comes out in both segments, with the same times.
+    """
+    tracks = {0: CUES, 1: CUES, 2: FORCED_CUES}
+    for index in range(math.ceil(DURATION_S / SEGMENT_S)):
+        start = index * SEGMENT_S
+        length = min(SEGMENT_S, DURATION_S - start)
+        outputs = [(track, tmp_path / f"subtitles_{index}.{track}.vtt") for track in tracks]
+        args = subtitle_args("ffmpeg", MediaInput(str(media.movie_mkv)), float(start), float(length), outputs)
+        subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
+
+        for track, cues in tracks.items():
+            expected = [(c.start, c.end, c.text) for c in cues if c.start < start + length and c.end > start]
+            got = _vtt_times((tmp_path / f"subtitles_{index}.{track}.vtt").read_text())
+            assert got == expected, (index, track)
+
+
+def test_a_whole_track_comes_out_at_the_source_s_times(media: Media, tmp_path: Path) -> None:
+    """The file starts at -0.023 s (AAC priming): without -copyts every cue would be 23 ms late."""
+    whole = tmp_path / "whole.vtt"
+    args = subtitle_file_args("ffmpeg", MediaInput(str(media.movie_mkv)), 1, whole)
+    subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
+
+    assert _vtt_times(whole.read_text()) == [(c.start, c.end, c.text) for c in CUES]
+
+
+def test_movie_mp4_s_mov_text_cuts_the_same_way(media: Media, tmp_path: Path) -> None:
+    out = tmp_path / "mp4.vtt"
+    args = subtitle_args("ffmpeg", MediaInput(str(media.movie_mp4)), 6.0, 6.0, [(0, out)])
+    subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
+
+    assert _vtt_times(out.read_text()) == [(c.start, c.end, c.text) for c in CUES if c.start < 12 and c.end > 6]

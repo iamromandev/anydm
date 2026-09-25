@@ -40,15 +40,29 @@ export type Prefs = {
      * code, or "" for whichever the file marks.
      */
     audioLanguage: string;
+    /**
+     * The subtitles shown from the start, by language (#100); "" for none,
+     * though a forced track still shows.
+     */
+    subtitleLanguage: string;
 };
 
 export const DEFAULT_PREFS: Prefs = {
     defaultPreset: "best",
     confirmBeforeRemove: true,
     audioLanguage: "",
+    subtitleLanguage: "",
 };
 
 const STORAGE_KEY = "anydm.prefs";
+
+/** A language code, or "" for none: what the language preferences hold. */
+function isLanguage(value: unknown): value is string {
+    return (
+        typeof value === "string" &&
+        /^[A-Za-z]{0,8}(-[A-Za-z0-9]{1,8})*$/.test(value)
+    );
+}
 
 function isPreset(value: unknown): value is Preset {
     return PRESETS.includes(value as Preset);
@@ -77,11 +91,12 @@ export function loadPrefs(
                 typeof saved.confirmBeforeRemove === "boolean"
                     ? saved.confirmBeforeRemove
                     : DEFAULT_PREFS.confirmBeforeRemove,
-            audioLanguage:
-                typeof saved.audioLanguage === "string" &&
-                /^[A-Za-z]{0,8}(-[A-Za-z0-9]{1,8})*$/.test(saved.audioLanguage)
-                    ? saved.audioLanguage
-                    : DEFAULT_PREFS.audioLanguage,
+            audioLanguage: isLanguage(saved.audioLanguage)
+                ? saved.audioLanguage
+                : DEFAULT_PREFS.audioLanguage,
+            subtitleLanguage: isLanguage(saved.subtitleLanguage)
+                ? saved.subtitleLanguage
+                : DEFAULT_PREFS.subtitleLanguage,
         };
     } catch {
         // Unparseable, or storage that refuses to be read at all.

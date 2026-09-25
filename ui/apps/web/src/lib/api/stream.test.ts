@@ -30,6 +30,7 @@ describe("playing a finished download (#94)", () => {
             mediaType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
             fileUrl: "/download/t1/file",
             audioTracks: [],
+            subtitleTracks: [],
         });
         expect(
             normalizeMediaInfo({ file_index: 3, file_url: "/x" }).mediaType,
@@ -171,6 +172,42 @@ describe("choosing the audio (#99)", () => {
             peers_connected: 3,
         });
         expect("audioTracks" in progress).toBe(false);
+    });
+
+    it("reads a session's subtitle tracks and segment length (#100)", () => {
+        const session = normalizeStreamSession({
+            session_id: "s1",
+            status: "ready",
+            subtitle_tracks: [
+                { index: 0, codec: "subrip", text: true },
+            ],
+            segment_seconds: 4,
+        });
+        expect(session.subtitleTracks.map((t) => t.text)).toEqual([
+            true,
+        ]);
+        expect(session.segmentSeconds).toBe(4);
+        expect(normalizeStreamSession({}).segmentSeconds).toBe(6);
+
+        const ready = normalizeStreamStatusEvent({
+            id: "s1",
+            status: "ready",
+            subtitle_tracks: [
+                { index: 0, text: false },
+            ],
+        });
+        expect(ready.subtitleTracks?.[0].text).toBe(false);
+        expect(
+            "subtitleTracks" in
+                normalizeStreamStatusEvent({ id: "s1", status: "ready" }),
+        ).toBe(false);
+        expect(
+            normalizeMediaInfo({
+                subtitle_tracks: [
+                    { index: 2, text: true },
+                ],
+            }).subtitleTracks[0].index,
+        ).toBe(2);
     });
 
     it("reads a download's tracks from its media", () => {

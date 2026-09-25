@@ -5,6 +5,7 @@ Driven through the real app with a fake ``StreamService``, as ``test_auth`` is.
 
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ import pytest_asyncio
 from src.config import get_settings
 from src.data.schema.download import PositionSchema
 from src.lib.media.audio import AudioTrack
+from src.lib.media.subtitle import SubtitleTrack
 from src.main import app
 from src.service import get_download_service, get_stream_service
 from src.service.stream.stream_service import MediaInfo
@@ -20,18 +22,26 @@ from src.service.stream.stream_service import MediaInfo
 TASK = uuid.uuid4()
 
 TRACKS = [AudioTrack(0, language="spa", channels=6, codec="ac3", default=True), AudioTrack(1, language="eng")]
+SUBTITLES = [
+    SubtitleTrack(0, language="eng", codec="subrip"),
+    SubtitleTrack(1, language="eng", codec="hdmv_pgs_subtitle", forced=True),
+]
+VTT = "WEBVTT\n\n00:00:05.000 --> 00:00:07.000\nHello\n"
 
 
 def _session(session_id: str, status: str, duration: float, track: int | None = None) -> Any:
     return type("S", (), {
         "id": session_id, "status": status, "duration_seconds": duration, "has_video": True,
         "audio_tracks": TRACKS if track is not None else [], "audio_track": track,
+        "subtitle_tracks": SUBTITLES if track is not None else [], "segment_seconds": 6,
     })()
 
 
 class _FakeStream:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
+        #: What the subtitle routes serve; the fixture writes it.
+        self.vtt = Path()
 
     async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
         self.calls.append(("media_info", (task_id, file_index)))
@@ -62,14 +72,24 @@ class _FakeStream:
     def get_session(self, session_id: str) -> Any:
         return _session(session_id, "ready", 30.0, track=0)
 
+    async def get_subtitle_segment(self, session: Any, track: int, index: int) -> Any:
+        self.calls.append(("get_subtitle_segment", (session.id, track, index)))
+        return self.vtt
+
+    async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Any:
+        self.calls.append(("subtitle_file", (task_id, file_index, track)))
+        return self.vtt
+
     async def switch_audio(self, session: Any, track: int) -> Any:
         self.calls.append(("switch_audio", (session.id, track)))
         return _session("s9", "ready", 30.0, track=track)
 
 
 @pytest.fixture
-def stream(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeStream]:
+def stream(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_FakeStream]:
     fake = _FakeStream()
+    fake.vtt = tmp_path / "cues.vtt"
+    fake.vtt.write_text(VTT)
     monkeypatch.setattr(get_settings(), "api_key", None)
     app.dependency_overrides[get_stream_service] = lambda: fake
     yield fake
@@ -95,6 +115,7 @@ async def test_media_names_the_file_and_where_to_fetch_it(client: httpx.AsyncCli
         "media_type": 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
         "file_url": f"/download/{TASK}/file",
         "audio_tracks": [],
+        "subtitle_tracks": [],
     }
     assert stream.calls == [("media_info", (TASK, None))]
 
@@ -221,3 +242,37 @@ async def test_a_position_is_saved_through_the_route(
     assert response.json()["data"]["position_seconds"] == 61.5
     assert fake.saved == [(TASK, 2, 61.5, 1300.0)]
     assert refused.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_session_lists_its_subtitles_and_says_which_can_be_shown(
+    client: httpx.AsyncClient, stream: _FakeStream
+) -> None:
+    """#100: a picture track is listed, marked as one the player can't show."""
+    data = (await client.post("/stream/start", json={"url": "https://example.com/a.mkv"})).json()["data"]
+
+    assert data["segment_seconds"] == 6
+    assert data["subtitle_tracks"] == [
+        {"index": 0, "language": "eng", "codec": "subrip", "default": False, "forced": False, "text": True},
+        {"index": 1, "language": "eng", "codec": "hdmv_pgs_subtitle", "default": False, "forced": True,
+         "text": False},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_segment_s_cues_are_served_as_webvtt(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.get("/stream/s1/subtitles/0/segment_3.vtt")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/vtt")
+    assert response.text == VTT
+    assert stream.calls == [("get_subtitle_segment", ("s1", 0, 3))]
+
+
+@pytest.mark.asyncio
+async def test_a_download_s_subtitle_track_is_served_whole(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.get(f"/download/{TASK}/subtitles/2.vtt", params={"file_index": 1})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/vtt")
+    assert stream.calls == [("subtitle_file", (TASK, 1, 2))]

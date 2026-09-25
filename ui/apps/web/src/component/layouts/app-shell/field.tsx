@@ -341,6 +341,7 @@ export const AppShell = component$<AppShellProps>(
                     fromTorrent={playerFromTorrent}
                     positions={playerPositions}
                     audioLanguage={prefs.audioLanguage}
+                    subtitleLanguage={prefs.subtitleLanguage}
                     onPositionSaved={onPositionSaved}
                     files={playerFiles}
                     onClose={onPlayerModalClose}

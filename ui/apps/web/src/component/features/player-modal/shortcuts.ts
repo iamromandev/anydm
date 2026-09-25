@@ -22,6 +22,7 @@ export type PlayerAction =
     | { type: "volumeBy"; delta: number }
     | { type: "toggleMute" }
     | { type: "toggleFullscreen" }
+    | { type: "toggleSubtitles" }
     | { type: "toggleHelp" }
     | { type: "escape" };
 
@@ -88,6 +89,9 @@ export function resolveShortcut(event: ShortcutEvent): PlayerAction | null {
         case "f":
         case "F":
             return { type: "toggleFullscreen" };
+        case "c":
+        case "C":
+            return { type: "toggleSubtitles" };
         case "?":
             return { type: "toggleHelp" };
         case "Escape":
@@ -105,6 +109,7 @@ export const SHORTCUT_HINTS: { keys: string; description: string }[] = [
     { keys: "↑ / ↓", description: "Volume up or down" },
     { keys: "M", description: "Mute" },
     { keys: "F", description: "Fullscreen" },
+    { keys: "C", description: "Subtitles on or off" },
     { keys: "?", description: "This list" },
     { keys: "Esc", description: "Leave fullscreen, or close" },
 ];

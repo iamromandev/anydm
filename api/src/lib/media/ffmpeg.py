@@ -164,6 +164,60 @@ def segment_args(
     return args
 
 
+def subtitle_args(
+    ffmpeg: str,
+    source: MediaInput,
+    start_seconds: float,
+    duration_seconds: float,
+    outputs: Sequence[tuple[int, Path]],
+) -> list[str]:
+    """One segment's cues, as WebVTT, for each ``(track, destination)`` in ``outputs`` (#100).
+
+    Not cut the way ``segment_args`` cuts video. With an input ``-ss`` and a
+    ``-t``, #93 found cues landing 0.5 to 1 s late, by a different amount in each
+    segment: subtitle packets keep an offset from wherever the demuxer landed.
+    ``-copyts`` keeps the source's own times instead, so every cue is where
+    the source puts it, and the end is absolute to match (``-to``). A cue that
+    straddles a seam comes out in both segments, with the same times; the
+    player drops the second.
+
+    Every track comes out of one read of the input, since switching subtitles
+    shouldn't cost another. Output options apply to the output that follows,
+    so each carries its own map and end.
+    """
+    seek = ["-ss", str(start_seconds)] if start_seconds > 0 else []
+    args = [ffmpeg, "-y", "-copyts", *seek, *headers_args(source.headers), "-i", source.url]
+    for track, destination in outputs:
+        args += [
+            "-map", f"0:s:{track}",
+            "-to", str(start_seconds + duration_seconds),
+            "-c:s", "webvtt",
+            "-f", "webvtt",
+            str(destination),
+        ]
+    return args
+
+
+def subtitle_file_args(ffmpeg: str, source: MediaInput, track: int, destination: Path) -> list[str]:
+    """A whole subtitle track as WebVTT, for a file the browser plays itself (#100).
+
+    ``-copyts`` for the same reason as ``subtitle_args``: an MKV with AAC starts
+    at -0.023 s, the encoder's priming, and without it every cue would be
+    re-zeroed on that and come out 23 ms late (#93).
+    """
+    return [
+        ffmpeg,
+        "-y",
+        "-copyts",
+        *headers_args(source.headers),
+        "-i", source.url,
+        "-map", f"0:s:{track}",
+        "-c:s", "webvtt",
+        "-f", "webvtt",
+        str(destination),
+    ]
+
+
 async def run(args: list[str]) -> None:
     """Run ffmpeg, raising an ``Error`` carrying its stderr tail on failure.
 

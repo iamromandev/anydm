@@ -22,6 +22,7 @@ from pathlib import Path
 from src.lib.media.audio import AudioTrack
 from src.lib.media.hls import MediaPlaylist
 from src.lib.media.source import MediaInput
+from src.lib.media.subtitle import SubtitleTrack
 
 
 class SegmentState(Enum):
@@ -94,6 +95,13 @@ class StreamSession:
     #: id and its input. Swapping the last input changes the track, since a
     #: site's audio is its own input. Empty for any other session.
     site_audio: list[tuple[str, MediaInput]] = field(default_factory=list)
+    #: The source's own subtitle tracks (#100). A torrent's are known once
+    #: it has been probed. A segment's cues for every text track are cut
+    #: together, on the first request for any of them, and tracked apart
+    #: from its video: they're cheap, and never wait for an encode.
+    subtitle_tracks: list[SubtitleTrack] = field(default_factory=list)
+    cue_states: dict[int, SegmentState] = field(default_factory=dict)
+    cue_events: dict[int, asyncio.Event] = field(default_factory=dict)
 
     @property
     def mapped_audio_track(self) -> int | None:
@@ -110,6 +118,9 @@ class StreamSession:
 
     def segment_path(self, index: int) -> Path:
         return self.session_dir / f"segment_{index}.ts"
+
+    def cue_path(self, index: int, track: int) -> Path:
+        return self.session_dir / f"subtitles_{index}.{track}.vtt"
 
     def state_of(self, index: int) -> SegmentState:
         return self.states.get(index, SegmentState.NOT_STARTED)

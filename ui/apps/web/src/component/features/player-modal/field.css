@@ -203,3 +203,12 @@
         animation: none;
     }
 }
+
+/* Subtitles (#100): the browser draws them, so a solid backing keeps them
+   readable over a bright picture, and bold from an ASS track still reads. */
+.player-modal-video::cue {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    font-size: 1.1em;
+    line-height: 1.3;
+}

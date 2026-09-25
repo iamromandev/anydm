@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, computed_field, model_validator
 
 from src.core.base import BaseSchema
+from src.lib.media.subtitle import TEXT_CODECS
 
 
 class StreamStartRequest(BaseSchema):
@@ -80,6 +81,25 @@ class AudioTrackSchema(BaseSchema):
     default: bool = False
 
 
+class SubtitleTrackSchema(BaseSchema):
+    """One of a source's subtitle tracks (#100)."""
+
+    #: Among its subtitle tracks only; what the subtitle routes take.
+    index: int
+    language: str | None = None
+    title: str | None = None
+    codec: str | None = None
+    default: bool = False
+    #: Shown whether or not subtitles are on.
+    forced: bool = False
+
+    @computed_field
+    @property
+    def text(self) -> bool:
+        """Whether it can be shown: a picture track (PGS, VobSub) can't."""
+        return self.codec in TEXT_CODECS
+
+
 class AudioSwitchRequest(BaseSchema):
     track: Annotated[int, Field(ge=0, description="The audio track to play, from the session's audio_tracks")]
 
@@ -97,6 +117,7 @@ class MediaInfoSchema(BaseSchema):
     #: Where the browser fetches the file itself, with Range.
     file_url: str
     audio_tracks: list[AudioTrackSchema] = Field(default_factory=list)
+    subtitle_tracks: list[SubtitleTrackSchema] = Field(default_factory=list)
 
 
 class StreamSessionSchema(BaseSchema):
@@ -108,3 +129,6 @@ class StreamSessionSchema(BaseSchema):
     #: A torrent's arrive with its ``ready`` event instead, once it's probed.
     audio_tracks: list[AudioTrackSchema] | None = None
     audio_track: int | None = None
+    subtitle_tracks: list[SubtitleTrackSchema] | None = None
+    #: How long each segment is, the last excepted: which segment's cues hold a time.
+    segment_seconds: int | None = None
