@@ -72,7 +72,7 @@ export interface AppShellProps {
     onAddClick: () => void;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
-    onDownloadFile: (id: string) => void;
+    onDownloadFile: (id: string, fileIndex?: number) => void;
     onRemove: (id: string) => void;
     removing: { id: string; title: string; status: string } | null;
     onRemoveCancel: () => void;

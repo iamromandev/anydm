@@ -8,6 +8,8 @@ import {
     retryLabel,
     canResume,
     canStopSeeding,
+    canDownloadTorrentFile,
+    downloadAction,
     isActive,
     isSeeding,
     keepSegments,
@@ -845,5 +847,59 @@ describe("settlePage", () => {
         expect(settled.map((t) => t.id)).toEqual([
             "a",
         ]);
+    });
+});
+
+describe("downloading a finished task's file (#107)", () => {
+    const file = (index: number, selected = true) => ({
+        index,
+        path: `file${index}`,
+        sizeBytes: 10,
+        selected,
+        downloadedBytes: 10,
+    });
+
+    it("offers nothing until the task is complete or seeding", () => {
+        expect(
+            downloadAction({
+                status: "downloading",
+                files: [
+                    file(0),
+                ],
+            }),
+        ).toBe("none");
+        expect(downloadAction({ status: "paused" })).toBe("none");
+    });
+
+    it("downloads the one file of a direct task or a single-file torrent", () => {
+        expect(downloadAction({ status: "complete" })).toBe("file");
+        expect(
+            downloadAction({
+                status: "seeding",
+                files: [
+                    file(0),
+                    file(1, false),
+                ],
+            }),
+        ).toBe("file");
+    });
+
+    it("asks to choose when a torrent has several selected files", () => {
+        expect(
+            downloadAction({
+                status: "seeding",
+                files: [
+                    file(0),
+                    file(1),
+                ],
+            }),
+        ).toBe("choose");
+    });
+
+    it("links a torrent's own files once it is finished, but only selected ones", () => {
+        expect(canDownloadTorrentFile("seeding", file(0))).toBe(true);
+        expect(canDownloadTorrentFile("complete", file(0))).toBe(true);
+        expect(canDownloadTorrentFile("downloading", file(0))).toBe(false);
+        expect(canDownloadTorrentFile("complete", file(1, false))).toBe(false);
     });
 });

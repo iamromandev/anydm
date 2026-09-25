@@ -24,6 +24,8 @@ import {
     detailRows,
     canResume,
     canStopSeeding,
+    canDownloadTorrentFile,
+    downloadAction,
     isActive,
     retryLabel,
     siteName,
@@ -44,7 +46,8 @@ export interface TorrentCardProps {
     now: number;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
-    onDownloadFile: (id: string) => void;
+    /** Without an index, the task's one file; with one, that file of a torrent. */
+    onDownloadFile: (id: string, fileIndex?: number) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
     /** Whether this card is the one showing its details. */
@@ -338,6 +341,28 @@ export const TorrentCard = component$<TorrentCardProps>(
                                                   )}%`
                                                 : "—"}
                                         </span>
+                                        {canDownloadTorrentFile(
+                                            task.status,
+                                            file,
+                                        ) && (
+                                            <button
+                                                type="button"
+                                                class="action-btn torrent-file-download"
+                                                aria-label={`Download ${file.path}`}
+                                                onClick$={() =>
+                                                    onDownloadFile(
+                                                        task.id,
+                                                        file.index,
+                                                    )
+                                                }
+                                            >
+                                                <LuFileDown
+                                                    width="14"
+                                                    height="14"
+                                                    aria-hidden="true"
+                                                />
+                                            </button>
+                                        )}
                                     </li>
                                 ))}
                         </ul>
@@ -390,13 +415,24 @@ export const TorrentCard = component$<TorrentCardProps>(
                         </button>
                     )}
 
-                    {(task.status === "complete" ||
-                        task.status === "seeding") && (
+                    {downloadAction(task) !== "none" && (
                         <button
                             type="button"
                             class="action-btn action-btn--primary"
-                            aria-label="Download file"
-                            onClick$={() => onDownloadFile(task.id)}
+                            aria-label={
+                                downloadAction(task) === "choose"
+                                    ? "Choose a file to download"
+                                    : "Download file"
+                            }
+                            onClick$={() => {
+                                // Several files have no single download: the
+                                // detail lists each one with its own link.
+                                if (downloadAction(task) === "choose") {
+                                    if (!expanded) onToggleDetail(task.id);
+                                } else {
+                                    onDownloadFile(task.id);
+                                }
+                            }}
                         >
                             <LuFileDown
                                 width="16"

@@ -31,6 +31,14 @@ class FileDatabaseRepo(FileRepo):
     async def list_for(self, task_id: uuid.UUID) -> list[File]:
         return await File.filter(task_id=task_id).order_by("index")
 
+    async def list_for_tasks(self, task_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[File]]:
+        by_task: dict[uuid.UUID, list[File]] = {task_id: [] for task_id in task_ids}
+        if not by_task:
+            return by_task
+        for row in await File.filter(task_id__in=list(by_task)).order_by("index"):
+            by_task[row.task_id].append(row)  # ty: ignore[unresolved-attribute]
+        return by_task
+
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         rows = await File.filter(task_id=task_id, selected=True).order_by("index")
         return [row.index for row in rows]

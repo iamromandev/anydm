@@ -110,12 +110,19 @@ class FakeFileRepo:
     def __init__(self) -> None:
         self.replaced: dict[uuid.UUID, list[tuple[int, str, int, bool]]] = {}
         self.rows: list[Any] = []
+        #: Rows per task for ``list_for_tasks``, and each batch it was asked for.
+        self.by_task: dict[uuid.UUID, list[Any]] = {}
+        self.batches: list[list[uuid.UUID]] = []
 
     async def replace(self, task_id: uuid.UUID, files: Any) -> None:
         self.replaced[task_id] = list(files)
 
     async def list_for(self, task_id: uuid.UUID) -> list[Any]:
         return self.rows
+
+    async def list_for_tasks(self, task_ids: Any) -> dict[uuid.UUID, list[Any]]:
+        self.batches.append(list(task_ids))
+        return {task_id: self.by_task.get(task_id, []) for task_id in task_ids}
 
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         return [index for index, _, _, selected in self.replaced.get(task_id, []) if selected]
@@ -232,9 +239,11 @@ async def test_enqueue_adds_to_the_engine_and_creates_a_task() -> None:
     task = await _service(client, repo=repo, file_repo=files).enqueue(MAGNET, [0])
 
     assert client.added[0]["only_files"] == [0]
-    assert client.added[0]["output_folder"] == "/workdir/download/torrent"
+    # Its own folder, and the row records the one rqbit is told (#107).
+    assert client.added[0]["output_folder"] == "/workdir/download/torrent/Some Release"
 
     created = repo.created[0]
+    assert created["file_path"] == "/workdir/download/torrent/Some Release"
     assert created["platform"].value == "torrent"
     assert created["kind"].value == "torrent"
     assert created["status"].value == "pending"
@@ -538,3 +547,111 @@ async def test_resolve_file_refuses_a_path_escaping_the_output_folder(tmp_path: 
     with pytest.raises(Error) as caught:
         await _service(repo=repo, file_repo=files).resolve_file(task_id, 0)
     assert caught.value.code == Code.NOT_FOUND
+
+
+def _file(index: int, path: str, *, selected: bool = True, size: int = 100, done: int = 0) -> Any:
+    fields = {"index": index, "path": path, "size_bytes": size, "selected": selected, "downloaded_bytes": done}
+    return type("F", (), fields)()
+
+
+@pytest.mark.asyncio
+async def test_schema_carries_a_torrents_files() -> None:
+    """#107: the card's file list waited on data the API never sent."""
+    files = FakeFileRepo()
+    files.rows = [_file(0, "video.mkv", size=900, done=450), _file(1, "readme.txt", selected=False)]
+
+    schema = await _service(file_repo=files).schema(_torrent_row(uuid.uuid4()))
+
+    assert [(f.index, f.path, f.size_bytes, f.selected, f.downloaded_bytes) for f in schema.files or []] == [
+        (0, "video.mkv", 900, True, 450),
+        (1, "readme.txt", 100, False, 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_schemas_load_a_pages_files_in_one_query_and_skip_other_platforms() -> None:
+    first, second, direct = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    files = FakeFileRepo()
+    files.by_task = {first: [_file(0, "a.mkv")], second: [_file(0, "b.mkv"), _file(1, "c.srt")]}
+    rows = [
+        _torrent_row(first),
+        _torrent_row(direct, platform=Platform.DIRECT, kind=Kind.FILE, info_hash=None),
+        _torrent_row(second),
+    ]
+
+    schemas = await _service(file_repo=files).schemas(rows)
+
+    assert files.batches == [[first, second]]
+    assert [s.id for s in schemas] == [first, direct, second]
+    assert [f.path for f in schemas[0].files or []] == ["a.mkv"]
+    assert schemas[1].files is None
+    assert [f.path for f in schemas[2].files or []] == ["b.mkv", "c.srt"]
+
+
+@pytest.mark.asyncio
+async def test_schemas_of_no_torrents_ask_for_no_files() -> None:
+    files = FakeFileRepo()
+    row = _torrent_row(uuid.uuid4(), platform=Platform.DIRECT, kind=Kind.FILE, info_hash=None)
+
+    await _service(file_repo=files).schemas([row])
+
+    assert files.batches == []
+
+
+@pytest.mark.asyncio
+async def test_published_torrent_frames_carry_files() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+    files = FakeFileRepo()
+    files.rows = [_file(0, "video.mkv")]
+    hub = EventHub()
+    subscription = hub.subscribe()
+    service = TorrentService(
+        repo=repo,  # ty: ignore[invalid-argument-type]
+        file_repo=files,  # ty: ignore[invalid-argument-type]
+        client=FakeTorrentClient(),
+        hub=hub,
+        torrent_root=Path("/workdir/download/torrent"),
+        enabled=True,
+    )
+
+    schema = await service.pause(task_id)
+
+    assert [f.path for f in schema.files or []] == ["video.mkv"]
+    event, data = await anext(aiter(subscription))
+    assert event == "task"
+    assert data["files"][0]["path"] == "video.mkv"
+    subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_only_file_serves_a_single_file_torrent(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    folder = tmp_path / "Some Release"
+    folder.mkdir()
+    (folder / "video.mkv").write_bytes(b"data")
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.COMPLETE, file_path=str(folder))
+    files = FakeFileRepo()
+    files.rows = [_file(0, "video.mkv"), _file(1, "readme.txt", selected=False)]
+
+    path, filename, _ = await _service(repo=repo, file_repo=files).resolve_only_file(task_id)
+
+    assert path == folder / "video.mkv"
+    assert filename == "video.mkv"
+
+
+@pytest.mark.asyncio
+async def test_resolve_only_file_asks_for_one_at_a_time_when_there_are_several(tmp_path: Path) -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
+    files = FakeFileRepo()
+    files.rows = [_file(0, "E1.mkv"), _file(1, "E2.mkv"), _file(2, "notes.txt", selected=False)]
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo, file_repo=files).resolve_only_file(task_id)
+
+    assert caught.value.code == Code.CONFLICT
+    assert caught.value.message == "This torrent has 2 files; download them one at a time"

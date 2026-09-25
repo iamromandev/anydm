@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -88,6 +89,15 @@ class FakeFileRepo:
     async def flush_progress(self, task_id: uuid.UUID, file_progress: Any) -> None:
         self.flushed.append((task_id, list(file_progress)))
 
+    async def list_for(self, task_id: uuid.UUID) -> list[Any]:
+        # What the flush above just wrote: one row per reported file.
+        progress = next((p for t, p in reversed(self.flushed) if t == task_id), [])
+        return [
+            type("F", (), {"index": i, "path": f"file{i}", "size_bytes": 1000, "selected": True,
+                           "downloaded_bytes": done})()
+            for i, done in enumerate(progress)
+        ]
+
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         return self.selected
 
@@ -134,6 +144,7 @@ def _monitor(
     *,
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
+    torrent_root: str = "/workdir/download/torrent",
 ) -> TorrentMonitor:
     return TorrentMonitor(
         repo=repo,
@@ -141,7 +152,7 @@ def _monitor(
         client=client,
         hub=hub or EventHub(),
         poll_ms=1000,
-        torrent_root="/workdir/download/torrent",
+        torrent_root=torrent_root,
         enabled=True,
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
@@ -235,6 +246,21 @@ async def test_every_tick_publishes_even_without_a_write() -> None:
 
 
 @pytest.mark.asyncio
+async def test_every_tick_publishes_the_files_it_just_flushed() -> None:
+    """#107: per-file progress reached the database every tick and the browser never."""
+    hub = EventHub()
+    subscription = hub.subscribe()
+    row = _row(status=TaskStatus.DOWNLOADING)
+    sample = _sample()
+
+    await _monitor(FakeRepo([row]), FakeClient([sample]), hub=hub).tick()
+
+    _event, data = await anext(aiter(subscription))
+    assert [f["downloaded_bytes"] for f in data["files"]] == list(sample.file_progress)
+    subscription.close()
+
+
+@pytest.mark.asyncio
 async def test_an_unreachable_engine_leaves_rows_untouched() -> None:
     row = _row(status=TaskStatus.DOWNLOADING)
     client = FakeClient(fail=torrent_error.engine_unavailable("connection refused"))
@@ -253,9 +279,26 @@ async def test_a_row_the_engine_has_lost_is_re_added_with_its_selection() -> Non
 
     await _monitor(FakeRepo([row]), client, files).tick()
 
+    # Into the folder the row records, not the root every torrent shared before #107.
     assert client.added == [
-        {"only_files": [0, 2], "output_folder": "/workdir/download/torrent"}
+        {"only_files": [0, 2], "output_folder": "/workdir/download/torrent/Some Release"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_from_before_per_torrent_folders_is_re_added_where_its_files_are(
+    tmp_path: Path,
+) -> None:
+    """Its row records <root>/<name>, but its files were written flat into the root."""
+    (tmp_path / "file0").write_bytes(b"data")
+    row = _row(status=TaskStatus.DOWNLOADING, file_path=str(tmp_path / "Some Release"))
+    client = FakeClient([])
+    files = FakeFileRepo(selected=[0])
+    files.flushed.append((row.id, [4]))  # so list_for reports file0
+
+    await _monitor(FakeRepo([row]), client, files, torrent_root=str(tmp_path)).tick()
+
+    assert client.added == [{"only_files": [0], "output_folder": str(tmp_path)}]
 
 
 @pytest.mark.asyncio

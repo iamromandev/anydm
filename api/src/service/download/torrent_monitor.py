@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -20,12 +21,13 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.repo.download.interface import FileRepo, TaskRepo
-from src.data.schema.download import TaskSchema
 from src.data.type import TaskStatus
 from src.lib.event import EventHub
+from src.lib.torrent.folder import stored_folder
 from src.lib.torrent.mapping import progress_percent, status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
+from src.service.download.torrent_service import task_schema
 
 
 class TorrentMonitor:
@@ -152,10 +154,14 @@ class TorrentMonitor:
             if (row.info_hash or "") in by_hash:
                 continue
             try:
+                # Where its files are: its own folder, or the root for a
+                # torrent added before per-torrent folders (#107).
+                paths = [file.path for file in await self._file_repo.list_for(row.id)]
+                folder = stored_folder(row.file_path, Path(self._root), paths)
                 await self._client.add(
                     parse_source(row.source_url),
                     only_files=await self._file_repo.selected_indexes(row.id),
-                    output_folder=self._root,
+                    output_folder=str(folder),
                 )
                 logger.info("{}|re-added lost torrent {}", self._tag, row.info_hash)
             except Error as error:
@@ -195,4 +201,6 @@ class TorrentMonitor:
             await row.save(update_fields=list(changed))
 
         await self._file_repo.flush_progress(row.id, sample.file_progress)
-        self._hub.publish("task", TaskSchema.model_validate(row).to_json())
+        # With the rows just flushed, so each file's progress reaches the card (#107).
+        files = await self._file_repo.list_for(row.id)
+        self._hub.publish("task", task_schema(row, files).to_json())
