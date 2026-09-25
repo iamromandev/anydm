@@ -12,7 +12,7 @@ from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
-from src.service.download.download_service import DownloadService
+from src.service.download.download_service import DownloadService, TorrentPlay
 
 from tests.sites import FakeSiteClient, site_info, sized
 
@@ -130,8 +130,8 @@ class FakeTorrentService:
     async def resolve_file(self, task_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         return Path(f"/t/file{index}.mkv"), f"file{index}.mkv", "video/x-matroska"
 
-    async def media_file_index(self, task_id: uuid.UUID) -> int:
-        return 7
+    async def media_file_index(self, task_id: uuid.UUID, wanted: int | None = None) -> int:
+        return 7 if wanted is None else wanted
 
     async def pause(self, task_id: uuid.UUID) -> Any:
         self.paused.append(task_id)
@@ -852,6 +852,61 @@ async def test_the_media_file_of_a_torrent_is_the_one_asked_for_or_its_largest()
 
     assert await service.resolve_media_file(task_id, 3) == (Path("/t/file3.mkv"), "file3.mkv", 3)
     assert await service.resolve_media_file(task_id, None) == (Path("/t/file7.mkv"), "file7.mkv", 7)
+
+
+def _torrent_task(repo: FakeRepo, status: TaskStatus) -> uuid.UUID:
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(
+        task_id, platform=Platform.TORRENT, kind=Kind.TORRENT, status=status, info_hash="abc123"
+    )
+    return task_id
+
+
+@pytest.mark.asyncio
+async def test_a_downloading_torrent_plays_from_its_torrent() -> None:
+    """Play mid-download (#95): the task's own torrent and file, nothing added."""
+    service, repo, torrents = _service()
+    task_id = _torrent_task(repo, TaskStatus.DOWNLOADING)
+
+    assert await service.torrent_play(task_id, None) == TorrentPlay("abc123", 7)
+    assert await service.torrent_play(task_id, 2) == TorrentPlay("abc123", 2)
+    assert torrents.resumed == []
+
+
+@pytest.mark.asyncio
+async def test_a_paused_torrent_is_resumed_to_play() -> None:
+    """A stream from a paused torrent would stall."""
+    service, repo, torrents = _service()
+    task_id = _torrent_task(repo, TaskStatus.PAUSED)
+
+    assert await service.torrent_play(task_id, None) == TorrentPlay("abc123", 7)
+    assert torrents.resumed == [task_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [TaskStatus.COMPLETE, TaskStatus.SEEDING])
+async def test_a_finished_torrent_plays_from_disk(status: TaskStatus) -> None:
+    service, repo, _ = _service()
+
+    assert await service.torrent_play(_torrent_task(repo, status), None) is None
+
+
+@pytest.mark.asyncio
+async def test_a_download_that_is_not_a_torrent_plays_from_disk() -> None:
+    service, repo, _ = _service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING)
+
+    assert await service.torrent_play(task_id, None) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_torrent_has_nothing_to_play() -> None:
+    service, repo, _ = _service()
+
+    with pytest.raises(Error) as caught:
+        await service.torrent_play(_torrent_task(repo, TaskStatus.FAILED), None)
+    assert caught.value.code == 409
 
 
 def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:

@@ -291,11 +291,12 @@ class TorrentService(BaseService):
         media_type, _ = mimetypes.guess_type(path.name)
         return path, path.name, media_type or "application/octet-stream"
 
-    async def media_file_index(self, task_id: uuid.UUID) -> int:
-        """The file Play opens on a torrent: its largest selected media file (#94).
+    async def media_file_index(self, task_id: uuid.UUID, wanted: int | None = None) -> int:
+        """The file Play opens on a torrent: ``wanted``, else its largest selected media file (#94).
 
         The same rule the torrent dialog's Play uses, over what this task is
-        downloading rather than everything in the torrent.
+        downloading rather than everything in the torrent. A ``wanted`` file
+        it isn't downloading, or that isn't media, is refused (#95).
         """
         await self._require(task_id)
         media = [
@@ -303,6 +304,14 @@ class TorrentService(BaseService):
             for row in await self._file_repo.list_for(task_id)
             if row.selected and row.path.lower().endswith(MEDIA_EXTENSIONS)
         ]
+        if wanted is not None:
+            if any(row.index == wanted for row in media):
+                return wanted
+            raise Error.create(
+                code=Code.UNPROCESSABLE_ENTITY,
+                message=f"This torrent isn't downloading a media file at index {wanted}",
+                error_type=ErrorType.UNPROCESSABLE_ENTITY,
+            )
         if not media:
             raise Error.create(
                 code=Code.UNPROCESSABLE_ENTITY,

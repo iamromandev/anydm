@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -35,6 +35,9 @@ from src.lib.torrent.source import parse_source
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSession, StreamSessionStore
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS, pick_media_file
 
+if TYPE_CHECKING:
+    from src.service.download.download_service import TorrentPlay
+
 
 class Prober(Protocol):
     def __call__(
@@ -53,6 +56,10 @@ PlaylistFetcher = Callable[[str, Mapping[str, str]], Awaitable[tuple[str, str]]]
 #: rules (finished, present, inside its folder), so a path never comes from a
 #: client.
 TaskFiles = Callable[[uuid.UUID, int | None], Awaitable[tuple[Path, str, int | None]]]
+
+#: The torrent to stream for a task still downloading, or ``None`` when it
+#: plays from disk (``DownloadService.torrent_play``, #95).
+TorrentPlays = Callable[[uuid.UUID, int | None], Awaitable["TorrentPlay | None"]]
 
 _PLAYLIST_TIMEOUT_S = 20.0
 
@@ -133,6 +140,7 @@ class StreamService(BaseService):
         site_client: SiteClient | None = None,
         playlist_fetcher: PlaylistFetcher = fetch_playlist,
         task_files: TaskFiles | None = None,
+        torrent_play: TorrentPlays | None = None,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -154,6 +162,7 @@ class StreamService(BaseService):
         self._site_client = site_client
         self._playlist_fetcher = playlist_fetcher
         self._task_files = task_files
+        self._torrent_play = torrent_play
 
     async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
         """Probe a finished task's file for what the player needs to pick how to play it."""
@@ -172,7 +181,14 @@ class StreamService(BaseService):
 
         For what the browser can't play itself: the file is probed and cut
         like any other source, but it is never fetched again.
+
+        A torrent still downloading plays from rqbit instead, through its own
+        torrent: nothing is added, so the download's selection can't change (#95).
         """
+        if self._torrent_play is not None:
+            target = await self._torrent_play(task_id, file_index)
+            if target is not None:
+                return self._torrent_stream_session(target.info_hash, target.file_index)
         path, _filename, _index = await self._task_file(task_id, file_index)
         source = MediaInput(str(path))
         result = await self._prober(self._ffprobe_path, source.url)
@@ -308,8 +324,16 @@ class StreamService(BaseService):
             only_files=[target.index],
             output_folder=str(torrent_folder(self._torrent_dir, details.name, details.info_hash)),
         )
+        return self._torrent_stream_session(details.info_hash, target.index)
 
-        stream_url = f"{self._torrent_api_url}/torrents/{details.info_hash}/stream/{target.index}"
+    def _torrent_stream_session(self, info_hash: str, file_index: int) -> StreamSession:
+        """A session reading one file of a torrent rqbit has, through its stream endpoint.
+
+        rqbit fetches the pieces being read first, so it plays while the
+        torrent downloads. The session starts ``connecting`` and is probed in
+        the background, publishing the swarm's numbers meanwhile.
+        """
+        stream_url = f"{self._torrent_api_url}/torrents/{info_hash}/stream/{file_index}"
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -321,7 +345,7 @@ class StreamService(BaseService):
             segment_seconds=self._segment_seconds,
             session_dir=session_dir,
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
-            info_hash=details.info_hash,
+            info_hash=info_hash,
             status="connecting",
         )
         self._sessions.add(session)

@@ -15,6 +15,7 @@ from src.lib.site.client import SiteInfo
 from src.lib.site.format import playback_plan
 from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
+from src.service.download.download_service import TorrentPlay
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSessionStore
 from src.service.stream.stream_service import Prober, StreamService, fetch_playlist
 
@@ -1298,3 +1299,50 @@ async def test_playing_tasks_needs_a_resolver(tmp_path: Path) -> None:
         await service.media_info(uuid.uuid4(), None)
 
     assert caught.value.code == Code.SERVICE_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_still_downloading_plays_from_its_torrent(tmp_path: Path) -> None:
+    """#95: the task's own torrent, streamed by rqbit, and never added again."""
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    disk = FakeTaskFiles(tmp_path / "unused.mkv")
+    asked: list[tuple[uuid.UUID, int | None]] = []
+
+    async def torrent_play(task_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
+        asked.append((task_id, file_index))
+        return TorrentPlay("deadbeef", 1)
+
+    service, _ = _service(
+        tmp_path,
+        torrent_client=torrent_client,
+        task_repo=FakeTaskRepo(),
+        torrent_dir=tmp_path / "torrent",
+        torrent_api_url="http://torrent-anydm-api:3030",
+        task_files=disk,
+        torrent_play=torrent_play,
+    )
+    task_id = uuid.uuid4()
+
+    session = await service.start_task_session(task_id, None)
+    await asyncio.gather(*session.background_tasks)
+
+    assert asked == [(task_id, None)]
+    assert torrent_client.added == []
+    assert disk.asked == []
+    assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"
+    assert session.info_hash == "deadbeef"
+    assert session.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_torrent_still_plays_from_disk(tmp_path: Path) -> None:
+    async def torrent_play(_task_id: uuid.UUID, _file_index: int | None) -> TorrentPlay | None:
+        return None
+
+    disk = FakeTaskFiles(tmp_path / "Movie.mkv", index=1)
+    service, _ = _service(tmp_path, task_files=disk, torrent_play=torrent_play)
+
+    session = await service.start_task_session(uuid.uuid4(), None)
+
+    assert [source.url for source in session.inputs] == [str(tmp_path / "Movie.mkv")]
+    assert session.info_hash is None

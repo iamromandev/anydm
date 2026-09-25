@@ -686,3 +686,20 @@ async def test_a_torrent_with_no_selected_media_has_nothing_to_play() -> None:
     with pytest.raises(Error) as caught:
         await _service(repo=repo, file_repo=files).media_file_index(task_id)
     assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_a_named_file_to_play_must_be_a_selected_media_file() -> None:
+    """What a torrent still downloading may play (#95): what it's downloading."""
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+    files = FakeFileRepo()
+    files.rows = [_file(0, "E1.mkv"), _file(1, "E2.mkv", selected=False), _file(2, "E1.en.srt")]
+    service = _service(repo=repo, file_repo=files)
+
+    assert await service.media_file_index(task_id, 0) == 0
+    for refused in (1, 2, 9):
+        with pytest.raises(Error) as caught:
+            await service.media_file_index(task_id, refused)
+        assert caught.value.code == Code.UNPROCESSABLE_ENTITY
