@@ -172,6 +172,38 @@ export const SettingsModal = component$<SettingsModalProps>(
                             </label>
 
                             <label class="settings-row">
+                                <span class="settings-label">Subtitles</span>
+                                <select
+                                    class="settings-select"
+                                    onChange$={(_, el) =>
+                                        onPrefsChange({
+                                            ...prefs,
+                                            subtitleLanguage: el.value,
+                                        })
+                                    }
+                                >
+                                    <option
+                                        value=""
+                                        selected={prefs.subtitleLanguage === ""}
+                                    >
+                                        Off
+                                    </option>
+                                    {AUDIO_LANGUAGES.map((option) => (
+                                        <option
+                                            key={option.value}
+                                            value={option.value}
+                                            selected={
+                                                option.value ===
+                                                prefs.subtitleLanguage
+                                            }
+                                        >
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+
+                            <label class="settings-row">
                                 <span class="settings-label">
                                     Sort the list by
                                 </span>

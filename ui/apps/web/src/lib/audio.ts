@@ -265,7 +265,8 @@ const CHANNELS: Record<number, string> = {
     8: "7.1",
 };
 
-function languageName(code: string | null): string | null {
+/** A language code as a person reads it, in English: "eng" and "en-US" are both "English". */
+export function languageName(code: string | null): string | null {
     const key = languageKey(code);
     if (key === null) return null;
     try {

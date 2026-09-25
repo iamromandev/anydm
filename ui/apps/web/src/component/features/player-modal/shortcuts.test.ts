@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
     SEEK_LONG_S,
+    SHORTCUT_HINTS,
     SEEK_STEP_S,
     VOLUME_STEP,
     resolveShortcut,
@@ -48,6 +49,12 @@ describe("resolveShortcut", () => {
         expect(press("m")).toEqual({ type: "toggleMute" });
         expect(press("f")).toEqual({ type: "toggleFullscreen" });
         expect(press("Escape")).toEqual({ type: "escape" });
+    });
+
+    it("turns subtitles on or off with C, and lists it (#100)", () => {
+        expect(press("c")).toEqual({ type: "toggleSubtitles" });
+        expect(press("C")).toEqual({ type: "toggleSubtitles" });
+        expect(SHORTCUT_HINTS.map((hint) => hint.keys)).toContain("C");
     });
 
     it("offers the list of shortcuts on ?", () => {

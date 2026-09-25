@@ -1,6 +1,7 @@
 /** Start, and stop, an ephemeral on-demand HLS session for a site page, media URL or torrent. */
 
 import { type AudioTrack, normalizeAudioTracks } from "../audio";
+import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles";
 import { deleteApi, getApi, postApi } from "./client";
 
 export type StreamSession = {
@@ -12,6 +13,10 @@ export type StreamSession = {
     /** Empty until a torrent is probed: its arrive with the `ready` event (#99). */
     audioTracks: AudioTrack[];
     audioTrack: number | null;
+    /** A source's own subtitles, cut by the segment (#100); a torrent's come with `ready`. */
+    subtitleTracks: SubtitleTrack[];
+    /** Which segment's cues hold a time. */
+    segmentSeconds: number;
 };
 
 /** The audio a session should open with (#99): a named track, else the preferred language's. */
@@ -45,6 +50,7 @@ export type StreamStatusEvent = {
     /** On a torrent's `ready`, once it has been probed (#99). */
     audioTracks?: AudioTrack[];
     audioTrack?: number | null;
+    subtitleTracks?: SubtitleTrack[];
 };
 
 export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
@@ -62,6 +68,9 @@ export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
                   audioTrack: raw?.audio_track ?? null,
               }
             : {}),
+        ...(raw?.subtitle_tracks !== undefined
+            ? { subtitleTracks: normalizeSubtitleTracks(raw.subtitle_tracks) }
+            : {}),
     };
 }
 
@@ -76,6 +85,8 @@ export function normalizeStreamSession(raw: any): StreamSession {
             raw?.has_video ?? (raw?.status === "connecting" ? null : false),
         audioTracks: normalizeAudioTracks(raw?.audio_tracks),
         audioTrack: raw?.audio_track ?? null,
+        subtitleTracks: normalizeSubtitleTracks(raw?.subtitle_tracks),
+        segmentSeconds: raw?.segment_seconds ?? 6,
     };
 }
 
@@ -140,6 +151,8 @@ export type MediaInfo = {
     fileUrl: string;
     /** A browser plays the one marked default; any other takes a session (#99). */
     audioTracks: AudioTrack[];
+    /** Shown from each track whole, since there are no segments (#100). */
+    subtitleTracks: SubtitleTrack[];
 };
 
 export function normalizeMediaInfo(raw: any): MediaInfo {
@@ -152,6 +165,7 @@ export function normalizeMediaInfo(raw: any): MediaInfo {
         mediaType: raw?.media_type ?? null,
         fileUrl: raw?.file_url ?? "",
         audioTracks: normalizeAudioTracks(raw?.audio_tracks),
+        subtitleTracks: normalizeSubtitleTracks(raw?.subtitle_tracks),
     };
 }
 

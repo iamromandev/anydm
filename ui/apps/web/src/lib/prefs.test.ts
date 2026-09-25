@@ -57,6 +57,18 @@ describe("loadPrefs", () => {
         expect(loadPrefs(stub).audioLanguage).toBe("");
     });
 
+    it("remembers the subtitle language, off by default (#100)", () => {
+        expect(DEFAULT_PREFS.subtitleLanguage).toBe("");
+        savePrefs({ ...DEFAULT_PREFS, subtitleLanguage: "fr" }, stub);
+        expect(loadPrefs(stub).subtitleLanguage).toBe("fr");
+
+        stub.setItem(
+            "anydm.prefs",
+            JSON.stringify({ subtitleLanguage: "not a code!" }),
+        );
+        expect(loadPrefs(stub).subtitleLanguage).toBe("");
+    });
+
     it("survives a stored value that is not json at all", () => {
         stub.setItem("anydm.prefs", "{ this is not json");
 

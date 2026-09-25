@@ -35,6 +35,14 @@ import {
     pickAudioTrack,
     segmentAt,
 } from "@/lib/audio";
+import {
+    cueKey,
+    cueSegmentsAt,
+    parseVtt,
+    pickSubtitleTrack,
+    type SubtitleTrack,
+    subtitleToToggleOn,
+} from "@/lib/subtitles";
 import { defaultFileIndex, type PlayableFile } from "@/lib/media";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
@@ -72,6 +80,8 @@ export interface PlayerModalProps {
     onPositionSaved?: (taskId: string, position: PositionView) => void;
     /** The audio language to open with, from Settings; "" for the file's own (#99). */
     audioLanguage?: string;
+    /** The subtitle language to show from the start; "" for none (#100). */
+    subtitleLanguage?: string;
     onClose: () => void;
 }
 
@@ -87,6 +97,7 @@ export const PlayerModal = component$<PlayerModalProps>(
         positions,
         onPositionSaved,
         audioLanguage,
+        subtitleLanguage,
         onClose,
     }) => {
         const videoRef = useSignal<HTMLVideoElement>();
@@ -135,6 +146,15 @@ export const PlayerModal = component$<PlayerModalProps>(
             audioTracks: [] as AudioTrack[],
             audioTrack: null as number | null,
             audioPending: false,
+            // Subtitles (#100): the tracks, the one showing (`null` is off),
+            // the one C brings back, and where a file played as it is gets
+            // them whole. A session's come by the segment instead.
+            subtitleTracks: [] as SubtitleTrack[],
+            subtitleTrack: null as number | null,
+            lastSubtitle: null as number | null,
+            subtitleFileBase: "",
+            subtitleFileQuery: "",
+            segmentSeconds: 6,
         });
 
         useVisibleTask$(
@@ -192,6 +212,24 @@ export const PlayerModal = component$<PlayerModalProps>(
                 // next thing played, not to this one.
                 const preferred: StreamAudio = {
                     language: audioLanguage || null,
+                };
+                store.subtitleTracks = [];
+                store.subtitleTrack = null;
+                store.lastSubtitle = null;
+                store.subtitleFileBase = "";
+                store.subtitleFileQuery = "";
+                const preferredSubtitles = subtitleLanguage || null;
+                // The first time a source's tracks are known, the preference
+                // picks what shows; later lists (an audio switch) keep it.
+                let subtitlesOffered = false;
+                const offerSubtitles = (tracks: SubtitleTrack[]) => {
+                    store.subtitleTracks = tracks;
+                    if (subtitlesOffered || tracks.length === 0) return;
+                    subtitlesOffered = true;
+                    store.subtitleTrack = pickSubtitleTrack(
+                        tracks,
+                        preferredSubtitles,
+                    );
                 };
 
                 // Reassigned inside the try block below; declared here so `cleanup`
@@ -262,6 +300,12 @@ export const PlayerModal = component$<PlayerModalProps>(
                             store.audioTrack = pickAudioTrack(
                                 media.audioTracks,
                             );
+                            store.subtitleFileBase = `/download/${sourceTask}/subtitles`;
+                            store.subtitleFileQuery =
+                                media.fileIndex === null
+                                    ? ""
+                                    : `?file_index=${media.fileIndex}`;
+                            offerSubtitles(media.subtitleTracks);
                         } else {
                             session = await startTaskStream(
                                 sourceTask,
@@ -285,6 +329,8 @@ export const PlayerModal = component$<PlayerModalProps>(
                         store.hasVideo = session.hasVideo ?? true;
                         store.audioTracks = session.audioTracks;
                         store.audioTrack = session.audioTrack;
+                        store.segmentSeconds = session.segmentSeconds;
+                        offerSubtitles(session.subtitleTracks);
                         ready = session.status !== "connecting";
                     }
                     if (session && session.status === "connecting") {
@@ -341,6 +387,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                         store.audioTracks = data.audioTracks;
                                         store.audioTrack =
                                             data.audioTrack ?? null;
+                                    }
+                                    if (data.subtitleTracks !== undefined) {
+                                        offerSubtitles(data.subtitleTracks);
                                     }
                                     if (!resolved && data.status === "ready") {
                                         resolved = true;
@@ -581,6 +630,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                         store.streamStatus = taken.status;
                                         store.audioTracks = taken.audioTracks;
                                         store.audioTrack = taken.audioTrack;
+                                        store.segmentSeconds =
+                                            taken.segmentSeconds;
+                                        offerSubtitles(taken.subtitleTracks);
                                         if (wasPaused) {
                                             video.addEventListener(
                                                 "loadedmetadata",
@@ -819,6 +871,97 @@ export const PlayerModal = component$<PlayerModalProps>(
         });
 
         // From the audio menu (#99): the task above does the switch.
+        // From the subtitle menu (#100): the loader below follows the pick.
+        const handlePickSubtitle = $((index: number | null) => {
+            store.lastSubtitle = index ?? store.subtitleTrack;
+            store.subtitleTrack = index;
+        });
+
+        // Cues for the subtitle track showing (#100), added to one text track
+        // on the video at their own times. A session's come by the segment,
+        // the one playing and the next, as playback and seeks reach them; a
+        // file played as it is gets the track whole. A new pick, or a new
+        // session, starts from no cues.
+        useVisibleTask$(({ track, cleanup }) => {
+            const chosen = track(() => store.subtitleTrack);
+            const sessionId = track(() => store.sessionId);
+            const fileBase = track(() => store.subtitleFileBase);
+            const video = track(() => videoRef.value);
+            if (!video) return;
+
+            let cues: TextTrack | undefined;
+            for (const existing of Array.from(video.textTracks)) {
+                if (existing.label === "anydm") cues = existing;
+            }
+            cues ??= video.addTextTrack("subtitles", "anydm");
+            // Cues are only reachable while the track isn't disabled.
+            cues.mode = "hidden";
+            for (const cue of Array.from(cues.cues ?? [])) cues.removeCue(cue);
+            if (chosen === null || (!sessionId && !fileBase)) return;
+            cues.mode = "showing";
+            const showing = cues;
+
+            let closed = false;
+            cleanup(() => {
+                closed = true;
+            });
+            const seen = new Set<string>();
+            const add = (text: string) => {
+                if (closed) return;
+                for (const cue of parseVtt(text)) {
+                    const key = cueKey(cue);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    showing.addCue(new VTTCue(cue.start, cue.end, cue.text));
+                }
+            };
+            const get = async (path: string) => {
+                const response = await fetch(apiUrl(path), {
+                    headers: authHeaders(),
+                });
+                if (!response.ok) throw new Error(`status ${response.status}`);
+                return response.text();
+            };
+
+            if (!sessionId) {
+                get(`${fileBase}/${chosen}.vtt${store.subtitleFileQuery}`).then(
+                    add,
+                    () => {
+                        // Best-effort: the film plays on without them.
+                    },
+                );
+                return;
+            }
+
+            const requested = new Set<number>();
+            const load = () => {
+                const duration = Number.isFinite(video.duration)
+                    ? video.duration
+                    : store.duration;
+                for (const index of cueSegmentsAt(
+                    video.currentTime,
+                    store.segmentSeconds,
+                    duration,
+                )) {
+                    if (requested.has(index)) continue;
+                    requested.add(index);
+                    get(
+                        `/stream/${sessionId}/subtitles/${chosen}/segment_${index}.vtt`,
+                    ).then(add, () => {
+                        // Asked again a little later, not on every tick.
+                        setTimeout(() => requested.delete(index), 3000);
+                    });
+                }
+            };
+            video.addEventListener("timeupdate", load);
+            video.addEventListener("seeking", load);
+            load();
+            cleanup(() => {
+                video.removeEventListener("timeupdate", load);
+                video.removeEventListener("seeking", load);
+            });
+        });
+
         const handlePickAudio = $(async (track: number) => {
             await switchAudioRef.value?.(track);
         });
@@ -939,6 +1082,23 @@ export const PlayerModal = component$<PlayerModalProps>(
                 case "toggleFullscreen":
                     await handleToggleFullscreen();
                     return;
+                case "toggleSubtitles": {
+                    if (store.subtitleTrack !== null) {
+                        store.lastSubtitle = store.subtitleTrack;
+                        store.subtitleTrack = null;
+                        await flash("Subtitles off");
+                        return;
+                    }
+                    const next = subtitleToToggleOn(
+                        store.subtitleTracks,
+                        store.lastSubtitle,
+                        subtitleLanguage || null,
+                    );
+                    if (next === null) return;
+                    store.subtitleTrack = next;
+                    await flash("Subtitles on");
+                    return;
+                }
                 case "toggleHelp":
                     store.helpOpen = !store.helpOpen;
                     return;
@@ -1049,6 +1209,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 audioTrack={store.audioTrack}
                                 audioPending={store.audioPending}
                                 onPickAudio={handlePickAudio}
+                                subtitleTracks={store.subtitleTracks}
+                                subtitleTrack={store.subtitleTrack}
+                                onPickSubtitle={handlePickSubtitle}
                             />
                         )}
                     </div>

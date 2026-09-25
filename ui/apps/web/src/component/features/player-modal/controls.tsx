@@ -14,6 +14,7 @@ import {
 } from "./scrubber-progress";
 import { type AudioTrack, audioTrackLabel } from "@/lib/audio";
 import type { PlayableFile } from "@/lib/media";
+import { type SubtitleTrack, subtitleTrackLabel } from "@/lib/subtitles";
 import "./controls.css";
 
 export interface PlayerControlsProps {
@@ -41,6 +42,10 @@ export interface PlayerControlsProps {
     /** A switch is on its way: the old track plays until the new one is ready. */
     audioPending?: boolean;
     onPickAudio?: (index: number) => void;
+    /** The source's subtitle tracks (#100), and the one showing; `null` is off. */
+    subtitleTracks?: SubtitleTrack[];
+    subtitleTrack?: number | null;
+    onPickSubtitle?: (index: number | null) => void;
 }
 
 const PLAYBACK_RATES = [
@@ -74,6 +79,9 @@ export const PlayerControls = component$<PlayerControlsProps>(
         audioTrack,
         audioPending,
         onPickAudio,
+        subtitleTracks,
+        subtitleTrack,
+        onPickSubtitle,
     }) => {
         const trackRef = useSignal<HTMLDivElement>();
         const isDragging = useSignal(false);
@@ -279,6 +287,37 @@ export const PlayerControls = component$<PlayerControlsProps>(
                                     {audioPending && track.index === audioTrack
                                         ? "Switching…"
                                         : audioTrackLabel(track, audioTracks)}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
+                    {subtitleTracks && subtitleTracks.length > 0 && (
+                        <select
+                            class="player-controls-subtitles"
+                            value={String(subtitleTrack ?? "")}
+                            onChange$={(e: Event) => {
+                                const value = (e.target as HTMLSelectElement)
+                                    .value;
+                                onPickSubtitle?.(
+                                    value === "" ? null : Number(value),
+                                );
+                            }}
+                            aria-label="Subtitles"
+                        >
+                            {/* `selected` too, for the reason the speed menu
+                                gives below. */}
+                            <option value="" selected={subtitleTrack === null}>
+                                Subtitles off
+                            </option>
+                            {subtitleTracks.map((track) => (
+                                <option
+                                    key={track.index}
+                                    value={track.index}
+                                    disabled={!track.text}
+                                    selected={track.index === subtitleTrack}
+                                >
+                                    {subtitleTrackLabel(track, subtitleTracks)}
                                 </option>
                             ))}
                         </select>
