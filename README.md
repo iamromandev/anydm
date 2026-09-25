@@ -104,7 +104,7 @@ cp api/.env.example api/.env
 | `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every download. HTTP downloads and their segments draw from one limiter. An HLS or DASH download gets `DOWNLOAD_RATE_LIMIT_BPS ÷ DOWNLOAD_WORKERS` through yt-dlp, one fragment at a time, and what it reads is charged to that limiter, so HTTP downloads alongside make room. `0` is unlimited |
 | `TORRENT_ENABLED` | `true` | Torrent routes and the monitor. Off, torrent routes answer 503 and nothing polls |
 | `TORRENT_API_URL` | `http://torrent-anydm-api:3030` | rqbit's control API. `http://127.0.0.1:8031` when running the API on the host |
-| `TORRENT_DIR` | `./download/torrent` | Where rqbit writes, under `DOWNLOAD_DIR` |
+| `TORRENT_DIR` | `./download/torrent` | Where rqbit writes, under `DOWNLOAD_DIR`: one folder per torrent, named after it |
 | `TORRENT_POLL_MS` | `1000` | How often the monitor samples the engine (min 250) |
 | `TORRENT_METADATA_TIMEOUT_S` | `30` | How long resolving waits for peers to supply metadata |
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
@@ -153,7 +153,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/summary` — how many tasks each sidebar filter holds, counted in the database
     - `GET /download/events` — SSE task and progress stream
     - `GET /download/{task_id}` — one task
-    - `GET /download/{task_id}/file` — serve the finished file
+    - `GET /download/{task_id}/file` — serve the finished file; for a torrent, its one selected file (409 when it has several)
     - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
     - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise
     - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
