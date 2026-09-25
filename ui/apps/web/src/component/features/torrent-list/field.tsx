@@ -21,6 +21,8 @@ export interface TorrentListProps {
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onDownloadFile: (id: string, fileIndex?: number) => void;
+    /** Play a finished download (#94). */
+    onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
 }
@@ -45,6 +47,7 @@ export const TorrentList = component$<TorrentListProps>(
         onPause,
         onResume,
         onDownloadFile,
+        onPlay,
         onRemove,
         onStopSeeding,
     }) => {
@@ -140,6 +143,7 @@ export const TorrentList = component$<TorrentListProps>(
                                 onPause={onPause}
                                 onResume={onResume}
                                 onDownloadFile={onDownloadFile}
+                                onPlay={onPlay}
                                 onRemove={onRemove}
                                 onStopSeeding={onStopSeeding}
                             />

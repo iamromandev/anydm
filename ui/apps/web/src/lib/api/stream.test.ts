@@ -2,10 +2,75 @@ import { describe, expect, it } from "bun:test";
 
 import {
     buildStreamStartBody,
+    buildTaskStreamBody,
+    choosePlayback,
     isTorrentKind,
+    nativeFailed,
+    normalizeMediaInfo,
     normalizeStreamSession,
     normalizeStreamStatusEvent,
 } from "./stream";
+
+describe("playing a finished download (#94)", () => {
+    const media = normalizeMediaInfo({
+        filename: "Movie.mp4",
+        duration_seconds: 30,
+        has_video: true,
+        media_type: 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+        file_url: "/download/t1/file",
+    });
+
+    it("maps the media route onto the UI shape, a missing index and type as null", () => {
+        expect(media).toEqual({
+            fileIndex: null,
+            filename: "Movie.mp4",
+            durationSeconds: 30,
+            hasVideo: true,
+            mediaType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+            fileUrl: "/download/t1/file",
+        });
+        expect(
+            normalizeMediaInfo({ file_index: 3, file_url: "/x" }).mediaType,
+        ).toBeNull();
+        expect(normalizeMediaInfo({ file_index: 3 }).fileIndex).toBe(3);
+    });
+
+    it("plays the file itself when the browser says it can", () => {
+        expect(choosePlayback(media, () => "probably")).toBe("native");
+        expect(choosePlayback(media, () => "maybe")).toBe("native");
+    });
+
+    it("plays through a session when the browser can't, or there's no type to ask about", () => {
+        expect(choosePlayback(media, () => "")).toBe("session");
+        expect(
+            choosePlayback({ ...media, mediaType: null }, () => "probably"),
+        ).toBe("session");
+    });
+
+    it("gives up on the file when it errors, or shows no picture it should have", () => {
+        expect(
+            nativeFailed({ errored: true, hasVideo: false, videoWidth: 0 }),
+        ).toBe(true);
+        // WebKit says "probably" to VP9 and then draws nothing (#93).
+        expect(
+            nativeFailed({ errored: false, hasVideo: true, videoWidth: 0 }),
+        ).toBe(true);
+        expect(
+            nativeFailed({ errored: false, hasVideo: true, videoWidth: 640 }),
+        ).toBe(false);
+        expect(
+            nativeFailed({ errored: false, hasVideo: false, videoWidth: 0 }),
+        ).toBe(false);
+    });
+
+    it("starts a session from a task, with a torrent's file when there is one", () => {
+        expect(buildTaskStreamBody("t1", null)).toEqual({ task_id: "t1" });
+        expect(buildTaskStreamBody("t1", 4)).toEqual({
+            task_id: "t1",
+            file_index: 4,
+        });
+    });
+});
 
 describe("normalizeStreamSession", () => {
     it("maps snake_case onto the UI shape", () => {

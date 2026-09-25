@@ -9,6 +9,7 @@ import {
     canResume,
     canStopSeeding,
     canDownloadTorrentFile,
+    canPlayTask,
     downloadAction,
     isActive,
     isSeeding,
@@ -847,6 +848,70 @@ describe("settlePage", () => {
         expect(settled.map((t) => t.id)).toEqual([
             "a",
         ]);
+    });
+});
+
+describe("playing a finished task (#94)", () => {
+    const file = (path: string, selected = true) => ({
+        index: 0,
+        path,
+        sizeBytes: 10,
+        selected,
+        downloadedBytes: 10,
+    });
+
+    it("plays a finished video or audio download", () => {
+        expect(canPlayTask({ status: "complete", kind: "video" })).toBe(true);
+        expect(canPlayTask({ status: "complete", kind: "audio" })).toBe(true);
+    });
+
+    it("waits for it to finish", () => {
+        expect(canPlayTask({ status: "downloading", kind: "video" })).toBe(
+            false,
+        );
+    });
+
+    it("plays a direct download only when it's a media file", () => {
+        expect(
+            canPlayTask({
+                status: "complete",
+                kind: "file",
+                filename: "a.MKV",
+            }),
+        ).toBe(true);
+        expect(
+            canPlayTask({
+                status: "complete",
+                kind: "file",
+                filename: "a.zip",
+            }),
+        ).toBe(false);
+    });
+
+    it("plays a torrent with a selected media file, seeding included", () => {
+        expect(
+            canPlayTask({
+                status: "seeding",
+                kind: "torrent",
+                files: [
+                    file("Movie.mkv"),
+                    file("readme.txt"),
+                ],
+            }),
+        ).toBe(true);
+        expect(
+            canPlayTask({
+                status: "complete",
+                kind: "torrent",
+                files: [
+                    file("Movie.mkv", false),
+                    file("readme.txt"),
+                ],
+            }),
+        ).toBe(false);
+        expect(canPlayTask({ status: "complete", kind: "torrent" })).toBe(
+            false,
+        );
     });
 });
 
