@@ -236,6 +236,26 @@ class DownloadService(BaseService):
 
         return path, task.filename, task.mime_type or "application/octet-stream"
 
+    async def resolve_media_file(
+        self, task_id: uuid.UUID, file_index: int | None
+    ) -> tuple[Path, str, int | None]:
+        """The file Play reads from disk, and its index in a torrent (#94).
+
+        A download's own file, or one of a torrent's: the one asked for, else
+        its largest selected media file. The same checks as ``resolve_file``
+        apply, so nothing unfinished, missing or outside its folder is played.
+        """
+        task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            if file_index is None:
+                file_index = await self._torrents.media_file_index(task_id)
+            path, filename, _ = await self._torrents.resolve_file(task_id, file_index)
+            return path, filename, file_index
+        if file_index is not None:
+            raise Error.not_found(message="Only a torrent has files by index")
+        path, filename, _ = await self.resolve_file(task_id)
+        return path, filename, None
+
     async def pause(self, task_id: uuid.UUID) -> TaskSchema:
         """Signal a running transfer to stop between chunks, keeping the ``.part``.
 

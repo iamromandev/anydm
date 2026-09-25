@@ -9,10 +9,17 @@ import { LuX } from "@/component/core/icons";
 import {
     apiUrl,
     authHeaders,
+    choosePlayback,
+    fetchMediaInfo,
     isTorrentKind,
+    NATIVE_LOAD_TIMEOUT_MS,
+    nativeFailed,
     normalizeStreamStatusEvent,
     startStream,
+    startTaskStream,
     stopStream,
+    type MediaInfo,
+    type StreamSession,
 } from "@/lib/api";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
@@ -27,13 +34,21 @@ import "./field.css";
 
 export interface PlayerModalProps {
     open: boolean;
+    /** A link to play, and what kind of link it is. */
     url: string;
     kind: string;
+    /**
+     * Or a finished download to play instead of a link (#94): its file itself
+     * when the browser can play it, else a session reading it from disk.
+     */
+    taskId?: string;
+    /** Which of a torrent's files; its largest media file when absent. */
+    fileIndex?: number | null;
     onClose: () => void;
 }
 
 export const PlayerModal = component$<PlayerModalProps>(
-    ({ open, url, kind, onClose }) => {
+    ({ open, url, kind, taskId, fileIndex, onClose }) => {
         const videoRef = useSignal<HTMLVideoElement>();
         const panelRef = useSignal<HTMLDivElement>();
         const store = useStore({
@@ -69,8 +84,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const isOpen = track(() => open);
                 const sourceUrl = track(() => url);
                 const sourceKind = track(() => kind);
+                const sourceTask = track(() => taskId) ?? "";
+                const sourceFileIndex = track(() => fileIndex) ?? null;
 
-                if (!isOpen || !sourceUrl) {
+                if (!isOpen || (!sourceUrl && !sourceTask)) {
                     return;
                 }
 
@@ -83,7 +100,8 @@ export const PlayerModal = component$<PlayerModalProps>(
                 // POST /stream/start can take a while (metadata resolve),
                 // and the HUD needs to be up for that whole wait, not just
                 // after it resolves.
-                store.isTorrent = isTorrentKind(sourceKind);
+                // A finished torrent plays from disk: there's no swarm to show.
+                store.isTorrent = !sourceTask && isTorrentKind(sourceKind);
                 store.peersConnected = 0;
                 store.downloadBps = 0;
                 store.progressBytes = 0;
@@ -124,13 +142,42 @@ export const PlayerModal = component$<PlayerModalProps>(
                 });
 
                 try {
-                    const session = await startStream(sourceUrl, sourceKind);
-                    store.sessionId = session.sessionId;
-                    store.streamStatus = session.status;
-                    store.hasVideo = session.hasVideo ?? true;
+                    // A finished download plays its file itself when the
+                    // browser says it can; everything else is a session.
+                    let native: MediaInfo | null = null;
+                    let session: StreamSession | null = null;
+                    if (sourceTask) {
+                        const media = await fetchMediaInfo(
+                            sourceTask,
+                            sourceFileIndex,
+                        );
+                        store.hasVideo = media.hasVideo;
+                        const probe = document.createElement("video");
+                        if (
+                            choosePlayback(media, (type) =>
+                                probe.canPlayType(type),
+                            ) === "native"
+                        ) {
+                            native = media;
+                        } else {
+                            session = await startTaskStream(
+                                sourceTask,
+                                media.fileIndex,
+                            );
+                        }
+                    } else {
+                        session = await startStream(sourceUrl, sourceKind);
+                    }
 
-                    let ready = session.status !== "connecting";
-                    if (session.status === "connecting") {
+                    let ready = true;
+                    if (session) {
+                        store.sessionId = session.sessionId;
+                        store.streamStatus = session.status;
+                        store.hasVideo = session.hasVideo ?? true;
+                        ready = session.status !== "connecting";
+                    }
+                    if (session && session.status === "connecting") {
+                        const connecting = session;
                         // A torrent-backed session comes back before ffprobe
                         // has run — the backend probes in the background and
                         // pushes live swarm status here until it's ready (or
@@ -153,7 +200,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                             (event as MessageEvent).data,
                                         ),
                                     );
-                                    if (data.id !== session.sessionId) {
+                                    if (data.id !== connecting.sessionId) {
                                         return;
                                     }
                                     if (data.status === "error") {
@@ -278,45 +325,164 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     video.removeEventListener(type, handler);
                                 }
                             });
-                            // hls.js first: Chromium's canPlayType("application/vnd.apple.mpegurl")
-                            // reports "maybe" even though Chrome has no real native
-                            // HLS support, which let this decode a simple mono test
-                            // tone by luck and then fail outright on a real movie's
-                            // stereo AAC audio. Hls.isSupported() (real MSE
-                            // availability) is the reliable signal; native <video src>
-                            // is the fallback for the few browsers without it (Safari).
-                            const { default: Hls } = await import("hls.js");
-                            if (Hls.isSupported()) {
-                                // hls.js makes its own requests, so it can
-                                // send the key as a header and keep it out of
-                                // every playlist and segment URL.
-                                const headers = authHeaders();
-                                hls = new Hls({
-                                    xhrSetup: (xhr) => {
-                                        for (const [
-                                            name,
-                                            value,
-                                        ] of Object.entries(headers)) {
-                                            xhr.setRequestHeader(name, value);
+                            const attach = async (playing: StreamSession) => {
+                                // hls.js first: Chromium's canPlayType("application/vnd.apple.mpegurl")
+                                // reports "maybe" even though Chrome has no real native
+                                // HLS support, which let this decode a simple mono test
+                                // tone by luck and then fail outright on a real movie's
+                                // stereo AAC audio. Hls.isSupported() (real MSE
+                                // availability) is the reliable signal; native <video src>
+                                // is the fallback for the few browsers without it (Safari).
+                                const { default: Hls } = await import("hls.js");
+                                if (Hls.isSupported()) {
+                                    // hls.js makes its own requests, so it can
+                                    // send the key as a header and keep it out of
+                                    // every playlist and segment URL.
+                                    const headers = authHeaders();
+                                    hls = new Hls({
+                                        xhrSetup: (xhr) => {
+                                            for (const [
+                                                name,
+                                                value,
+                                            ] of Object.entries(headers)) {
+                                                xhr.setRequestHeader(
+                                                    name,
+                                                    value,
+                                                );
+                                            }
+                                        },
+                                    });
+                                    hls.loadSource(apiUrl(playing.playlistUrl));
+                                    hls.attachMedia(video);
+                                } else if (
+                                    video.canPlayType(
+                                        "application/vnd.apple.mpegurl",
+                                    )
+                                ) {
+                                    // Native playback fetches for itself and cannot
+                                    // add a header. The API hands a key found here
+                                    // on to every segment URI in the playlist.
+                                    video.src = apiUrl(playing.playlistUrl, {
+                                        withKey: true,
+                                    });
+                                } else {
+                                    store.error =
+                                        "This browser cannot play HLS streams.";
+                                }
+                            };
+
+                            if (native) {
+                                const media = native;
+                                // If the file won't play after all, a session
+                                // from disk takes over where it stopped (#93).
+                                let fellBack = false;
+                                const fallBack = async () => {
+                                    if (fellBack) return;
+                                    fellBack = true;
+                                    const resumeAt = video.currentTime;
+                                    video.removeAttribute("src");
+                                    video.load();
+                                    try {
+                                        const taken = await startTaskStream(
+                                            sourceTask,
+                                            media.fileIndex,
+                                        );
+                                        store.sessionId = taken.sessionId;
+                                        store.streamStatus = taken.status;
+                                        if (resumeAt > 0) {
+                                            video.addEventListener(
+                                                "loadedmetadata",
+                                                () => {
+                                                    video.currentTime =
+                                                        resumeAt;
+                                                },
+                                                { once: true },
+                                            );
                                         }
-                                    },
+                                        await attach(taken);
+                                    } catch (err) {
+                                        store.error =
+                                            err instanceof Error
+                                                ? err.message
+                                                : "Failed to start the stream";
+                                    }
+                                };
+                                const onError = () => {
+                                    if (
+                                        nativeFailed({
+                                            errored: true,
+                                            hasVideo: media.hasVideo,
+                                            videoWidth: video.videoWidth,
+                                        })
+                                    ) {
+                                        void fallBack();
+                                    }
+                                };
+                                const onLoaded = () => {
+                                    if (
+                                        nativeFailed({
+                                            errored: false,
+                                            hasVideo: media.hasVideo,
+                                            videoWidth: video.videoWidth,
+                                        })
+                                    ) {
+                                        void fallBack();
+                                    }
+                                };
+                                // A file that never loads at all, which WebKit
+                                // does with VP9 in WebM, fires neither event.
+                                let stallTimer: ReturnType<
+                                    typeof setTimeout
+                                > | null = null;
+                                const settle = () => {
+                                    if (stallTimer !== null) {
+                                        clearTimeout(stallTimer);
+                                        stallTimer = null;
+                                    }
+                                };
+                                const onStalled = () => {
+                                    stallTimer = null;
+                                    if (
+                                        video.readyState <
+                                            HTMLMediaElement.HAVE_CURRENT_DATA &&
+                                        nativeFailed({
+                                            errored: false,
+                                            hasVideo: media.hasVideo,
+                                            videoWidth: video.videoWidth,
+                                            stalled: true,
+                                        })
+                                    ) {
+                                        void fallBack();
+                                    }
+                                };
+                                video.addEventListener("error", settle);
+                                video.addEventListener("loadeddata", settle);
+                                video.addEventListener("error", onError);
+                                video.addEventListener("loadeddata", onLoaded);
+                                cleanup(() => {
+                                    settle();
+                                    video.removeEventListener("error", settle);
+                                    video.removeEventListener(
+                                        "loadeddata",
+                                        settle,
+                                    );
+                                    video.removeEventListener("error", onError);
+                                    video.removeEventListener(
+                                        "loadeddata",
+                                        onLoaded,
+                                    );
                                 });
-                                hls.loadSource(apiUrl(session.playlistUrl));
-                                hls.attachMedia(video);
-                            } else if (
-                                video.canPlayType(
-                                    "application/vnd.apple.mpegurl",
-                                )
-                            ) {
-                                // Native playback fetches for itself and cannot
-                                // add a header. The API hands a key found here
-                                // on to every segment URI in the playlist.
-                                video.src = apiUrl(session.playlistUrl, {
+                                // The browser fetches the file itself, with
+                                // Range, so the key goes in the URL.
+                                video.src = apiUrl(media.fileUrl, {
                                     withKey: true,
                                 });
-                            } else {
-                                store.error =
-                                    "This browser cannot play HLS streams.";
+                                stallTimer = setTimeout(
+                                    onStalled,
+                                    NATIVE_LOAD_TIMEOUT_MS,
+                                );
+                            } else if (session) {
+                                await attach(session);
                             }
                         }
                     }

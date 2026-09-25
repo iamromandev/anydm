@@ -24,6 +24,7 @@ from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
 from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist, sub_playlist
+from src.lib.media.media_type import media_type
 from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
@@ -47,7 +48,25 @@ Encoder = Callable[[list[str]], Awaitable[None]]
 #: read from in the end, which its relative URIs resolve against, and its text.
 PlaylistFetcher = Callable[[str, Mapping[str, str]], Awaitable[tuple[str, str]]]
 
+#: A finished task's file on disk, by task and torrent file index: its path,
+#: its name, and the index it turned out to be. ``DownloadService`` owns the
+#: rules (finished, present, inside its folder), so a path never comes from a
+#: client.
+TaskFiles = Callable[[uuid.UUID, int | None], Awaitable[tuple[Path, str, int | None]]]
+
 _PLAYLIST_TIMEOUT_S = 20.0
+
+
+@dataclass(frozen=True, slots=True)
+class MediaInfo:
+    """What the player needs to choose between the file itself and a session (#94)."""
+
+    file_index: int | None
+    filename: str
+    duration_seconds: float
+    has_video: bool
+    #: For ``canPlayType``. ``None`` when no browser plays it from a file.
+    media_type: str | None
 
 
 async def fetch_playlist(
@@ -113,6 +132,7 @@ class StreamService(BaseService):
         progress_poll_s: float = 1.0,
         site_client: SiteClient | None = None,
         playlist_fetcher: PlaylistFetcher = fetch_playlist,
+        task_files: TaskFiles | None = None,
     ) -> None:
         super().__init__()
         self._sessions = sessions
@@ -133,6 +153,61 @@ class StreamService(BaseService):
         self._progress_poll_s = progress_poll_s
         self._site_client = site_client
         self._playlist_fetcher = playlist_fetcher
+        self._task_files = task_files
+
+    async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
+        """Probe a finished task's file for what the player needs to pick how to play it."""
+        path, filename, index = await self._task_file(task_id, file_index)
+        result = await self._prober(self._ffprobe_path, str(path))
+        return MediaInfo(
+            file_index=index,
+            filename=filename,
+            duration_seconds=result.duration_seconds,
+            has_video=result.has_video,
+            media_type=media_type(result.container, result.video_codec, result.audio_codec),
+        )
+
+    async def start_task_session(self, task_id: uuid.UUID, file_index: int | None) -> StreamSession:
+        """Play a finished task's file through a session, read from disk (#94).
+
+        For what the browser can't play itself: the file is probed and cut
+        like any other source, but it is never fetched again.
+        """
+        path, _filename, _index = await self._task_file(task_id, file_index)
+        source = MediaInput(str(path))
+        result = await self._prober(self._ffprobe_path, source.url)
+        return self._new_session([source], result.duration_seconds, result.has_video)
+
+    async def _task_file(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
+        if self._task_files is None:
+            raise Error.service_unavailable("Playing downloads is not configured")
+        return await self._task_files(task_id, file_index)
+
+    def _new_session(
+        self,
+        inputs: list[MediaInput],
+        duration: float,
+        has_video: bool,
+        *,
+        origin: SiteOrigin | None = None,
+        playlists: list[MediaPlaylist] | None = None,
+    ) -> StreamSession:
+        session_id = uuid.uuid4().hex
+        session_dir = self._stream_dir / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session = StreamSession(
+            id=session_id,
+            inputs=inputs,
+            duration_seconds=duration,
+            has_video=has_video,
+            segment_seconds=self._segment_seconds,
+            session_dir=session_dir,
+            encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
+            origin=origin,
+            playlists=playlists or [],
+        )
+        self._sessions.add(session)
+        return session
 
     async def start_session(self, url: str) -> StreamSession:
         """Play ``url``: a page on a site, or a media file as it is.
@@ -152,22 +227,13 @@ class StreamService(BaseService):
             first = inputs[0]
             result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
             duration, has_video = result.duration_seconds, result.has_video
-        session_id = uuid.uuid4().hex
-        session_dir = self._stream_dir / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        session = StreamSession(
-            id=session_id,
-            inputs=inputs,
-            duration_seconds=duration,
-            has_video=has_video,
-            segment_seconds=self._segment_seconds,
-            session_dir=session_dir,
-            encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
+        return self._new_session(
+            inputs,
+            duration,
+            has_video,
             origin=page.origin if page is not None else None,
             playlists=playlists,
         )
-        self._sessions.add(session)
-        return session
 
     async def _open_page(self, url: str) -> _Page | None:
         """What a page's site offers for playback, or ``None`` for a plain file."""

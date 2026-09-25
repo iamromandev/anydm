@@ -25,12 +25,15 @@ async def start_stream(
     payload: StreamStartRequest,
     stream_service: Annotated[StreamService, Depends(get_stream_service)],
 ) -> Response:
-    if payload.torrent:
+    # The request allows exactly one of the three (``StreamStartRequest``).
+    if payload.task_id is not None:
+        session = await stream_service.start_task_session(payload.task_id, payload.file_index)
+    elif payload.torrent:
         session = await stream_service.start_torrent_session(payload.torrent.strip())
     elif payload.url:
         session = await stream_service.start_session(payload.url.strip())
     else:
-        raise Error.bad_request("Provide either url or torrent")
+        raise Error.bad_request("Provide exactly one of url, torrent or task_id")
     schema = StreamSessionSchema(
         session_id=session.id,
         playlist_url=f"/stream/{session.id}/playlist.m3u8",

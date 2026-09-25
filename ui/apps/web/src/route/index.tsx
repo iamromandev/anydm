@@ -105,6 +105,8 @@ export default component$(() => {
         playerModalOpen: false as boolean,
         playerUrl: "" as string,
         playerKind: "" as string,
+        playerTaskId: "" as string,
+        playerFileIndex: null as number | null,
         // A count of stream writes, and the count at each task's latest one:
         // what lets a page fetch tell which rows went stale while it was out.
         // Only ids the stream has written are here, so it grows with the
@@ -647,8 +649,19 @@ export default component$(() => {
     });
 
     const handlePlayClick = $((value: string, kind: string) => {
+        store.playerTaskId = "";
+        store.playerFileIndex = null;
         store.playerUrl = value;
         store.playerKind = kind;
+        store.playerModalOpen = true;
+    });
+
+    // A finished download, played from its file rather than its source (#94).
+    const handlePlayTask = $((taskId: string) => {
+        store.playerUrl = "";
+        store.playerKind = "";
+        store.playerFileIndex = null;
+        store.playerTaskId = taskId;
         store.playerModalOpen = true;
     });
 
@@ -750,11 +763,14 @@ export default component$(() => {
             playerModalOpen={store.playerModalOpen}
             playerUrl={store.playerUrl}
             playerKind={store.playerKind}
+            playerTaskId={store.playerTaskId}
+            playerFileIndex={store.playerFileIndex}
             onPlayClick={handlePlayClick}
             onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}
             onResume={handleResume}
             onDownloadFile={handleDownloadFile}
+            onPlay={handlePlayTask}
             onRemove={handleRemove}
             removing={store.removing}
             onRemoveCancel={handleRemoveCancel}

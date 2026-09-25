@@ -127,6 +127,12 @@ class FakeTorrentService:
         self.only_files.append(task_id)
         return Path("/t/video.mkv"), "video.mkv", "video/x-matroska"
 
+    async def resolve_file(self, task_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
+        return Path(f"/t/file{index}.mkv"), f"file{index}.mkv", "video/x-matroska"
+
+    async def media_file_index(self, task_id: uuid.UUID) -> int:
+        return 7
+
     async def pause(self, task_id: uuid.UUID) -> Any:
         self.paused.append(task_id)
         return type("Row", (), {"status": TaskStatus.PAUSED})()
@@ -814,6 +820,38 @@ async def test_an_unknown_bulk_action_is_refused(tmp_path: Path) -> None:
         await service.bulk("delete_everything")
 
     assert caught.value.code == 400
+
+
+@pytest.mark.asyncio
+async def test_the_media_file_of_a_download_is_its_file(tmp_path: Path) -> None:
+    """What Play on a finished card reads from disk (#94)."""
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    (tmp_path / "clip.mp4").write_bytes(b"x")
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE, file_path="clip.mp4")
+
+    assert await service.resolve_media_file(task_id, None) == (tmp_path / "clip.mp4", "clip.mp4", None)
+
+
+@pytest.mark.asyncio
+async def test_a_download_has_no_file_at_an_index(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE, file_path="clip.mp4")
+
+    with pytest.raises(Error) as caught:
+        await service.resolve_media_file(task_id, 2)
+    assert caught.value.code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_media_file_of_a_torrent_is_the_one_asked_for_or_its_largest() -> None:
+    service, repo, _ = _service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, kind=Kind.TORRENT, status=TaskStatus.SEEDING)
+
+    assert await service.resolve_media_file(task_id, 3) == (Path("/t/file3.mkv"), "file3.mkv", 3)
+    assert await service.resolve_media_file(task_id, None) == (Path("/t/file7.mkv"), "file7.mkv", 7)
 
 
 def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:

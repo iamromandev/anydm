@@ -7,6 +7,8 @@
  * exception in the middle of a render.
  */
 
+import { hasMediaExtension } from "../media";
+
 export type TaskStatus =
     | "pending"
     | "downloading"
@@ -271,6 +273,23 @@ export function downloadAction(
     if (!isFinished(task.status)) return "none";
     const selected = (task.files ?? []).filter((file) => file.selected);
     return selected.length > 1 ? "choose" : "file";
+}
+
+/**
+ * Whether a finished task's card offers Play (#94): a video or audio
+ * download, a direct download of a media file, or a torrent downloading one.
+ */
+export function canPlayTask(
+    task: Pick<UiTask, "status" | "kind" | "filename" | "files">,
+): boolean {
+    if (!isFinished(task.status)) return false;
+    if (task.kind === "video" || task.kind === "audio") return true;
+    if (task.kind === "torrent") {
+        return (task.files ?? []).some(
+            (file) => file.selected && hasMediaExtension(file.path),
+        );
+    }
+    return hasMediaExtension(task.filename ?? "");
 }
 
 /** Whether a torrent's file row gets its own download link. */

@@ -62,6 +62,9 @@ export interface AppShellProps {
     playerModalOpen: boolean;
     playerUrl: string;
     playerKind: string;
+    /** A finished download to play instead of a link, and a torrent's file. */
+    playerTaskId: string;
+    playerFileIndex: number | null;
     onPlayClick: (value: string, kind: string) => void;
     onPlayerModalClose: () => void;
     onSidebarToggle: () => void;
@@ -73,6 +76,8 @@ export interface AppShellProps {
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onDownloadFile: (id: string, fileIndex?: number) => void;
+    /** Play a finished download (#94). */
+    onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     removing: { id: string; title: string; status: string } | null;
     onRemoveCancel: () => void;
@@ -127,6 +132,8 @@ export const AppShell = component$<AppShellProps>(
         playerModalOpen,
         playerUrl,
         playerKind,
+        playerTaskId,
+        playerFileIndex,
         onPlayClick,
         onPlayerModalClose,
         onSidebarToggle,
@@ -138,6 +145,7 @@ export const AppShell = component$<AppShellProps>(
         onPause,
         onResume,
         onDownloadFile,
+        onPlay,
         onRemove,
         removing,
         onRemoveCancel,
@@ -246,6 +254,7 @@ export const AppShell = component$<AppShellProps>(
                                 onPause={onPause}
                                 onResume={onResume}
                                 onDownloadFile={onDownloadFile}
+                                onPlay={onPlay}
                                 onRemove={onRemove}
                                 onStopSeeding={onStopSeeding}
                             />
@@ -303,6 +312,8 @@ export const AppShell = component$<AppShellProps>(
                     open={playerModalOpen}
                     url={playerUrl}
                     kind={playerKind}
+                    taskId={playerTaskId}
+                    fileIndex={playerFileIndex}
                     onClose={onPlayerModalClose}
                 />
             </div>

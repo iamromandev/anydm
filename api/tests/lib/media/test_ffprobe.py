@@ -85,3 +85,44 @@ def test_parse_probe_output_raises_on_malformed_json() -> None:
 def test_parse_probe_output_raises_when_duration_is_missing() -> None:
     with pytest.raises(Error):
         parse_probe_output(json.dumps({"format": {}, "streams": []}))
+
+
+def test_parse_probe_output_reads_the_container_and_codecs() -> None:
+    """What decides whether a browser can play the file itself (#94)."""
+    raw = json.dumps({
+        "format": {"duration": "20.0", "format_name": "matroska,webm"},
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "audio", "codec_name": "aac", "disposition": {"default": 0}},
+            {"codec_type": "audio", "codec_name": "ac3", "disposition": {"default": 1}},
+            {"codec_type": "subtitle", "codec_name": "subrip"},
+        ],
+    })
+    result = parse_probe_output(raw)
+    assert result.container == "matroska,webm"
+    assert result.video_codec == "h264"
+    # The track a player opens with: the one flagged default, not the first.
+    assert result.audio_codec == "ac3"
+
+
+def test_parse_probe_output_takes_the_first_audio_track_when_none_is_default() -> None:
+    raw = json.dumps({
+        "format": {"duration": "20.0", "format_name": "mp3"},
+        "streams": [{"codec_type": "audio", "codec_name": "mp3"}, {"codec_type": "audio", "codec_name": "aac"}],
+    })
+    result = parse_probe_output(raw)
+    assert (result.video_codec, result.audio_codec) == (None, "mp3")
+
+
+def test_parse_probe_output_ignores_a_cover_picture() -> None:
+    """An MP3's or M4A's cover art is a one-frame video stream, not a picture to play."""
+    raw = json.dumps({
+        "format": {"duration": "200.0", "format_name": "mp3"},
+        "streams": [
+            {"codec_type": "audio", "codec_name": "mp3"},
+            {"codec_type": "video", "codec_name": "mjpeg", "disposition": {"attached_pic": 1}},
+        ],
+    })
+    result = parse_probe_output(raw)
+    assert result.has_video is False
+    assert result.video_codec is None

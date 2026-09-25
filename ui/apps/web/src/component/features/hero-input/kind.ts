@@ -1,22 +1,7 @@
+import { MEDIA_EXTENSIONS } from "@/lib/media";
+
 export type InputKind =
     "auto" | "magnet" | "site" | "url" | "torrent" | "media";
-
-const MEDIA_EXTENSIONS = [
-    ".mp4",
-    ".mkv",
-    ".webm",
-    ".avi",
-    ".mov",
-    ".wmv",
-    ".flv",
-    ".m4v",
-    ".mp3",
-    ".flac",
-    ".wav",
-    ".m4a",
-    ".aac",
-    ".ogg",
-];
 
 /**
  * Extensions a page is served under. A link ending in anything else names a

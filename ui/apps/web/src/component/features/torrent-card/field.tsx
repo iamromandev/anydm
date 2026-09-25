@@ -25,6 +25,7 @@ import {
     canResume,
     canStopSeeding,
     canDownloadTorrentFile,
+    canPlayTask,
     downloadAction,
     isActive,
     retryLabel,
@@ -48,6 +49,8 @@ export interface TorrentCardProps {
     onResume: (id: string) => void;
     /** Without an index, the task's one file; with one, that file of a torrent. */
     onDownloadFile: (id: string, fileIndex?: number) => void;
+    /** Play a finished download (#94). */
+    onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
     /** Whether this card is the one showing its details. */
@@ -126,6 +129,7 @@ export const TorrentCard = component$<TorrentCardProps>(
         onPause,
         onResume,
         onDownloadFile,
+        onPlay,
         onRemove,
         onStopSeeding,
         expanded,
@@ -412,6 +416,21 @@ export const TorrentCard = component$<TorrentCardProps>(
                                     aria-hidden="true"
                                 />
                             )}
+                        </button>
+                    )}
+
+                    {canPlayTask(task) && (
+                        <button
+                            type="button"
+                            class="action-btn action-btn--primary"
+                            aria-label="Play"
+                            onClick$={() => onPlay(task.id)}
+                        >
+                            <LuMonitorPlay
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
                         </button>
                     )}
 

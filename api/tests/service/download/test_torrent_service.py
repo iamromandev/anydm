@@ -655,3 +655,34 @@ async def test_resolve_only_file_asks_for_one_at_a_time_when_there_are_several(t
 
     assert caught.value.code == Code.CONFLICT
     assert caught.value.message == "This torrent has 2 files; download them one at a time"
+
+
+@pytest.mark.asyncio
+async def test_the_file_to_play_is_the_largest_selected_media_file() -> None:
+    """What Play on a torrent's card opens until #98 lets you choose (#94)."""
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING)
+    files = FakeFileRepo()
+    files.rows = [
+        _file(0, "Sample.mkv", size=50),
+        _file(1, "Movie.mkv", size=900),
+        _file(2, "Extras.mkv", size=5000, selected=False),
+        _file(3, "Movie.iso", size=9000),
+        _file(4, "Movie.en.srt", size=10),
+    ]
+
+    assert await _service(repo=repo, file_repo=files).media_file_index(task_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_with_no_selected_media_has_nothing_to_play() -> None:
+    task_id = uuid.uuid4()
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING)
+    files = FakeFileRepo()
+    files.rows = [_file(0, "readme.txt"), _file(1, "Movie.mkv", selected=False)]
+
+    with pytest.raises(Error) as caught:
+        await _service(repo=repo, file_repo=files).media_file_index(task_id)
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
