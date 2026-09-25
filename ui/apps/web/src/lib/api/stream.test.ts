@@ -5,6 +5,7 @@ import {
     buildTaskStreamBody,
     choosePlayback,
     isTorrentKind,
+    NATIVE_LOAD_TIMEOUT_MS,
     nativeFailed,
     normalizeMediaInfo,
     normalizeStreamSession,
@@ -61,6 +62,28 @@ describe("playing a finished download (#94)", () => {
         expect(
             nativeFailed({ errored: false, hasVideo: false, videoWidth: 0 }),
         ).toBe(false);
+    });
+
+    it("gives up on a file that never loads at all", () => {
+        // WebKit answers "probably" to VP9 WebM, then fires neither loadeddata
+        // nor error: without a time limit the player would wait forever.
+        expect(
+            nativeFailed({
+                errored: false,
+                hasVideo: true,
+                videoWidth: 0,
+                stalled: true,
+            }),
+        ).toBe(true);
+        expect(
+            nativeFailed({
+                errored: false,
+                hasVideo: false,
+                videoWidth: 0,
+                stalled: true,
+            }),
+        ).toBe(true);
+        expect(NATIVE_LOAD_TIMEOUT_MS).toBeGreaterThan(0);
     });
 
     it("starts a session from a task, with a torrent's file when there is one", () => {

@@ -12,6 +12,7 @@ import {
     choosePlayback,
     fetchMediaInfo,
     isTorrentKind,
+    NATIVE_LOAD_TIMEOUT_MS,
     nativeFailed,
     normalizeStreamStatusEvent,
     startStream,
@@ -428,9 +429,43 @@ export const PlayerModal = component$<PlayerModalProps>(
                                         void fallBack();
                                     }
                                 };
+                                // A file that never loads at all, which WebKit
+                                // does with VP9 in WebM, fires neither event.
+                                let stallTimer: ReturnType<
+                                    typeof setTimeout
+                                > | null = null;
+                                const settle = () => {
+                                    if (stallTimer !== null) {
+                                        clearTimeout(stallTimer);
+                                        stallTimer = null;
+                                    }
+                                };
+                                const onStalled = () => {
+                                    stallTimer = null;
+                                    if (
+                                        video.readyState <
+                                            HTMLMediaElement.HAVE_CURRENT_DATA &&
+                                        nativeFailed({
+                                            errored: false,
+                                            hasVideo: media.hasVideo,
+                                            videoWidth: video.videoWidth,
+                                            stalled: true,
+                                        })
+                                    ) {
+                                        void fallBack();
+                                    }
+                                };
+                                video.addEventListener("error", settle);
+                                video.addEventListener("loadeddata", settle);
                                 video.addEventListener("error", onError);
                                 video.addEventListener("loadeddata", onLoaded);
                                 cleanup(() => {
+                                    settle();
+                                    video.removeEventListener("error", settle);
+                                    video.removeEventListener(
+                                        "loadeddata",
+                                        settle,
+                                    );
                                     video.removeEventListener("error", onError);
                                     video.removeEventListener(
                                         "loadeddata",
@@ -442,6 +477,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 video.src = apiUrl(media.fileUrl, {
                                     withKey: true,
                                 });
+                                stallTimer = setTimeout(
+                                    onStalled,
+                                    NATIVE_LOAD_TIMEOUT_MS,
+                                );
                             } else if (session) {
                                 await attach(session);
                             }

@@ -120,16 +120,30 @@ export function choosePlayback(
 }
 
 /**
+ * How long a file gets to load its first frame before a session takes over.
+ * A file on the same server loads in well under a second; this only catches
+ * one that never will.
+ */
+export const NATIVE_LOAD_TIMEOUT_MS = 8000;
+
+/**
  * Whether the file failed to play itself, so a session should take over:
- * the element errored, or it has loaded and shows no picture it should have.
- * WebKit answers "probably" to VP9 and then draws nothing (#93).
+ * the element errored, it loaded and shows no picture it should have, or it
+ * never loaded at all (`stalled`, after `NATIVE_LOAD_TIMEOUT_MS`). WebKit
+ * answers "probably" to VP9, then draws nothing (#93), or, for VP9 in WebM,
+ * fires neither `loadeddata` nor `error` (#94).
  */
 export function nativeFailed(state: {
     errored: boolean;
     hasVideo: boolean;
     videoWidth: number;
+    stalled?: boolean;
 }): boolean {
-    return state.errored || (state.hasVideo && state.videoWidth === 0);
+    return (
+        state.errored ||
+        Boolean(state.stalled) ||
+        (state.hasVideo && state.videoWidth === 0)
+    );
 }
 
 export function buildTaskStreamBody(
