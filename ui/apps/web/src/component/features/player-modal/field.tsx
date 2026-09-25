@@ -47,11 +47,16 @@ export interface PlayerModalProps {
     fileIndex?: number | null;
     /** A torrent's media files, to switch between in the player (#98). */
     files?: PlayableFile[];
+    /**
+     * The task is a torrent still downloading: it plays from rqbit's stream,
+     * with the swarm showing, never from its partial file (#95).
+     */
+    fromTorrent?: boolean;
     onClose: () => void;
 }
 
 export const PlayerModal = component$<PlayerModalProps>(
-    ({ open, url, kind, taskId, fileIndex, files, onClose }) => {
+    ({ open, url, kind, taskId, fileIndex, files, fromTorrent, onClose }) => {
         const videoRef = useSignal<HTMLVideoElement>();
         // The file picked in the player's own menu. A signal of this
         // component's rather than a prop, so the task below reliably re-runs
@@ -96,6 +101,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const sourceTask = track(() => taskId) ?? "";
                 const sourceFileIndex = track(() => fileIndex) ?? null;
                 const picked = track(() => chosen.value);
+                const sourceFromTorrent = Boolean(track(() => fromTorrent));
 
                 if (!isOpen || (!sourceUrl && !sourceTask)) {
                     return;
@@ -118,7 +124,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                 // and the HUD needs to be up for that whole wait, not just
                 // after it resolves.
                 // A finished torrent plays from disk: there's no swarm to show.
-                store.isTorrent = !sourceTask && isTorrentKind(sourceKind);
+                // One still downloading streams from it, with the swarm (#95).
+                store.isTorrent =
+                    sourceFromTorrent ||
+                    (!sourceTask && isTorrentKind(sourceKind));
                 store.peersConnected = 0;
                 store.downloadBps = 0;
                 store.progressBytes = 0;
@@ -163,7 +172,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                     // browser says it can; everything else is a session.
                     let native: MediaInfo | null = null;
                     let session: StreamSession | null = null;
-                    if (sourceTask) {
+                    if (sourceTask && sourceFromTorrent) {
+                        // A partial file can't play natively: straight to
+                        // rqbit's stream, through the task's own torrent.
+                        session = await startTaskStream(sourceTask, playIndex);
+                    } else if (sourceTask) {
                         const media = await fetchMediaInfo(
                             sourceTask,
                             playIndex,

@@ -282,14 +282,32 @@ export function downloadAction(
 export function canPlayTask(
     task: Pick<UiTask, "status" | "kind" | "filename" | "files">,
 ): boolean {
-    if (!isFinished(task.status)) return false;
-    if (task.kind === "video" || task.kind === "audio") return true;
     if (task.kind === "torrent") {
+        // A torrent plays while it downloads too, from rqbit (#95).
+        if (!isFinished(task.status) && !playsFromTorrent(task)) return false;
         return (task.files ?? []).some(
             (file) => file.selected && hasMediaExtension(file.path),
         );
     }
+    if (!isFinished(task.status)) return false;
+    if (task.kind === "video" || task.kind === "audio") return true;
     return hasMediaExtension(task.filename ?? "");
+}
+
+/**
+ * A torrent still downloading (or paused) plays through rqbit's stream, not
+ * from its partial file on disk (#95): the player skips the native check and
+ * shows the swarm.
+ */
+export function playsFromTorrent(
+    task: Pick<UiTask, "status" | "kind">,
+): boolean {
+    return (
+        task.kind === "torrent" &&
+        (task.status === "pending" ||
+            task.status === "downloading" ||
+            task.status === "paused")
+    );
 }
 
 /** Whether a torrent's file row gets its own download link. */

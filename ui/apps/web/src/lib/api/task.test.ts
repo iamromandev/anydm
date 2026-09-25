@@ -10,6 +10,7 @@ import {
     canStopSeeding,
     canDownloadTorrentFile,
     canPlayTask,
+    playsFromTorrent,
     downloadAction,
     isActive,
     isSeeding,
@@ -867,6 +868,32 @@ describe("playing a finished task (#94)", () => {
 
     it("waits for it to finish", () => {
         expect(canPlayTask({ status: "downloading", kind: "video" })).toBe(
+            false,
+        );
+    });
+
+    it("plays a torrent while it downloads, or while paused (#95)", () => {
+        const files = [
+            file("Movie.mkv"),
+        ];
+        for (const status of [
+            "pending",
+            "downloading",
+            "paused",
+        ] as const) {
+            expect(canPlayTask({ status, kind: "torrent", files })).toBe(true);
+            expect(playsFromTorrent({ status, kind: "torrent" })).toBe(true);
+        }
+        expect(canPlayTask({ status: "failed", kind: "torrent", files })).toBe(
+            false,
+        );
+    });
+
+    it("plays a finished torrent from disk, not from its torrent", () => {
+        expect(playsFromTorrent({ status: "seeding", kind: "torrent" })).toBe(
+            false,
+        );
+        expect(playsFromTorrent({ status: "downloading", kind: "video" })).toBe(
             false,
         );
     });
