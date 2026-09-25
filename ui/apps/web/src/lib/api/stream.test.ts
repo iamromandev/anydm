@@ -86,6 +86,20 @@ describe("playing a finished download (#94)", () => {
         expect(NATIVE_LOAD_TIMEOUT_MS).toBeGreaterThan(0);
     });
 
+    it("names a torrent's file when a link is played from the dialog (#98)", () => {
+        expect(buildStreamStartBody("magnet:?x", "magnet", 2)).toEqual({
+            torrent: "magnet:?x",
+            file_index: 2,
+        });
+        expect(buildStreamStartBody("magnet:?x", "magnet")).toEqual({
+            torrent: "magnet:?x",
+        });
+        // A link is one file: an index means nothing to it.
+        expect(buildStreamStartBody("https://x/a.mp4", "media", 2)).toEqual({
+            url: "https://x/a.mp4",
+        });
+    });
+
     it("starts a session from a task, with a torrent's file when there is one", () => {
         expect(buildTaskStreamBody("t1", null)).toEqual({ task_id: "t1" });
         expect(buildTaskStreamBody("t1", 4)).toEqual({

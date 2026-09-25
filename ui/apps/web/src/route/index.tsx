@@ -43,6 +43,7 @@ import {
 } from "@/lib/toast";
 import { DEFAULT_SORT, loadSort, saveSort, type SortValue } from "@/lib/sort";
 import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from "@/lib/prefs";
+import { mediaFiles, type PlayableFile } from "@/lib/media";
 import type { ServerSettings } from "@/component/features/settings-modal";
 import { removePrompt } from "@/component/features/remove-dialog/prompt";
 
@@ -107,6 +108,7 @@ export default component$(() => {
         playerKind: "" as string,
         playerTaskId: "" as string,
         playerFileIndex: null as number | null,
+        playerFiles: [] as PlayableFile[],
         // A count of stream writes, and the count at each task's latest one:
         // what lets a page fetch tell which rows went stale while it was out.
         // Only ids the stream has written are here, so it grows with the
@@ -648,19 +650,31 @@ export default component$(() => {
         store.addModalOpen = false;
     });
 
-    const handlePlayClick = $((value: string, kind: string) => {
-        store.playerTaskId = "";
-        store.playerFileIndex = null;
-        store.playerUrl = value;
-        store.playerKind = kind;
-        store.playerModalOpen = true;
-    });
+    const handlePlayClick = $(
+        (
+            value: string,
+            kind: string,
+            fileIndex: number | null = null,
+            files: PlayableFile[] = [],
+        ) => {
+            store.playerTaskId = "";
+            // A torrent from the dialog: which file, and the ones to switch between (#98).
+            store.playerFileIndex = fileIndex;
+            store.playerFiles = files;
+            store.playerUrl = value;
+            store.playerKind = kind;
+            store.playerModalOpen = true;
+        },
+    );
 
     // A finished download, played from its file rather than its source (#94).
     const handlePlayTask = $((taskId: string) => {
+        const task = store.tasks.find((t) => t.id === taskId);
         store.playerUrl = "";
         store.playerKind = "";
         store.playerFileIndex = null;
+        // A torrent's files, for the player's file menu (#98).
+        store.playerFiles = mediaFiles(task?.files ?? []);
         store.playerTaskId = taskId;
         store.playerModalOpen = true;
     });
@@ -765,6 +779,7 @@ export default component$(() => {
             playerKind={store.playerKind}
             playerTaskId={store.playerTaskId}
             playerFileIndex={store.playerFileIndex}
+            playerFiles={store.playerFiles}
             onPlayClick={handlePlayClick}
             onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}

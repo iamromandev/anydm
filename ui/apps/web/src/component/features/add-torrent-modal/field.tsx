@@ -8,13 +8,23 @@ import {
     LuPlay,
 } from "@/component/core/icons";
 import type { ResolvedTorrent } from "@/lib/api";
+import { hasMediaExtension, mediaFiles, type PlayableFile } from "@/lib/media";
 import "./field.css";
 
 export interface AddTorrentModalProps {
     open: boolean;
     onClose: () => void;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
-    onPlay: (value: string, kind: string) => void | Promise<void>;
+    /**
+     * Play the torrent: one of its files when an index is given (#98), and the
+     * media files the player may switch between.
+     */
+    onPlay: (
+        value: string,
+        kind: string,
+        fileIndex?: number | null,
+        files?: PlayableFile[],
+    ) => void | Promise<void>;
     onAdd: (input: {
         type: AddType;
         value: string;
@@ -421,6 +431,37 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                                         )}
                                                     </span>
                                                 </label>
+                                                {hasMediaExtension(
+                                                    file.path,
+                                                ) && (
+                                                    <button
+                                                        type="button"
+                                                        class="torrent-file-play"
+                                                        aria-label={`Play ${file.path}`}
+                                                        onClick$={$(() =>
+                                                            onPlay(
+                                                                store.inputValue,
+                                                                store.inputType ===
+                                                                    "file"
+                                                                    ? "torrent"
+                                                                    : "magnet",
+                                                                file.index,
+                                                                mediaFiles(
+                                                                    store
+                                                                        .resolved
+                                                                        ?.files ??
+                                                                        [],
+                                                                ),
+                                                            ),
+                                                        )}
+                                                    >
+                                                        <LuPlay
+                                                            width="14"
+                                                            height="14"
+                                                            aria-hidden="true"
+                                                        />
+                                                    </button>
+                                                )}
                                             </li>
                                         ))}
                                     </ul>
@@ -481,6 +522,10 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                                 store.inputType === "file"
                                                     ? "torrent"
                                                     : "magnet",
+                                                null,
+                                                mediaFiles(
+                                                    store.resolved?.files ?? [],
+                                                ),
                                             ),
                                         )}
                                     >

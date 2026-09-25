@@ -37,7 +37,9 @@ class StreamStartRequest(BaseSchema):
         Field(
             default=None,
             ge=0,
-            description="With task_id, which of a torrent's files; its largest media file by default",
+            description=(
+                "With task_id or torrent, which of the torrent's files; its largest media file by default"
+            ),
         ),
     ]
 
@@ -46,8 +48,8 @@ class StreamStartRequest(BaseSchema):
         sources = [self.url, self.torrent, self.task_id]
         if sum(source is not None for source in sources) != 1:
             raise ValueError("Provide exactly one of url, torrent or task_id")
-        if self.file_index is not None and self.task_id is None:
-            raise ValueError("file_index goes with task_id")
+        if self.file_index is not None and self.url is not None:
+            raise ValueError("file_index goes with task_id or torrent")
         return self
 
 

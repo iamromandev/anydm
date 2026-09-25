@@ -21,6 +21,7 @@ import {
     type MediaInfo,
     type StreamSession,
 } from "@/lib/api";
+import { defaultFileIndex, type PlayableFile } from "@/lib/media";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
@@ -44,12 +45,18 @@ export interface PlayerModalProps {
     taskId?: string;
     /** Which of a torrent's files; its largest media file when absent. */
     fileIndex?: number | null;
+    /** A torrent's media files, to switch between in the player (#98). */
+    files?: PlayableFile[];
     onClose: () => void;
 }
 
 export const PlayerModal = component$<PlayerModalProps>(
-    ({ open, url, kind, taskId, fileIndex, onClose }) => {
+    ({ open, url, kind, taskId, fileIndex, files, onClose }) => {
         const videoRef = useSignal<HTMLVideoElement>();
+        // The file picked in the player's own menu. A signal of this
+        // component's rather than a prop, so the task below reliably re-runs
+        // on every pick.
+        const chosen = useSignal<number | null>(null);
         const panelRef = useSignal<HTMLDivElement>();
         const store = useStore({
             isLoading: false,
@@ -77,6 +84,8 @@ export const PlayerModal = component$<PlayerModalProps>(
             // way. Empty when nothing is showing.
             flash: "",
             flashToken: "",
+            // Which of a torrent's files is playing, for the file menu (#98).
+            currentFileIndex: null as number | null,
         });
 
         useVisibleTask$(
@@ -86,10 +95,18 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const sourceKind = track(() => kind);
                 const sourceTask = track(() => taskId) ?? "";
                 const sourceFileIndex = track(() => fileIndex) ?? null;
+                const picked = track(() => chosen.value);
 
                 if (!isOpen || (!sourceUrl && !sourceTask)) {
                     return;
                 }
+
+                // Which of a torrent's files: picked in the menu, named by
+                // whoever opened the player, or its largest. Known here rather
+                // than left to the API, so the menu can show it (#98).
+                const playIndex =
+                    picked ?? sourceFileIndex ?? defaultFileIndex(files ?? []);
+                store.currentFileIndex = playIndex;
 
                 store.isLoading = true;
                 store.error = "";
@@ -149,9 +166,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                     if (sourceTask) {
                         const media = await fetchMediaInfo(
                             sourceTask,
-                            sourceFileIndex,
+                            playIndex,
                         );
                         store.hasVideo = media.hasVideo;
+                        store.currentFileIndex = media.fileIndex;
                         const probe = document.createElement("video");
                         if (
                             choosePlayback(media, (type) =>
@@ -166,7 +184,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                             );
                         }
                     } else {
-                        session = await startStream(sourceUrl, sourceKind);
+                        session = await startStream(
+                            sourceUrl,
+                            sourceKind,
+                            playIndex,
+                        );
                     }
 
                     let ready = true;
@@ -511,7 +533,15 @@ export const PlayerModal = component$<PlayerModalProps>(
         );
 
         const handleClose = $(() => {
+            // The next thing played starts from its own file, not this pick.
+            chosen.value = null;
             onClose();
+        });
+
+        // Another of a torrent's files: the task above stops this session and
+        // starts one on that file (#98).
+        const handlePickFile = $((index: number) => {
+            chosen.value = index;
         });
 
         const handleTogglePlay = $(() => {
@@ -726,6 +756,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 onToggleMute={handleToggleMute}
                                 onPlaybackRateChange={handlePlaybackRateChange}
                                 onToggleFullscreen={handleToggleFullscreen}
+                                files={files}
+                                currentFileIndex={store.currentFileIndex}
+                                onPickFile={handlePickFile}
                             />
                         )}
                     </div>

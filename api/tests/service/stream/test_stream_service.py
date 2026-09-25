@@ -451,6 +451,44 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
     ]
 
 
+SEASON_DETAILS = TorrentDetails(
+    info_hash="5ea50ea5",
+    name="Show S01",
+    output_folder="/workdir/download/torrent/Show S01",
+    files=[
+        FileInfo(index=0, path="Show.S01E10.mkv", size_bytes=900),
+        FileInfo(index=1, path="Show.S01E2.mkv", size_bytes=800),
+        FileInfo(index=2, path="Show.S01E2.en.srt", size_bytes=10),
+    ],
+)
+
+
+@pytest.mark.asyncio
+async def test_start_torrent_session_plays_the_file_asked_for(tmp_path: Path) -> None:
+    """Episode 2, not whichever is biggest (#98)."""
+    torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5", file_index=1)
+    await asyncio.gather(*session.background_tasks)
+
+    assert torrent_client.added[0]["only_files"] == [1]
+    assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/5ea50ea5/stream/1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_index", [2, 9])
+async def test_start_torrent_session_refuses_a_file_that_is_not_media(tmp_path: Path, file_index: int) -> None:
+    torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+
+    with pytest.raises(Error) as caught:
+        await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5", file_index=file_index)
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert torrent_client.added == []
+
+
 @pytest.mark.asyncio
 async def test_start_torrent_session_returns_immediately_as_connecting(tmp_path: Path) -> None:
     never_returns = asyncio.Event()

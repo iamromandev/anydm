@@ -121,7 +121,8 @@
     color: rgba(255, 255, 255, 0.85);
 }
 
-.player-controls-rate {
+.player-controls-rate,
+.player-controls-file {
     margin-left: auto;
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
@@ -129,6 +130,16 @@
     border-radius: 4px;
     font-size: 0.75rem;
     padding: 0.125rem 0.25rem;
+}
+
+/* A torrent's files (#98): a long episode name must not push the rest off the bar. */
+.player-controls-file {
+    max-width: 14rem;
+    text-overflow: ellipsis;
+}
+
+.player-controls-file + .player-controls-rate {
+    margin-left: 0.5rem;
 }
 
 @media (max-width: 640px) {
@@ -144,8 +155,13 @@
         height: 44px;
     }
 
-    .player-controls-rate {
+    .player-controls-rate,
+    .player-controls-file {
         min-height: 44px;
+    }
+
+    .player-controls-file {
+        max-width: 8rem;
     }
 
     /* A phone has volume keys, and the slider is both a 16px target and the

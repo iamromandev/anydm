@@ -29,7 +29,7 @@ async def start_stream(
     if payload.task_id is not None:
         session = await stream_service.start_task_session(payload.task_id, payload.file_index)
     elif payload.torrent:
-        session = await stream_service.start_torrent_session(payload.torrent.strip())
+        session = await stream_service.start_torrent_session(payload.torrent.strip(), payload.file_index)
     elif payload.url:
         session = await stream_service.start_session(payload.url.strip())
     else:

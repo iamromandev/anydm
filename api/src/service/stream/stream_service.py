@@ -267,7 +267,8 @@ class StreamService(BaseService):
         except PlaylistRefused as refused:
             raise (site_error.live_not_supported() if refused.live else site_error.stream_not_playable()) from refused
 
-    async def start_torrent_session(self, torrent_raw: str) -> StreamSession:
+    async def start_torrent_session(self, torrent_raw: str, file_index: int | None = None) -> StreamSession:
+        """Stream a torrent's file: ``file_index``, else its largest media file (#98)."""
         if not self._torrent_enabled:
             raise Error.service_unavailable("Torrent support is disabled")
         if self._torrent_client is None or self._task_repo is None or self._torrent_dir is None:
@@ -279,11 +280,23 @@ class StreamService(BaseService):
 
         source = parse_source(torrent_raw)
         details = await self._torrent_client.resolve(source)
-        target = pick_media_file(details.files)
+        if file_index is None:
+            target = pick_media_file(details.files)
+            refusal = "This torrent has no playable media file"
+        else:
+            target = next(
+                (
+                    file
+                    for file in details.files
+                    if file.index == file_index and file.path.lower().endswith(MEDIA_EXTENSIONS)
+                ),
+                None,
+            )
+            refusal = f"This torrent has no media file at index {file_index}"
         if target is None:
             raise Error.create(
                 code=Code.UNPROCESSABLE_ENTITY,
-                message="This torrent has no playable media file",
+                message=refusal,
                 error_type=ErrorType.UNPROCESSABLE_ENTITY,
             )
 

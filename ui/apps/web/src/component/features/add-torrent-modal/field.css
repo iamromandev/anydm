@@ -280,12 +280,39 @@
     gap: 0.25rem;
 }
 
+/* The row: its checkbox label, and Play for a media file (#98). */
+.torrent-file {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .torrent-file label {
     display: flex;
+    flex: 1;
+    min-width: 0;
     align-items: center;
     gap: 0.5rem;
     padding: 0.25rem 0;
     cursor: pointer;
+}
+
+.torrent-file-play {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--color-muted);
+    color: color-mix(in srgb, var(--color-foreground) 70%, transparent);
+    cursor: pointer;
+}
+
+.torrent-file-play:hover {
+    color: var(--color-foreground);
 }
 
 .torrent-file-path {
