@@ -885,94 +885,101 @@ export const PlayerModal = component$<PlayerModalProps>(
         // the one playing and the next, as playback and seeks reach them; a
         // file played as it is gets the track whole. A new pick, or a new
         // session, starts from no cues.
-        useVisibleTask$(({ track, cleanup }) => {
-            const chosen = track(() => store.subtitleTrack);
-            const sessionId = track(() => store.sessionId);
-            const fileBase = track(() => store.subtitleFileBase);
-            const video = track(() => videoRef.value);
-            if (!video) return;
+        useVisibleTask$(
+            ({ track, cleanup }) => {
+                const chosen = track(() => store.subtitleTrack);
+                const sessionId = track(() => store.sessionId);
+                const fileBase = track(() => store.subtitleFileBase);
+                const video = track(() => videoRef.value);
+                if (!video) return;
 
-            let cues: TextTrack | undefined;
-            for (const existing of Array.from(video.textTracks)) {
-                if (existing.label === "anydm") cues = existing;
-            }
-            cues ??= video.addTextTrack("subtitles", "anydm");
-            // Cues are only reachable while the track isn't disabled.
-            cues.mode = "hidden";
-            for (const cue of Array.from(cues.cues ?? [])) cues.removeCue(cue);
-            if (chosen === null || (!sessionId && !fileBase)) return;
-            cues.mode = "showing";
-            const showing = cues;
-
-            let closed = false;
-            cleanup(() => {
-                closed = true;
-            });
-            const seen = new Set<string>();
-            const add = (text: string) => {
-                if (closed) return;
-                for (const cue of parseVtt(text)) {
-                    const key = cueKey(cue);
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    const shown = new VTTCue(cue.start, cue.end, cue.text);
-                    // Lines count up from the bottom: clear of the control
-                    // bar, which always sits over the foot of the picture.
-                    shown.line = SUBTITLE_LINE;
-                    showing.addCue(shown);
+                let cues: TextTrack | undefined;
+                for (const existing of Array.from(video.textTracks)) {
+                    if (existing.label === "anydm") cues = existing;
                 }
-            };
-            const get = async (path: string) => {
-                const response = await fetch(apiUrl(path), {
-                    headers: authHeaders(),
-                });
-                if (!response.ok) throw new Error(`status ${response.status}`);
-                return response.text();
-            };
+                cues ??= video.addTextTrack("subtitles", "anydm");
+                // Cues are only reachable while the track isn't disabled.
+                cues.mode = "hidden";
+                for (const cue of Array.from(cues.cues ?? []))
+                    cues.removeCue(cue);
+                if (chosen === null || (!sessionId && !fileBase)) return;
+                cues.mode = "showing";
+                const showing = cues;
 
-            // A subtitle file beside the video comes whole in a session too
-            // (#101); only an embedded track is cut by the segment.
-            const external = store.subtitleTracks.some(
-                (known) => known.index === chosen && known.external,
-            );
-            if (!sessionId || external) {
-                const whole = sessionId
-                    ? `/stream/${sessionId}/subtitles/${chosen}.vtt`
-                    : `${fileBase}/${chosen}.vtt${store.subtitleFileQuery}`;
-                get(whole).then(add, () => {
-                    // Best-effort: the film plays on without them.
+                let closed = false;
+                cleanup(() => {
+                    closed = true;
                 });
-                return;
-            }
-
-            const requested = new Set<number>();
-            const load = () => {
-                const duration = Number.isFinite(video.duration)
-                    ? video.duration
-                    : store.duration;
-                for (const index of cueSegmentsAt(
-                    video.currentTime,
-                    store.segmentSeconds,
-                    duration,
-                )) {
-                    if (requested.has(index)) continue;
-                    requested.add(index);
-                    get(
-                        `/stream/${sessionId}/subtitles/${chosen}/segment_${index}.vtt`,
-                    ).then(add, () => {
-                        // Asked again a little later, not on every tick.
-                        setTimeout(() => requested.delete(index), 3000);
+                const seen = new Set<string>();
+                const add = (text: string) => {
+                    if (closed) return;
+                    for (const cue of parseVtt(text)) {
+                        const key = cueKey(cue);
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        const shown = new VTTCue(cue.start, cue.end, cue.text);
+                        // Lines count up from the bottom: clear of the control
+                        // bar, which always sits over the foot of the picture.
+                        shown.line = SUBTITLE_LINE;
+                        showing.addCue(shown);
+                    }
+                };
+                const get = async (path: string) => {
+                    const response = await fetch(apiUrl(path), {
+                        headers: authHeaders(),
                     });
+                    if (!response.ok)
+                        throw new Error(`status ${response.status}`);
+                    return response.text();
+                };
+
+                // A subtitle file beside the video comes whole in a session too
+                // (#101); only an embedded track is cut by the segment.
+                const external = store.subtitleTracks.some(
+                    (known) => known.index === chosen && known.external,
+                );
+                if (!sessionId || external) {
+                    const whole = sessionId
+                        ? `/stream/${sessionId}/subtitles/${chosen}.vtt`
+                        : `${fileBase}/${chosen}.vtt${store.subtitleFileQuery}`;
+                    get(whole).then(add, () => {
+                        // Best-effort: the film plays on without them.
+                    });
+                    return;
                 }
-            };
-            video.addEventListener("timeupdate", load);
-            video.addEventListener("seeking", load);
-            load();
-            cleanup(() => {
-                video.removeEventListener("timeupdate", load);
-                video.removeEventListener("seeking", load);
-            });
-        });
+
+                const requested = new Set<number>();
+                const load = () => {
+                    const duration = Number.isFinite(video.duration)
+                        ? video.duration
+                        : store.duration;
+                    for (const index of cueSegmentsAt(
+                        video.currentTime,
+                        store.segmentSeconds,
+                        duration,
+                    )) {
+                        if (requested.has(index)) continue;
+                        requested.add(index);
+                        get(
+                            `/stream/${sessionId}/subtitles/${chosen}/segment_${index}.vtt`,
+                        ).then(add, () => {
+                            // Asked again a little later, not on every tick.
+                            setTimeout(() => requested.delete(index), 3000);
+                        });
+                    }
+                };
+                video.addEventListener("timeupdate", load);
+                video.addEventListener("seeking", load);
+                load();
+                cleanup(() => {
+                    video.removeEventListener("timeupdate", load);
+                    video.removeEventListener("seeking", load);
+                });
+                // Named, as the task above does: the modal renders nothing while
+                // closed, so the default strategy has no element to watch.
+            },
+            { strategy: "document-ready" },
+        );
 
         const handlePickAudio = $(async (track: number) => {
             await switchAudioRef.value?.(track);
