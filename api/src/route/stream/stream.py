@@ -138,6 +138,18 @@ async def get_subtitle_segment(
     return FileResponse(path=path, media_type="text/vtt")
 
 
+@router.get(path="/stream/{session_id}/subtitles/{track}.vtt")
+async def get_subtitle_file(
+    session_id: str,
+    track: int,
+    stream_service: Annotated[StreamService, Depends(get_stream_service)],
+) -> FileResponse:
+    """A subtitle file that sits beside the video, whole, as WebVTT (#101)."""
+    session = stream_service.get_session(session_id)
+    path = await stream_service.get_subtitle_file(session, track)
+    return FileResponse(path=path, media_type="text/vtt")
+
+
 @router.delete(path="/stream/{session_id}")
 async def stop_stream(
     session_id: str,

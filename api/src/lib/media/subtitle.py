@@ -18,6 +18,9 @@ class SubtitleTrack:
     default: bool = False
     #: Shown whether or not subtitles are on: signs, and lines in another language.
     forced: bool = False
+    #: A file beside the video rather than a track inside it (#101): served
+    #: whole, never by the segment. Numbered after the embedded tracks.
+    external: bool = False
 
     @property
     def text(self) -> bool:

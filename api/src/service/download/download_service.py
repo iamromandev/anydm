@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
 from src.data.schema.download import PositionSchema, TaskSchema, TaskSummarySchema
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
+from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.filename import safe_filename
@@ -311,6 +313,23 @@ class DownloadService(BaseService):
             raise Error.not_found(message="Only a torrent has files by index")
         path, filename, _ = await self.resolve_file(task_id)
         return path, filename, None
+
+    async def subtitle_files(
+        self, task_id: uuid.UUID, file_index: int | None
+    ) -> list[tuple[Sidecar, SidecarSource]]:
+        """The subtitle files that go with the file Play opens, and where to read each (#101).
+
+        A torrent's come from its file list. A download's are its neighbours
+        on disk, beside it or in a subtitles folder there, once it's finished.
+        """
+        task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            return await self._torrents.subtitle_files(task_id, file_index)
+        if task.status != TaskStatus.COMPLETE:
+            return []
+        path, _, _ = await self.resolve_file(task_id)
+        listing = await asyncio.to_thread(folder_listing, path.parent)
+        return [(sidecar, path.parent / sidecar.path) for sidecar in match_sidecars(path.name, listing)]
 
     async def torrent_play(self, task_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
         """The torrent to stream when Play is pressed on a torrent still downloading (#95).

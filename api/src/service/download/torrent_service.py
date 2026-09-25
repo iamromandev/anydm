@@ -23,6 +23,7 @@ from src.data.repo.download.interface import FileRepo, TaskRepo
 from src.data.schema.download import FileSchema, TaskSchema, TorrentResolveResponse
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
+from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import stored_folder, torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
@@ -319,6 +320,42 @@ class TorrentService(BaseService):
                 error_type=ErrorType.UNPROCESSABLE_ENTITY,
             )
         return max(media, key=lambda row: row.size_bytes).index
+
+    async def subtitle_files(self, task_id: uuid.UUID, file_index: int | None) -> list[tuple[Sidecar, SidecarSource]]:
+        """The subtitle files that go with one of this torrent's videos, and where to read each (#101).
+
+        Whatever was selected for download: subtitle files are small, and a
+        torrent often ships the one wanted unselected. One on disk in full is
+        read from there; otherwise from rqbit, which streams a file without
+        selecting it (#93), for as long as it has the torrent.
+        """
+        task = await self._require(task_id)
+        rows = await self._file_repo.list_for(task_id)
+        if file_index is None:
+            file_index = await self.media_file_index(task_id)
+        video = next((row for row in rows if row.index == file_index), None)
+        if video is None:
+            return []
+        by_path = {row.path: row for row in rows}
+        in_rqbit = bool(task.info_hash) and task.status in (
+            TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED, TaskStatus.SEEDING,
+        )
+        folder = stored_folder(task.file_path, self._root, [video.path]).resolve()
+        found: list[tuple[Sidecar, SidecarSource]] = []
+        for sidecar in match_sidecars(video.path, list(by_path)):
+            row = by_path[sidecar.path]
+            path = (folder / row.path).resolve()
+            on_disk = (
+                row.selected
+                and path.is_relative_to(folder)
+                and path.is_file()
+                and path.stat().st_size == row.size_bytes
+            )
+            if on_disk:
+                found.append((sidecar, path))
+            elif in_rqbit:
+                found.append((sidecar, TorrentFile(task.info_hash or "", row.index)))
+        return found
 
     async def resolve_only_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
         """The file of a torrent that has one: what the card's "Download file" asks for (#107).

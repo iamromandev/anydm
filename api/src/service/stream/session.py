@@ -21,6 +21,7 @@ from pathlib import Path
 
 from src.lib.media.audio import AudioTrack
 from src.lib.media.hls import MediaPlaylist
+from src.lib.media.sidecar import Sidecar, SidecarSource
 from src.lib.media.source import MediaInput
 from src.lib.media.subtitle import SubtitleTrack
 
@@ -102,6 +103,14 @@ class StreamSession:
     subtitle_tracks: list[SubtitleTrack] = field(default_factory=list)
     cue_states: dict[int, SegmentState] = field(default_factory=dict)
     cue_events: dict[int, asyncio.Event] = field(default_factory=dict)
+    #: Subtitle files beside the video (#101), by their track index, and
+    #: where each is read from. Served whole, each converted once. A
+    #: torrent's wait in ``pending_sidecars`` until it's probed, since their
+    #: indexes follow the embedded tracks.
+    subtitle_files: dict[int, tuple[Sidecar, SidecarSource]] = field(default_factory=dict)
+    pending_sidecars: list[tuple[Sidecar, SidecarSource]] = field(default_factory=list)
+    file_states: dict[int, SegmentState] = field(default_factory=dict)
+    file_events: dict[int, asyncio.Event] = field(default_factory=dict)
 
     @property
     def mapped_audio_track(self) -> int | None:
@@ -121,6 +130,9 @@ class StreamSession:
 
     def cue_path(self, index: int, track: int) -> Path:
         return self.session_dir / f"subtitles_{index}.{track}.vtt"
+
+    def subtitle_file_path(self, track: int) -> Path:
+        return self.session_dir / f"subtitles_file_{track}.vtt"
 
     def state_of(self, index: int) -> SegmentState:
         return self.states.get(index, SegmentState.NOT_STARTED)

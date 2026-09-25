@@ -22,6 +22,7 @@ import pytest
 from src.lib.media.audio import pick_audio_track
 from src.lib.media.ffmpeg import segment_args, subtitle_args, subtitle_file_args
 from src.lib.media.ffprobe import parse_probe_output
+from src.lib.media.sidecar import decode_subtitles, folder_listing, match_sidecars
 from src.lib.media.source import MediaInput
 
 from tests.fixtures.media import CUES, DURATION_S, FORCED_CUES, SEGMENT_S, Media, build
@@ -261,3 +262,32 @@ def test_movie_mp4_s_mov_text_cuts_the_same_way(media: Media, tmp_path: Path) ->
     subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
 
     assert _vtt_times(out.read_text()) == [(c.start, c.end, c.text) for c in CUES if c.start < 12 and c.end > 6]
+
+
+# --- subtitle files beside the video (#101) -------------------------------------------
+
+
+def test_the_sidecar_folder_s_files_match_and_convert_at_their_own_times(media: Media, tmp_path: Path) -> None:
+    folder = media.sidecar_video.parent
+    found = match_sidecars(media.sidecar_video.name, folder_listing(folder))
+
+    assert [(sidecar.path, sidecar.language) for sidecar in found] == [
+        ("Movie.en.srt", "en"),
+        ("Subs/2_English.srt", "en"),
+    ]
+    for sidecar in found:
+        out = tmp_path / f"{sidecar.title}.vtt"
+        args = subtitle_file_args("ffmpeg", MediaInput(str(folder / sidecar.path)), 0, out)
+        subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
+        assert _vtt_times(out.read_text()) == [(c.start, c.end, c.text) for c in CUES]
+
+
+def test_a_windows_1252_file_keeps_its_accents(tmp_path: Path) -> None:
+    raw = "1\n00:00:01,000 --> 00:00:02,500\nCafé, señor\n".encode("cp1252")
+    utf8 = tmp_path / "Movie.es.srt"
+    utf8.write_text(decode_subtitles(raw), encoding="utf-8")
+    out = tmp_path / "es.vtt"
+    args = subtitle_file_args("ffmpeg", MediaInput(str(utf8)), 0, out)
+    subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
+
+    assert _vtt_times(out.read_text(encoding="utf-8")) == [(1.0, 2.5, "Café, señor")]

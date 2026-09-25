@@ -8,6 +8,7 @@ from src.core.error import Error
 from src.core.type import Code
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
+from src.lib.media.sidecar import TorrentFile
 from src.lib.torrent.protocol import FileInfo, TorrentDetails
 from src.service.download.disk import DiskGuard
 from src.service.download.torrent_service import TorrentService
@@ -703,3 +704,59 @@ async def test_a_named_file_to_play_must_be_a_selected_media_file() -> None:
         with pytest.raises(Error) as caught:
             await service.media_file_index(task_id, refused)
         assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+# --- subtitle files beside the video (#101) -------------------------------------------
+
+def _release(tmp_path: Path, status: TaskStatus) -> tuple[TorrentService, uuid.UUID, Path]:
+    """A film with a subtitle file beside it on disk, and one in Subs/ that wasn't selected."""
+    task_id = uuid.uuid4()
+    folder = tmp_path / "Some Release"
+    (folder / "Subs").mkdir(parents=True)
+    (folder / "Movie.mkv").write_bytes(b"x" * 900)
+    (folder / "Movie.en.srt").write_bytes(b"s" * 10)
+    repo = FakeTaskRepo()
+    repo.rows[task_id] = _torrent_row(task_id, status=status, file_path=str(folder))
+    files = FakeFileRepo()
+    files.rows = [
+        _file(0, "Movie.mkv", size=900),
+        _file(1, "Movie.en.srt", size=10),
+        _file(2, "Subs/2_French.srt", size=12, selected=False),
+        _file(3, "Other.en.srt", size=10),
+    ]
+    return _service(repo=repo, file_repo=files), task_id, folder
+
+
+@pytest.mark.asyncio
+async def test_a_downloading_torrent_offers_its_subtitle_files_from_disk_or_rqbit(tmp_path: Path) -> None:
+    service, task_id, folder = _release(tmp_path, TaskStatus.DOWNLOADING)
+
+    found = await service.subtitle_files(task_id, None)
+
+    assert [(sidecar.path, source) for sidecar, source in found] == [
+        ("Movie.en.srt", (folder / "Movie.en.srt").resolve()),
+        # Not selected, and not on disk: rqbit streams it all the same (#93).
+        ("Subs/2_French.srt", TorrentFile("abc123", 2)),
+    ]
+    assert [sidecar.language for sidecar, _ in found] == ["en", "fr"]
+
+
+@pytest.mark.asyncio
+async def test_a_half_written_subtitle_file_is_read_through_rqbit(tmp_path: Path) -> None:
+    service, task_id, folder = _release(tmp_path, TaskStatus.SEEDING)
+    (folder / "Movie.en.srt").write_bytes(b"s" * 4)
+
+    found = await service.subtitle_files(task_id, 0)
+
+    assert found[0][1] == TorrentFile("abc123", 1)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_torrent_rqbit_no_longer_has_offers_only_what_s_on_disk(tmp_path: Path) -> None:
+    service, task_id, folder = _release(tmp_path, TaskStatus.COMPLETE)
+
+    found = await service.subtitle_files(task_id, None)
+
+    assert [(sidecar.path, source) for sidecar, source in found] == [
+        ("Movie.en.srt", (folder / "Movie.en.srt").resolve())
+    ]

@@ -1026,3 +1026,33 @@ def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:
     from src.service.download.download_service import BULK_SCOPES
 
     assert set(get_args(BulkAction)) == set(BULK_SCOPES)
+
+
+@pytest.mark.asyncio
+async def test_a_download_s_subtitle_files_are_its_neighbours_on_disk(tmp_path: Path) -> None:
+    """#101: beside it, or in a subtitles folder there; never another film's."""
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    folder = tmp_path / str(task_id)
+    (folder / "Subs").mkdir(parents=True)
+    for name in ("Movie.mkv", "Movie.en.srt", "Subs/Movie.fr.srt", "Other.en.srt"):
+        (folder / name).write_bytes(b"x")
+    repo.rows[task_id] = _row(
+        task_id, status=TaskStatus.COMPLETE, file_path=f"{task_id}/Movie.mkv", filename="Movie.mkv"
+    )
+
+    found = await service.subtitle_files(task_id, None)
+
+    assert [(sidecar.path, source) for sidecar, source in found] == [
+        ("Movie.en.srt", folder / "Movie.en.srt"),
+        ("Subs/Movie.fr.srt", folder / "Subs" / "Movie.fr.srt"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_unfinished_download_has_no_subtitle_files_yet(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING, file_path=None)
+
+    assert await service.subtitle_files(task_id, None) == []

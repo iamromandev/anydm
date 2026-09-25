@@ -92,6 +92,9 @@ class SubtitleTrackSchema(BaseSchema):
     default: bool = False
     #: Shown whether or not subtitles are on.
     forced: bool = False
+    #: A subtitle file beside the video (#101), served whole at
+    #: ``/stream/{id}/subtitles/{track}.vtt`` rather than by the segment.
+    external: bool = False
 
     @computed_field
     @property
