@@ -12,11 +12,21 @@ import pytest
 import pytest_asyncio
 from src.config import get_settings
 from src.data.schema.download import PositionSchema
+from src.lib.media.audio import AudioTrack
 from src.main import app
 from src.service import get_download_service, get_stream_service
 from src.service.stream.stream_service import MediaInfo
 
 TASK = uuid.uuid4()
+
+TRACKS = [AudioTrack(0, language="spa", channels=6, codec="ac3", default=True), AudioTrack(1, language="eng")]
+
+
+def _session(session_id: str, status: str, duration: float, track: int | None = None) -> Any:
+    return type("S", (), {
+        "id": session_id, "status": status, "duration_seconds": duration, "has_video": True,
+        "audio_tracks": TRACKS if track is not None else [], "audio_track": track,
+    })()
 
 
 class _FakeStream:
@@ -31,19 +41,30 @@ class _FakeStream:
             duration_seconds=30.0,
             has_video=True,
             media_type='video/mp4; codecs="avc1.640028, mp4a.40.2"',
+            audio_tracks=tuple(TRACKS) if task_id != TASK else (),
         )
 
-    async def start_task_session(self, task_id: uuid.UUID, file_index: int | None) -> Any:
+    async def start_task_session(self, task_id: uuid.UUID, file_index: int | None, **audio: Any) -> Any:
         self.calls.append(("start_task_session", (task_id, file_index)))
-        return type("S", (), {"id": "s1", "status": "ready", "duration_seconds": 30.0, "has_video": True})()
+        self.audio = audio
+        return _session("s1", "ready", 30.0)
 
-    async def start_torrent_session(self, raw: str, file_index: int | None = None) -> Any:
+    async def start_torrent_session(self, raw: str, file_index: int | None = None, **audio: Any) -> Any:
         self.calls.append(("start_torrent_session", (raw, file_index)))
-        return type("S", (), {"id": "s3", "status": "connecting", "duration_seconds": 0.0, "has_video": True})()
+        self.audio = audio
+        return _session("s3", "connecting", 0.0)
 
-    async def start_session(self, url: str) -> Any:
+    async def start_session(self, url: str, **audio: Any) -> Any:
         self.calls.append(("start_session", url))
-        return type("S", (), {"id": "s2", "status": "ready", "duration_seconds": 1.0, "has_video": True})()
+        self.audio = audio
+        return _session("s2", "ready", 1.0, track=0)
+
+    def get_session(self, session_id: str) -> Any:
+        return _session(session_id, "ready", 30.0, track=0)
+
+    async def switch_audio(self, session: Any, track: int) -> Any:
+        self.calls.append(("switch_audio", (session.id, track)))
+        return _session("s9", "ready", 30.0, track=track)
 
 
 @pytest.fixture
@@ -73,6 +94,7 @@ async def test_media_names_the_file_and_where_to_fetch_it(client: httpx.AsyncCli
         "has_video": True,
         "media_type": 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
         "file_url": f"/download/{TASK}/file",
+        "audio_tracks": [],
     }
     assert stream.calls == [("media_info", (TASK, None))]
 
@@ -83,6 +105,11 @@ async def test_a_torrents_media_points_at_that_file(client: httpx.AsyncClient, s
     response = await client.get(f"/download/{other}/media", params={"file_index": 5})
 
     assert response.json()["data"]["file_url"] == f"/download/{other}/file/5"
+    # Every track, so the player knows a file needs a session for any but the default (#99).
+    assert response.json()["data"]["audio_tracks"] == [
+        {"index": 0, "language": "spa", "channels": 6, "codec": "ac3", "default": True},
+        {"index": 1, "language": "eng", "default": False},
+    ]
     assert stream.calls == [("media_info", (other, 5))]
 
 
@@ -93,6 +120,44 @@ async def test_a_session_starts_from_a_task(client: httpx.AsyncClient, stream: _
     assert response.status_code == 201
     assert response.json()["data"]["session_id"] == "s1"
     assert stream.calls == [("start_task_session", (TASK, 2))]
+    assert stream.audio == {"audio_language": None, "audio_track": None}
+
+
+@pytest.mark.asyncio
+async def test_a_start_passes_on_the_audio_it_asks_for(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post(
+        "/stream/start", json={"url": "https://example.com/a.mkv", "audio_language": "en-US", "audio_track": 1}
+    )
+
+    assert response.status_code == 201
+    assert stream.audio == {"audio_language": "en-US", "audio_track": 1}
+    data = response.json()["data"]
+    assert data["audio_track"] == 0
+    assert [track["language"] for track in data["audio_tracks"]] == ["spa", "eng"]
+
+
+@pytest.mark.asyncio
+async def test_a_connecting_session_names_no_tracks_yet(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post("/stream/start", json={"torrent": "magnet:?xt=urn:btih:abc"})
+
+    assert "audio_tracks" not in response.json()["data"]
+
+
+@pytest.mark.asyncio
+async def test_a_switch_answers_with_the_new_session(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post("/stream/s1/audio", json={"track": 1})
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert (data["session_id"], data["playlist_url"], data["audio_track"]) == ("s9", "/stream/s9/playlist.m3u8", 1)
+    assert stream.calls == [("switch_audio", ("s1", 1))]
+
+
+@pytest.mark.asyncio
+async def test_a_switch_needs_a_track(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    assert (await client.post("/stream/s1/audio", json={})).status_code in (400, 422)
+    assert (await client.post("/stream/s1/audio", json={"track": -1})).status_code in (400, 422)
+    assert stream.calls == []
 
 
 @pytest.mark.asyncio

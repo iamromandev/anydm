@@ -20,10 +20,11 @@ Three things the #53 recording showed about yt-dlp's formats:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from src.data.type import Kind, Preset
+from src.lib.media.audio import language_key
 from src.lib.site.error import no_format_for_preset, stream_not_playable
 
 #: Protocols made of fragments: playlists the segmented engine cannot fetch.
@@ -54,6 +55,12 @@ class Format:
     bitrate: int | None = None
     size: int | None = None
     size_approx: int | None = None
+    #: The audio's language, as the site names it (``en``, ``es-US``).
+    language: str | None = None
+    #: yt-dlp's rank for that language: YouTube gives its original audio 10
+    #: and each dub -1, so a dub never wins on bitrate alone (#99).
+    language_preference: int | None = None
+    audio_channels: int | None = None
 
     @classmethod
     def from_ytdlp(cls, raw: dict[str, Any]) -> Format:
@@ -69,6 +76,9 @@ class Format:
             bitrate=round(rate * 1000) if rate else None,
             size=raw.get("filesize") or None,
             size_approx=raw.get("filesize_approx") or None,
+            language=raw.get("language") or None,
+            language_preference=raw.get("language_preference"),
+            audio_channels=raw.get("audio_channels") or None,
         )
 
     @property
@@ -134,7 +144,8 @@ def _by_height(formats: list[Format]) -> list[Format]:
 
 
 def _by_bitrate(formats: list[Format]) -> list[Format]:
-    return sorted(formats, key=lambda f: (-(f.bitrate or 0), f.fragmented))
+    """The site's own audio first, then the best of it: a dub can have the higher bitrate."""
+    return sorted(formats, key=lambda f: (-(f.language_preference or 0), -(f.bitrate or 0), f.fragmented))
 
 
 def _pick(candidates: list[Format], target: int | None) -> Format | None:
@@ -273,7 +284,27 @@ def usable_presets(formats: list[Format]) -> list[Preset]:
 PLAYBACK_PRESET = Preset.P1080
 
 
-def playback_plan(formats: list[Format]) -> Plan:
+def audio_choices(formats: list[Format], plan: Plan) -> list[Format]:
+    """The audio tracks the player offers for ``plan``: the best audio-only format in each language (#99).
+
+    Drawn from the kind of format the plan plays, plain or HLS, since both of
+    a session's inputs are read the same way. The site's own audio comes
+    first. A plan with no separate audio offers none: a combined format's
+    audio can't be swapped.
+    """
+    if plan.audio is None:
+        return []
+    same_kind = [
+        f for f in _eligible(formats)
+        if f.has_audio and not f.has_video and (f.hls if plan.audio.hls else not f.fragmented)
+    ]
+    choices: dict[str | None, Format] = {}
+    for candidate in _by_bitrate(same_kind):
+        choices.setdefault(language_key(candidate.language), candidate)
+    return list(choices.values())
+
+
+def playback_plan(formats: list[Format], language: str | None = None) -> Plan:
     """What the player streams: video at up to 1080p, or an audio-only site's audio.
 
     Plain files first, and HLS only when a page has nothing else that plays:
@@ -282,7 +313,19 @@ def playback_plan(formats: list[Format]) -> Plan:
     Within each kind, video comes first, so a page's HLS video beats its plain
     audio. A DASH, f4m or ISM URL is a manifest of every rendition, which
     ffmpeg would not narrow to the one chosen. Downloads take all of them.
+
+    Audio in the preferred ``language`` replaces the plan's own when the page
+    has some (#99).
     """
+    plan = _playback_plan(formats)
+    key = language_key(language)
+    if key is None:
+        return plan
+    match = next((f for f in audio_choices(formats, plan) if language_key(f.language) == key), None)
+    return replace(plan, audio=match) if match is not None else plan
+
+
+def _playback_plan(formats: list[Format]) -> Plan:
     plain = [f for f in formats if not f.fragmented]
     hls = [f for f in formats if f.hls]
     for pool in (plain, hls):

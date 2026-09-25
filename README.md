@@ -165,7 +165,8 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
   - Streaming (independent of downloading — nothing is kept)
-    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain files, or its HLS when it has nothing else), a media URL, a magnet or a `.torrent` (with `file_index`, that one of its files rather than the largest), or a finished download read from disk (`task_id`, and `file_index` for a torrent)
+    - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain files, or its HLS when it has nothing else), a media URL, a magnet or a `.torrent` (with `file_index`, that one of its files rather than the largest), or a finished download read from disk (`task_id`, and `file_index` for a torrent); `audio_language` picks the audio track, or `audio_track` names one
+    - `POST /stream/{session_id}/audio` — a new session playing another of `audio_tracks`, built from this one, which keeps playing until the player stops it
     - `GET /stream/events` — SSE session status, including swarm numbers
     - `GET /stream/{session_id}/playlist.m3u8` — the HLS playlist
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request

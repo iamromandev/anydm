@@ -12,9 +12,15 @@ CI installs.
 import json
 import shutil
 import subprocess
+from array import array
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
+from src.lib.media.audio import pick_audio_track
+from src.lib.media.ffmpeg import segment_args
+from src.lib.media.ffprobe import parse_probe_output
+from src.lib.media.source import MediaInput
 
 from tests.fixtures.media import CUES, DURATION_S, FORCED_CUES, SEGMENT_S, Media, build
 
@@ -150,3 +156,48 @@ def test_season_files_come_in_natural_order_which_text_order_breaks(media: Media
     assert sorted(names) == ["Show.S01E10.mkv", "Show.S01E2.mkv"]
     for episode in media.season:
         assert _of(_streams(episode), "video")
+
+
+# --- audio tracks (#99) ---------------------------------------------------------
+
+
+def _probe_json(path: Path) -> str:
+    return subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _tone_hz(segment: Path) -> float:
+    """The pitch of a segment's audio, from how often it crosses zero: two crossings a cycle."""
+    pcm = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(segment), "-map", "0:a:0", "-ac", "1", "-ar", "16000",
+         "-f", "s16le", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    samples = array("h", pcm)
+    crossings = sum(1 for a, b in pairwise(samples) if (a < 0) != (b < 0))
+    return crossings / 2 / (len(samples) / 16000)
+
+
+def test_movie_mkv_probes_as_two_audio_tracks(media: Media) -> None:
+    tracks = parse_probe_output(_probe_json(media.movie_mkv)).audio_tracks
+
+    assert [(t.index, t.language, t.default) for t in tracks] == [(0, "eng", False), (1, "rus", True)]
+    assert pick_audio_track(tracks, "en") == 0
+    assert pick_audio_track(tracks) == 1
+
+
+@pytest.mark.parametrize(("track", "hz"), [(0, 440), (1, 880)])
+def test_a_segment_plays_the_audio_track_it_maps(media: Media, tmp_path: Path, track: int, hz: int) -> None:
+    """The English track is a 440 Hz tone and the Russian one 880 Hz, so the pitch says which played."""
+    segment = tmp_path / f"segment_{track}.ts"
+    args = segment_args(
+        "ffmpeg", [MediaInput(str(media.movie_mkv))], 6.0, 6.0, segment, has_video=True, audio_track=track
+    )
+    subprocess.run(args, check=True, capture_output=True)
+
+    assert _tone_hz(segment) == pytest.approx(hz, rel=0.05)

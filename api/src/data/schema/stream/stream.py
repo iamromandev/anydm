@@ -43,6 +43,20 @@ class StreamStartRequest(BaseSchema):
         ),
     ]
 
+    audio_language: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=1,
+            max_length=35,
+            description="The audio language to prefer, as ISO 639 or BCP 47 (en, eng, en-US)",
+        ),
+    ]
+    audio_track: Annotated[
+        int | None,
+        Field(default=None, ge=0, description="The audio track to play, when the source has it"),
+    ]
+
     @model_validator(mode="after")
     def _one_source(self) -> StreamStartRequest:
         sources = [self.url, self.torrent, self.task_id]
@@ -51,6 +65,23 @@ class StreamStartRequest(BaseSchema):
         if self.file_index is not None and self.url is not None:
             raise ValueError("file_index goes with task_id or torrent")
         return self
+
+
+class AudioTrackSchema(BaseSchema):
+    """One of a source's audio tracks (#99)."""
+
+    #: Among its audio tracks only; what ``/stream/{id}/audio`` takes.
+    index: int
+    language: str | None = None
+    title: str | None = None
+    channels: int | None = None
+    codec: str | None = None
+    #: The one the source marks to open with.
+    default: bool = False
+
+
+class AudioSwitchRequest(BaseSchema):
+    track: Annotated[int, Field(ge=0, description="The audio track to play, from the session's audio_tracks")]
 
 
 class MediaInfoSchema(BaseSchema):
@@ -65,6 +96,7 @@ class MediaInfoSchema(BaseSchema):
     media_type: str | None = None
     #: Where the browser fetches the file itself, with Range.
     file_url: str
+    audio_tracks: list[AudioTrackSchema] = Field(default_factory=list)
 
 
 class StreamSessionSchema(BaseSchema):
@@ -73,3 +105,6 @@ class StreamSessionSchema(BaseSchema):
     status: str
     duration_seconds: float | None = None
     has_video: bool | None = None
+    #: A torrent's arrive with its ``ready`` event instead, once it's probed.
+    audio_tracks: list[AudioTrackSchema] | None = None
+    audio_track: int | None = None

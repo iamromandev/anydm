@@ -7,7 +7,7 @@ import contextlib
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
@@ -20,6 +20,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.interface import TaskRepo
 from src.lib.event import EventHub
+from src.lib.media.audio import AudioTrack, pick_audio_track
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args
 from src.lib.media.ffprobe import ProbeResult, probe
@@ -28,7 +29,7 @@ from src.lib.media.media_type import media_type
 from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.format import playback_plan
+from src.lib.site.format import audio_choices, playback_plan
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
@@ -74,6 +75,9 @@ class MediaInfo:
     has_video: bool
     #: For ``canPlayType``. ``None`` when no browser plays it from a file.
     media_type: str | None
+    #: A browser playing the file itself opens with the one marked default;
+    #: any other takes a session (#99).
+    audio_tracks: tuple[AudioTrack, ...] = ()
 
 
 async def fetch_playlist(
@@ -102,6 +106,10 @@ class _Page:
     #: Its inputs are HLS media playlists: read rather than probed, and cut from.
     hls: bool
     has_video: bool
+    #: Its audio formats as tracks, and each one's id and input (#99).
+    audio_tracks: list[AudioTrack]
+    site_audio: list[tuple[str, MediaInput]]
+    audio_track: int | None
 
 
 def _is_media_file(url: str) -> bool:
@@ -174,9 +182,17 @@ class StreamService(BaseService):
             duration_seconds=result.duration_seconds,
             has_video=result.has_video,
             media_type=media_type(result.container, result.video_codec, result.audio_codec),
+            audio_tracks=result.audio_tracks,
         )
 
-    async def start_task_session(self, task_id: uuid.UUID, file_index: int | None) -> StreamSession:
+    async def start_task_session(
+        self,
+        task_id: uuid.UUID,
+        file_index: int | None,
+        *,
+        audio_language: str | None = None,
+        audio_track: int | None = None,
+    ) -> StreamSession:
         """Play a finished task's file through a session, read from disk (#94).
 
         For what the browser can't play itself: the file is probed and cut
@@ -184,15 +200,26 @@ class StreamService(BaseService):
 
         A torrent still downloading plays from rqbit instead, through its own
         torrent: nothing is added, so the download's selection can't change (#95).
+
+        ``audio_track`` is the track to play, else the one ``audio_language``
+        picks (#99).
         """
         if self._torrent_play is not None:
             target = await self._torrent_play(task_id, file_index)
             if target is not None:
-                return self._torrent_stream_session(target.info_hash, target.file_index)
+                return self._torrent_stream_session(
+                    target.info_hash, target.file_index, audio_language=audio_language, audio_track=audio_track
+                )
         path, _filename, _index = await self._task_file(task_id, file_index)
         source = MediaInput(str(path))
         result = await self._prober(self._ffprobe_path, source.url)
-        return self._new_session([source], result.duration_seconds, result.has_video)
+        return self._new_session(
+            [source],
+            result.duration_seconds,
+            result.has_video,
+            audio_tracks=list(result.audio_tracks),
+            audio_track=pick_audio_track(result.audio_tracks, audio_language, audio_track),
+        )
 
     async def _task_file(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
         if self._task_files is None:
@@ -207,6 +234,10 @@ class StreamService(BaseService):
         *,
         origin: SiteOrigin | None = None,
         playlists: list[MediaPlaylist] | None = None,
+        audio_tracks: list[AudioTrack] | None = None,
+        audio_track: int | None = None,
+        site_audio: list[tuple[str, MediaInput]] | None = None,
+        info_hash: str | None = None,
     ) -> StreamSession:
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
@@ -221,19 +252,27 @@ class StreamService(BaseService):
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
             origin=origin,
             playlists=playlists or [],
+            audio_tracks=audio_tracks or [],
+            audio_track=audio_track,
+            site_audio=site_audio or [],
+            info_hash=info_hash,
         )
         self._sessions.add(session)
         return session
 
-    async def start_session(self, url: str) -> StreamSession:
+    async def start_session(
+        self, url: str, *, audio_language: str | None = None, audio_track: int | None = None
+    ) -> StreamSession:
         """Play ``url``: a page on a site, or a media file as it is.
 
         A page is read from the formats its site offers; anything no site
         claims is played directly, the same fallback the add box makes. An HLS
         page isn't probed: its playlists say how long it is, and its segments
         are cut from them.
+
+        A page's audio tracks are its audio formats; a file's are its own (#99).
         """
-        page = await self._open_page(url)
+        page = await self._open_page(url, audio_language, audio_track)
         inputs = page.inputs if page is not None else [MediaInput(url)]
         playlists: list[MediaPlaylist] = []
         if page is not None and page.hls:
@@ -243,15 +282,25 @@ class StreamService(BaseService):
             first = inputs[0]
             result = await self._prober(self._ffprobe_path, first.url, headers=first.headers)
             duration, has_video = result.duration_seconds, result.has_video
+        if page is not None:
+            tracks, track = page.audio_tracks, page.audio_track
+        else:
+            tracks = list(result.audio_tracks)
+            track = pick_audio_track(tracks, audio_language, audio_track)
         return self._new_session(
             inputs,
             duration,
             has_video,
             origin=page.origin if page is not None else None,
             playlists=playlists,
+            audio_tracks=tracks,
+            audio_track=track,
+            site_audio=page.site_audio if page is not None else None,
         )
 
-    async def _open_page(self, url: str) -> _Page | None:
+    async def _open_page(
+        self, url: str, audio_language: str | None = None, audio_track: int | None = None
+    ) -> _Page | None:
         """What a page's site offers for playback, or ``None`` for a plain file."""
         if self._site_client is None or _is_media_file(url):
             return None
@@ -263,13 +312,33 @@ class StreamService(BaseService):
             raise
         if info.is_live:
             raise site_error.live_not_supported()
-        plan = playback_plan(info.formats)
+        plan = playback_plan(info.formats, audio_language)
+        # Every format came back resolved, so a track can be swapped in
+        # without asking the site again.
+        choices = [choice for choice in audio_choices(info.formats, plan) if choice.id in resolved]
+        if audio_track is not None and 0 <= audio_track < len(choices):
+            plan = replace(plan, audio=choices[audio_track])
         parts = [part for part in (plan.video, plan.audio) if part is not None]
+        playing = plan.audio.id if plan.audio is not None else None
         return _Page(
             inputs=[MediaInput(resolved[part.id].url, resolved[part.id].headers) for part in parts],
             origin=SiteOrigin(info.webpage_url or url, tuple(part.id for part in parts)),
             hls=all(part.hls for part in parts),
             has_video=plan.video is not None,
+            audio_tracks=[
+                AudioTrack(
+                    index=n,
+                    language=choice.language,
+                    channels=choice.audio_channels,
+                    codec=choice.acodec,
+                    default=n == 0,
+                )
+                for n, choice in enumerate(choices)
+            ],
+            site_audio=[
+                (choice.id, MediaInput(resolved[choice.id].url, resolved[choice.id].headers)) for choice in choices
+            ],
+            audio_track=next((n for n, choice in enumerate(choices) if choice.id == playing), None),
         )
 
     async def _fetch_playlists(self, inputs: list[MediaInput]) -> list[MediaPlaylist]:
@@ -283,7 +352,14 @@ class StreamService(BaseService):
         except PlaylistRefused as refused:
             raise (site_error.live_not_supported() if refused.live else site_error.stream_not_playable()) from refused
 
-    async def start_torrent_session(self, torrent_raw: str, file_index: int | None = None) -> StreamSession:
+    async def start_torrent_session(
+        self,
+        torrent_raw: str,
+        file_index: int | None = None,
+        *,
+        audio_language: str | None = None,
+        audio_track: int | None = None,
+    ) -> StreamSession:
         """Stream a torrent's file: ``file_index``, else its largest media file (#98)."""
         if not self._torrent_enabled:
             raise Error.service_unavailable("Torrent support is disabled")
@@ -324,9 +400,18 @@ class StreamService(BaseService):
             only_files=[target.index],
             output_folder=str(torrent_folder(self._torrent_dir, details.name, details.info_hash)),
         )
-        return self._torrent_stream_session(details.info_hash, target.index)
+        return self._torrent_stream_session(
+            details.info_hash, target.index, audio_language=audio_language, audio_track=audio_track
+        )
 
-    def _torrent_stream_session(self, info_hash: str, file_index: int) -> StreamSession:
+    def _torrent_stream_session(
+        self,
+        info_hash: str,
+        file_index: int,
+        *,
+        audio_language: str | None = None,
+        audio_track: int | None = None,
+    ) -> StreamSession:
         """A session reading one file of a torrent rqbit has, through its stream endpoint.
 
         rqbit fetches the pieces being read first, so it plays while the
@@ -347,6 +432,8 @@ class StreamService(BaseService):
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
             info_hash=info_hash,
             status="connecting",
+            audio_track=audio_track,
+            audio_language=audio_language,
         )
         self._sessions.add(session)
         task = asyncio.create_task(self._probe_torrent_session(session))
@@ -368,8 +455,15 @@ class StreamService(BaseService):
             return
         session.duration_seconds = result.duration_seconds
         session.has_video = result.has_video
+        session.audio_tracks = list(result.audio_tracks)
+        session.audio_track = pick_audio_track(result.audio_tracks, session.audio_language, session.audio_track)
         session.status = "ready"
-        self._publish_status(session, status="ready")
+        self._publish_status(
+            session,
+            status="ready",
+            audio_tracks=[asdict(track) for track in session.audio_tracks],
+            audio_track=session.audio_track,
+        )
         # poll_task keeps running after this — it's what keeps the player's
         # swarm HUD live during playback, not just while connecting. It
         # stops only when stop_session() cancels it.
@@ -523,6 +617,7 @@ class StreamService(BaseService):
             duration_seconds=duration,
             destination=session.segment_path(index),
             has_video=session.has_video,
+            audio_track=session.mapped_audio_track,
         )
 
     async def _cut(self, session: StreamSession, index: int, start: float, end: float) -> list[PlaylistCut]:
@@ -553,6 +648,46 @@ class StreamService(BaseService):
             session.inputs = inputs
             session.inputs_version += 1
 
+    async def switch_audio(self, session: StreamSession, track: int) -> StreamSession:
+        """A new session like ``session``, playing audio track ``track`` (#99).
+
+        Built from what ``session`` already holds, never asking a site or rqbit
+        again: its inputs, its playlists, its torrent. A site's track is its
+        audio format, so the last input changes, and for HLS its playlist.
+        ``session`` keeps playing; the player stops it once the new one has
+        caught up.
+        """
+        if session.status != "ready":
+            raise Error.conflict("The stream is not ready yet")
+        if track not in [known.index for known in session.audio_tracks]:
+            raise Error.create(
+                code=Code.UNPROCESSABLE_ENTITY,
+                message=f"This stream has no audio track {track}",
+                error_type=ErrorType.UNPROCESSABLE_ENTITY,
+            )
+        inputs, origin, playlists = list(session.inputs), session.origin, list(session.playlists)
+        if session.site_audio:
+            format_id, source = session.site_audio[track]
+            inputs[-1] = source
+            if origin is not None:
+                origin = SiteOrigin(origin.page_url, (*origin.format_ids[:-1], format_id))
+            if playlists:
+                playlists[-1] = await self._fetch_playlist(source)
+        switched = self._new_session(
+            inputs,
+            session.duration_seconds,
+            session.has_video,
+            origin=origin,
+            playlists=playlists,
+            audio_tracks=list(session.audio_tracks),
+            audio_track=track,
+            site_audio=list(session.site_audio),
+            info_hash=session.info_hash,
+        )
+        if switched.info_hash is not None and self._torrent_client is not None:
+            switched.progress_task = asyncio.create_task(self._publish_progress_until_cancelled(switched))
+        return switched
+
     async def stop_session(self, session_id: str) -> None:
         session = self._sessions.remove(session_id)
         if session is None:
@@ -573,7 +708,10 @@ class StreamService(BaseService):
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await task
 
-        if session.info_hash and self._torrent_client is not None and self._task_repo is not None:
+        # A switch leaves two sessions on one torrent for a moment (#99): the
+        # one still playing needs it.
+        shared = any(other.info_hash == session.info_hash for other in self._sessions.all())
+        if session.info_hash and not shared and self._torrent_client is not None and self._task_repo is not None:
             existing = await self._task_repo.get_one(
                 info_hash=session.info_hash, deleted_at__isnull=True
             )

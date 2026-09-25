@@ -83,6 +83,7 @@ def segment_args(
     destination: Path,
     *,
     has_video: bool,
+    audio_track: int | None = None,
 ) -> list[str]:
     """One HLS-compatible segment, always re-encoded.
 
@@ -122,6 +123,11 @@ def segment_args(
     real 5.1 torrent, where hls.js's fragmented-MP4 remux of an unmodified
     6-channel AAC segment raised CHUNK_DEMUXER_ERROR_APPEND_FAILED on every
     attempt. Stereo is the safe, universally-supported target.
+
+    ``audio_track`` picks one input's audio track, counted among its audio
+    tracks (#99). Left to itself, ffmpeg takes the one with the most channels,
+    so a 5.1 dub beats a stereo original. Two inputs never take one: a site's
+    audio is its own input.
     """
     cuts = [source for source in inputs if isinstance(source, PlaylistCut)]
     plain = [source for source in inputs if isinstance(source, MediaInput)]
@@ -148,6 +154,8 @@ def segment_args(
     args += ["-t", str(duration_seconds)]
     if len(inputs) > 1:
         args += ["-map", "0:v:0", "-map", "1:a:0"]
+    elif audio_track is not None:
+        args += [*(["-map", "0:v:0"] if has_video else []), "-map", f"0:a:{audio_track}"]
     if has_video:
         args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2"]
     else:
