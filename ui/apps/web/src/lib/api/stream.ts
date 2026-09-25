@@ -1,5 +1,6 @@
 /** Start, and stop, an ephemeral on-demand HLS session for a site page, media URL or torrent. */
 
+import { type AudioTrack, normalizeAudioTracks } from "../audio";
 import { deleteApi, getApi, postApi } from "./client";
 
 export type StreamSession = {
@@ -8,7 +9,28 @@ export type StreamSession = {
     status: string;
     durationSeconds: number | null;
     hasVideo: boolean | null;
+    /** Empty until a torrent is probed: its arrive with the `ready` event (#99). */
+    audioTracks: AudioTrack[];
+    audioTrack: number | null;
 };
+
+/** The audio a session should open with (#99): a named track, else the preferred language's. */
+export type StreamAudio = {
+    language?: string | null;
+    track?: number | null;
+};
+
+function audioBody(audio: StreamAudio): {
+    audio_language?: string;
+    audio_track?: number;
+} {
+    return {
+        ...(audio.language ? { audio_language: audio.language } : {}),
+        ...(audio.track !== null && audio.track !== undefined
+            ? { audio_track: audio.track }
+            : {}),
+    };
+}
 
 /** One `stream_status` SSE payload — peer/speed/progress fields are only
  * present on torrent-backed sessions, and keep arriving through playback. */
@@ -20,6 +42,9 @@ export type StreamStatusEvent = {
     downloadBps?: number;
     progressBytes?: number;
     totalBytes?: number;
+    /** On a torrent's `ready`, once it has been probed (#99). */
+    audioTracks?: AudioTrack[];
+    audioTrack?: number | null;
 };
 
 export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
@@ -31,6 +56,12 @@ export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
         downloadBps: raw?.download_bps,
         progressBytes: raw?.progress_bytes,
         totalBytes: raw?.total_bytes,
+        ...(raw?.audio_tracks !== undefined
+            ? {
+                  audioTracks: normalizeAudioTracks(raw.audio_tracks),
+                  audioTrack: raw?.audio_track ?? null,
+              }
+            : {}),
     };
 }
 
@@ -43,6 +74,8 @@ export function normalizeStreamSession(raw: any): StreamSession {
             raw?.duration_seconds ?? (raw?.status === "connecting" ? null : 0),
         hasVideo:
             raw?.has_video ?? (raw?.status === "connecting" ? null : false),
+        audioTracks: normalizeAudioTracks(raw?.audio_tracks),
+        audioTrack: raw?.audio_track ?? null,
     };
 }
 
@@ -54,24 +87,39 @@ export function buildStreamStartBody(
     value: string,
     kind: string,
     fileIndex: number | null = null,
-): { url: string } | { torrent: string; file_index?: number } {
-    if (!isTorrentKind(kind)) return { url: value };
+    audio: StreamAudio = {},
+): Record<string, string | number> {
+    if (!isTorrentKind(kind)) return { url: value, ...audioBody(audio) };
     // A torrent's file, when one is named (#98); its largest otherwise.
     return fileIndex === null
-        ? { torrent: value }
-        : { torrent: value, file_index: fileIndex };
+        ? { torrent: value, ...audioBody(audio) }
+        : { torrent: value, file_index: fileIndex, ...audioBody(audio) };
 }
 
 export async function startStream(
     value: string,
     kind: string,
     fileIndex: number | null = null,
+    audio: StreamAudio = {},
 ): Promise<StreamSession> {
     return normalizeStreamSession(
         await postApi<any>(
             "/stream/start",
-            buildStreamStartBody(value, kind, fileIndex),
+            buildStreamStartBody(value, kind, fileIndex, audio),
         ),
+    );
+}
+
+/**
+ * A new session like `sessionId`'s, playing audio track `track` (#99). The
+ * old one keeps playing until it's stopped.
+ */
+export async function switchStreamAudio(
+    sessionId: string,
+    track: number,
+): Promise<StreamSession> {
+    return normalizeStreamSession(
+        await postApi<any>(`/stream/${sessionId}/audio`, { track }),
     );
 }
 
@@ -90,6 +138,8 @@ export type MediaInfo = {
     mediaType: string | null;
     /** The file itself, served with Range. */
     fileUrl: string;
+    /** A browser plays the one marked default; any other takes a session (#99). */
+    audioTracks: AudioTrack[];
 };
 
 export function normalizeMediaInfo(raw: any): MediaInfo {
@@ -101,6 +151,7 @@ export function normalizeMediaInfo(raw: any): MediaInfo {
         hasVideo: raw?.has_video ?? true,
         mediaType: raw?.media_type ?? null,
         fileUrl: raw?.file_url ?? "",
+        audioTracks: normalizeAudioTracks(raw?.audio_tracks),
     };
 }
 
@@ -158,21 +209,23 @@ export function nativeFailed(state: {
 export function buildTaskStreamBody(
     taskId: string,
     fileIndex: number | null,
-): { task_id: string; file_index?: number } {
+    audio: StreamAudio = {},
+): Record<string, string | number> {
     return fileIndex === null
-        ? { task_id: taskId }
-        : { task_id: taskId, file_index: fileIndex };
+        ? { task_id: taskId, ...audioBody(audio) }
+        : { task_id: taskId, file_index: fileIndex, ...audioBody(audio) };
 }
 
 /** A session that reads a finished download's file from disk. */
 export async function startTaskStream(
     taskId: string,
     fileIndex: number | null,
+    audio: StreamAudio = {},
 ): Promise<StreamSession> {
     return normalizeStreamSession(
         await postApi<any>(
             "/stream/start",
-            buildTaskStreamBody(taskId, fileIndex),
+            buildTaskStreamBody(taskId, fileIndex, audio),
         ),
     );
 }

@@ -1,5 +1,6 @@
 import { component$ } from "@qwik.dev/core";
 import { LuX } from "@/component/core/icons";
+import { AUDIO_LANGUAGES } from "@/lib/audio";
 import { PRESET_OPTIONS, type Prefs, type Preset } from "@/lib/prefs";
 import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
 import { serverLabel, serverValue } from "./server-value";
@@ -128,6 +129,40 @@ export const SettingsModal = component$<SettingsModalProps>(
                                             selected={
                                                 option.value ===
                                                 prefs.defaultPreset
+                                            }
+                                        >
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+
+                            <label class="settings-row">
+                                <span class="settings-label">
+                                    Audio language
+                                </span>
+                                <select
+                                    class="settings-select"
+                                    onChange$={(_, el) =>
+                                        onPrefsChange({
+                                            ...prefs,
+                                            audioLanguage: el.value,
+                                        })
+                                    }
+                                >
+                                    <option
+                                        value=""
+                                        selected={prefs.audioLanguage === ""}
+                                    >
+                                        As the file marks it
+                                    </option>
+                                    {AUDIO_LANGUAGES.map((option) => (
+                                        <option
+                                            key={option.value}
+                                            value={option.value}
+                                            selected={
+                                                option.value ===
+                                                prefs.audioLanguage
                                             }
                                         >
                                             {option.label}

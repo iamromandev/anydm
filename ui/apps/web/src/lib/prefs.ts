@@ -35,11 +35,17 @@ export type Prefs = {
     defaultPreset: Preset;
     /** Whether removing a download asks first. */
     confirmBeforeRemove: boolean;
+    /**
+     * The audio track the player opens with, by language (#99): an ISO 639-1
+     * code, or "" for whichever the file marks.
+     */
+    audioLanguage: string;
 };
 
 export const DEFAULT_PREFS: Prefs = {
     defaultPreset: "best",
     confirmBeforeRemove: true,
+    audioLanguage: "",
 };
 
 const STORAGE_KEY = "anydm.prefs";
@@ -71,6 +77,11 @@ export function loadPrefs(
                 typeof saved.confirmBeforeRemove === "boolean"
                     ? saved.confirmBeforeRemove
                     : DEFAULT_PREFS.confirmBeforeRemove,
+            audioLanguage:
+                typeof saved.audioLanguage === "string" &&
+                /^[A-Za-z]{0,8}(-[A-Za-z0-9]{1,8})*$/.test(saved.audioLanguage)
+                    ? saved.audioLanguage
+                    : DEFAULT_PREFS.audioLanguage,
         };
     } catch {
         // Unparseable, or storage that refuses to be read at all.
