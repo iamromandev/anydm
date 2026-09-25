@@ -930,13 +930,18 @@ export const PlayerModal = component$<PlayerModalProps>(
                 return response.text();
             };
 
-            if (!sessionId) {
-                get(`${fileBase}/${chosen}.vtt${store.subtitleFileQuery}`).then(
-                    add,
-                    () => {
-                        // Best-effort: the film plays on without them.
-                    },
-                );
+            // A subtitle file beside the video comes whole in a session too
+            // (#101); only an embedded track is cut by the segment.
+            const external = store.subtitleTracks.some(
+                (known) => known.index === chosen && known.external,
+            );
+            if (!sessionId || external) {
+                const whole = sessionId
+                    ? `/stream/${sessionId}/subtitles/${chosen}.vtt`
+                    : `${fileBase}/${chosen}.vtt${store.subtitleFileQuery}`;
+                get(whole).then(add, () => {
+                    // Best-effort: the film plays on without them.
+                });
                 return;
             }
 
