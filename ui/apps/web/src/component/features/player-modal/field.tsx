@@ -85,6 +85,9 @@ export interface PlayerModalProps {
     onClose: () => void;
 }
 
+/** The line a cue sits on, counted up from the bottom: above the control bar (#100). */
+const SUBTITLE_LINE = -4;
+
 export const PlayerModal = component$<PlayerModalProps>(
     ({
         open,
@@ -912,7 +915,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                     const key = cueKey(cue);
                     if (seen.has(key)) continue;
                     seen.add(key);
-                    showing.addCue(new VTTCue(cue.start, cue.end, cue.text));
+                    const shown = new VTTCue(cue.start, cue.end, cue.text);
+                    // Lines count up from the bottom: clear of the control
+                    // bar, which always sits over the foot of the picture.
+                    shown.line = SUBTITLE_LINE;
+                    showing.addCue(shown);
                 }
             };
             const get = async (path: string) => {
