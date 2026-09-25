@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_args
 
@@ -35,6 +36,14 @@ BULK_SCOPES: dict[str, frozenset[TaskStatus]] = {
     "resume_all": frozenset({TaskStatus.PAUSED, TaskStatus.FAILED}),
     "clear_finished": frozenset({TaskStatus.COMPLETE, TaskStatus.FAILED}),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentPlay:
+    """A torrent task still downloading, to play through rqbit's stream (#95)."""
+
+    info_hash: str
+    file_index: int
 
 
 class DownloadService(BaseService):
@@ -255,6 +264,23 @@ class DownloadService(BaseService):
             raise Error.not_found(message="Only a torrent has files by index")
         path, filename, _ = await self.resolve_file(task_id)
         return path, filename, None
+
+    async def torrent_play(self, task_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
+        """The torrent to stream when Play is pressed on a torrent still downloading (#95).
+
+        ``None`` when the task plays from disk instead: it isn't a torrent, or
+        it has finished. A paused torrent is resumed first, since a stream
+        from it would stall; it keeps downloading after the player closes.
+        """
+        task = await self._require(task_id)
+        if task.platform != Platform.TORRENT or task.status in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
+            return None
+        if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED):
+            raise Error.conflict(message=f"Task is {task.status.value}; there's nothing to play")
+        index = await self._torrents.media_file_index(task_id, file_index)
+        if task.status == TaskStatus.PAUSED:
+            await self._torrents.resume(task_id)
+        return TorrentPlay(info_hash=task.info_hash or "", file_index=index)
 
     async def pause(self, task_id: uuid.UUID) -> TaskSchema:
         """Signal a running transfer to stop between chunks, keeping the ``.part``.

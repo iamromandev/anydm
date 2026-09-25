@@ -13,6 +13,7 @@ import {
     postApi,
     keepSegments,
     resolveTorrent,
+    playsFromTorrent,
     settlePage,
     type ResolvedTorrent,
     normalizeSummary,
@@ -109,6 +110,7 @@ export default component$(() => {
         playerTaskId: "" as string,
         playerFileIndex: null as number | null,
         playerFiles: [] as PlayableFile[],
+        playerFromTorrent: false as boolean,
         // A count of stream writes, and the count at each task's latest one:
         // what lets a page fetch tell which rows went stale while it was out.
         // Only ids the stream has written are here, so it grows with the
@@ -661,6 +663,7 @@ export default component$(() => {
             // A torrent from the dialog: which file, and the ones to switch between (#98).
             store.playerFileIndex = fileIndex;
             store.playerFiles = files;
+            store.playerFromTorrent = false;
             store.playerUrl = value;
             store.playerKind = kind;
             store.playerModalOpen = true;
@@ -675,6 +678,8 @@ export default component$(() => {
         store.playerFileIndex = null;
         // A torrent's files, for the player's file menu (#98).
         store.playerFiles = mediaFiles(task?.files ?? []);
+        // Still downloading: its stream, not its partial file (#95).
+        store.playerFromTorrent = task ? playsFromTorrent(task) : false;
         store.playerTaskId = taskId;
         store.playerModalOpen = true;
     });
@@ -780,6 +785,7 @@ export default component$(() => {
             playerTaskId={store.playerTaskId}
             playerFileIndex={store.playerFileIndex}
             playerFiles={store.playerFiles}
+            playerFromTorrent={store.playerFromTorrent}
             onPlayClick={handlePlayClick}
             onPlayerModalClose={handlePlayerModalClose}
             onPause={handlePause}

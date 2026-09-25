@@ -68,6 +68,8 @@ export interface AppShellProps {
     playerFileIndex: number | null;
     /** A torrent's media files, for the player's file menu (#98). */
     playerFiles: PlayableFile[];
+    /** The task is a torrent still downloading, played from its stream (#95). */
+    playerFromTorrent: boolean;
     /** Play a link; for a torrent, which file and the files to switch between (#98). */
     onPlayClick: (
         value: string,
@@ -144,6 +146,7 @@ export const AppShell = component$<AppShellProps>(
         playerTaskId,
         playerFileIndex,
         playerFiles,
+        playerFromTorrent,
         onPlayClick,
         onPlayerModalClose,
         onSidebarToggle,
@@ -329,6 +332,7 @@ export const AppShell = component$<AppShellProps>(
                     kind={playerKind}
                     taskId={playerTaskId}
                     fileIndex={playerFileIndex}
+                    fromTorrent={playerFromTorrent}
                     files={playerFiles}
                     onClose={onPlayerModalClose}
                 />
