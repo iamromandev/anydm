@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 
 from src.config import get_settings
-from src.data.repo import FileDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
+from src.data.repo import FileDatabaseRepo, PositionDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
@@ -70,6 +70,7 @@ def get_download_service() -> DownloadService:
         downloads_root=Path(settings.download_dir),
         torrents=get_torrent_service(),
         disk=get_disk_guard(),
+        positions=PositionDatabaseRepo(),
     )
 
 

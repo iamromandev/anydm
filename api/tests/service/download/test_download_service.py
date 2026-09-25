@@ -909,6 +909,115 @@ async def test_a_failed_torrent_has_nothing_to_play() -> None:
     assert caught.value.code == 409
 
 
+class FakePositionRepo:
+    def __init__(self) -> None:
+        self.rows: dict[tuple[uuid.UUID, int], Any] = {}
+        self.batches: list[list[uuid.UUID]] = []
+
+    async def save(
+        self, task_id: uuid.UUID, file_index: int, *, position_seconds: float, duration_seconds: float,
+        watched: bool,
+    ) -> Any:
+        row = type("P", (), {"task_id": task_id, "file_index": file_index, "position_seconds": position_seconds,
+                             "duration_seconds": duration_seconds, "watched": watched})()
+        self.rows[(task_id, file_index)] = row
+        return row
+
+    async def list_for_tasks(self, task_ids: Any) -> dict[uuid.UUID, list[Any]]:
+        self.batches.append(list(task_ids))
+        return {
+            task_id: sorted((r for (t, _), r in self.rows.items() if t == task_id), key=lambda r: r.file_index)
+            for task_id in task_ids
+        }
+
+
+class _SchemaTorrents(FakeTorrentService):
+    """Real schemas, so positions can be attached to them."""
+
+    async def schemas(self, tasks: Any) -> list[Any]:
+        from src.data.schema.download import TaskSchema
+
+        return [TaskSchema.model_validate(task) for task in tasks]
+
+
+def _positions_service() -> tuple[DownloadService, FakeRepo, FakePositionRepo]:
+    repo, positions = FakeRepo(), FakePositionRepo()
+    service = DownloadService(
+        repo=repo,  # ty: ignore[invalid-argument-type]
+        segment_repo=FakeSegmentRepo(),  # ty: ignore[invalid-argument-type]
+        client=FakeSiteClient(site_info("youtube")),
+        control=DownloadControl(),
+        hub=EventHub(),
+        downloads_root=Path("/tmp/anydm-test"),
+        torrents=_SchemaTorrents(),  # ty: ignore[invalid-argument-type]
+        positions=positions,  # ty: ignore[invalid-argument-type]
+    )
+    return service, repo, positions
+
+
+@pytest.mark.asyncio
+async def test_a_position_is_saved_for_a_tasks_file() -> None:
+    """Where a download was left, so it resumes on any device (#96)."""
+    service, repo, positions = _positions_service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE)
+
+    saved = await service.save_position(task_id, None, position_seconds=61.5, duration_seconds=1300.0)
+
+    assert (saved.file_index, saved.position_seconds, saved.watched) == (0, 61.5, False)
+    assert positions.rows[(task_id, 0)].position_seconds == 61.5
+
+
+@pytest.mark.asyncio
+async def test_stopping_near_the_end_marks_it_watched_and_clears_where_to_resume() -> None:
+    service, repo, _ = _positions_service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE)
+
+    saved = await service.save_position(task_id, 2, position_seconds=1275.0, duration_seconds=1300.0)
+
+    assert (saved.position_seconds, saved.watched) == (0.0, True)
+
+
+@pytest.mark.asyncio
+async def test_a_watched_file_stays_watched_when_played_again() -> None:
+    service, repo, _ = _positions_service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, status=TaskStatus.COMPLETE)
+    await service.save_position(task_id, 0, position_seconds=1290.0, duration_seconds=1300.0)
+
+    again = await service.save_position(task_id, 0, position_seconds=40.0, duration_seconds=1300.0)
+
+    assert (again.position_seconds, again.watched) == (40.0, True)
+
+
+@pytest.mark.asyncio
+async def test_a_position_for_a_task_that_is_gone_is_a_404() -> None:
+    service, _, _ = _positions_service()
+
+    with pytest.raises(Error) as caught:
+        await service.save_position(uuid.uuid4(), None, position_seconds=1.0, duration_seconds=2.0)
+    assert caught.value.code == 404
+
+
+@pytest.mark.asyncio
+async def test_tasks_carry_their_positions_a_page_at_a_time() -> None:
+    service, repo, positions = _positions_service()
+    first, second = uuid.uuid4(), uuid.uuid4()
+    repo.page = [_row(first), _row(second)]
+    repo.rows[first] = repo.page[0]
+    await service.save_position(first, 1, position_seconds=10.0, duration_seconds=100.0)
+    positions.batches.clear()
+
+    tasks, _ = await service.list_tasks(page=1, page_size=20)
+
+    assert positions.batches == [[first, second]]
+    assert [(p.file_index, p.position_seconds) for p in tasks[0].positions or []] == [(1, 10.0)]
+    assert tasks[1].positions == []
+    one = await service.get_task(first)
+    assert [p.file_index for p in one.positions or []] == [1]
+
+
 def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:
     """The names live in the type module; what they mean lives in the service."""
     from typing import get_args

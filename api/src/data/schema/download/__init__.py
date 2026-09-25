@@ -1,6 +1,8 @@
 from .download import BulkActionRequest as BulkActionRequest
 from .download import BulkResultSchema as BulkResultSchema
 from .download import MediaDownloadRequest as MediaDownloadRequest
+from .download import PositionRequest as PositionRequest
+from .download import PositionSchema as PositionSchema
 from .download import TaskSchema as TaskSchema
 from .download import TaskSummarySchema as TaskSummarySchema
 from .download import UrlDownloadRequest as UrlDownloadRequest

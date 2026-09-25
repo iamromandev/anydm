@@ -14,6 +14,8 @@ from src.data.schema.download import (
     BulkActionRequest,
     BulkResultSchema,
     MediaDownloadRequest,
+    PositionRequest,
+    PositionSchema,
     TaskSchema,
     TaskSummarySchema,
     UrlDownloadRequest,
@@ -170,6 +172,25 @@ async def download_file(
     """
     path, filename, media_type = await download_service.resolve_file(task_id)
     return FileResponse(path=path, filename=filename, media_type=media_type)
+
+
+@router.put(path="/download/{task_id}/position", response_model=Success[PositionSchema])
+async def save_position(
+    task_id: uuid.UUID,
+    payload: PositionRequest,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    """Where a download was left in the player, so it resumes on any device (#96).
+
+    Near the end, it's marked watched and its position cleared.
+    """
+    data = await download_service.save_position(
+        task_id,
+        payload.file_index,
+        position_seconds=payload.position_seconds,
+        duration_seconds=payload.duration_seconds,
+    )
+    return Success.ok(data=data).to_resp()
 
 
 @router.get(path="/download/{task_id}/media", response_model=Success[MediaInfoSchema])

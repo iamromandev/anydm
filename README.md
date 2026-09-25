@@ -154,6 +154,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/events` — SSE task and progress stream
     - `GET /download/{task_id}` — one task
     - `GET /download/{task_id}/file` — serve the finished file; for a torrent, its one selected file (409 when it has several)
+    - `PUT /download/{task_id}/position` — where a download was left in the player (`file_index` for a torrent's file), so it resumes on any device; within its last 30 s it's marked watched instead. Tasks carry these as `positions`
     - `GET /download/{task_id}/media` — what the player needs to play a finished download: its MIME type for `canPlayType`, duration, and file URL (`?file_index=` for a torrent's file, else its largest media file)
     - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
     - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise

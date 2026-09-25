@@ -11,8 +11,9 @@ import httpx
 import pytest
 import pytest_asyncio
 from src.config import get_settings
+from src.data.schema.download import PositionSchema
 from src.main import app
-from src.service import get_stream_service
+from src.service import get_download_service, get_stream_service
 from src.service.stream.stream_service import MediaInfo
 
 TASK = uuid.uuid4()
@@ -121,3 +122,37 @@ async def test_a_start_names_exactly_one_source(
 
     assert response.status_code in (400, 422)
     assert stream.calls == []
+
+
+class _FakeDownloads:
+    def __init__(self) -> None:
+        self.saved: list[tuple[uuid.UUID, int | None, float, float]] = []
+
+    async def save_position(
+        self, task_id: uuid.UUID, file_index: int | None, *, position_seconds: float, duration_seconds: float
+    ) -> PositionSchema:
+        self.saved.append((task_id, file_index, position_seconds, duration_seconds))
+        return PositionSchema(file_index=file_index or 0, position_seconds=position_seconds,
+                              duration_seconds=duration_seconds)
+
+
+@pytest.mark.asyncio
+async def test_a_position_is_saved_through_the_route(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#96: the player's regular save."""
+    fake = _FakeDownloads()
+    monkeypatch.setattr(get_settings(), "api_key", None)
+    app.dependency_overrides[get_download_service] = lambda: fake
+    try:
+        response = await client.put(
+            f"/download/{TASK}/position", json={"file_index": 2, "position_seconds": 61.5, "duration_seconds": 1300}
+        )
+        refused = await client.put(f"/download/{TASK}/position", json={"position_seconds": -1, "duration_seconds": 1})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["data"]["position_seconds"] == 61.5
+    assert fake.saved == [(TASK, 2, 61.5, 1300.0)]
+    assert refused.status_code == 422
