@@ -39,6 +39,24 @@ describe("loadPrefs", () => {
         expect(loadPrefs(stub).defaultPreset).toBe(DEFAULT_PREFS.defaultPreset);
     });
 
+    it("remembers the audio language, and opens with the file's own by default (#99)", () => {
+        expect(DEFAULT_PREFS.audioLanguage).toBe("");
+        savePrefs({ ...DEFAULT_PREFS, audioLanguage: "ja" }, stub);
+
+        expect(loadPrefs(stub).audioLanguage).toBe("ja");
+    });
+
+    it("ignores an audio language that is not a language code", () => {
+        stub.setItem(
+            "anydm.prefs",
+            JSON.stringify({ audioLanguage: "<script>" }),
+        );
+        expect(loadPrefs(stub).audioLanguage).toBe("");
+
+        stub.setItem("anydm.prefs", JSON.stringify({ audioLanguage: 7 }));
+        expect(loadPrefs(stub).audioLanguage).toBe("");
+    });
+
     it("survives a stored value that is not json at all", () => {
         stub.setItem("anydm.prefs", "{ this is not json");
 

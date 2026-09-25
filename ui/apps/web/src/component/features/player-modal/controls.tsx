@@ -12,6 +12,7 @@ import {
     seekRatioFromPointerX,
     type ScrubberSegments,
 } from "./scrubber-progress";
+import { type AudioTrack, audioTrackLabel } from "@/lib/audio";
 import type { PlayableFile } from "@/lib/media";
 import "./controls.css";
 
@@ -34,6 +35,12 @@ export interface PlayerControlsProps {
     files?: PlayableFile[];
     currentFileIndex?: number | null;
     onPickFile?: (index: number) => void;
+    /** The source's audio tracks, when there's more than one (#99). */
+    audioTracks?: AudioTrack[];
+    audioTrack?: number | null;
+    /** A switch is on its way: the old track plays until the new one is ready. */
+    audioPending?: boolean;
+    onPickAudio?: (index: number) => void;
 }
 
 const PLAYBACK_RATES = [
@@ -63,6 +70,10 @@ export const PlayerControls = component$<PlayerControlsProps>(
         files,
         currentFileIndex,
         onPickFile,
+        audioTracks,
+        audioTrack,
+        audioPending,
+        onPickAudio,
     }) => {
         const trackRef = useSignal<HTMLDivElement>();
         const isDragging = useSignal(false);
@@ -237,6 +248,37 @@ export const PlayerControls = component$<PlayerControlsProps>(
                                     selected={file.index === currentFileIndex}
                                 >
                                     {file.path.split("/").pop()}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
+                    {audioTracks && audioTracks.length > 1 && (
+                        <select
+                            class="player-controls-audio"
+                            value={String(audioTrack ?? "")}
+                            disabled={audioPending}
+                            onChange$={(e: Event) => {
+                                onPickAudio?.(
+                                    Number(
+                                        (e.target as HTMLSelectElement).value,
+                                    ),
+                                );
+                            }}
+                            aria-label="Audio track"
+                            aria-busy={audioPending}
+                        >
+                            {/* `selected` too, for the reason the speed menu
+                                gives below. */}
+                            {audioTracks.map((track) => (
+                                <option
+                                    key={track.index}
+                                    value={track.index}
+                                    selected={track.index === audioTrack}
+                                >
+                                    {audioPending && track.index === audioTrack
+                                        ? "Switching…"
+                                        : audioTrackLabel(track, audioTracks)}
                                 </option>
                             ))}
                         </select>

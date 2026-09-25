@@ -29,6 +29,7 @@ describe("playing a finished download (#94)", () => {
             hasVideo: true,
             mediaType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
             fileUrl: "/download/t1/file",
+            audioTracks: [],
         });
         expect(
             normalizeMediaInfo({ file_index: 3, file_url: "/x" }).mediaType,
@@ -106,6 +107,80 @@ describe("playing a finished download (#94)", () => {
             task_id: "t1",
             file_index: 4,
         });
+    });
+});
+
+describe("choosing the audio (#99)", () => {
+    it("sends the preferred language, or a named track, only when there is one", () => {
+        expect(
+            buildStreamStartBody("https://x/a.mkv", "media", null, {
+                language: "en",
+            }),
+        ).toEqual({ url: "https://x/a.mkv", audio_language: "en" });
+        expect(
+            buildStreamStartBody("magnet:?x", "magnet", 1, {
+                language: null,
+                track: 0,
+            }),
+        ).toEqual({ torrent: "magnet:?x", file_index: 1, audio_track: 0 });
+        expect(buildTaskStreamBody("t1", null, { language: "" })).toEqual({
+            task_id: "t1",
+        });
+        expect(buildTaskStreamBody("t1", 2, { track: 1 })).toEqual({
+            task_id: "t1",
+            file_index: 2,
+            audio_track: 1,
+        });
+    });
+
+    it("reads a session's tracks, and none for one still connecting", () => {
+        const session = normalizeStreamSession({
+            session_id: "s1",
+            status: "ready",
+            audio_tracks: [
+                { index: 0, language: "eng", default: true },
+            ],
+            audio_track: 0,
+        });
+        expect(session.audioTracks.map((t) => t.language)).toEqual([
+            "eng",
+        ]);
+        expect(session.audioTrack).toBe(0);
+
+        const connecting = normalizeStreamSession({ status: "connecting" });
+        expect(connecting.audioTracks).toEqual([]);
+        expect(connecting.audioTrack).toBeNull();
+    });
+
+    it("reads a torrent's tracks from its ready event, and leaves them out of the others", () => {
+        const ready = normalizeStreamStatusEvent({
+            id: "s1",
+            status: "ready",
+            audio_tracks: [
+                { index: 0 },
+                { index: 1, language: "rus" },
+            ],
+            audio_track: 1,
+        });
+        expect(ready.audioTracks?.length).toBe(2);
+        expect(ready.audioTrack).toBe(1);
+
+        const progress = normalizeStreamStatusEvent({
+            id: "s1",
+            status: "ready",
+            peers_connected: 3,
+        });
+        expect("audioTracks" in progress).toBe(false);
+    });
+
+    it("reads a download's tracks from its media", () => {
+        expect(
+            normalizeMediaInfo({
+                audio_tracks: [
+                    { index: 0, language: "spa", default: true },
+                ],
+            }).audioTracks[0].language,
+        ).toBe("spa");
     });
 });
 

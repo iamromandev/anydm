@@ -122,7 +122,8 @@
 }
 
 .player-controls-rate,
-.player-controls-file {
+.player-controls-file,
+.player-controls-audio {
     margin-left: auto;
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
@@ -138,8 +139,20 @@
     text-overflow: ellipsis;
 }
 
-.player-controls-file + .player-controls-rate {
+.player-controls-file + .player-controls-rate,
+.player-controls-file + .player-controls-audio,
+.player-controls-audio + .player-controls-rate {
     margin-left: 0.5rem;
+}
+
+/* Audio tracks (#99): a title can be long too. */
+.player-controls-audio {
+    max-width: 12rem;
+    text-overflow: ellipsis;
+}
+
+.player-controls-audio:disabled {
+    opacity: 0.6;
 }
 
 @media (max-width: 640px) {
@@ -156,11 +169,13 @@
     }
 
     .player-controls-rate,
-    .player-controls-file {
+    .player-controls-file,
+    .player-controls-audio {
         min-height: 44px;
     }
 
-    .player-controls-file {
+    .player-controls-file,
+    .player-controls-audio {
         max-width: 8rem;
     }
 

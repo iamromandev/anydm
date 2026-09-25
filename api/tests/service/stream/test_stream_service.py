@@ -8,11 +8,12 @@ import httpx
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
+from src.lib.media.audio import AudioTrack
 from src.lib.media.ffprobe import ProbeResult
 from src.lib.media.source import MediaInput
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteInfo
-from src.lib.site.format import playback_plan
+from src.lib.site.format import Format, playback_plan
 from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
 from src.service.download.download_service import TorrentPlay
@@ -1346,3 +1347,180 @@ async def test_a_finished_torrent_still_plays_from_disk(tmp_path: Path) -> None:
 
     assert [source.url for source in session.inputs] == [str(tmp_path / "Movie.mkv")]
     assert session.info_hash is None
+
+
+# --- audio tracks (#99) ---------------------------------------------------------
+
+DUB_THEN_ORIGINAL = (
+    AudioTrack(0, language="spa", channels=6, codec="ac3", default=True),
+    AudioTrack(1, language="eng", channels=2, codec="aac"),
+)
+
+
+async def _two_tracks(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+    return ProbeResult(duration_seconds=20.0, has_video=True, audio_tracks=DUB_THEN_ORIGINAL)
+
+
+def _maps(args: list[str]) -> list[str]:
+    return [args[i + 1] for i, arg in enumerate(args) if arg == "-map"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_opens_with_the_preferred_language(tmp_path: Path) -> None:
+    service, encoded = _service(tmp_path, prober=_two_tracks, readahead_segments=0)
+
+    session = await service.start_session("http://example.com/movie.mkv", audio_language="en")
+    await service.get_segment(session, 0)
+
+    assert session.audio_tracks == list(DUB_THEN_ORIGINAL)
+    assert session.audio_track == 1
+    assert _maps(encoded[-1]) == ["0:v:0", "0:a:1"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_opens_with_its_marked_track_without_a_preference(tmp_path: Path) -> None:
+    service, encoded = _service(tmp_path, prober=_two_tracks, readahead_segments=0)
+
+    session = await service.start_session("http://example.com/movie.mkv", audio_language="ja")
+    await service.get_segment(session, 0)
+
+    assert session.audio_track == 0
+    assert _maps(encoded[-1]) == ["0:v:0", "0:a:0"]
+
+
+@pytest.mark.asyncio
+async def test_a_named_track_beats_the_preference(tmp_path: Path) -> None:
+    """What native playback asks for when it hands over to a session."""
+    service, _ = _service(tmp_path, prober=_two_tracks)
+
+    session = await service.start_session("http://example.com/movie.mkv", audio_language="es", audio_track=1)
+
+    assert session.audio_track == 1
+
+
+@pytest.mark.asyncio
+async def test_a_switch_is_a_new_session_on_the_same_source(tmp_path: Path) -> None:
+    probes: list[str] = []
+
+    async def counting(_ffprobe: str, source: str, **_: object) -> ProbeResult:
+        probes.append(source)
+        return await _two_tracks(_ffprobe, source)
+
+    service, encoded = _service(tmp_path, prober=counting, readahead_segments=0)
+    old = await service.start_session("http://example.com/movie.mkv")
+
+    new = await service.switch_audio(old, 1)
+    await service.get_segment(new, 2)
+
+    assert new.id != old.id
+    assert (new.inputs, new.duration_seconds, new.audio_track) == (old.inputs, old.duration_seconds, 1)
+    assert _maps(encoded[-1]) == ["0:v:0", "0:a:1"]
+    # Nothing probed again, and the old one still plays until the player stops it.
+    assert probes == ["http://example.com/movie.mkv"]
+    assert service.get_session(old.id) is old
+    assert old.audio_track == 0
+
+
+@pytest.mark.asyncio
+async def test_a_switch_refuses_a_track_the_source_lacks(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path, prober=_two_tracks)
+    session = await service.start_session("http://example.com/movie.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.switch_audio(session, 2)
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_picks_its_track_once_probed_and_switches_on_the_same_torrent(tmp_path: Path) -> None:
+    torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
+    service, encoded = _torrent_service(
+        tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo(), prober=_two_tracks
+    )
+
+    old = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef", audio_language="eng")
+    with pytest.raises(Error) as caught:
+        await service.switch_audio(old, 0)
+    assert caught.value.code == Code.CONFLICT
+    await asyncio.gather(*old.background_tasks)
+    assert (old.audio_tracks, old.audio_track) == (list(DUB_THEN_ORIGINAL), 1)
+
+    new = await service.switch_audio(old, 0)
+    await service.get_segment(new, 0)
+
+    assert (new.info_hash, new.inputs) == (old.info_hash, old.inputs)
+    assert new.progress_task is not None
+    assert _maps(encoded[-1]) == ["0:v:0", "0:a:0"]
+    assert len(torrent_client.added) == 1
+
+    # The old one goes first, while the new one still needs the torrent.
+    await service.stop_session(old.id)
+    assert torrent_client.deleted == []
+    await service.stop_session(new.id)
+    assert torrent_client.deleted == ["deadbeef"]
+    assert new.progress_task.cancelled()
+
+
+def _dubbed(*, hls: bool = False) -> SiteInfo:
+    protocol = "m3u8_native" if hls else "https"
+
+    def audio(format_id: str, language: str, preference: int) -> dict[str, object]:
+        return {
+            "format_id": format_id, "protocol": protocol, "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2",
+            "tbr": 128, "language": language, "language_preference": preference, "audio_channels": 2,
+        }
+
+    formats = [
+        {"format_id": "137", "protocol": protocol, "ext": "mp4", "vcodec": "avc1.640028", "acodec": "none",
+         "height": 1080, "tbr": 4000},
+        audio("140-en", "en", 10),
+        audio("140-es", "es-US", -1),
+        audio("140-de", "de", -1),
+    ]
+    return site_info("youtube", formats=[Format.from_ytdlp(f) for f in formats])
+
+
+@pytest.mark.asyncio
+async def test_a_page_s_dubs_are_its_tracks(tmp_path: Path) -> None:
+    client = FakeSiteClient(_dubbed())
+    service, _, encoded = _site_service(tmp_path, client)
+
+    session = await service.start_session(YOUTUBE_PAGE, audio_language="spa")
+    await service.get_segment(session, 0)
+
+    assert [(t.index, t.language, t.default) for t in session.audio_tracks] == [
+        (0, "en", True), (1, "es-US", False), (2, "de", False),
+    ]
+    assert session.audio_track == 1
+    assert session.inputs[-1] == MediaInput(media_url("youtube", "140-es"), HEADERS)
+    # A site's audio is its own input: nothing to map from one file.
+    assert _maps(encoded[-1]) == ["0:v:0", "1:a:0"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_switch_swaps_its_audio_input_without_asking_the_site(tmp_path: Path) -> None:
+    client = FakeSiteClient(_dubbed())
+    service, _, _ = _site_service(tmp_path, client)
+    old = await service.start_session(YOUTUBE_PAGE)
+
+    new = await service.switch_audio(old, 2)
+
+    assert new.inputs == [old.inputs[0], MediaInput(media_url("youtube", "140-de"), HEADERS)]
+    assert new.origin == SiteOrigin(_dubbed().webpage_url, ("137", "140-de"))
+    assert new.audio_track == 2
+    assert client.opened == [YOUTUBE_PAGE]
+    assert client.resolved == []
+
+
+@pytest.mark.asyncio
+async def test_an_hls_page_switch_reads_only_the_new_audio_playlist(tmp_path: Path) -> None:
+    playlists = FakePlaylists()
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_dubbed(hls=True)), playlist_fetcher=playlists)
+    old = await service.start_session(YOUTUBE_PAGE)
+    playlists.fetched.clear()
+
+    new = await service.switch_audio(old, 1)
+
+    assert [url for url, _ in playlists.fetched] == [media_url("youtube", "140-es")]
+    assert new.playlists[0] is old.playlists[0]
+    assert len(new.playlists) == 2

@@ -9,6 +9,7 @@ from src.core.type import Code, ErrorType
 from src.data.type import Kind, Preset
 from src.lib.site.format import (
     Format,
+    audio_choices,
     container_for,
     is_fragmented,
     playback_plan,
@@ -418,3 +419,56 @@ def test_hls_is_the_m3u8_kind_of_fragmented() -> None:
     assert _one("twitch", "720p-1").fragmented
     assert not _one("youtube", "137").hls
     assert not Format("dash-720", protocol="http_dash_segments").hls
+
+
+# --- audio tracks (#99) ---------------------------------------------------------
+
+
+def _dub(format_id: str, language: str, bitrate: int, *, preference: int = -1, hls: bool = False) -> Format:
+    return Format(
+        format_id, protocol="m3u8_native" if hls else "https", vcodec="none", acodec="mp4a", ext="m4a",
+        bitrate=bitrate, language=language, language_preference=preference,
+    )
+
+
+DUBBED = [
+    _video("137", 1080),
+    _dub("140-en", "en", 128_000, preference=10),
+    _dub("140-es", "es-US", 160_000),
+    _dub("139-es", "es-US", 48_000),
+    _dub("140-de", "de", 128_000),
+    _dub("hls-fr", "fr", 128_000, hls=True),
+]
+
+
+def test_a_format_reads_its_language() -> None:
+    raw = {"format_id": "140", "acodec": "mp4a.40.2", "vcodec": "none", "language": "es-US",
+           "language_preference": -1, "audio_channels": 2}
+    parsed = Format.from_ytdlp(raw)
+    assert (parsed.language, parsed.language_preference, parsed.audio_channels) == ("es-US", -1, 2)
+
+
+def test_the_site_s_own_audio_beats_a_dub_with_a_higher_bitrate() -> None:
+    assert playback_plan(DUBBED).audio == DUBBED[1]
+    assert select_plan(DUBBED, Preset.BEST).audio == DUBBED[1]
+
+
+def test_audio_choices_are_one_per_language_of_the_plan_s_kind() -> None:
+    choices = audio_choices(DUBBED, playback_plan(DUBBED))
+    # The best Spanish only, and no HLS French beside plain files.
+    assert [f.id for f in choices] == ["140-en", "140-es", "140-de"]
+
+
+def test_a_combined_plan_offers_no_audio_choices() -> None:
+    formats = [_video("22", 720, audio=True)]
+    assert audio_choices(formats, playback_plan(formats)) == []
+
+
+def test_the_preferred_language_picks_the_plan_s_audio() -> None:
+    assert playback_plan(DUBBED, "spa").audio == DUBBED[2]
+    assert playback_plan(DUBBED, "de-DE").audio == DUBBED[4]
+
+
+def test_a_language_the_page_lacks_keeps_the_site_s_own() -> None:
+    assert playback_plan(DUBBED, "ja").audio == DUBBED[1]
+    assert playback_plan(DUBBED, None).audio == DUBBED[1]

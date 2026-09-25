@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from src.lib.media.audio import AudioTrack
 from src.lib.media.hls import MediaPlaylist
 from src.lib.media.source import MediaInput
 
@@ -83,6 +84,21 @@ class StreamSession:
     #: An HLS session's media playlists, one per input in the same order,
     #: which each segment is cut from. Empty for any other session.
     playlists: list[MediaPlaylist] = field(default_factory=list)
+    #: What the audio menu offers, and the one playing (#99). A torrent's are
+    #: known once it has been probed; until then ``audio_track`` holds the one
+    #: asked for, and ``audio_language`` the preference to fall back on.
+    audio_tracks: list[AudioTrack] = field(default_factory=list)
+    audio_track: int | None = None
+    audio_language: str | None = None
+    #: A site's audio formats, one per track in the same order: the format's
+    #: id and its input. Swapping the last input changes the track, since a
+    #: site's audio is its own input. Empty for any other session.
+    site_audio: list[tuple[str, MediaInput]] = field(default_factory=list)
+
+    @property
+    def mapped_audio_track(self) -> int | None:
+        """The track ``segment_args`` maps from the one input: none for a site, whose audio is an input."""
+        return None if self.site_audio else self.audio_track
 
     @property
     def segment_count(self) -> int:

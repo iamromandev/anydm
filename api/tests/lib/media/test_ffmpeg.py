@@ -259,3 +259,40 @@ def test_plain_inputs_and_cuts_are_never_mixed() -> None:
 
     with pytest.raises(ValueError):
         segment_args("ffmpeg", inputs, 6.0, 6.0, Path("/s/o.ts"), has_video=True)  # ty: ignore[invalid-argument-type]
+
+
+def _maps(args: list[str]) -> list[str]:
+    return [args[i + 1] for i, arg in enumerate(args) if arg == "-map"]
+
+
+def test_segment_args_maps_the_chosen_audio_track_with_the_picture() -> None:
+    """Left alone, ffmpeg takes the track with the most channels: a 5.1 dub over a stereo original (#99)."""
+    args = segment_args(
+        "ffmpeg", [MediaInput("/d/movie.mkv")], 6.0, 6.0, Path("/t/o.ts"), has_video=True, audio_track=1
+    )
+    assert _maps(args) == ["0:v:0", "0:a:1"]
+    assert args.index("-map") > args.index("-i")
+
+
+def test_segment_args_maps_only_the_audio_track_for_audio_alone() -> None:
+    args = segment_args(
+        "ffmpeg", [MediaInput("/d/album.mka")], 0.0, 6.0, Path("/t/o.ts"), has_video=False, audio_track=2
+    )
+    assert _maps(args) == ["0:a:2"]
+
+
+def test_segment_args_maps_a_cut_s_audio_track_too() -> None:
+    args = segment_args(
+        "ffmpeg", [PlaylistCut(Path("/t/segment_1.0.m3u8"), 5.0)], 6.0, 6.0, Path("/t/o.ts"),
+        has_video=True, audio_track=0,
+    )
+    assert _maps(args) == ["0:v:0", "0:a:0"]
+
+
+def test_segment_args_ignores_an_audio_track_for_a_site_s_two_inputs() -> None:
+    """A site's audio is its own input, chosen by format rather than by track."""
+    args = segment_args(
+        "ffmpeg", [MediaInput("https://media.test/v"), MediaInput("https://media.test/a")],
+        0.0, 6.0, Path("/t/o.ts"), has_video=True, audio_track=1,
+    )
+    assert _maps(args) == ["0:v:0", "1:a:0"]

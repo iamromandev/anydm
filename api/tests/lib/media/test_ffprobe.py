@@ -3,6 +3,7 @@ import json
 import pytest
 from src.core.error import Error
 from src.core.type import ErrorType
+from src.lib.media.audio import AudioTrack
 from src.lib.media.ffprobe import ProbeResult, capture, parse_probe_output, probe_args
 
 
@@ -66,7 +67,7 @@ def test_parse_probe_output_reads_duration_and_detects_video() -> None:
         ],
     })
     result = parse_probe_output(raw)
-    assert result == ProbeResult(duration_seconds=125.48, has_video=True)
+    assert result == ProbeResult(duration_seconds=125.48, has_video=True, audio_tracks=(AudioTrack(0),))
 
 
 def test_parse_probe_output_detects_audio_only() -> None:
@@ -126,3 +127,28 @@ def test_parse_probe_output_ignores_a_cover_picture() -> None:
     result = parse_probe_output(raw)
     assert result.has_video is False
     assert result.video_codec is None
+
+
+def test_parse_probe_output_lists_every_audio_track() -> None:
+    """Counted among audio streams only, as ``-map 0:a:N`` counts them (#99)."""
+    raw = json.dumps({
+        "format": {"duration": "20.0", "format_name": "matroska,webm"},
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {
+                "codec_type": "audio", "codec_name": "ac3", "channels": 6,
+                "disposition": {"default": 1}, "tags": {"language": "spa", "title": "Doblaje"},
+            },
+            {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng"}},
+            {"codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "eng"}},
+        ],
+    })
+    assert parse_probe_output(raw).audio_tracks == (
+        AudioTrack(0, language="spa", title="Doblaje", channels=6, codec="ac3", default=True),
+        AudioTrack(1, language="eng", channels=2, codec="aac"),
+    )
+
+
+def test_parse_probe_output_lists_no_audio_tracks_for_a_silent_file() -> None:
+    raw = json.dumps({"format": {"duration": "4.0"}, "streams": [{"codec_type": "video"}]})
+    assert parse_probe_output(raw).audio_tracks == ()

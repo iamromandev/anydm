@@ -1,6 +1,8 @@
 import {
     component$,
     $,
+    noSerialize,
+    type NoSerialize,
     useSignal,
     useStore,
     useVisibleTask$,
@@ -22,9 +24,17 @@ import {
     startStream,
     startTaskStream,
     stopStream,
+    switchStreamAudio,
     type MediaInfo,
+    type StreamAudio,
     type StreamSession,
 } from "@/lib/api";
+import {
+    type AudioTrack,
+    needsAudioSession,
+    pickAudioTrack,
+    segmentAt,
+} from "@/lib/audio";
 import { defaultFileIndex, type PlayableFile } from "@/lib/media";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
@@ -60,6 +70,8 @@ export interface PlayerModalProps {
     positions?: PositionView[];
     /** The player saved where it is. */
     onPositionSaved?: (taskId: string, position: PositionView) => void;
+    /** The audio language to open with, from Settings; "" for the file's own (#99). */
+    audioLanguage?: string;
     onClose: () => void;
 }
 
@@ -74,9 +86,15 @@ export const PlayerModal = component$<PlayerModalProps>(
         fromTorrent,
         positions,
         onPositionSaved,
+        audioLanguage,
         onClose,
     }) => {
         const videoRef = useSignal<HTMLVideoElement>();
+        // Set by the task below once something plays: moves playback to
+        // another audio track without starting over (#99). A function, so
+        // kept out of what Qwik serializes.
+        const switchAudioRef =
+            useSignal<NoSerialize<(track: number) => Promise<void>>>();
         // The file picked in the player's own menu. A signal of this
         // component's rather than a prop, so the task below reliably re-runs
         // on every pick.
@@ -112,6 +130,11 @@ export const PlayerModal = component$<PlayerModalProps>(
             currentFileIndex: null as number | null,
             // Where playback resumed, for the note offering to start over (#96).
             resumedAt: 0,
+            // The audio menu (#99): the tracks, the one playing (or on its
+            // way), and whether a switch is still getting ready.
+            audioTracks: [] as AudioTrack[],
+            audioTrack: null as number | null,
+            audioPending: false,
         });
 
         useVisibleTask$(
@@ -161,6 +184,15 @@ export const PlayerModal = component$<PlayerModalProps>(
                 store.volume = 1;
                 store.muted = false;
                 store.playbackRate = 1;
+                store.audioTracks = [];
+                store.audioTrack = null;
+                store.audioPending = false;
+                switchAudioRef.value = undefined;
+                // Read, not tracked: a change in Settings applies to the
+                // next thing played, not to this one.
+                const preferred: StreamAudio = {
+                    language: audioLanguage || null,
+                };
 
                 // Reassigned inside the try block below; declared here so `cleanup`
                 // below can reach whichever instance (if any) actually got created.
@@ -172,6 +204,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const streamEventsRef: { current: EventSource | null } = {
                     current: null,
                 };
+                // The same, for the move from a file the browser plays itself
+                // to a session: set only when that's how this run plays.
+                const fallBackRef: {
+                    current: ((audio?: StreamAudio) => Promise<void>) | null;
+                } = { current: null };
 
                 const updateFullscreenState = () => {
                     store.fullscreen =
@@ -196,7 +233,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                     if (sourceTask && sourceFromTorrent) {
                         // A partial file can't play natively: straight to
                         // rqbit's stream, through the task's own torrent.
-                        session = await startTaskStream(sourceTask, playIndex);
+                        session = await startTaskStream(
+                            sourceTask,
+                            playIndex,
+                            preferred,
+                        );
                     } else if (sourceTask) {
                         const media = await fetchMediaInfo(
                             sourceTask,
@@ -205,16 +246,27 @@ export const PlayerModal = component$<PlayerModalProps>(
                         store.hasVideo = media.hasVideo;
                         store.currentFileIndex = media.fileIndex;
                         const probe = document.createElement("video");
+                        // The browser opens with the track the file marks,
+                        // so a preference for another takes a session (#99).
                         if (
                             choosePlayback(media, (type) =>
                                 probe.canPlayType(type),
-                            ) === "native"
+                            ) === "native" &&
+                            !needsAudioSession(
+                                media.audioTracks,
+                                preferred.language ?? null,
+                            )
                         ) {
                             native = media;
+                            store.audioTracks = media.audioTracks;
+                            store.audioTrack = pickAudioTrack(
+                                media.audioTracks,
+                            );
                         } else {
                             session = await startTaskStream(
                                 sourceTask,
                                 media.fileIndex,
+                                preferred,
                             );
                         }
                     } else {
@@ -222,6 +274,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                             sourceUrl,
                             sourceKind,
                             playIndex,
+                            preferred,
                         );
                     }
 
@@ -230,10 +283,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                         store.sessionId = session.sessionId;
                         store.streamStatus = session.status;
                         store.hasVideo = session.hasVideo ?? true;
+                        store.audioTracks = session.audioTracks;
+                        store.audioTrack = session.audioTrack;
                         ready = session.status !== "connecting";
                     }
                     if (session && session.status === "connecting") {
-                        const connecting = session;
                         // A torrent-backed session comes back before ffprobe
                         // has run — the backend probes in the background and
                         // pushes live swarm status here until it's ready (or
@@ -256,7 +310,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                             (event as MessageEvent).data,
                                         ),
                                     );
-                                    if (data.id !== connecting.sessionId) {
+                                    // The session playing, which a switch of
+                                    // audio track replaces (#99).
+                                    if (data.id !== store.sessionId) {
                                         return;
                                     }
                                     if (data.status === "error") {
@@ -280,6 +336,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     }
                                     if (data.totalBytes !== undefined) {
                                         store.totalBytes = data.totalBytes;
+                                    }
+                                    if (data.audioTracks !== undefined) {
+                                        store.audioTracks = data.audioTracks;
+                                        store.audioTrack =
+                                            data.audioTrack ?? null;
                                     }
                                     if (!resolved && data.status === "ready") {
                                         resolved = true;
@@ -498,20 +559,35 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 const media = native;
                                 // If the file won't play after all, a session
                                 // from disk takes over where it stopped (#93).
+                                // So does another audio track than the file's
+                                // own, picked from the menu (#99).
                                 let fellBack = false;
-                                const fallBack = async () => {
+                                fallBackRef.current = async (
+                                    audio: StreamAudio = preferred,
+                                ) => {
                                     if (fellBack) return;
                                     fellBack = true;
                                     const resumeAt = video.currentTime;
+                                    const wasPaused = video.paused;
                                     video.removeAttribute("src");
                                     video.load();
                                     try {
                                         const taken = await startTaskStream(
                                             sourceTask,
                                             media.fileIndex,
+                                            audio,
                                         );
                                         store.sessionId = taken.sessionId;
                                         store.streamStatus = taken.status;
+                                        store.audioTracks = taken.audioTracks;
+                                        store.audioTrack = taken.audioTrack;
+                                        if (wasPaused) {
+                                            video.addEventListener(
+                                                "loadedmetadata",
+                                                () => video.pause(),
+                                                { once: true },
+                                            );
+                                        }
                                         if (resumeAt > 0) {
                                             video.addEventListener(
                                                 "loadedmetadata",
@@ -530,6 +606,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                                 : "Failed to start the stream";
                                     }
                                 };
+                                const fallBack = () => fallBackRef.current?.();
                                 const onError = () => {
                                     if (
                                         nativeFailed({
@@ -607,6 +684,102 @@ export const PlayerModal = component$<PlayerModalProps>(
                             } else if (session) {
                                 await attach(session);
                             }
+
+                            let switching = 0;
+                            let closed = false;
+                            cleanup(() => {
+                                closed = true;
+                                switchAudioRef.value = undefined;
+                            });
+                            // Another audio track (#99). The session playing
+                            // carries on while the new one readies the segment
+                            // at the current position; then the player swaps
+                            // to it there and stops the old one. A file the
+                            // browser plays itself moves to a session instead.
+                            switchAudioRef.value = noSerialize(
+                                async (track: number) => {
+                                    if (
+                                        track === store.audioTrack ||
+                                        store.audioPending
+                                    ) {
+                                        return;
+                                    }
+                                    const token = ++switching;
+                                    const previous = store.audioTrack;
+                                    store.audioTrack = track;
+                                    store.audioPending = true;
+                                    try {
+                                        if (!store.sessionId) {
+                                            await fallBackRef.current?.({
+                                                track,
+                                            });
+                                            return;
+                                        }
+                                        const oldId = store.sessionId;
+                                        const next = await switchStreamAudio(
+                                            oldId,
+                                            track,
+                                        );
+                                        const headers = authHeaders();
+                                        const playlist = await fetch(
+                                            apiUrl(next.playlistUrl),
+                                            { headers },
+                                        ).then((r) => r.text());
+                                        const warmed = await fetch(
+                                            apiUrl(
+                                                `/stream/${next.sessionId}/segment_${segmentAt(playlist, video.currentTime)}.ts`,
+                                            ),
+                                            { headers },
+                                        );
+                                        if (
+                                            closed ||
+                                            token !== switching ||
+                                            !warmed.ok
+                                        ) {
+                                            stopStream(next.sessionId).catch(
+                                                () => {},
+                                            );
+                                            if (!warmed.ok) {
+                                                throw new Error(
+                                                    `status ${warmed.status}`,
+                                                );
+                                            }
+                                            return;
+                                        }
+                                        const resumeFrom = video.currentTime;
+                                        const wasPaused = video.paused;
+                                        store.sessionId = next.sessionId;
+                                        store.audioTrack = next.audioTrack;
+                                        hls?.destroy();
+                                        hls = null;
+                                        video.removeAttribute("src");
+                                        video.load();
+                                        video.addEventListener(
+                                            "loadedmetadata",
+                                            () => {
+                                                video.currentTime = resumeFrom;
+                                                if (wasPaused) video.pause();
+                                            },
+                                            { once: true },
+                                        );
+                                        await attach(next);
+                                        stopStream(oldId).catch(() => {
+                                            // Best-effort: the idle sweeper cleans this up anyway.
+                                        });
+                                    } catch {
+                                        store.audioTrack = previous;
+                                        store.flash =
+                                            "Couldn't switch the audio track";
+                                        setTimeout(() => {
+                                            store.flash = "";
+                                        }, 3000);
+                                    } finally {
+                                        if (token === switching) {
+                                            store.audioPending = false;
+                                        }
+                                    }
+                                },
+                            );
                         }
                     }
                 } catch (err) {
@@ -643,6 +816,11 @@ export const PlayerModal = component$<PlayerModalProps>(
         // starts one on that file (#98).
         const handlePickFile = $((index: number) => {
             chosen.value = index;
+        });
+
+        // From the audio menu (#99): the task above does the switch.
+        const handlePickAudio = $(async (track: number) => {
+            await switchAudioRef.value?.(track);
         });
 
         // From the resume note: back to the beginning (#96).
@@ -867,6 +1045,10 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 files={files}
                                 currentFileIndex={store.currentFileIndex}
                                 onPickFile={handlePickFile}
+                                audioTracks={store.audioTracks}
+                                audioTrack={store.audioTrack}
+                                audioPending={store.audioPending}
+                                onPickAudio={handlePickAudio}
                             />
                         )}
                     </div>
