@@ -255,6 +255,32 @@ export function canStopSeeding(status: string): boolean {
     return status === "seeding";
 }
 
+/** Done enough to hand over a file: a seeding torrent is finished, too. */
+function isFinished(status: string): boolean {
+    return status === "complete" || status === "seeding";
+}
+
+/**
+ * What the card's download button does (#107): nothing yet, fetch the one
+ * file, or, for a torrent of several files, open the detail to pick one.
+ * The API answers 409 for a single download of several files.
+ */
+export function downloadAction(
+    task: Pick<UiTask, "status" | "files">,
+): "none" | "file" | "choose" {
+    if (!isFinished(task.status)) return "none";
+    const selected = (task.files ?? []).filter((file) => file.selected);
+    return selected.length > 1 ? "choose" : "file";
+}
+
+/** Whether a torrent's file row gets its own download link. */
+export function canDownloadTorrentFile(
+    status: string,
+    file: FileView,
+): boolean {
+    return isFinished(status) && file.selected;
+}
+
 /** The four numbers the status bar draws. */
 export type GlobalStats = {
     downloadSpeed: number;

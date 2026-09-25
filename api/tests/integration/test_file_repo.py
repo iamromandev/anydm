@@ -48,6 +48,25 @@ async def test_replace_is_idempotent(db: None) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_for_tasks_groups_each_tasks_files_in_order(db: None) -> None:
+    first, second, empty = await _task(), await _task(), await _task()
+    repo = FileDatabaseRepo()
+    await repo.replace(first.id, [(1, "b.srt", 1, True), (0, "a.mkv", 9, True)])
+    await repo.replace(second.id, [(0, "c.mkv", 5, False)])
+
+    by_task = await repo.list_for_tasks([first.id, second.id, empty.id])
+
+    assert [row.path for row in by_task[first.id]] == ["a.mkv", "b.srt"]
+    assert [(row.path, row.selected) for row in by_task[second.id]] == [("c.mkv", False)]
+    assert by_task[empty.id] == []
+
+
+@pytest.mark.asyncio
+async def test_list_for_tasks_of_nothing_asks_nothing(db: None) -> None:
+    assert await FileDatabaseRepo().list_for_tasks([]) == {}
+
+
+@pytest.mark.asyncio
 async def test_selected_indexes_are_sorted_and_filtered(db: None) -> None:
     task = await _task()
     repo = FileDatabaseRepo()

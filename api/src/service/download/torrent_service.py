@@ -28,6 +28,19 @@ from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
 
 
+def task_schema(task: Any, files: Sequence[Any] | None = None) -> TaskSchema:
+    """A row's ``TaskSchema``, carrying a torrent's file rows when given (#107).
+
+    The files are attached after validation rather than read off the row: the
+    relation is named ``torrent_files``, not ``files``, on purpose (see
+    ``File``), so ``model_validate`` alone always left ``files`` empty.
+    """
+    schema = TaskSchema.model_validate(task)
+    if files is not None:
+        schema.files = [FileSchema.model_validate(row) for row in files]
+    return schema
+
+
 class TorrentService(BaseService):
     def __init__(
         self,
@@ -132,7 +145,7 @@ class TorrentService(BaseService):
                 for file in details.files
             ],
         )
-        return self._published(task)
+        return await self._published(task)
 
     def _validated_selection(self, details: TorrentDetails, files: Sequence[int]) -> set[int]:
         """The chosen indexes, or every index when nothing was chosen."""
@@ -149,13 +162,25 @@ class TorrentService(BaseService):
             )
         return set(files)
 
-    def _published(self, task: Any) -> TaskSchema:
+    async def schema(self, task: Any) -> TaskSchema:
+        """``task`` as the API reports it, with its files when it is a torrent."""
+        if task.platform != Platform.TORRENT:
+            return task_schema(task)
+        return task_schema(task, await self._file_repo.list_for(task.id))
+
+    async def schemas(self, tasks: Sequence[Any]) -> list[TaskSchema]:
+        """``schema`` for a page of rows, with every torrent's files in one query."""
+        torrent_ids = [task.id for task in tasks if task.platform == Platform.TORRENT]
+        files = await self._file_repo.list_for_tasks(torrent_ids) if torrent_ids else {}
+        return [task_schema(task, files.get(task.id)) for task in tasks]
+
+    async def _published(self, task: Any) -> TaskSchema:
         """Serialise, announce, and hand back — as ``DownloadService`` does.
 
         Publishing here is what makes a torrent appear in every open browser
         the moment it is added, rather than on the monitor's next tick.
         """
-        schema = TaskSchema.model_validate(task)
+        schema = await self.schema(task)
         self._hub.publish("task", schema.to_json())
         return schema
 
@@ -169,7 +194,7 @@ class TorrentService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return self._published(task)
+        return await self._published(task)
 
     async def resume(self, task_id: uuid.UUID) -> TaskSchema:
         task = await self._require(task_id)
@@ -184,7 +209,7 @@ class TorrentService(BaseService):
         task.error = None
         task.error_code = None
         await task.save(update_fields=["status", "error", "error_code"])
-        return self._published(task)
+        return await self._published(task)
 
     async def stop_seeding(self, task_id: uuid.UUID) -> TaskSchema:
         """Stop sharing, keep the files.
@@ -202,7 +227,7 @@ class TorrentService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return self._published(task)
+        return await self._published(task)
 
     async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
         """Remove the torrent and the row, with or without the files.
@@ -228,7 +253,7 @@ class TorrentService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
-        self._published(task)
+        await self._published(task)
 
     async def resolve_file(self, task_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.
@@ -260,6 +285,25 @@ class TorrentService(BaseService):
 
         media_type, _ = mimetypes.guess_type(path.name)
         return path, path.name, media_type or "application/octet-stream"
+
+    async def resolve_only_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
+        """The file of a torrent that has one: what the card's "Download file" asks for (#107).
+
+        A torrent with several selected files has no single file to hand over,
+        so 409 says to take them one at a time, through ``resolve_file``.
+        """
+        task = await self._require(task_id)
+        if task.status not in (TaskStatus.SEEDING, TaskStatus.COMPLETE):
+            raise Error.conflict(message=f"Task is {task.status.value}, not complete")
+
+        selected = [row for row in await self._file_repo.list_for(task_id) if row.selected]
+        if not selected:
+            raise Error.not_found(message="Torrent has no selected file")
+        if len(selected) > 1:
+            raise Error.conflict(
+                message=f"This torrent has {len(selected)} files; download them one at a time"
+            )
+        return await self.resolve_file(task_id, selected[0].index)
 
     async def _require(self, task_id: uuid.UUID) -> Any:
         self._require_enabled()

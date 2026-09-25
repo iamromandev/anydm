@@ -25,6 +25,8 @@ class FakeRepo:
         self.rows: dict[uuid.UUID, Any] = {}
         self.listed_statuses: list[Any] | None = None
         self.listed_sort: str | None = None
+        #: What ``list_page`` answers with.
+        self.page: list[Any] = []
 
     async def list_page(
         self,
@@ -35,7 +37,7 @@ class FakeRepo:
     ) -> tuple[list[Any], Meta]:
         self.listed_statuses = statuses
         self.listed_sort = sort
-        return [], Meta(page=page, page_size=page_size, total=0, total_pages=0)
+        return list(self.page), Meta(page=page, page_size=page_size, total=len(self.page), total_pages=1)
 
     async def create(self, **kwargs: Any) -> Any:
         kwargs.setdefault("id", uuid.uuid4())
@@ -110,6 +112,20 @@ class FakeTorrentService:
         self.resumed: list[uuid.UUID] = []
         self.canceled: list[uuid.UUID] = []
         self.canceled_with_files: list[bool] = []
+        self.schema_batches: list[list[Any]] = []
+        self.only_files: list[uuid.UUID] = []
+
+    async def schema(self, task: Any) -> Any:
+        return (await self.schemas([task]))[0]
+
+    async def schemas(self, tasks: Any) -> list[Any]:
+        """Tags each row so a test can tell it went through here."""
+        self.schema_batches.append(list(tasks))
+        return [("via-torrents", task.id) for task in tasks]
+
+    async def resolve_only_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
+        self.only_files.append(task_id)
+        return Path("/t/video.mkv"), "video.mkv", "video/x-matroska"
 
     async def pause(self, task_id: uuid.UUID) -> Any:
         self.paused.append(task_id)
@@ -319,6 +335,43 @@ async def test_resolve_file_404s_when_the_file_vanished(tmp_path: Path) -> None:
     with pytest.raises(Error) as caught:
         await service.resolve_file(task_id)
     assert caught.value.code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [TaskStatus.SEEDING, TaskStatus.COMPLETE])
+async def test_resolve_file_hands_a_torrent_to_the_torrent_service(status: TaskStatus) -> None:
+    """#107: a torrent's file_path is a folder, so this answered 404, or 409 while seeding."""
+    service, repo, torrents = _service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(
+        task_id, platform=Platform.TORRENT, kind=Kind.TORRENT, status=status, file_path="/t"
+    )
+
+    path, filename, _ = await service.resolve_file(task_id)
+
+    assert torrents.only_files == [task_id]
+    assert (path, filename) == (Path("/t/video.mkv"), "video.mkv")
+
+
+@pytest.mark.asyncio
+async def test_the_list_goes_through_the_torrent_service_as_one_batch() -> None:
+    service, repo, torrents = _service()
+    rows = [_row(uuid.uuid4()), _row(uuid.uuid4(), platform=Platform.TORRENT, kind=Kind.TORRENT)]
+    repo.page = rows
+
+    tasks, _meta = await service.list_tasks(page=1, page_size=20)
+
+    assert torrents.schema_batches == [rows]
+    assert tasks == [("via-torrents", row.id) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_one_task_goes_through_the_torrent_service() -> None:
+    service, repo, _ = _service()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, platform=Platform.TORRENT, kind=Kind.TORRENT)
+
+    assert await service.get_task(task_id) == ("via-torrents", task_id)
 
 
 @pytest.mark.asyncio

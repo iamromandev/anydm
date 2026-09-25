@@ -88,6 +88,15 @@ class FakeFileRepo:
     async def flush_progress(self, task_id: uuid.UUID, file_progress: Any) -> None:
         self.flushed.append((task_id, list(file_progress)))
 
+    async def list_for(self, task_id: uuid.UUID) -> list[Any]:
+        # What the flush above just wrote: one row per reported file.
+        progress = next((p for t, p in reversed(self.flushed) if t == task_id), [])
+        return [
+            type("F", (), {"index": i, "path": f"file{i}", "size_bytes": 1000, "selected": True,
+                           "downloaded_bytes": done})()
+            for i, done in enumerate(progress)
+        ]
+
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         return self.selected
 
@@ -231,6 +240,21 @@ async def test_every_tick_publishes_even_without_a_write() -> None:
     event, data = await anext(aiter(subscription))
     assert event == "task"
     assert data["peers_connected"] == 6
+    subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_every_tick_publishes_the_files_it_just_flushed() -> None:
+    """#107: per-file progress reached the database every tick and the browser never."""
+    hub = EventHub()
+    subscription = hub.subscribe()
+    row = _row(status=TaskStatus.DOWNLOADING)
+    sample = _sample()
+
+    await _monitor(FakeRepo([row]), FakeClient([sample]), hub=hub).tick()
+
+    _event, data = await anext(aiter(subscription))
+    assert [f["downloaded_bytes"] for f in data["files"]] == list(sample.file_progress)
     subscription.close()
 
 

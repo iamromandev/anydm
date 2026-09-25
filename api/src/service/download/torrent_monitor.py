@@ -20,12 +20,12 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.repo.download.interface import FileRepo, TaskRepo
-from src.data.schema.download import TaskSchema
 from src.data.type import TaskStatus
 from src.lib.event import EventHub
 from src.lib.torrent.mapping import progress_percent, status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
+from src.service.download.torrent_service import task_schema
 
 
 class TorrentMonitor:
@@ -195,4 +195,6 @@ class TorrentMonitor:
             await row.save(update_fields=list(changed))
 
         await self._file_repo.flush_progress(row.id, sample.file_progress)
-        self._hub.publish("task", TaskSchema.model_validate(row).to_json())
+        # With the rows just flushed, so each file's progress reaches the card (#107).
+        files = await self._file_repo.list_for(row.id)
+        self._hub.publish("task", task_schema(row, files).to_json())

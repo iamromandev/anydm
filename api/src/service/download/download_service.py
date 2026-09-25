@@ -160,7 +160,9 @@ class DownloadService(BaseService):
         tasks, meta = await self._repo.list_page(
             page=page, page_size=page_size, statuses=statuses, sort=sort
         )
-        return [TaskSchema.model_validate(task) for task in tasks], meta
+        # Through the torrent service, which adds a torrent's files: one query
+        # for the whole page (#107).
+        return await self._torrents.schemas(tasks), meta
 
     async def bulk(self, action: str, *, delete_files: bool = False) -> int:
         """Apply one action to every row it makes sense for.
@@ -209,7 +211,7 @@ class DownloadService(BaseService):
         return await self._repo.summary()
 
     async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
-        return TaskSchema.model_validate(await self._require(task_id))
+        return await self._torrents.schema(await self._require(task_id))
 
     async def resolve_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
         """The finished file for ``task_id``.
@@ -217,8 +219,13 @@ class DownloadService(BaseService):
         409 rather than 404 while a task is still running: the resource will
         exist, just not yet — which is what the Bun API said for a verifying
         torrent, and what a polling client needs to tell "wait" from "never".
+
+        A torrent goes to the torrent service: its ``file_path`` is a folder,
+        and it is done while seeding too (#107).
         """
         task = await self._require(task_id)
+        if task.platform == Platform.TORRENT:
+            return await self._torrents.resolve_only_file(task_id)
 
         if task.status != TaskStatus.COMPLETE or not task.file_path:
             raise Error.conflict(message=f"Task is {task.status.value}, not complete")

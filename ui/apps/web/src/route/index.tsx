@@ -625,12 +625,17 @@ export default component$(() => {
         store.removing = null;
     });
 
-    const handleDownloadFile = $((taskId: string) => {
+    const handleDownloadFile = $((taskId: string, fileIndex?: number) => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
+        // An index picks one file out of a torrent; without one, the task's only file.
+        const path =
+            fileIndex === undefined
+                ? `/download/${taskId}/file`
+                : `/download/${taskId}/file/${fileIndex}`;
         const a = document.createElement("a");
-        a.href = apiUrl(`/download/${taskId}/file`, { withKey: true });
+        a.href = apiUrl(path, { withKey: true });
         a.style.display = "none";
         document.body.appendChild(a);
         a.click();

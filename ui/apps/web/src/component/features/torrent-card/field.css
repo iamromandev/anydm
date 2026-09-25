@@ -262,7 +262,15 @@
 
 .torrent-file-row .torrent-file-size {
     flex-shrink: 0;
+    margin-left: auto;
     font-variant-numeric: tabular-nums;
+}
+
+/* One file's own download, beside its progress, once the torrent is finished. */
+.torrent-file-row .torrent-file-download {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
 }
 
 .torrent-actions {

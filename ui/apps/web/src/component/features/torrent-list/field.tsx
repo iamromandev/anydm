@@ -20,7 +20,7 @@ export interface TorrentListProps {
     onLoadMore: () => void;
     onPause: (id: string) => void;
     onResume: (id: string) => void;
-    onDownloadFile: (id: string) => void;
+    onDownloadFile: (id: string, fileIndex?: number) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
 }

@@ -28,6 +28,15 @@ class FileRepo(ABC):
         ...
 
     @abstractmethod
+    async def list_for_tasks(self, task_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[File]]:
+        """Every file row of each task, in torrent order, in one query.
+
+        For a page of the list: asking once per task would be a query per row.
+        Every task asked for has a key, with an empty list if it has no rows.
+        """
+        ...
+
+    @abstractmethod
     async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
         """The indexes the user chose, sorted — what the engine's selection takes."""
         ...
