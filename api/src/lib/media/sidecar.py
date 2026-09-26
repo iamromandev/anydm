@@ -45,6 +45,8 @@ class Sidecar:
     forced: bool = False
     #: Its name says it's for the hard of hearing.
     hearing_impaired: bool = False
+    #: Machine captions, as a site download saves them (``.en.auto.vtt``, #102).
+    automatic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,9 +154,12 @@ def match_sidecars(video: str, paths: Sequence[str]) -> list[Sidecar]:
                 title=candidate.name,
                 forced="forced" in words,
                 hearing_impaired=any(word in _HEARING for word in words),
+                automatic="auto" in words,
             )
         )
-    return sorted(found, key=lambda sidecar: sidecar.path.lower())
+    # Machine captions last, so a language's own subtitles are the ones the
+    # player picks for it: ``.en.auto.vtt`` would otherwise sort first.
+    return sorted(found, key=lambda sidecar: (sidecar.automatic, sidecar.path.lower()))
 
 
 def decode_subtitles(raw: bytes) -> str:

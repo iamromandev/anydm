@@ -321,8 +321,10 @@ async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: P
     assert server.fetched[0] == ("https://yt.test/en.vtt", {"User-Agent": "UA"})
     # And #101 finds them, with their languages, when the download is played.
     found = match_sidecars("Rick_1080p.mp4", folder_listing(folder))
-    assert [(sidecar.path, sidecar.language) for sidecar in found] == [
-        ("Rick_1080p.en.auto.vtt", "en"), ("Rick_1080p.en.vtt", "en"), ("Rick_1080p.es.srt", "es"),
+    # Captions after the rest, so English picks the real subtitles.
+    assert [(sidecar.path, sidecar.language, sidecar.automatic) for sidecar in found] == [
+        ("Rick_1080p.en.vtt", "en", False), ("Rick_1080p.es.srt", "es", False),
+        ("Rick_1080p.en.auto.vtt", "en", True),
     ]
     # Deleting the task's files takes them too.
     remove_task_files(tmp_path, row.id)
