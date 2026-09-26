@@ -111,6 +111,15 @@
     background: rgba(255, 255, 255, 0.15);
 }
 
+.player-controls-button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.player-controls-button:disabled:hover {
+    background: transparent;
+}
+
 .player-controls-volume {
     width: 72px;
 }

@@ -57,6 +57,25 @@ describe("resolveShortcut", () => {
         expect(SHORTCUT_HINTS.map((hint) => hint.keys)).toContain("C");
     });
 
+    it("moves between files on Shift+N and Shift+P, and lists it (#97)", () => {
+        expect(press("n", { shiftKey: true })).toEqual({ type: "nextFile" });
+        expect(press("N", { shiftKey: true })).toEqual({ type: "nextFile" });
+        expect(press("p", { shiftKey: true })).toEqual({
+            type: "previousFile",
+        });
+        expect(press("P", { shiftKey: true })).toEqual({
+            type: "previousFile",
+        });
+        expect(SHORTCUT_HINTS.map((hint) => hint.keys)).toContain(
+            "Shift+N / Shift+P",
+        );
+    });
+
+    it("ignores bare N and P: only the Shift combination moves files", () => {
+        expect(press("n")).toBeNull();
+        expect(press("p")).toBeNull();
+    });
+
     it("offers the list of shortcuts on ?", () => {
         expect(press("?", { shiftKey: true })).toEqual({ type: "toggleHelp" });
     });

@@ -7,7 +7,7 @@
  * exception in the middle of a render.
  */
 
-import { hasMediaExtension } from "../media";
+import { hasMediaExtension, mediaFiles } from "../media";
 
 export type TaskStatus =
     | "pending"
@@ -534,6 +534,32 @@ export function resumeAt(
         (positions ?? []).find((position) => position.fileIndex === index)
             ?.positionSeconds ?? 0
     );
+}
+
+/**
+ * Which file Play on the card opens (#97): the one you were partway through,
+ * else the first not yet watched, in natural order. The first file when
+ * everything has been watched, or there's nothing to go on yet.
+ */
+export function pickFileToOpen(
+    task: Pick<UiTask, "files">,
+    positions: PositionView[] | undefined,
+): number | null {
+    const files = mediaFiles(task.files ?? []);
+    if (files.length === 0) return null;
+    const byIndex = new Map(
+        (positions ?? []).map((p) => [
+            p.fileIndex,
+            p,
+        ]),
+    );
+    const partway = files.find((file) => {
+        const position = byIndex.get(file.index);
+        return position && !position.watched && position.positionSeconds > 0;
+    });
+    if (partway) return partway.index;
+    const unwatched = files.find((file) => !byIndex.get(file.index)?.watched);
+    return (unwatched ?? files[0]).index;
 }
 
 /**
