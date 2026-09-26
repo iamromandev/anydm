@@ -57,6 +57,10 @@ class StreamStartRequest(BaseSchema):
         int | None,
         Field(default=None, ge=0, description="The audio track to play, when the source has it"),
     ]
+    quality: Annotated[
+        int | None,
+        Field(default=None, ge=1, description="The height to play at, when the source offers it (#103)"),
+    ]
 
     @model_validator(mode="after")
     def _one_source(self) -> StreamStartRequest:
@@ -103,6 +107,13 @@ class SubtitleTrackSchema(BaseSchema):
         return self.codec in TEXT_CODECS
 
 
+class QualitySwitchRequest(BaseSchema):
+    height: Annotated[
+        int | None,
+        Field(ge=1, description="One of the session's qualities, or null for its default (#103)"),
+    ]
+
+
 class AudioSwitchRequest(BaseSchema):
     track: Annotated[int, Field(ge=0, description="The audio track to play, from the session's audio_tracks")]
 
@@ -121,6 +132,8 @@ class MediaInfoSchema(BaseSchema):
     file_url: str
     audio_tracks: list[AudioTrackSchema] = Field(default_factory=list)
     subtitle_tracks: list[SubtitleTrackSchema] = Field(default_factory=list)
+    #: Its height, which the quality menu offers below (#103).
+    video_height: int | None = None
 
 
 class StreamSessionSchema(BaseSchema):
@@ -135,3 +148,11 @@ class StreamSessionSchema(BaseSchema):
     subtitle_tracks: list[SubtitleTrackSchema] | None = None
     #: How long each segment is, the last excepted: which segment's cues hold a time.
     segment_seconds: int | None = None
+    #: The quality menu (#103): the heights besides the default, tallest first,
+    #: the one picked (null for the default), the one playing, and what the
+    #: default is: "auto" (a site's 1080p pick) or "original" (a file as it is).
+    qualities: list[int] | None = None
+    quality: int | None = None
+    playing_height: int | None = None
+    quality_default: str | None = None
+    default_height: int | None = None

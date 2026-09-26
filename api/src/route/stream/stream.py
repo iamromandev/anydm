@@ -14,6 +14,7 @@ from src.core.type import Code
 from src.data.schema.stream import (
     AudioSwitchRequest,
     AudioTrackSchema,
+    QualitySwitchRequest,
     StreamSessionSchema,
     StreamStartRequest,
     SubtitleTrackSchema,
@@ -34,13 +35,19 @@ async def start_stream(
     stream_service: Annotated[StreamService, Depends(get_stream_service)],
 ) -> Response:
     # The request allows exactly one of the three (``StreamStartRequest``).
-    audio = {"audio_language": payload.audio_language, "audio_track": payload.audio_track}
+    language, track, quality = payload.audio_language, payload.audio_track, payload.quality
     if payload.task_id is not None:
-        session = await stream_service.start_task_session(payload.task_id, payload.file_index, **audio)
+        session = await stream_service.start_task_session(
+            payload.task_id, payload.file_index, audio_language=language, audio_track=track, quality=quality
+        )
     elif payload.torrent:
-        session = await stream_service.start_torrent_session(payload.torrent.strip(), payload.file_index, **audio)
+        session = await stream_service.start_torrent_session(
+            payload.torrent.strip(), payload.file_index, audio_language=language, audio_track=track, quality=quality
+        )
     elif payload.url:
-        session = await stream_service.start_session(payload.url.strip(), **audio)
+        session = await stream_service.start_session(
+            payload.url.strip(), audio_language=language, audio_track=track, quality=quality
+        )
     else:
         raise Error.bad_request("Provide exactly one of url, torrent or task_id")
     return Success.created(data=_session_schema(session)).to_resp()
@@ -64,8 +71,27 @@ async def switch_audio(
     return Success.created(data=_session_schema(switched)).to_resp()
 
 
+@router.post(
+    path="/stream/{session_id}/quality",
+    response_model=Success[StreamSessionSchema],
+)
+async def switch_quality(
+    session_id: str,
+    payload: QualitySwitchRequest,
+    stream_service: Annotated[StreamService, Depends(get_stream_service)],
+) -> Response:
+    """A new session at another height, from where this one is (#103).
+
+    This one keeps playing: the player stops it once the new one is ready.
+    """
+    session = stream_service.get_session(session_id)
+    switched = await stream_service.switch_quality(session, payload.height)
+    return Success.created(data=_session_schema(switched)).to_resp()
+
+
 def _session_schema(session: StreamSession) -> StreamSessionSchema:
     ready = session.status == "ready"
+    menu = session.quality if ready and session.quality.heights else None
     return StreamSessionSchema(
         session_id=session.id,
         playlist_url=f"/stream/{session.id}/playlist.m3u8",
@@ -76,6 +102,11 @@ def _session_schema(session: StreamSession) -> StreamSessionSchema:
         audio_track=session.audio_track if ready else None,
         subtitle_tracks=[SubtitleTrackSchema(**asdict(track)) for track in session.subtitle_tracks] if ready else None,
         segment_seconds=session.segment_seconds,
+        qualities=list(menu.heights) if menu else None,
+        quality=menu.chosen if menu else None,
+        playing_height=menu.playing if menu else None,
+        quality_default=menu.default if menu else None,
+        default_height=menu.default_height if menu else None,
     )
 
 

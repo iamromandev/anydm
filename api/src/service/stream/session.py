@@ -24,6 +24,7 @@ from src.lib.media.hls import MediaPlaylist
 from src.lib.media.sidecar import Sidecar, SidecarSource
 from src.lib.media.source import MediaInput
 from src.lib.media.subtitle import SubtitleTrack
+from src.service.stream.quality import QualityState
 
 
 class SegmentState(Enum):
@@ -110,6 +111,10 @@ class StreamSession:
     subtitle_files: dict[int, tuple[Sidecar, SidecarSource]] = field(default_factory=dict)
     pending_sidecars: list[tuple[Sidecar, SidecarSource]] = field(default_factory=list)
     file_states: dict[int, SegmentState] = field(default_factory=dict)
+    #: The quality menu, and what's playing (#103). A torrent's is known once
+    #: it's probed; until then ``wanted_quality`` holds the height asked for.
+    quality: QualityState = field(default_factory=QualityState)
+    wanted_quality: int | None = None
     file_events: dict[int, asyncio.Event] = field(default_factory=dict)
 
     @property

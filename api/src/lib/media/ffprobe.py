@@ -35,6 +35,8 @@ class ProbeResult:
     audio_tracks: tuple[AudioTrack, ...] = ()
     #: Every subtitle track, in the order ``-map 0:s:N`` counts them (#100).
     subtitle_tracks: tuple[SubtitleTrack, ...] = ()
+    #: The first video stream's height, which the quality menu offers below (#103).
+    video_height: int | None = None
 
 
 def _audio_track(index: int, stream: dict) -> AudioTrack:
@@ -154,6 +156,7 @@ def parse_probe_output(raw: str) -> ProbeResult:
         audio_codec=audio.get("codec_name") if audio else None,
         audio_tracks=tracks,
         subtitle_tracks=subtitles,
+        video_height=int(videos[0]["height"]) if videos and videos[0].get("height") else None,
     )
 
 

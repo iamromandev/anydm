@@ -344,3 +344,24 @@ def test_subtitle_file_args_extract_a_whole_track_at_its_own_times() -> None:
     assert "-ss" not in args and "-to" not in args
     assert args[args.index("-map") + 1] == "0:s:2"
     assert args[-3:] == ["-f", "webvtt", "/t/whole.vtt"]
+
+
+
+def test_segment_args_scale_a_file_down_and_cap_its_bitrate() -> None:
+    """#103: a 4K source may not encode in real time at its own size."""
+    args = segment_args("ffmpeg", [MediaInput("/d/4k.mkv")], 6.0, 6.0, Path("/t/o.ts"), has_video=True, scale_height=720)
+
+    assert args[args.index("-vf") + 1] == "scale=-2:720"
+    assert args[args.index("-maxrate") + 1] == "3000000"
+    assert args[args.index("-bufsize") + 1] == "6000000"
+    assert args.index("-vf") > args.index("-c:v")
+
+
+def test_segment_args_leave_the_picture_alone_without_a_height() -> None:
+    args = segment_args("ffmpeg", [MediaInput("/d/4k.mkv")], 6.0, 6.0, Path("/t/o.ts"), has_video=True)
+    assert "-vf" not in args and "-maxrate" not in args
+
+
+def test_audio_alone_is_never_scaled() -> None:
+    args = segment_args("ffmpeg", [MediaInput("/d/a.mka")], 0.0, 6.0, Path("/t/o.ts"), has_video=False, scale_height=480)
+    assert "-vf" not in args
