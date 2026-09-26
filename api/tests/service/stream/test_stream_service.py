@@ -16,6 +16,7 @@ from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteInfo
 from src.lib.site.format import Format, playback_plan
+from src.lib.site.subtitles import SiteSubtitle
 from src.lib.torrent.protocol import FileInfo, TorrentDetails, TorrentProgress
 from src.lib.torrent.source import TorrentSource
 from src.service.download.download_service import TorrentPlay
@@ -1826,3 +1827,76 @@ async def test_a_download_played_as_it_is_gets_its_subtitle_file_converted_once(
     assert encoder.calls[0][encoder.calls[0].index("-map") + 1] == "0:s:0"
     with pytest.raises(Error):
         await service.subtitle_file(task, None, 4)
+
+
+# --- a site's own subtitles (#102) ---------------------------------------------------
+
+def _captioned(url_tag: str = "a") -> SiteInfo:
+    return site_info(
+        "youtube",
+        subtitles=[
+            SiteSubtitle("en", "English", False, "vtt", f"https://yt.test/en-{url_tag}.vtt", {"User-Agent": "UA"}),
+            SiteSubtitle("en", "English (auto-generated)", True, "vtt", f"https://yt.test/auto-{url_tag}.vtt"),
+        ],
+    )
+
+
+class FakeSubtitles:
+    """A site's subtitle server, refusing the URLs it's told have expired."""
+
+    def __init__(self, expired: set[str] | None = None) -> None:
+        self.expired = expired or set()
+        self.fetched: list[tuple[str, dict[str, str]]] = []
+
+    async def __call__(self, url: str, headers: Mapping[str, str]) -> bytes:
+        self.fetched.append((url, dict(headers)))
+        if url in self.expired:
+            raise Error.create(code=Code.FORBIDDEN, message="403", error_type=ErrorType.EXTERNAL_API_ERROR)
+        return b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n"
+
+
+@pytest.mark.asyncio
+async def test_a_page_s_subtitles_and_captions_are_its_tracks(tmp_path: Path) -> None:
+    subtitles = FakeSubtitles()
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_captioned()), subtitle_fetcher=subtitles)
+    service._encoder = RecordingEncoder()
+
+    session = await service.start_session(YOUTUBE_PAGE)
+    await service.get_subtitle_file(session, 1)
+
+    assert [(t.index, t.language, t.title, t.external) for t in session.subtitle_tracks] == [
+        (0, "en", "English", True),
+        (1, "en", "English (auto-generated)", True),
+    ]
+    assert subtitles.fetched == [("https://yt.test/auto-a.vtt", {})]
+
+
+@pytest.mark.asyncio
+async def test_an_expired_subtitle_url_asks_the_site_again_once(tmp_path: Path) -> None:
+    client = FakeSiteClient(_captioned("a"))
+    subtitles = FakeSubtitles(expired={"https://yt.test/en-a.vtt"})
+    service, _, _ = _site_service(tmp_path, client, subtitle_fetcher=subtitles)
+    service._encoder = RecordingEncoder()
+    session = await service.start_session(YOUTUBE_PAGE)
+    client.info = _captioned("b")
+
+    path = await service.get_subtitle_file(session, 0)
+
+    assert path.exists()
+    assert [url for url, _ in subtitles.fetched] == ["https://yt.test/en-a.vtt", "https://yt.test/en-b.vtt"]
+    # With the site's headers both times.
+    assert all(headers == {"User-Agent": "UA"} for _, headers in subtitles.fetched)
+    assert client.opened == [YOUTUBE_PAGE, YOUTUBE_PAGE]
+
+
+@pytest.mark.asyncio
+async def test_a_subtitle_url_that_stays_refused_fails(tmp_path: Path) -> None:
+    subtitles = FakeSubtitles(expired={"https://yt.test/en-a.vtt"})
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_captioned("a")), subtitle_fetcher=subtitles)
+    service._encoder = RecordingEncoder()
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    with pytest.raises(Error) as caught:
+        await service.get_subtitle_file(session, 0)
+    assert caught.value.code == Code.FORBIDDEN
+    assert len(subtitles.fetched) == 2

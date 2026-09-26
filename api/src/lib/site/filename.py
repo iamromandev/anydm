@@ -21,3 +21,18 @@ def safe_filename(title: str, suffix: str, extension: str) -> str:
     stem = stem[:_MAX_STEM] or "download"
     tail = f"_{suffix}" if suffix else ""
     return f"{stem}{tail}.{extension}"
+
+
+_LANGUAGE = re.compile(r"[^A-Za-z0-9-]")
+
+
+def subtitle_filename(video: str, language: str, extension: str, *, automatic: bool = False) -> str:
+    """The name a site's subtitles are saved under beside ``video`` (#102): ``Title.en.vtt``.
+
+    Machine captions add ``.auto``, which #101's matching reads as no
+    language, so ``Title.en.auto.vtt`` is still English.
+    """
+    stem = video.rsplit(".", 1)[0] if "." in video else video
+    code = _LANGUAGE.sub("", language)[:20] or "und"
+    kind = ".auto" if automatic else ""
+    return f"{stem}.{code}{kind}.{extension}"

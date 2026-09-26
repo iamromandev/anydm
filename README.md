@@ -172,7 +172,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /stream/{session_id}/playlist.m3u8` — the HLS playlist
     - `GET /stream/{session_id}/segment_{index}.ts` — one segment, transcoded on request
     - `GET /stream/{session_id}/subtitles/{track}/segment_{index}.vtt` — one segment's cues for one of `subtitle_tracks`, as WebVTT at the source's own times
-    - `GET /stream/{session_id}/subtitles/{track}.vtt` — one of `subtitle_tracks` that's a subtitle file beside the video (`external`), whole, as WebVTT
+    - `GET /stream/{session_id}/subtitles/{track}.vtt` — one of `subtitle_tracks` that's a subtitle file beside the video, or a page's own subtitles or captions (`external`), whole, as WebVTT; a site download saves those beside its file as `<name>.<lang>.vtt`
     - `DELETE /stream/{session_id}` — end the session
 - **Workers:** a pool started in the app lifespan claims queued tasks, resumes from `.part` files, and requeues orphans left in-flight by a previous process
 - **Segmented transfers:** direct and YouTube downloads are fetched over `DOWNLOAD_SEGMENTS` concurrent range requests written positionally into one preallocated `.part`, with per-segment watermarks in `segment` so a pause or a crash resumes mid-segment. A server that refuses ranges, a file below `DOWNLOAD_SEGMENT_MIN_BYTES`, or `DOWNLOAD_SEGMENTS=1` all fall back to the original single-stream path — which is also the rollback switch. HLS and DASH formats are playlists of fragments rather than one file, so they go through yt-dlp's own downloader instead, which resumes from its own record of the fragments on disk.

@@ -45,6 +45,8 @@ class Sidecar:
     forced: bool = False
     #: Its name says it's for the hard of hearing.
     hearing_impaired: bool = False
+    #: Machine captions, as a site download saves them (``.en.auto.vtt``, #102).
+    automatic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +57,19 @@ class TorrentFile:
     index: int
 
 
-#: Where a subtitle file is read from: the disk, or rqbit.
-SidecarSource = Path | TorrentFile
+@dataclass(frozen=True, slots=True)
+class SiteSubtitleFile:
+    """A site's own subtitles (#102), fetched with its headers: ``SiteSubtitle``'s place among the sources."""
+
+    url: str
+    headers: tuple[tuple[str, str], ...] = ()
+    #: Which of the page's tracks, to find again when the URL has expired.
+    language: str = ""
+    automatic: bool = False
+
+
+#: Where a subtitle file is read from: the disk, rqbit, or a site.
+SidecarSource = Path | TorrentFile | SiteSubtitleFile
 
 #: The codec each kind of file reads as, for the menu and ``SubtitleTrack.text``.
 _CODECS = {".srt": "subrip", ".vtt": "webvtt", ".ass": "ass", ".ssa": "ssa"}
@@ -141,9 +154,12 @@ def match_sidecars(video: str, paths: Sequence[str]) -> list[Sidecar]:
                 title=candidate.name,
                 forced="forced" in words,
                 hearing_impaired=any(word in _HEARING for word in words),
+                automatic="auto" in words,
             )
         )
-    return sorted(found, key=lambda sidecar: sidecar.path.lower())
+    # Machine captions last, so a language's own subtitles are the ones the
+    # player picks for it: ``.en.auto.vtt`` would otherwise sort first.
+    return sorted(found, key=lambda sidecar: (sidecar.automatic, sidecar.path.lower()))
 
 
 def decode_subtitles(raw: bytes) -> str:
