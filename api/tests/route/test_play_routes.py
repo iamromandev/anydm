@@ -25,6 +25,7 @@ TRACKS = [AudioTrack(0, language="spa", channels=6, codec="ac3", default=True), 
 SUBTITLES = [
     SubtitleTrack(0, language="eng", codec="subrip"),
     SubtitleTrack(1, language="eng", codec="hdmv_pgs_subtitle", forced=True),
+    SubtitleTrack(2, language="en", title="Movie.en.srt", codec="subrip", external=True),
 ]
 VTT = "WEBVTT\n\n00:00:05.000 --> 00:00:07.000\nHello\n"
 
@@ -74,6 +75,10 @@ class _FakeStream:
 
     async def get_subtitle_segment(self, session: Any, track: int, index: int) -> Any:
         self.calls.append(("get_subtitle_segment", (session.id, track, index)))
+        return self.vtt
+
+    async def get_subtitle_file(self, session: Any, track: int) -> Any:
+        self.calls.append(("get_subtitle_file", (session.id, track)))
         return self.vtt
 
     async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Any:
@@ -253,9 +258,12 @@ async def test_a_session_lists_its_subtitles_and_says_which_can_be_shown(
 
     assert data["segment_seconds"] == 6
     assert data["subtitle_tracks"] == [
-        {"index": 0, "language": "eng", "codec": "subrip", "default": False, "forced": False, "text": True},
+        {"index": 0, "language": "eng", "codec": "subrip", "default": False, "forced": False, "external": False,
+         "text": True},
         {"index": 1, "language": "eng", "codec": "hdmv_pgs_subtitle", "default": False, "forced": True,
-         "text": False},
+         "external": False, "text": False},
+        {"index": 2, "language": "en", "title": "Movie.en.srt", "codec": "subrip", "default": False,
+         "forced": False, "external": True, "text": True},
     ]
 
 
@@ -276,3 +284,13 @@ async def test_a_download_s_subtitle_track_is_served_whole(client: httpx.AsyncCl
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/vtt")
     assert stream.calls == [("subtitle_file", (TASK, 1, 2))]
+
+
+@pytest.mark.asyncio
+async def test_a_subtitle_file_is_served_whole(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    """#101: a file beside the video comes whole, not by the segment."""
+    response = await client.get("/stream/s1/subtitles/2.vtt")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/vtt")
+    assert stream.calls == [("get_subtitle_file", ("s1", 2))]

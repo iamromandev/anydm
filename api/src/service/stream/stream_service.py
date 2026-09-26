@@ -7,7 +7,7 @@ import contextlib
 import os
 import shutil
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -27,6 +27,14 @@ from src.lib.media.ffmpeg import segment_args, subtitle_args, subtitle_file_args
 from src.lib.media.ffprobe import ProbeResult, probe
 from src.lib.media.hls import MediaPlaylist, PlaylistRefused, parse_media_playlist, sub_playlist
 from src.lib.media.media_type import media_type
+from src.lib.media.sidecar import (
+    Sidecar,
+    SidecarSource,
+    TorrentFile,
+    decode_subtitles,
+    match_sidecars,
+    sidecar_codec,
+)
 from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
@@ -64,6 +72,17 @@ TaskFiles = Callable[[uuid.UUID, int | None], Awaitable[tuple[Path, str, int | N
 #: plays from disk (``DownloadService.torrent_play``, #95).
 TorrentPlays = Callable[[uuid.UUID, int | None], Awaitable["TorrentPlay | None"]]
 
+#: The subtitle files beside a task's file, and where to read each
+#: (``DownloadService.subtitle_files``, #101).
+TaskSidecars = Callable[[uuid.UUID, int | None], Awaitable[list[tuple[Sidecar, SidecarSource]]]]
+
+#: Reads a URL whole: a subtitle file out of rqbit.
+BytesFetcher = Callable[[str], Awaitable[bytes]]
+
+#: Far more than any subtitle file; a guard against being handed a film.
+_SIDECAR_MAX_BYTES = 10 * 1024 * 1024
+_SIDECAR_TIMEOUT_S = 60.0
+
 _PLAYLIST_TIMEOUT_S = 20.0
 
 
@@ -82,6 +101,51 @@ class MediaInfo:
     audio_tracks: tuple[AudioTrack, ...] = ()
     #: A browser playing the file itself shows them from whole-track WebVTT (#100).
     subtitle_tracks: tuple[SubtitleTrack, ...] = ()
+
+
+async def fetch_bytes(url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """The default ``BytesFetcher``. A file that won't load is a retryable 502."""
+    try:
+        async with httpx.AsyncClient(timeout=_SIDECAR_TIMEOUT_S, transport=transport) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise Error.create(
+            code=Code.BAD_GATEWAY,
+            message=f"The subtitle file could not be read: {exc}",
+            error_type=ErrorType.EXTERNAL_API_ERROR,
+            retry_able=True,
+        ) from exc
+    if len(response.content) > _SIDECAR_MAX_BYTES:
+        raise Error.create(
+            code=Code.UNPROCESSABLE_ENTITY,
+            message="That's too big to be a subtitle file",
+            error_type=ErrorType.UNPROCESSABLE_ENTITY,
+        )
+    return response.content
+
+
+def with_sidecars(
+    embedded: Sequence[SubtitleTrack], sidecars: Sequence[tuple[Sidecar, SidecarSource]]
+) -> tuple[list[SubtitleTrack], dict[int, tuple[Sidecar, SidecarSource]]]:
+    """A source's subtitle tracks with its subtitle files after them, and each file by its index (#101)."""
+    tracks = list(embedded)
+    files: dict[int, tuple[Sidecar, SidecarSource]] = {}
+    for offset, (sidecar, source) in enumerate(sidecars):
+        index = len(embedded) + offset
+        label = sidecar.title + (" · SDH" if sidecar.hearing_impaired else "")
+        tracks.append(
+            SubtitleTrack(
+                index=index,
+                language=sidecar.language,
+                title=label,
+                codec=sidecar_codec(sidecar.path),
+                forced=sidecar.forced,
+                external=True,
+            )
+        )
+        files[index] = (sidecar, source)
+    return tracks, files
 
 
 async def fetch_playlist(
@@ -189,6 +253,8 @@ class StreamService(BaseService):
         site_client: SiteClient | None = None,
         playlist_fetcher: PlaylistFetcher = fetch_playlist,
         task_files: TaskFiles | None = None,
+        task_sidecars: TaskSidecars | None = None,
+        bytes_fetcher: BytesFetcher = fetch_bytes,
         torrent_play: TorrentPlays | None = None,
     ) -> None:
         super().__init__()
@@ -211,12 +277,15 @@ class StreamService(BaseService):
         self._site_client = site_client
         self._playlist_fetcher = playlist_fetcher
         self._task_files = task_files
+        self._task_sidecars = task_sidecars
+        self._fetch_bytes = bytes_fetcher
         self._torrent_play = torrent_play
 
     async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
         """Probe a finished task's file for what the player needs to pick how to play it."""
         path, filename, index = await self._task_file(task_id, file_index)
         result = await self._prober(self._ffprobe_path, str(path))
+        subtitles, _ = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
         return MediaInfo(
             file_index=index,
             filename=filename,
@@ -224,7 +293,7 @@ class StreamService(BaseService):
             has_video=result.has_video,
             media_type=media_type(result.container, result.video_codec, result.audio_codec),
             audio_tracks=result.audio_tracks,
-            subtitle_tracks=result.subtitle_tracks,
+            subtitle_tracks=tuple(subtitles),
         )
 
     async def start_task_session(
@@ -250,19 +319,32 @@ class StreamService(BaseService):
             target = await self._torrent_play(task_id, file_index)
             if target is not None:
                 return self._torrent_stream_session(
-                    target.info_hash, target.file_index, audio_language=audio_language, audio_track=audio_track
+                    target.info_hash,
+                    target.file_index,
+                    audio_language=audio_language,
+                    audio_track=audio_track,
+                    sidecars=await self._sidecars_of(task_id, target.file_index),
                 )
-        path, _filename, _index = await self._task_file(task_id, file_index)
+        path, _filename, index = await self._task_file(task_id, file_index)
         source = MediaInput(str(path))
         result = await self._prober(self._ffprobe_path, source.url)
-        return self._new_session(
+        subtitles, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
+        session = self._new_session(
             [source],
             result.duration_seconds,
             result.has_video,
             audio_tracks=list(result.audio_tracks),
             audio_track=pick_audio_track(result.audio_tracks, audio_language, audio_track),
-            subtitle_tracks=list(result.subtitle_tracks),
+            subtitle_tracks=subtitles,
         )
+        session.subtitle_files = files
+        return session
+
+    async def _sidecars_of(self, task_id: uuid.UUID, file_index: int | None) -> list[tuple[Sidecar, SidecarSource]]:
+        """A task's subtitle files, or none when nothing can say (#101)."""
+        if self._task_sidecars is None:
+            return []
+        return await self._task_sidecars(task_id, file_index)
 
     async def _task_file(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
         if self._task_files is None:
@@ -282,6 +364,7 @@ class StreamService(BaseService):
         site_audio: list[tuple[str, MediaInput]] | None = None,
         info_hash: str | None = None,
         subtitle_tracks: list[SubtitleTrack] | None = None,
+        subtitle_files: dict[int, tuple[Sidecar, SidecarSource]] | None = None,
     ) -> StreamSession:
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
@@ -301,6 +384,7 @@ class StreamService(BaseService):
             site_audio=site_audio or [],
             info_hash=info_hash,
             subtitle_tracks=subtitle_tracks or [],
+            subtitle_files=subtitle_files or {},
         )
         self._sessions.add(session)
         return session
@@ -444,13 +528,20 @@ class StreamService(BaseService):
         # A folder of its own, so a streamed file can't overwrite a download's
         # (#107). A torrent a task already has keeps its own: rqbit ignores a
         # re-add's options (#93).
+        # Its subtitle files come too: they're small, and it's what they're for (#101).
+        by_path = {file.path: file.index for file in details.files}
+        sidecars = match_sidecars(target.path, list(by_path))
         await self._torrent_client.add(
             source,
-            only_files=[target.index],
+            only_files=[target.index, *(by_path[sidecar.path] for sidecar in sidecars)],
             output_folder=str(torrent_folder(self._torrent_dir, details.name, details.info_hash)),
         )
         return self._torrent_stream_session(
-            details.info_hash, target.index, audio_language=audio_language, audio_track=audio_track
+            details.info_hash,
+            target.index,
+            audio_language=audio_language,
+            audio_track=audio_track,
+            sidecars=[(sidecar, TorrentFile(details.info_hash, by_path[sidecar.path])) for sidecar in sidecars],
         )
 
     def _torrent_stream_session(
@@ -460,6 +551,7 @@ class StreamService(BaseService):
         *,
         audio_language: str | None = None,
         audio_track: int | None = None,
+        sidecars: list[tuple[Sidecar, SidecarSource]] | None = None,
     ) -> StreamSession:
         """A session reading one file of a torrent rqbit has, through its stream endpoint.
 
@@ -483,6 +575,7 @@ class StreamService(BaseService):
             status="connecting",
             audio_track=audio_track,
             audio_language=audio_language,
+            pending_sidecars=sidecars or [],
         )
         self._sessions.add(session)
         task = asyncio.create_task(self._probe_torrent_session(session))
@@ -505,7 +598,9 @@ class StreamService(BaseService):
         session.duration_seconds = result.duration_seconds
         session.has_video = result.has_video
         session.audio_tracks = list(result.audio_tracks)
-        session.subtitle_tracks = list(result.subtitle_tracks)
+        session.subtitle_tracks, session.subtitle_files = with_sidecars(
+            result.subtitle_tracks, session.pending_sidecars
+        )
         session.audio_track = pick_audio_track(result.audio_tracks, session.audio_language, session.audio_track)
         session.status = "ready"
         self._publish_status(
@@ -625,7 +720,7 @@ class StreamService(BaseService):
         """
         if index < 0 or index >= session.segment_count:
             raise Error.not_found(f"Segment {index} does not exist")
-        texts = [known for known in session.subtitle_tracks if known.text]
+        texts = [known for known in session.subtitle_tracks if known.text and not known.external]
         if track not in [known.index for known in texts]:
             raise Error.not_found(f"This stream has no subtitle track {track} to show")
         session.touch()
@@ -657,8 +752,9 @@ class StreamService(BaseService):
     async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Path:
         """A finished task's subtitle track, whole, as WebVTT, for a file played as it is (#100).
 
-        Extracted once and kept under the stream folder, keyed by the file's
-        size and time, so a file replaced on disk is extracted again.
+        An embedded track is extracted; a subtitle file beside it (#101) is
+        converted. Either way once, and kept under the stream folder, keyed
+        by the video's size and time, so a file replaced on disk is done again.
         """
         path, _filename, index = await self._task_file(task_id, file_index)
         stat = await asyncio.to_thread(path.stat)
@@ -666,18 +762,79 @@ class StreamService(BaseService):
         if await asyncio.to_thread(cached.exists):
             return cached
         result = await self._prober(self._ffprobe_path, str(path))
-        if track not in [known.index for known in result.subtitle_tracks if known.text]:
+        tracks, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
+        if track not in [known.index for known in tracks if known.text]:
             raise Error.not_found(f"This file has no subtitle track {track} to show")
         await asyncio.to_thread(cached.parent.mkdir, parents=True, exist_ok=True)
-        # Written aside and moved into place: two players asking at once must
-        # never read half a file.
-        partial = cached.with_name(f"{cached.stem}.{uuid.uuid4().hex}.part.vtt")
+        if track in files:
+            await self._convert_sidecar(*files[track], cached)
+        else:
+            await self._write_aside(
+                cached,
+                lambda partial: self._encoder(
+                    subtitle_file_args(self._ffmpeg_path, MediaInput(str(path)), track, partial)
+                ),
+            )
+        return cached
+
+    async def get_subtitle_file(self, session: StreamSession, track: int) -> Path:
+        """A session's subtitle file (#101), whole, as WebVTT: converted on the first request."""
+        if track not in session.subtitle_files:
+            raise Error.not_found(f"This stream has no subtitle file {track}")
+        session.touch()
+        destination = session.subtitle_file_path(track)
+
+        async def convert() -> None:
+            if not self._is_open(session):
+                raise _session_not_found()
+            await self._convert_sidecar(*session.subtitle_files[track], destination)
+
         try:
-            await self._encoder(subtitle_file_args(self._ffmpeg_path, MediaInput(str(path)), track, partial))
-            await asyncio.to_thread(os.replace, partial, cached)
+            await _produce_once(session.file_states, session.file_events, track, convert)
+        except (Error, OSError) as error:
+            if self._is_open(session):
+                raise
+            raise _session_not_found() from error
+        if not self._is_open(session):
+            raise _session_not_found()
+        return destination
+
+    async def _convert_sidecar(self, sidecar: Sidecar, source: SidecarSource, destination: Path) -> None:
+        """A subtitle file as WebVTT at ``destination``: read, decoded, written as UTF-8, then converted.
+
+        Decoded here rather than by ffmpeg, which reads everything as UTF-8
+        and garbles a Windows-1252 file's accents.
+        """
+        if isinstance(source, TorrentFile):
+            raw = await self._fetch_bytes(f"{self._torrent_api_url}/torrents/{source.info_hash}/stream/{source.index}")
+        else:
+            raw = await asyncio.to_thread(source.read_bytes)
+        text = decode_subtitles(raw)
+        suffix = Path(sidecar.path).suffix.lower() or ".srt"
+        utf8 = destination.with_name(f"{destination.stem}.{uuid.uuid4().hex}{suffix}")
+        await asyncio.to_thread(utf8.write_text, text, encoding="utf-8")
+        try:
+            await self._write_aside(
+                destination,
+                lambda partial: self._encoder(
+                    subtitle_file_args(self._ffmpeg_path, MediaInput(str(utf8)), 0, partial)
+                ),
+            )
+        finally:
+            await asyncio.to_thread(utf8.unlink, missing_ok=True)
+
+    @staticmethod
+    async def _write_aside(destination: Path, write: Callable[[Path], Awaitable[None]]) -> None:
+        """Have ``write`` fill a file beside ``destination``, then move it into place.
+
+        Two players asking at once must never read half a file.
+        """
+        partial = destination.with_name(f"{destination.stem}.{uuid.uuid4().hex}.part.vtt")
+        try:
+            await write(partial)
+            await asyncio.to_thread(os.replace, partial, destination)
         finally:
             await asyncio.to_thread(partial.unlink, missing_ok=True)
-        return cached
 
     async def _encode(self, session: StreamSession, index: int) -> None:
         """Encode one segment; a site's expired URLs are resolved again, once."""
@@ -770,6 +927,7 @@ class StreamService(BaseService):
             origin=origin,
             playlists=playlists,
             subtitle_tracks=list(session.subtitle_tracks),
+            subtitle_files=dict(session.subtitle_files),
             audio_tracks=list(session.audio_tracks),
             audio_track=track,
             site_audio=list(session.site_audio),

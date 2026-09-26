@@ -220,6 +220,7 @@ def get_stream_service() -> StreamService:
         event_hub=get_event_hub(),
         site_client=get_site_client(),
         task_files=get_download_service().resolve_media_file,
+        task_sidecars=get_download_service().subtitle_files,
         torrent_play=get_download_service().torrent_play,
     )
 

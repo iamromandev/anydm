@@ -20,6 +20,11 @@ export type SubtitleTrack = {
     forced: boolean;
     /** Whether it can be shown: a picture track (PGS, VobSub) can't. */
     text: boolean;
+    /**
+     * A subtitle file beside the video rather than a track inside it (#101):
+     * fetched whole, even in a session. Its title is its file name.
+     */
+    external: boolean;
 };
 
 export function normalizeSubtitleTracks(raw: any): SubtitleTrack[] {
@@ -33,6 +38,7 @@ export function normalizeSubtitleTracks(raw: any): SubtitleTrack[] {
         default: Boolean(track?.default),
         forced: Boolean(track?.forced),
         text: Boolean(track?.text),
+        external: Boolean(track?.external),
     }));
 }
 

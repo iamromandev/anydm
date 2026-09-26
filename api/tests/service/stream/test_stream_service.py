@@ -10,6 +10,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.lib.media.audio import AudioTrack
 from src.lib.media.ffprobe import ProbeResult
+from src.lib.media.sidecar import Sidecar, TorrentFile
 from src.lib.media.source import MediaInput
 from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
@@ -448,9 +449,10 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
     assert session.info_hash == "deadbeef"
     assert session.status == "ready"
     assert session.duration_seconds == 20.0  # from the fake prober
-    # Its own folder: a streamed file must not overwrite a download's (#107).
+    # Its own folder: a streamed file must not overwrite a download's (#107),
+    # with the film's subtitle file beside it (#101).
     assert torrent_client.added == [
-        {"only_files": [1], "output_folder": str(tmp_path / "torrent" / "Some Release")}
+        {"only_files": [1, 0], "output_folder": str(tmp_path / "torrent" / "Some Release")}
     ]
 
 
@@ -475,7 +477,8 @@ async def test_start_torrent_session_plays_the_file_asked_for(tmp_path: Path) ->
     session = await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5", file_index=1)
     await asyncio.gather(*session.background_tasks)
 
-    assert torrent_client.added[0]["only_files"] == [1]
+    # Episode 2's subtitle file too, never episode 10's (#101).
+    assert torrent_client.added[0]["only_files"] == [1, 2]
     assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/5ea50ea5/stream/1"
 
 
@@ -1617,9 +1620,15 @@ async def test_a_torrent_s_subtitle_tracks_arrive_when_it_s_probed(tmp_path: Pat
     assert session.subtitle_tracks == []
     await asyncio.gather(*session.background_tasks)
 
-    assert session.subtitle_tracks == list(SUBTITLED)
+    # The embedded tracks, then the film's subtitle file after them (#101).
+    assert session.subtitle_tracks[:3] == list(SUBTITLED)
+    assert session.subtitle_tracks[3] == SubtitleTrack(
+        3, language="en", title="Movie.en.srt", codec="subrip", external=True
+    )
     ready = next(data for data in published if data["status"] == "ready")
-    assert [(t["index"], t["text"]) for t in ready["subtitle_tracks"]] == [(0, True), (1, True), (2, False)]
+    assert [(t["index"], t["text"], t["external"]) for t in ready["subtitle_tracks"]] == [
+        (0, True, False), (1, True, False), (2, False, False), (3, True, True),
+    ]
     await service.stop_session(session.id)
 
 
@@ -1653,3 +1662,167 @@ async def test_a_download_s_picture_subtitles_are_not_found(tmp_path: Path) -> N
         await service.subtitle_file(uuid.uuid4(), None, 2)
     assert caught.value.code == Code.NOT_FOUND
     assert encoded == []
+
+
+
+# --- subtitle files beside the video (#101) -------------------------------------------
+
+class FakeSidecars:
+    """Stands in for ``DownloadService.subtitle_files``."""
+
+    def __init__(self, found: list) -> None:
+        self.found = found
+        self.asked: list[tuple[uuid.UUID, int | None]] = []
+
+    async def __call__(self, task_id: uuid.UUID, file_index: int | None) -> list:
+        self.asked.append((task_id, file_index))
+        return self.found
+
+
+class RecordingEncoder:
+    """Writes each output, and keeps what the input file said when it was converted."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.read: list[str] = []
+
+    async def __call__(self, args: list[str]) -> None:
+        self.calls.append(args)
+        source = Path(args[args.index("-i") + 1])
+        if source.suffix in (".srt", ".ass", ".vtt"):
+            self.read.append(source.read_text(encoding="utf-8"))
+        Path(args[-1]).write_text("WEBVTT\n")
+
+
+SRT_1252 = "1\n00:00:01,000 --> 00:00:02,000\nCaf\u00e9, se\u00f1or\n".encode("cp1252")
+
+
+@pytest.mark.asyncio
+async def test_a_download_s_subtitle_files_follow_its_embedded_tracks(tmp_path: Path) -> None:
+    movie = tmp_path / "Movie.mkv"
+    movie.write_bytes(b"mkv")
+    srt = tmp_path / "Movie.fr.srt"
+    srt.write_bytes(SRT_1252)
+    sidecars = FakeSidecars([(Sidecar("Movie.fr.srt", "fr", "Movie.fr.srt"), srt)])
+    encoder = RecordingEncoder()
+    service, _ = _service(
+        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), task_sidecars=sidecars,
+        encoder=encoder,
+    )
+    task = uuid.uuid4()
+
+    session = await service.start_task_session(task, None)
+    info = await service.media_info(task, None)
+
+    external = SubtitleTrack(3, language="fr", title="Movie.fr.srt", codec="subrip", external=True)
+    assert session.subtitle_tracks == [*SUBTITLED, external]
+    assert info.subtitle_tracks == (*SUBTITLED, external)
+
+    first, again = await asyncio.gather(service.get_subtitle_file(session, 3), service.get_subtitle_file(session, 3))
+
+    assert first == again == session.subtitle_file_path(3)
+    # Read once, as Windows-1252, and handed to ffmpeg as UTF-8.
+    assert encoder.read == ["1\n00:00:01,000 --> 00:00:02,000\nCaf\u00e9, se\u00f1or\n"]
+    assert len(encoder.calls) == 1
+    # Nothing left beside it but the result.
+    assert sorted(p.name for p in session.session_dir.iterdir()) == ["subtitles_file_3.vtt"]
+
+
+@pytest.mark.asyncio
+async def test_a_subtitle_file_is_never_cut_by_the_segment(tmp_path: Path) -> None:
+    movie = tmp_path / "Movie.mkv"
+    movie.write_bytes(b"mkv")
+    sidecars = FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), tmp_path / "Movie.en.srt")])
+    service, encoded = _service(
+        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), task_sidecars=sidecars
+    )
+    session = await service.start_task_session(uuid.uuid4(), None)
+
+    with pytest.raises(Error) as caught:
+        await service.get_subtitle_segment(session, 3, 0)
+    assert caught.value.code == Code.NOT_FOUND
+    # And an embedded track has no whole-file route in a session.
+    with pytest.raises(Error):
+        await service.get_subtitle_file(session, 0)
+    assert encoded == []
+
+
+@pytest.mark.asyncio
+async def test_a_downloading_torrent_s_subtitle_file_is_read_through_rqbit(tmp_path: Path) -> None:
+    fetched: list[str] = []
+
+    async def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return b"1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+
+    async def playing(_task: uuid.UUID, _index: int | None) -> TorrentPlay:
+        return TorrentPlay(info_hash="deadbeef", file_index=1)
+
+    sidecars = FakeSidecars([(Sidecar("Subs/2_English.srt", "en", "2_English.srt"), TorrentFile("deadbeef", 4))])
+    encoder = RecordingEncoder()
+    service, _ = _torrent_service(
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(),
+        prober=_subtitled,
+    )
+    service._torrent_play = playing
+    service._task_sidecars = sidecars
+    service._fetch_bytes = fetch
+    service._encoder = encoder
+    task = uuid.uuid4()
+
+    session = await service.start_task_session(task, None)
+    await asyncio.gather(*session.background_tasks)
+    await service.get_subtitle_file(session, 3)
+
+    assert sidecars.asked == [(task, 1)]
+    assert session.subtitle_tracks[3].external
+    assert fetched == ["http://torrent-anydm-api:3030/torrents/deadbeef/stream/4"]
+    assert encoder.read == ["1\n00:00:01,000 --> 00:00:02,000\nhi\n"]
+    await service.stop_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_an_audio_switch_keeps_the_subtitle_files(tmp_path: Path) -> None:
+    movie = tmp_path / "Movie.mkv"
+    movie.write_bytes(b"mkv")
+
+    async def both(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+        return ProbeResult(duration_seconds=20.0, has_video=True, audio_tracks=DUB_THEN_ORIGINAL)
+
+    srt = tmp_path / "Movie.en.srt"
+    srt.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    sidecars = FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), srt)])
+    service, _ = _service(
+        tmp_path / "stream", prober=both, task_files=FakeTaskFiles(movie), task_sidecars=sidecars,
+        encoder=RecordingEncoder(),
+    )
+    old = await service.start_task_session(uuid.uuid4(), None)
+
+    new = await service.switch_audio(old, 1)
+
+    assert new.subtitle_files == old.subtitle_files
+    assert (await service.get_subtitle_file(new, 0)).exists()
+
+
+@pytest.mark.asyncio
+async def test_a_download_played_as_it_is_gets_its_subtitle_file_converted_once(tmp_path: Path) -> None:
+    movie = tmp_path / "Movie.mkv"
+    movie.write_bytes(b"mkv")
+    srt = tmp_path / "Movie.en.srt"
+    srt.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    encoder = RecordingEncoder()
+    service, _ = _service(
+        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), encoder=encoder,
+        task_sidecars=FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), srt)]),
+    )
+    task = uuid.uuid4()
+
+    first = await service.subtitle_file(task, None, 3)
+    again = await service.subtitle_file(task, None, 3)
+
+    assert first == again
+    assert encoder.read == ["1\n00:00:01,000 --> 00:00:02,000\nhi\n"]
+    # Converted, not extracted: its own file is the input, its only track.
+    assert encoder.calls[0][encoder.calls[0].index("-map") + 1] == "0:s:0"
+    with pytest.raises(Error):
+        await service.subtitle_file(task, None, 4)

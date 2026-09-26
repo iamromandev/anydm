@@ -22,6 +22,7 @@ const track = (
     default: false,
     forced: false,
     text: true,
+    external: false,
     ...fields,
 });
 
@@ -49,6 +50,40 @@ describe("subtitle tracks (#100)", () => {
             track(1, { codec: null, text: false }),
         ]);
         expect(normalizeSubtitleTracks(undefined)).toEqual([]);
+    });
+
+    it("reads which tracks are subtitle files beside the video (#101)", () => {
+        const [
+            file,
+        ] = normalizeSubtitleTracks([
+            {
+                index: 3,
+                language: "en",
+                title: "Movie.en.srt",
+                codec: "subrip",
+                text: true,
+                external: true,
+            },
+        ]);
+        expect(file.external).toBe(true);
+        expect(subtitleTrackLabel(file)).toBe("English · Movie.en.srt");
+    });
+
+    it("picks a subtitle file like any other track", () => {
+        const file = track(3, {
+            language: "fr",
+            title: "Movie.fr.srt",
+            external: true,
+        });
+        expect(
+            pickSubtitleTrack(
+                [
+                    ...MOVIE,
+                    file,
+                ],
+                "fr",
+            ),
+        ).toBe(3);
     });
 
     it("shows the preferred language, a full track before a forced one", () => {

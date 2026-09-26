@@ -41,6 +41,34 @@ _TWO_LETTER = {
 #: What a file writes when it doesn't know.
 _UNKNOWN = {"und", "unk", "mis", "mul", "zxx", ""}
 
+#: The languages above by their English names, as subtitle files are often
+#: named (``2_English.srt``), and a few native ones releases use.
+_NAMES = {
+    "arabic": "ar", "bengali": "bn", "chinese": "zh", "czech": "cs", "danish": "da",
+    "dutch": "nl", "english": "en", "finnish": "fi", "french": "fr", "francais": "fr",
+    "german": "de", "deutsch": "de", "greek": "el", "hebrew": "he", "hindi": "hi",
+    "hungarian": "hu", "indonesian": "id", "italian": "it", "italiano": "it",
+    "japanese": "ja", "korean": "ko", "malay": "ms", "norwegian": "no", "persian": "fa",
+    "farsi": "fa", "polish": "pl", "portuguese": "pt", "brazilian": "pt", "romanian": "ro",
+    "russian": "ru", "spanish": "es", "espanol": "es", "latino": "es", "swedish": "sv",
+    "tamil": "ta", "telugu": "te", "thai": "th", "turkish": "tr", "ukrainian": "uk",
+    "urdu": "ur", "vietnamese": "vi", "filipino": "tl", "tagalog": "tl",
+}
+
+#: Two-letter codes a file name can carry. Not "hi": beside a language,
+#: ``Movie.en.hi.srt`` means hearing impaired far more often than Hindi.
+_FILE_NAME_CODES = (set(_TWO_LETTER.values()) | {"en", "es", "pt", "it"}) - {"hi"}
+
+
+def language_in_name(token: str) -> str | None:
+    """The ISO 639-1 code one word of a file name stands for (``en``, ``eng``, ``English``), if any."""
+    word = token.strip().lower()
+    if word in _NAMES:
+        return _NAMES[word]
+    if word in _TWO_LETTER:
+        return _TWO_LETTER[word]
+    return word if word in _FILE_NAME_CODES else None
+
 
 def language_key(code: str | None) -> str | None:
     """``code``'s language alone, comparable across ISO 639-1, 639-2 and BCP 47; ``None`` when unknown."""
