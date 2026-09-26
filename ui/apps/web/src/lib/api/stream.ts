@@ -1,6 +1,7 @@
 /** Start, and stop, an ephemeral on-demand HLS session for a site page, media URL or torrent. */
 
 import { type AudioTrack, normalizeAudioTracks } from "../audio";
+import { normalizeQualityMenu, type QualityMenu } from "../quality";
 import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles";
 import { deleteApi, getApi, postApi } from "./client";
 
@@ -17,22 +18,30 @@ export type StreamSession = {
     subtitleTracks: SubtitleTrack[];
     /** Which segment's cues hold a time. */
     segmentSeconds: number;
+    /** Its quality menu (#103); a torrent's comes with `ready`. */
+    quality: QualityMenu;
 };
 
 /** The audio a session should open with (#99): a named track, else the preferred language's. */
 export type StreamAudio = {
     language?: string | null;
     track?: number | null;
+    /** The height to play at (#103), when not the default. */
+    quality?: number | null;
 };
 
 function audioBody(audio: StreamAudio): {
     audio_language?: string;
     audio_track?: number;
+    quality?: number;
 } {
     return {
         ...(audio.language ? { audio_language: audio.language } : {}),
         ...(audio.track !== null && audio.track !== undefined
             ? { audio_track: audio.track }
+            : {}),
+        ...(audio.quality !== null && audio.quality !== undefined
+            ? { quality: audio.quality }
             : {}),
     };
 }
@@ -51,6 +60,7 @@ export type StreamStatusEvent = {
     audioTracks?: AudioTrack[];
     audioTrack?: number | null;
     subtitleTracks?: SubtitleTrack[];
+    quality?: QualityMenu;
 };
 
 export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
@@ -71,6 +81,9 @@ export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
         ...(raw?.subtitle_tracks !== undefined
             ? { subtitleTracks: normalizeSubtitleTracks(raw.subtitle_tracks) }
             : {}),
+        ...(raw?.qualities !== undefined
+            ? { quality: normalizeQualityMenu(raw) }
+            : {}),
     };
 }
 
@@ -87,6 +100,7 @@ export function normalizeStreamSession(raw: any): StreamSession {
         audioTrack: raw?.audio_track ?? null,
         subtitleTracks: normalizeSubtitleTracks(raw?.subtitle_tracks),
         segmentSeconds: raw?.segment_seconds ?? 6,
+        quality: normalizeQualityMenu(raw),
     };
 }
 
@@ -134,6 +148,19 @@ export async function switchStreamAudio(
     );
 }
 
+/**
+ * A new session like `sessionId`'s, at `height`; `null` is its default
+ * (#103). The old one keeps playing until it's stopped.
+ */
+export async function switchStreamQuality(
+    sessionId: string,
+    height: number | null,
+): Promise<StreamSession> {
+    return normalizeStreamSession(
+        await postApi<any>(`/stream/${sessionId}/quality`, { height }),
+    );
+}
+
 export function stopStream(sessionId: string): Promise<void> {
     return deleteApi(`/stream/${sessionId}`);
 }
@@ -153,6 +180,8 @@ export type MediaInfo = {
     audioTracks: AudioTrack[];
     /** Shown from each track whole, since there are no segments (#100). */
     subtitleTracks: SubtitleTrack[];
+    /** Its height: a lower quality takes a session (#103). */
+    videoHeight: number | null;
 };
 
 export function normalizeMediaInfo(raw: any): MediaInfo {
@@ -166,6 +195,7 @@ export function normalizeMediaInfo(raw: any): MediaInfo {
         fileUrl: raw?.file_url ?? "",
         audioTracks: normalizeAudioTracks(raw?.audio_tracks),
         subtitleTracks: normalizeSubtitleTracks(raw?.subtitle_tracks),
+        videoHeight: raw?.video_height ?? null,
     };
 }
 

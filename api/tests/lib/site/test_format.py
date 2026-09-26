@@ -15,6 +15,7 @@ from src.lib.site.format import (
     playback_plan,
     select_plan,
     usable_presets,
+    video_choices,
 )
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "ytdlp"
@@ -472,3 +473,30 @@ def test_the_preferred_language_picks_the_plan_s_audio() -> None:
 def test_a_language_the_page_lacks_keeps_the_site_s_own() -> None:
     assert playback_plan(DUBBED, "ja").audio == DUBBED[1]
     assert playback_plan(DUBBED, None).audio == DUBBED[1]
+
+
+
+# --- heights (#103) ----------------------------------------------------------------
+
+
+def test_video_choices_offer_every_height_above_1080p_too() -> None:
+    formats = [_video("401", 2160), _video("400", 1440), _video("137", 1080), _video("136", 720),
+               _video("136b", 720), _audio("140", 128_000)]
+    plan = playback_plan(formats)
+
+    assert plan.video is not None and plan.video.id == "137"
+    assert [(f.id, f.height) for f in video_choices(formats, plan)] == [
+        ("401", 2160), ("400", 1440), ("137", 1080), ("136", 720),
+    ]
+
+
+def test_a_combined_plan_offers_combined_heights() -> None:
+    formats = [_video("22", 720, audio=True), _video("18", 360, audio=True), _video("137", 480)]
+    plan = playback_plan(formats)
+
+    assert [f.id for f in video_choices(formats, plan)] == ["22", "18"]
+
+
+def test_an_audio_only_plan_offers_no_heights() -> None:
+    formats = [_audio("140", 128_000)]
+    assert video_choices(formats, select_plan(formats, Preset.MP3)) == []

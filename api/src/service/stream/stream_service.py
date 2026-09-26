@@ -40,11 +40,12 @@ from src.lib.media.source import MediaInput, PlaylistCut
 from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.format import audio_choices, playback_plan
+from src.lib.site.format import audio_choices, playback_plan, video_choices
 from src.lib.site.subtitles import SiteSubtitle, fetch_subtitle, same_subtitle
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
+from src.service.stream.quality import QualityState, file_quality
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSession, StreamSessionStore
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS, pick_media_file
 
@@ -106,6 +107,8 @@ class MediaInfo:
     audio_tracks: tuple[AudioTrack, ...] = ()
     #: A browser playing the file itself shows them from whole-track WebVTT (#100).
     subtitle_tracks: tuple[SubtitleTrack, ...] = ()
+    #: Its height, which the quality menu offers below; a lower one takes a session (#103).
+    video_height: int | None = None
 
 
 async def fetch_bytes(url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
@@ -185,6 +188,8 @@ class _Page:
     audio_track: int | None
     #: Its own subtitles and captions (#102), as subtitle files to fetch.
     subtitles: list[tuple[Sidecar, SidecarSource]]
+    #: Its heights (#103).
+    quality: QualityState
 
 
 def _site_subtitle(subtitle: SiteSubtitle) -> tuple[Sidecar, SidecarSource]:
@@ -246,6 +251,19 @@ async def _produce_once(
         raise
     states[index] = SegmentState.READY
     event.set()
+
+
+def quality_fields(quality: QualityState) -> dict[str, object]:
+    """A session's quality menu as the API describes it (#103): nothing for one with no menu."""
+    if not quality.heights:
+        return {}
+    return {
+        "qualities": list(quality.heights),
+        "quality": quality.chosen,
+        "playing_height": quality.playing,
+        "quality_default": quality.default,
+        "default_height": quality.default_height,
+    }
 
 
 class StreamService(BaseService):
@@ -313,6 +331,7 @@ class StreamService(BaseService):
             media_type=media_type(result.container, result.video_codec, result.audio_codec),
             audio_tracks=result.audio_tracks,
             subtitle_tracks=tuple(subtitles),
+            video_height=result.video_height,
         )
 
     async def start_task_session(
@@ -322,6 +341,7 @@ class StreamService(BaseService):
         *,
         audio_language: str | None = None,
         audio_track: int | None = None,
+        quality: int | None = None,
     ) -> StreamSession:
         """Play a finished task's file through a session, read from disk (#94).
 
@@ -343,6 +363,7 @@ class StreamService(BaseService):
                     audio_language=audio_language,
                     audio_track=audio_track,
                     sidecars=await self._sidecars_of(task_id, target.file_index),
+                    quality=quality,
                 )
         path, _filename, index = await self._task_file(task_id, file_index)
         source = MediaInput(str(path))
@@ -355,6 +376,7 @@ class StreamService(BaseService):
             audio_tracks=list(result.audio_tracks),
             audio_track=pick_audio_track(result.audio_tracks, audio_language, audio_track),
             subtitle_tracks=subtitles,
+            quality=file_quality(result.video_height, result.has_video, quality),
         )
         session.subtitle_files = files
         return session
@@ -384,6 +406,7 @@ class StreamService(BaseService):
         info_hash: str | None = None,
         subtitle_tracks: list[SubtitleTrack] | None = None,
         subtitle_files: dict[int, tuple[Sidecar, SidecarSource]] | None = None,
+        quality: QualityState | None = None,
     ) -> StreamSession:
         session_id = uuid.uuid4().hex
         session_dir = self._stream_dir / session_id
@@ -404,12 +427,18 @@ class StreamService(BaseService):
             info_hash=info_hash,
             subtitle_tracks=subtitle_tracks or [],
             subtitle_files=subtitle_files or {},
+            quality=quality or QualityState(),
         )
         self._sessions.add(session)
         return session
 
     async def start_session(
-        self, url: str, *, audio_language: str | None = None, audio_track: int | None = None
+        self,
+        url: str,
+        *,
+        audio_language: str | None = None,
+        audio_track: int | None = None,
+        quality: int | None = None,
     ) -> StreamSession:
         """Play ``url``: a page on a site, or a media file as it is.
 
@@ -420,7 +449,7 @@ class StreamService(BaseService):
 
         A page's audio tracks are its audio formats; a file's are its own (#99).
         """
-        page = await self._open_page(url, audio_language, audio_track)
+        page = await self._open_page(url, audio_language, audio_track, quality)
         inputs = page.inputs if page is not None else [MediaInput(url)]
         playlists: list[MediaPlaylist] = []
         if page is not None and page.hls:
@@ -436,10 +465,12 @@ class StreamService(BaseService):
         if page is not None:
             tracks, track = page.audio_tracks, page.audio_track
             subtitles, files = with_sidecars([], page.subtitles)
+            heights = page.quality
         else:
             tracks = list(result.audio_tracks)
             track = pick_audio_track(tracks, audio_language, audio_track)
             subtitles = list(result.subtitle_tracks)
+            heights = file_quality(result.video_height, result.has_video, quality)
         return self._new_session(
             inputs,
             duration,
@@ -451,10 +482,15 @@ class StreamService(BaseService):
             site_audio=page.site_audio if page is not None else None,
             subtitle_tracks=subtitles,
             subtitle_files=files,
+            quality=heights,
         )
 
     async def _open_page(
-        self, url: str, audio_language: str | None = None, audio_track: int | None = None
+        self,
+        url: str,
+        audio_language: str | None = None,
+        audio_track: int | None = None,
+        quality: int | None = None,
     ) -> _Page | None:
         """What a page's site offers for playback, or ``None`` for a plain file."""
         if self._site_client is None or _is_media_file(url):
@@ -473,6 +509,20 @@ class StreamService(BaseService):
         choices = [choice for choice in audio_choices(info.formats, plan) if choice.id in resolved]
         if audio_track is not None and 0 <= audio_track < len(choices):
             plan = replace(plan, audio=choices[audio_track])
+        # Its heights, each ready to swap in the same way (#103).
+        videos = {choice.height or 0: choice for choice in video_choices(info.formats, plan) if choice.id in resolved}
+        default_height = plan.video.height if plan.video is not None else None
+        if quality is not None and quality in videos:
+            plan = replace(plan, video=videos[quality])
+        heights = QualityState(
+            heights=tuple(videos),
+            default="auto",
+            default_height=default_height,
+            site_video={
+                height: (choice.id, MediaInput(resolved[choice.id].url, resolved[choice.id].headers))
+                for height, choice in videos.items()
+            },
+        ).switched(quality if quality in videos else None)
         parts = [part for part in (plan.video, plan.audio) if part is not None]
         playing = plan.audio.id if plan.audio is not None else None
         return _Page(
@@ -495,6 +545,7 @@ class StreamService(BaseService):
             ],
             audio_track=next((n for n, choice in enumerate(choices) if choice.id == playing), None),
             subtitles=[_site_subtitle(subtitle) for subtitle in info.subtitles],
+            quality=heights,
         )
 
     async def _fetch_playlists(self, inputs: list[MediaInput]) -> list[MediaPlaylist]:
@@ -515,6 +566,7 @@ class StreamService(BaseService):
         *,
         audio_language: str | None = None,
         audio_track: int | None = None,
+        quality: int | None = None,
     ) -> StreamSession:
         """Stream a torrent's file: ``file_index``, else its largest media file (#98)."""
         if not self._torrent_enabled:
@@ -565,6 +617,7 @@ class StreamService(BaseService):
             audio_language=audio_language,
             audio_track=audio_track,
             sidecars=[(sidecar, TorrentFile(details.info_hash, by_path[sidecar.path])) for sidecar in sidecars],
+            quality=quality,
         )
 
     def _torrent_stream_session(
@@ -575,6 +628,7 @@ class StreamService(BaseService):
         audio_language: str | None = None,
         audio_track: int | None = None,
         sidecars: list[tuple[Sidecar, SidecarSource]] | None = None,
+        quality: int | None = None,
     ) -> StreamSession:
         """A session reading one file of a torrent rqbit has, through its stream endpoint.
 
@@ -599,6 +653,7 @@ class StreamService(BaseService):
             audio_track=audio_track,
             audio_language=audio_language,
             pending_sidecars=sidecars or [],
+            wanted_quality=quality,
         )
         self._sessions.add(session)
         task = asyncio.create_task(self._probe_torrent_session(session))
@@ -625,6 +680,7 @@ class StreamService(BaseService):
             result.subtitle_tracks, session.pending_sidecars
         )
         session.audio_track = pick_audio_track(result.audio_tracks, session.audio_language, session.audio_track)
+        session.quality = file_quality(result.video_height, result.has_video, session.wanted_quality)
         session.status = "ready"
         self._publish_status(
             session,
@@ -632,6 +688,7 @@ class StreamService(BaseService):
             audio_tracks=[asdict(track) for track in session.audio_tracks],
             audio_track=session.audio_track,
             subtitle_tracks=[{**asdict(track), "text": track.text} for track in session.subtitle_tracks],
+            **quality_fields(session.quality),
         )
         # poll_task keeps running after this — it's what keeps the player's
         # swarm HUD live during playback, not just while connecting. It
@@ -909,6 +966,7 @@ class StreamService(BaseService):
             destination=session.segment_path(index),
             has_video=session.has_video,
             audio_track=session.mapped_audio_track,
+            scale_height=session.quality.scale_height,
         )
 
     async def _cut(self, session: StreamSession, index: int, start: float, end: float) -> list[PlaylistCut]:
@@ -964,6 +1022,52 @@ class StreamService(BaseService):
                 origin = SiteOrigin(origin.page_url, (*origin.format_ids[:-1], format_id))
             if playlists:
                 playlists[-1] = await self._fetch_playlist(source)
+        return self._switched(session, inputs, origin, playlists, audio_track=track)
+
+    async def switch_quality(self, session: StreamSession, height: int | None) -> StreamSession:
+        """A new session like ``session``, at ``height``; ``None`` is the default (#103).
+
+        Built from what ``session`` holds, as ``switch_audio`` is. A site's
+        height is its video format, so the first input changes, and for HLS
+        its playlist; a file's is a scale in the encode.
+        """
+        if session.status != "ready":
+            raise Error.conflict("The stream is not ready yet")
+        menu = session.quality
+        if not menu.heights or (height is not None and height not in menu.heights):
+            raise Error.create(
+                code=Code.UNPROCESSABLE_ENTITY,
+                message=f"This stream can't play at {height}p",
+                error_type=ErrorType.UNPROCESSABLE_ENTITY,
+            )
+        inputs, origin, playlists = list(session.inputs), session.origin, list(session.playlists)
+        if menu.site_video:
+            target = height if height is not None else menu.default_height
+            if target not in menu.site_video:
+                raise Error.create(
+                    code=Code.UNPROCESSABLE_ENTITY,
+                    message="This stream has no default quality to go back to",
+                    error_type=ErrorType.UNPROCESSABLE_ENTITY,
+                )
+            format_id, source = menu.site_video[target]
+            inputs[0] = source
+            if origin is not None:
+                origin = SiteOrigin(origin.page_url, (format_id, *origin.format_ids[1:]))
+            if playlists:
+                playlists[0] = await self._fetch_playlist(source)
+        return self._switched(session, inputs, origin, playlists, quality=menu.switched(height))
+
+    def _switched(
+        self,
+        session: StreamSession,
+        inputs: list[MediaInput],
+        origin: SiteOrigin | None,
+        playlists: list[MediaPlaylist],
+        *,
+        audio_track: int | None = None,
+        quality: QualityState | None = None,
+    ) -> StreamSession:
+        """A new session with everything ``session`` has but what a switch changed."""
         switched = self._new_session(
             inputs,
             session.duration_seconds,
@@ -973,9 +1077,10 @@ class StreamService(BaseService):
             subtitle_tracks=list(session.subtitle_tracks),
             subtitle_files=dict(session.subtitle_files),
             audio_tracks=list(session.audio_tracks),
-            audio_track=track,
+            audio_track=audio_track if audio_track is not None else session.audio_track,
             site_audio=list(session.site_audio),
             info_hash=session.info_hash,
+            quality=quality or session.quality,
         )
         if switched.info_hash is not None and self._torrent_client is not None:
             switched.progress_task = asyncio.create_task(self._publish_progress_until_cancelled(switched))

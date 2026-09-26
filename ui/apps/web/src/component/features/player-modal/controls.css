@@ -124,7 +124,8 @@
 .player-controls-rate,
 .player-controls-file,
 .player-controls-audio,
-.player-controls-subtitles {
+.player-controls-subtitles,
+.player-controls-quality {
     margin-left: auto;
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
@@ -145,8 +146,16 @@
 .player-controls-audio + .player-controls-rate,
 .player-controls-file + .player-controls-subtitles,
 .player-controls-audio + .player-controls-subtitles,
-.player-controls-subtitles + .player-controls-rate {
+.player-controls-subtitles + .player-controls-rate,
+.player-controls-file + .player-controls-quality,
+.player-controls-audio + .player-controls-quality,
+.player-controls-subtitles + .player-controls-quality,
+.player-controls-quality + .player-controls-rate {
     margin-left: 0.5rem;
+}
+
+.player-controls-quality:disabled {
+    opacity: 0.6;
 }
 
 /* Subtitle tracks (#100): a title can be long too. */
@@ -181,7 +190,8 @@
     .player-controls-rate,
     .player-controls-file,
     .player-controls-audio,
-    .player-controls-subtitles {
+    .player-controls-subtitles,
+    .player-controls-quality {
         min-height: 44px;
     }
 

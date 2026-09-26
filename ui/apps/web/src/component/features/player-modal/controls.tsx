@@ -14,6 +14,7 @@ import {
 } from "./scrubber-progress";
 import { type AudioTrack, audioTrackLabel } from "@/lib/audio";
 import type { PlayableFile } from "@/lib/media";
+import { defaultQualityLabel, type QualityMenu } from "@/lib/quality";
 import { type SubtitleTrack, subtitleTrackLabel } from "@/lib/subtitles";
 import "./controls.css";
 
@@ -46,6 +47,10 @@ export interface PlayerControlsProps {
     subtitleTracks?: SubtitleTrack[];
     subtitleTrack?: number | null;
     onPickSubtitle?: (index: number | null) => void;
+    /** The quality menu (#103), and whether a switch is getting ready. */
+    quality?: QualityMenu;
+    qualityPending?: boolean;
+    onPickQuality?: (height: number | null) => void;
 }
 
 const PLAYBACK_RATES = [
@@ -82,6 +87,9 @@ export const PlayerControls = component$<PlayerControlsProps>(
         subtitleTracks,
         subtitleTrack,
         onPickSubtitle,
+        quality,
+        qualityPending,
+        onPickQuality,
     }) => {
         const trackRef = useSignal<HTMLDivElement>();
         const isDragging = useSignal(false);
@@ -318,6 +326,42 @@ export const PlayerControls = component$<PlayerControlsProps>(
                                     selected={track.index === subtitleTrack}
                                 >
                                     {subtitleTrackLabel(track, subtitleTracks)}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
+                    {quality && quality.heights.length > 0 && (
+                        <select
+                            class="player-controls-quality"
+                            value={String(quality.chosen ?? "")}
+                            disabled={qualityPending}
+                            onChange$={(e: Event) => {
+                                const value = (e.target as HTMLSelectElement)
+                                    .value;
+                                onPickQuality?.(
+                                    value === "" ? null : Number(value),
+                                );
+                            }}
+                            aria-label="Quality"
+                            aria-busy={qualityPending}
+                        >
+                            {/* `selected` too, for the reason the speed menu
+                                gives below. */}
+                            <option value="" selected={quality.chosen === null}>
+                                {qualityPending && quality.chosen === null
+                                    ? "Switching…"
+                                    : defaultQualityLabel(quality)}
+                            </option>
+                            {quality.heights.map((height) => (
+                                <option
+                                    key={height}
+                                    value={height}
+                                    selected={height === quality.chosen}
+                                >
+                                    {qualityPending && height === quality.chosen
+                                        ? "Switching…"
+                                        : `${height}p`}
                                 </option>
                             ))}
                         </select>

@@ -17,6 +17,7 @@ from src.lib.media.audio import AudioTrack
 from src.lib.media.subtitle import SubtitleTrack
 from src.main import app
 from src.service import get_download_service, get_stream_service
+from src.service.stream.quality import QualityState
 from src.service.stream.stream_service import MediaInfo
 
 TASK = uuid.uuid4()
@@ -35,6 +36,7 @@ def _session(session_id: str, status: str, duration: float, track: int | None = 
         "id": session_id, "status": status, "duration_seconds": duration, "has_video": True,
         "audio_tracks": TRACKS if track is not None else [], "audio_track": track,
         "subtitle_tracks": SUBTITLES if track is not None else [], "segment_seconds": 6,
+        "quality": QualityState(),
     })()
 
 
@@ -84,6 +86,12 @@ class _FakeStream:
     async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Any:
         self.calls.append(("subtitle_file", (task_id, file_index, track)))
         return self.vtt
+
+    async def switch_quality(self, session: Any, height: int | None) -> Any:
+        self.calls.append(("switch_quality", (session.id, height)))
+        switched = _session("s8", "ready", 30.0)
+        switched.quality = QualityState(heights=(1080, 720), default_height=2160).switched(height)
+        return switched
 
     async def switch_audio(self, session: Any, track: int) -> Any:
         self.calls.append(("switch_audio", (session.id, track)))
@@ -146,7 +154,7 @@ async def test_a_session_starts_from_a_task(client: httpx.AsyncClient, stream: _
     assert response.status_code == 201
     assert response.json()["data"]["session_id"] == "s1"
     assert stream.calls == [("start_task_session", (TASK, 2))]
-    assert stream.audio == {"audio_language": None, "audio_track": None}
+    assert stream.audio == {"audio_language": None, "audio_track": None, "quality": None}
 
 
 @pytest.mark.asyncio
@@ -156,7 +164,7 @@ async def test_a_start_passes_on_the_audio_it_asks_for(client: httpx.AsyncClient
     )
 
     assert response.status_code == 201
-    assert stream.audio == {"audio_language": "en-US", "audio_track": 1}
+    assert stream.audio == {"audio_language": "en-US", "audio_track": 1, "quality": None}
     data = response.json()["data"]
     assert data["audio_track"] == 0
     assert [track["language"] for track in data["audio_tracks"]] == ["spa", "eng"]
@@ -294,3 +302,22 @@ async def test_a_subtitle_file_is_served_whole(client: httpx.AsyncClient, stream
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/vtt")
     assert stream.calls == [("get_subtitle_file", ("s1", 2))]
+
+
+
+@pytest.mark.asyncio
+async def test_a_quality_switch_answers_with_the_new_session(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post("/stream/s1/quality", json={"height": 720})
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert (data["session_id"], data["qualities"], data["quality"], data["playing_height"]) == ("s8", [1080, 720], 720, 720)
+    assert (data["quality_default"], data["default_height"]) == ("original", 2160)
+    assert stream.calls == [("switch_quality", ("s1", 720))]
+
+
+@pytest.mark.asyncio
+async def test_a_quality_switch_back_to_the_default_says_null(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    assert (await client.post("/stream/s1/quality", json={"height": None})).status_code == 201
+    assert stream.calls == [("switch_quality", ("s1", None))]
+    assert (await client.post("/stream/s1/quality", json={})).status_code in (400, 422)

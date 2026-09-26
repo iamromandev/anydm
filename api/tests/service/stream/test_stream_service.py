@@ -1900,3 +1900,162 @@ async def test_a_subtitle_url_that_stays_refused_fails(tmp_path: Path) -> None:
         await service.get_subtitle_file(session, 0)
     assert caught.value.code == Code.FORBIDDEN
     assert len(subtitles.fetched) == 2
+
+
+
+# --- quality (#103) -------------------------------------------------------------
+
+async def _four_k(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+    return ProbeResult(duration_seconds=20.0, has_video=True, video_height=2160)
+
+
+def _scale(args: list[str]) -> str | None:
+    return args[args.index("-vf") + 1] if "-vf" in args else None
+
+
+@pytest.mark.asyncio
+async def test_a_file_offers_original_and_the_heights_below_it(tmp_path: Path) -> None:
+    service, encoded = _service(tmp_path, prober=_four_k, readahead_segments=0)
+
+    session = await service.start_session("http://example.com/4k.mkv")
+    await service.get_segment(session, 0)
+
+    assert session.quality.heights == (1080, 720, 480)
+    assert (session.quality.chosen, session.quality.playing, session.quality.default) == (None, 2160, "original")
+    assert _scale(encoded[-1]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_720p_file_offers_only_480p(tmp_path: Path) -> None:
+    async def hd(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+        return ProbeResult(duration_seconds=20.0, has_video=True, video_height=720)
+
+    service, _ = _service(tmp_path, prober=hd)
+    assert (await service.start_session("http://example.com/hd.mkv")).quality.heights == (480,)
+
+
+@pytest.mark.asyncio
+async def test_a_quality_switch_keeps_the_source_and_scales_the_encode(tmp_path: Path) -> None:
+    service, encoded = _service(tmp_path, prober=_four_k, readahead_segments=0)
+    old = await service.start_session("http://example.com/4k.mkv")
+
+    new = await service.switch_quality(old, 720)
+    await service.get_segment(new, 2)
+
+    assert new.id != old.id and new.inputs == old.inputs
+    assert (new.quality.chosen, new.quality.playing) == (720, 720)
+    assert _scale(encoded[-1]) == "scale=-2:720"
+    assert service.get_session(old.id) is old
+
+    back = await service.switch_quality(new, None)
+    await service.get_segment(back, 2)
+    assert (back.quality.chosen, back.quality.playing) == (None, 2160)
+    assert _scale(encoded[-1]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", [2160, 360])
+async def test_a_height_the_menu_lacks_is_refused(tmp_path: Path, height: int) -> None:
+    service, _ = _service(tmp_path, prober=_four_k)
+    session = await service.start_session("http://example.com/4k.mkv")
+
+    with pytest.raises(Error) as caught:
+        await service.switch_quality(session, height)
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_a_start_can_ask_for_a_height_and_an_audio_switch_keeps_it(tmp_path: Path) -> None:
+    async def both(_ffprobe: str, _source: str, **_: object) -> ProbeResult:
+        return ProbeResult(duration_seconds=20.0, has_video=True, video_height=2160, audio_tracks=DUB_THEN_ORIGINAL)
+
+    service, encoded = _service(tmp_path, prober=both, readahead_segments=0)
+    session = await service.start_session("http://example.com/4k.mkv", quality=480)
+    switched = await service.switch_audio(session, 1)
+    await service.get_segment(switched, 0)
+
+    assert session.quality.chosen == 480
+    assert _scale(encoded[-1]) == "scale=-2:480"
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_s_menu_arrives_when_it_s_probed(tmp_path: Path) -> None:
+    service, _ = _torrent_service(
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(), prober=_four_k
+    )
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef", quality=720)
+    with pytest.raises(Error):
+        await service.switch_quality(session, 480)
+    await asyncio.gather(*session.background_tasks)
+
+    assert (session.quality.heights, session.quality.chosen) == ((1080, 720, 480), 720)
+    switched = await service.switch_quality(session, 480)
+    assert switched.info_hash == session.info_hash
+    await service.stop_session(session.id)
+    await service.stop_session(switched.id)
+
+
+def _tall(*, hls: bool = False) -> SiteInfo:
+    protocol = "m3u8_native" if hls else "https"
+
+    def video(format_id: str, height: int) -> dict[str, object]:
+        return {"format_id": format_id, "protocol": protocol, "ext": "mp4", "vcodec": "avc1.640028",
+                "acodec": "none", "height": height, "tbr": height * 4}
+
+    formats = [video("313", 2160), video("137", 1080), video("136", 720),
+               {"format_id": "140", "protocol": protocol, "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2",
+                "tbr": 128}]
+    return site_info("youtube", formats=[Format.from_ytdlp(f) for f in formats])
+
+
+@pytest.mark.asyncio
+async def test_a_page_offers_its_heights_and_plays_1080p_by_default(tmp_path: Path) -> None:
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_tall()))
+
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    assert session.quality.heights == (2160, 1080, 720)
+    assert (session.quality.chosen, session.quality.playing, session.quality.default) == (None, 1080, "auto")
+    assert session.inputs[0] == MediaInput(media_url("youtube", "137"), HEADERS)
+
+
+@pytest.mark.asyncio
+async def test_a_page_switch_swaps_its_video_input_without_asking_the_site(tmp_path: Path) -> None:
+    client = FakeSiteClient(_tall())
+    service, _, encoded = _site_service(tmp_path, client)
+    old = await service.start_session(YOUTUBE_PAGE)
+
+    new = await service.switch_quality(old, 2160)
+    await service.get_segment(new, 0)
+
+    assert new.inputs == [MediaInput(media_url("youtube", "313"), HEADERS), old.inputs[1]]
+    assert new.origin == SiteOrigin(_tall().webpage_url, ("313", "140"))
+    assert (new.quality.chosen, new.quality.playing) == (2160, 2160)
+    # A site's height is its format: nothing scaled.
+    assert _scale(encoded[-1]) is None
+    assert client.opened == [YOUTUBE_PAGE] and client.resolved == []
+    assert (await service.switch_quality(new, None)).inputs[0] == old.inputs[0]
+
+
+@pytest.mark.asyncio
+async def test_an_hls_page_switch_reads_only_the_new_video_playlist(tmp_path: Path) -> None:
+    playlists = FakePlaylists()
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_tall(hls=True)), playlist_fetcher=playlists)
+    old = await service.start_session(YOUTUBE_PAGE)
+    playlists.fetched.clear()
+
+    new = await service.switch_quality(old, 720)
+
+    assert [url for url, _ in playlists.fetched] == [media_url("youtube", "136")]
+    assert new.playlists[1] is old.playlists[1]
+
+
+@pytest.mark.asyncio
+async def test_a_page_can_start_at_a_height(tmp_path: Path) -> None:
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(_tall()))
+
+    session = await service.start_session(YOUTUBE_PAGE, quality=720)
+
+    assert session.inputs[0].url == media_url("youtube", "136")
+    assert (session.quality.chosen, session.quality.playing) == (720, 720)

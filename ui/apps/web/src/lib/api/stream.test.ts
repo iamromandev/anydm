@@ -31,6 +31,7 @@ describe("playing a finished download (#94)", () => {
             fileUrl: "/download/t1/file",
             audioTracks: [],
             subtitleTracks: [],
+            videoHeight: null,
         });
         expect(
             normalizeMediaInfo({ file_index: 3, file_url: "/x" }).mediaType,

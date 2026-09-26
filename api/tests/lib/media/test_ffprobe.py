@@ -176,3 +176,16 @@ def test_parse_probe_output_lists_every_subtitle_track() -> None:
         SubtitleTrack(2, language="eng", codec="hdmv_pgs_subtitle", forced=True),
     )
     assert [track.text for track in tracks] == [True, True, False]
+
+
+
+def test_parse_probe_output_reads_the_picture_s_height() -> None:
+    raw = json.dumps({
+        "format": {"duration": "4.0"},
+        "streams": [
+            {"codec_type": "video", "codec_name": "mjpeg", "height": 600, "disposition": {"attached_pic": 1}},
+            {"codec_type": "video", "codec_name": "hevc", "height": 2160},
+        ],
+    })
+    assert parse_probe_output(raw).video_height == 2160
+    assert parse_probe_output(json.dumps({"format": {"duration": "4"}, "streams": []})).video_height is None

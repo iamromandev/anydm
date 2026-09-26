@@ -304,6 +304,30 @@ def audio_choices(formats: list[Format], plan: Plan) -> list[Format]:
     return list(choices.values())
 
 
+def video_choices(formats: list[Format], plan: Plan) -> list[Format]:
+    """The heights the player offers for ``plan``: the best format at each, tallest first (#103).
+
+    Of the same kind the plan plays: video-only beside a separate audio part,
+    else combined, and plain or HLS as the plan is. Every height the page
+    has, above 1080p included; a format with no height isn't offered.
+    """
+    video = plan.video
+    if video is None:
+        return []
+    separate = plan.audio is not None
+    same_kind = [
+        f for f in _eligible(formats)
+        if f.has_video
+        and f.height
+        and (not f.has_audio if separate else f.has_audio)
+        and (f.hls if video.hls else not f.fragmented)
+    ]
+    choices: dict[int, Format] = {}
+    for candidate in _by_height(same_kind):
+        choices.setdefault(candidate.height or 0, candidate)
+    return list(choices.values())
+
+
 def playback_plan(formats: list[Format], language: str | None = None) -> Plan:
     """What the player streams: video at up to 1080p, or an audio-only site's audio.
 

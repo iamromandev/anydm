@@ -291,3 +291,16 @@ def test_a_windows_1252_file_keeps_its_accents(tmp_path: Path) -> None:
     subprocess.run([args[0], "-v", "error", *args[1:]], check=True, capture_output=True)
 
     assert _vtt_times(out.read_text(encoding="utf-8")) == [(1.0, 2.5, "Café, señor")]
+
+
+# --- quality (#103) -------------------------------------------------------------
+
+
+def test_a_scaled_segment_comes_out_at_its_height_with_an_even_width(media: Media, tmp_path: Path) -> None:
+    segment = tmp_path / "segment_1.ts"
+    args = segment_args("ffmpeg", [MediaInput(str(media.movie_mkv))], 6.0, 6.0, segment, has_video=True, scale_height=480)
+    subprocess.run(args, check=True, capture_output=True)
+
+    (video,) = _of(_streams(segment), "video")
+    assert video["height"] == 480
+    assert video["width"] % 2 == 0

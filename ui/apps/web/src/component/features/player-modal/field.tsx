@@ -25,6 +25,7 @@ import {
     startTaskStream,
     stopStream,
     switchStreamAudio,
+    switchStreamQuality,
     type MediaInfo,
     type StreamAudio,
     type StreamSession,
@@ -35,6 +36,11 @@ import {
     pickAudioTrack,
     segmentAt,
 } from "@/lib/audio";
+import {
+    fileQualityMenu,
+    NO_QUALITY_MENU,
+    type QualityMenu,
+} from "@/lib/quality";
 import {
     cueKey,
     cueSegmentsAt,
@@ -109,6 +115,9 @@ export const PlayerModal = component$<PlayerModalProps>(
         // kept out of what Qwik serializes.
         const switchAudioRef =
             useSignal<NoSerialize<(track: number) => Promise<void>>>();
+        // The same, for the quality menu (#103).
+        const switchQualityRef =
+            useSignal<NoSerialize<(height: number | null) => Promise<void>>>();
         // The file picked in the player's own menu. A signal of this
         // component's rather than a prop, so the task below reliably re-runs
         // on every pick.
@@ -158,6 +167,9 @@ export const PlayerModal = component$<PlayerModalProps>(
             subtitleFileBase: "",
             subtitleFileQuery: "",
             segmentSeconds: 6,
+            // The quality menu (#103), and whether a switch is getting ready.
+            quality: NO_QUALITY_MENU as QualityMenu,
+            qualityPending: false,
         });
 
         useVisibleTask$(
@@ -211,6 +223,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                 store.audioTrack = null;
                 store.audioPending = false;
                 switchAudioRef.value = undefined;
+                switchQualityRef.value = undefined;
+                store.quality = NO_QUALITY_MENU;
+                store.qualityPending = false;
                 // Read, not tracked: a change in Settings applies to the
                 // next thing played, not to this one.
                 const preferred: StreamAudio = {
@@ -309,6 +324,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     ? ""
                                     : `?file_index=${media.fileIndex}`;
                             offerSubtitles(media.subtitleTracks);
+                            store.quality = fileQualityMenu(media.videoHeight);
                         } else {
                             session = await startTaskStream(
                                 sourceTask,
@@ -334,6 +350,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                         store.audioTrack = session.audioTrack;
                         store.segmentSeconds = session.segmentSeconds;
                         offerSubtitles(session.subtitleTracks);
+                        store.quality = session.quality;
                         ready = session.status !== "connecting";
                     }
                     if (session && session.status === "connecting") {
@@ -393,6 +410,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     }
                                     if (data.subtitleTracks !== undefined) {
                                         offerSubtitles(data.subtitleTracks);
+                                    }
+                                    if (data.quality !== undefined) {
+                                        store.quality = data.quality;
                                     }
                                     if (!resolved && data.status === "ready") {
                                         resolved = true;
@@ -636,6 +656,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                         store.segmentSeconds =
                                             taken.segmentSeconds;
                                         offerSubtitles(taken.subtitleTracks);
+                                        store.quality = taken.quality;
                                         if (wasPaused) {
                                             video.addEventListener(
                                                 "loadedmetadata",
@@ -745,18 +766,82 @@ export const PlayerModal = component$<PlayerModalProps>(
                             cleanup(() => {
                                 closed = true;
                                 switchAudioRef.value = undefined;
+                                switchQualityRef.value = undefined;
                             });
                             // Another audio track (#99). The session playing
                             // carries on while the new one readies the segment
                             // at the current position; then the player swaps
                             // to it there and stops the old one. A file the
                             // browser plays itself moves to a session instead.
+                            // Moves playback to `next`, a session another
+                            // switch made: readies its segment at the current
+                            // position while the old one plays, then swaps to
+                            // it there and stops the old one (#99, #103).
+                            // `false` when it's no longer wanted.
+                            const swapTo = async (
+                                next: StreamSession,
+                                token: number,
+                            ): Promise<boolean> => {
+                                const oldId = store.sessionId;
+                                const headers = authHeaders();
+                                const playlist = await fetch(
+                                    apiUrl(next.playlistUrl),
+                                    { headers },
+                                ).then((r) => r.text());
+                                const warmed = await fetch(
+                                    apiUrl(
+                                        `/stream/${next.sessionId}/segment_${segmentAt(playlist, video.currentTime)}.ts`,
+                                    ),
+                                    { headers },
+                                );
+                                if (
+                                    closed ||
+                                    token !== switching ||
+                                    !warmed.ok
+                                ) {
+                                    stopStream(next.sessionId).catch(() => {});
+                                    if (!warmed.ok) {
+                                        throw new Error(
+                                            `status ${warmed.status}`,
+                                        );
+                                    }
+                                    return false;
+                                }
+                                const resumeFrom = video.currentTime;
+                                const wasPaused = video.paused;
+                                store.sessionId = next.sessionId;
+                                hls?.destroy();
+                                hls = null;
+                                video.removeAttribute("src");
+                                video.load();
+                                video.addEventListener(
+                                    "loadedmetadata",
+                                    () => {
+                                        video.currentTime = resumeFrom;
+                                        if (wasPaused) video.pause();
+                                    },
+                                    { once: true },
+                                );
+                                await attach(next);
+                                stopStream(oldId).catch(() => {
+                                    // Best-effort: the idle sweeper cleans this up anyway.
+                                });
+                                return true;
+                            };
+                            const failed = (what: string) => {
+                                store.flash = `Couldn't switch the ${what}`;
+                                setTimeout(() => {
+                                    store.flash = "";
+                                }, 3000);
+                            };
+                            const busy = () =>
+                                store.audioPending || store.qualityPending;
+
+                            // Another audio track (#99). A file the browser
+                            // plays itself moves to a session instead.
                             switchAudioRef.value = noSerialize(
                                 async (track: number) => {
-                                    if (
-                                        track === store.audioTrack ||
-                                        store.audioPending
-                                    ) {
+                                    if (track === store.audioTrack || busy()) {
                                         return;
                                     }
                                     const token = ++switching;
@@ -767,70 +852,66 @@ export const PlayerModal = component$<PlayerModalProps>(
                                         if (!store.sessionId) {
                                             await fallBackRef.current?.({
                                                 track,
+                                                quality: store.quality.chosen,
                                             });
                                             return;
                                         }
-                                        const oldId = store.sessionId;
                                         const next = await switchStreamAudio(
-                                            oldId,
+                                            store.sessionId,
                                             track,
                                         );
-                                        const headers = authHeaders();
-                                        const playlist = await fetch(
-                                            apiUrl(next.playlistUrl),
-                                            { headers },
-                                        ).then((r) => r.text());
-                                        const warmed = await fetch(
-                                            apiUrl(
-                                                `/stream/${next.sessionId}/segment_${segmentAt(playlist, video.currentTime)}.ts`,
-                                            ),
-                                            { headers },
-                                        );
-                                        if (
-                                            closed ||
-                                            token !== switching ||
-                                            !warmed.ok
-                                        ) {
-                                            stopStream(next.sessionId).catch(
-                                                () => {},
-                                            );
-                                            if (!warmed.ok) {
-                                                throw new Error(
-                                                    `status ${warmed.status}`,
-                                                );
-                                            }
-                                            return;
+                                        if (await swapTo(next, token)) {
+                                            store.audioTrack = next.audioTrack;
                                         }
-                                        const resumeFrom = video.currentTime;
-                                        const wasPaused = video.paused;
-                                        store.sessionId = next.sessionId;
-                                        store.audioTrack = next.audioTrack;
-                                        hls?.destroy();
-                                        hls = null;
-                                        video.removeAttribute("src");
-                                        video.load();
-                                        video.addEventListener(
-                                            "loadedmetadata",
-                                            () => {
-                                                video.currentTime = resumeFrom;
-                                                if (wasPaused) video.pause();
-                                            },
-                                            { once: true },
-                                        );
-                                        await attach(next);
-                                        stopStream(oldId).catch(() => {
-                                            // Best-effort: the idle sweeper cleans this up anyway.
-                                        });
                                     } catch {
                                         store.audioTrack = previous;
-                                        store.flash =
-                                            "Couldn't switch the audio track";
-                                        setTimeout(() => {
-                                            store.flash = "";
-                                        }, 3000);
+                                        failed("audio track");
                                     } finally {
                                         if (token === switching) {
                                             store.audioPending = false;
+                                        }
+                                    }
+                                },
+                            );
+
+                            // Another quality (#103), the same way. A file
+                            // the browser plays itself moves to a session.
+                            switchQualityRef.value = noSerialize(
+                                async (height: number | null) => {
+                                    if (
+                                        height === store.quality.chosen ||
+                                        busy()
+                                    ) {
+                                        return;
+                                    }
+                                    const token = ++switching;
+                                    const previous = store.quality;
+                                    store.quality = {
+                                        ...previous,
+                                        chosen: height,
+                                    };
+                                    store.qualityPending = true;
+                                    try {
+                                        if (!store.sessionId) {
+                                            await fallBackRef.current?.({
+                                                language: preferred.language,
+                                                quality: height,
+                                            });
+                                            return;
+                                        }
+                                        const next = await switchStreamQuality(
+                                            store.sessionId,
+                                            height,
+                                        );
+                                        if (await swapTo(next, token)) {
+                                            store.quality = next.quality;
+                                        }
+                                    } catch {
+                                        store.quality = previous;
+                                        failed("quality");
+                                    } finally {
+                                        if (token === switching) {
+                                            store.qualityPending = false;
                                         }
                                     }
                                 },
@@ -980,6 +1061,11 @@ export const PlayerModal = component$<PlayerModalProps>(
             },
             { strategy: "document-ready" },
         );
+
+        // From the quality menu (#103): the task above does the switch.
+        const handlePickQuality = $(async (height: number | null) => {
+            await switchQualityRef.value?.(height);
+        });
 
         const handlePickAudio = $(async (track: number) => {
             await switchAudioRef.value?.(track);
@@ -1231,6 +1317,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 subtitleTracks={store.subtitleTracks}
                                 subtitleTrack={store.subtitleTrack}
                                 onPickSubtitle={handlePickSubtitle}
+                                quality={store.quality}
+                                qualityPending={store.qualityPending}
+                                onPickQuality={handlePickQuality}
                             />
                         )}
                     </div>

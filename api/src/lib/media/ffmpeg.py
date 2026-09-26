@@ -24,6 +24,10 @@ _STDERR_TAIL = 2000
 #: and the crypto protocol that decrypts AES-128 ones.
 _CUT_PROTOCOLS = "file,http,https,tcp,tls,crypto"
 
+#: Bits per second a scaled-down file is capped at, by height (#103): what
+#: keeps a lower quality lighter to fetch as well as quicker to encode.
+QUALITY_CAPS = {1080: 5_000_000, 720: 3_000_000, 480: 1_500_000}
+
 
 def mux_args(ffmpeg: str, video: Path, audio: Path, destination: Path) -> list[str]:
     """Combine a video-only and an audio-only file without re-encoding either.
@@ -84,6 +88,7 @@ def segment_args(
     *,
     has_video: bool,
     audio_track: int | None = None,
+    scale_height: int | None = None,
 ) -> list[str]:
     """One HLS-compatible segment, always re-encoded.
 
@@ -128,6 +133,10 @@ def segment_args(
     tracks (#99). Left to itself, ffmpeg takes the one with the most channels,
     so a 5.1 dub beats a stereo original. Two inputs never take one: a site's
     audio is its own input.
+
+    ``scale_height`` scales the picture down to that height, keeping its
+    shape (an even width, as libx264 needs), and caps the bitrate to match
+    (#103): a 4K source may not encode in real time at its own size.
     """
     cuts = [source for source in inputs if isinstance(source, PlaylistCut)]
     plain = [source for source in inputs if isinstance(source, MediaInput)]
@@ -157,7 +166,11 @@ def segment_args(
     elif audio_track is not None:
         args += [*(["-map", "0:v:0"] if has_video else []), "-map", f"0:a:{audio_track}"]
     if has_video:
-        args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "2"]
+        args += ["-c:v", "libx264", "-preset", "veryfast"]
+        if scale_height is not None:
+            cap = QUALITY_CAPS.get(scale_height, 3_000_000)
+            args += ["-vf", f"scale=-2:{scale_height}", "-maxrate", str(cap), "-bufsize", str(cap * 2)]
+        args += ["-c:a", "aac", "-ac", "2"]
     else:
         args += ["-vn", "-c:a", "aac", "-ac", "2"]
     args += ["-f", "mpegts", str(destination)]
