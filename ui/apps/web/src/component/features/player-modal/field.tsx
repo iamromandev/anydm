@@ -553,6 +553,14 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 chosen.value = index;
                             };
                             const onEnded = () => {
+                                // 'ended' can in principle fire again before a
+                                // countdown resolves (seeking back into the
+                                // last frame and forward again reaches it a
+                                // second time) — clearing first means there's
+                                // never more than one timer counting down, so
+                                // an earlier one can't outlive Cancel or a
+                                // later pick and fire on its own.
+                                clearUpNext();
                                 const next = adjacentFileIndex(
                                     files ?? [],
                                     store.currentFileIndex,
