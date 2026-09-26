@@ -32,6 +32,7 @@ from loguru import logger
 from src.core.error import Error
 from src.lib.site import error as site_error
 from src.lib.site.format import Format, is_fragmented
+from src.lib.site.subtitles import SiteSubtitle, site_subtitles
 
 #: A blocking ``url -> info dict`` call; yt-dlp's in production, a fake in tests.
 Extract = Callable[[str], dict[str, Any]]
@@ -66,6 +67,8 @@ class SiteInfo:
     webpage_url: str = ""
     is_live: bool = False
     formats: list[Format] = field(default_factory=list)
+    #: Its own subtitles, and captions in the language it was spoken in (#102).
+    subtitles: list[SiteSubtitle] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +176,7 @@ def _to_site_info(url: str, info: dict[str, Any]) -> SiteInfo:
         webpage_url=info.get("webpage_url") or url,
         is_live=bool(info.get("is_live")),
         formats=[Format.from_ytdlp(raw) for raw in _raw_formats(info)],
+        subtitles=site_subtitles(info),
     )
 
 

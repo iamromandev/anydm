@@ -55,8 +55,19 @@ class TorrentFile:
     index: int
 
 
-#: Where a subtitle file is read from: the disk, or rqbit.
-SidecarSource = Path | TorrentFile
+@dataclass(frozen=True, slots=True)
+class SiteSubtitleFile:
+    """A site's own subtitles (#102), fetched with its headers: ``SiteSubtitle``'s place among the sources."""
+
+    url: str
+    headers: tuple[tuple[str, str], ...] = ()
+    #: Which of the page's tracks, to find again when the URL has expired.
+    language: str = ""
+    automatic: bool = False
+
+
+#: Where a subtitle file is read from: the disk, rqbit, or a site.
+SidecarSource = Path | TorrentFile | SiteSubtitleFile
 
 #: The codec each kind of file reads as, for the menu and ``SubtitleTrack.text``.
 _CODECS = {".srt": "subrip", ".vtt": "webvtt", ".ass": "ass", ".ssa": "ssa"}

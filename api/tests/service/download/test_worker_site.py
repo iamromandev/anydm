@@ -1,14 +1,19 @@
 """The worker downloading a site task: one extraction per attempt, headers with every part."""
 
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from src.core.error import Error
+from src.core.type import Code, ErrorType
 from src.data.type import Kind, Platform, Preset, TaskStatus
 from src.lib.event import EventHub
+from src.lib.media.sidecar import folder_listing, match_sidecars
+from src.lib.site.subtitles import SiteSubtitle
 from src.service.download.control import DownloadControl
-from src.service.download.download_worker import DownloadWorker
+from src.service.download.download_worker import DownloadWorker, remove_task_files
 from src.service.download.downloader import Stopped
 from src.service.download.progress import AggregateSample
 
@@ -267,3 +272,95 @@ async def test_a_worker_without_a_fragment_downloader_fails_a_fragmented_part(tm
     ).run_task(cast(Any, row))
 
     assert row.status == TaskStatus.FAILED
+
+
+# --- a site's subtitles, saved beside the download (#102) --------------------------------
+
+def _with_subtitles() -> Any:
+    return replace(
+        site_info("youtube"),
+        subtitles=[
+            SiteSubtitle("en", "English", False, "vtt", "https://yt.test/en.vtt", {"User-Agent": "UA"}),
+            SiteSubtitle("es", "Spanish", False, "srt", "https://yt.test/es.srt"),
+            SiteSubtitle("en", "English (auto-generated)", True, "vtt", "https://yt.test/auto.vtt"),
+        ],
+    )
+
+
+class FakeSubtitleServer:
+    def __init__(self, failing: set[str] | None = None) -> None:
+        self.failing = failing or set()
+        self.fetched: list[tuple[str, dict[str, str]]] = []
+
+    async def __call__(self, url: str, headers: Any) -> bytes:
+        self.fetched.append((url, dict(headers)))
+        if url in self.failing:
+            raise Error.create(code=Code.BAD_GATEWAY, message="nope", error_type=ErrorType.EXTERNAL_API_ERROR)
+        return f"WEBVTT from {url}\n".encode()
+
+
+def _subtitled_worker(tmp_path: Path, server: FakeSubtitleServer) -> DownloadWorker:
+    worker = _worker(tmp_path, FakeSiteClient(_with_subtitles()), RecordingEngine(), TouchingPostProcessor())
+    worker._fetch_subtitle = server
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: Path) -> None:
+    row = FakeRow()
+    server = FakeSubtitleServer()
+
+    await _subtitled_worker(tmp_path, server).run_task(cast(Any, row))
+
+    folder = tmp_path / str(row.id)
+    assert row.status == TaskStatus.COMPLETE
+    assert sorted(p.name for p in folder.iterdir() if p.suffix != ".part") == [
+        "Rick_1080p.en.auto.vtt", "Rick_1080p.en.vtt", "Rick_1080p.es.srt", "Rick_1080p.mp4",
+    ]
+    assert (folder / "Rick_1080p.en.vtt").read_text() == "WEBVTT from https://yt.test/en.vtt\n"
+    assert server.fetched[0] == ("https://yt.test/en.vtt", {"User-Agent": "UA"})
+    # And #101 finds them, with their languages, when the download is played.
+    found = match_sidecars("Rick_1080p.mp4", folder_listing(folder))
+    assert [(sidecar.path, sidecar.language) for sidecar in found] == [
+        ("Rick_1080p.en.auto.vtt", "en"), ("Rick_1080p.en.vtt", "en"), ("Rick_1080p.es.srt", "es"),
+    ]
+    # Deleting the task's files takes them too.
+    remove_task_files(tmp_path, row.id)
+    assert not folder.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_subtitle_that_fails_is_skipped_and_the_download_still_completes(tmp_path: Path) -> None:
+    row = FakeRow()
+
+    await _subtitled_worker(tmp_path, FakeSubtitleServer(failing={"https://yt.test/es.srt"})).run_task(cast(Any, row))
+
+    assert row.status == TaskStatus.COMPLETE
+    assert sorted(p.name for p in (tmp_path / str(row.id)).iterdir() if p.suffix != ".part") == [
+        "Rick_1080p.en.auto.vtt", "Rick_1080p.en.vtt", "Rick_1080p.mp4",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_extraction_that_fails_leaves_the_download_complete(tmp_path: Path) -> None:
+    row = FakeRow()
+    worker = _subtitled_worker(tmp_path, FakeSubtitleServer())
+
+    async def broken(_url: str) -> Any:
+        raise Error.create(code=Code.BAD_GATEWAY, message="bot check", error_type=ErrorType.EXTERNAL_API_ERROR)
+
+    worker._client.extract = broken  # ty: ignore[invalid-assignment]
+    await worker.run_task(cast(Any, row))
+
+    assert row.status == TaskStatus.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_an_audio_download_saves_no_subtitles(tmp_path: Path) -> None:
+    row = FakeRow()
+    row.kind = Kind.AUDIO
+    server = FakeSubtitleServer()
+
+    await _subtitled_worker(tmp_path, server).run_task(cast(Any, row))
+
+    assert server.fetched == []

@@ -22,9 +22,10 @@ from src.core.error import Error
 from src.data.db.model import Task
 from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
-from src.data.type import Platform, TaskStatus
+from src.data.type import Kind, Platform, TaskStatus
 from src.lib.event import EventHub
 from src.lib.site.client import Resolved, SiteClient
+from src.lib.site.subtitles import fetch_subtitle
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
@@ -35,6 +36,7 @@ from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
 from src.service.download.segmented import SegmentedDownloader
+from src.service.download.site_subtitles import SubtitleFetcher, save_site_subtitles
 from src.service.download.url_source import Target, UrlProvider, UrlSource
 
 _IDLE_POLL_SECONDS = 5.0
@@ -59,7 +61,9 @@ class DownloadWorker:
         segments: int,
         disk: DiskGuard | None = None,
         fragments: FragmentDownloader | None = None,
+        subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
     ) -> None:
+        self._fetch_subtitle = subtitle_fetcher
         self._disk = disk
         self._fragments = fragments
         self._name = name
@@ -114,6 +118,7 @@ class DownloadWorker:
             destination = final_path(self._root, task.id, task.filename)
             await self._post_processor.run(task, parts, destination, fragmented=fragmented)
             await self._mark_complete(task, destination)
+            await self._save_subtitles(task, destination)
         except Stopped:
             # A pause or a cancel already set the row's status, so it is not
             # this worker's to change. But cancel deleted the task directory
@@ -339,6 +344,18 @@ class DownloadWorker:
                 for segment in sample.segments
             ]
         self._hub.publish("progress", frame)
+
+    async def _save_subtitles(self, task: Task, destination: Path) -> None:
+        """A site video's subtitles beside it (#102). Never fails the download: it's already done."""
+        if task.platform != Platform.SITE or task.kind != Kind.VIDEO:
+            return
+        try:
+            saved = await save_site_subtitles(self._client, task.source_url, destination, self._fetch_subtitle)
+        except Exception as exc:
+            logger.warning("{}|subtitles for {} not saved: {}", self._name, task.id, exc)
+            return
+        if saved:
+            logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), task.id)
 
     async def _mark_complete(self, task: Task, destination: Path) -> None:
         task.status = TaskStatus.COMPLETE

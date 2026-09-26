@@ -30,6 +30,7 @@ from src.lib.media.media_type import media_type
 from src.lib.media.sidecar import (
     Sidecar,
     SidecarSource,
+    SiteSubtitleFile,
     TorrentFile,
     decode_subtitles,
     match_sidecars,
@@ -40,6 +41,7 @@ from src.lib.media.subtitle import SubtitleTrack
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.format import audio_choices, playback_plan
+from src.lib.site.subtitles import SiteSubtitle, fetch_subtitle, same_subtitle
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
@@ -78,6 +80,9 @@ TaskSidecars = Callable[[uuid.UUID, int | None], Awaitable[list[tuple[Sidecar, S
 
 #: Reads a URL whole: a subtitle file out of rqbit.
 BytesFetcher = Callable[[str], Awaitable[bytes]]
+
+#: Reads a site's subtitle file with the headers its server expects (#102).
+SubtitleFetcher = Callable[[str, Mapping[str, str]], Awaitable[bytes]]
 
 #: Far more than any subtitle file; a guard against being handed a film.
 _SIDECAR_MAX_BYTES = 10 * 1024 * 1024
@@ -178,6 +183,18 @@ class _Page:
     audio_tracks: list[AudioTrack]
     site_audio: list[tuple[str, MediaInput]]
     audio_track: int | None
+    #: Its own subtitles and captions (#102), as subtitle files to fetch.
+    subtitles: list[tuple[Sidecar, SidecarSource]]
+
+
+def _site_subtitle(subtitle: SiteSubtitle) -> tuple[Sidecar, SidecarSource]:
+    """A site's subtitles as one of the player's subtitle files (#102)."""
+    return (
+        Sidecar(path=f"{subtitle.language}.{subtitle.ext}", language=subtitle.language, title=subtitle.name),
+        SiteSubtitleFile(
+            subtitle.url, tuple(subtitle.headers.items()), language=subtitle.language, automatic=subtitle.automatic
+        ),
+    )
 
 
 def _is_media_file(url: str) -> bool:
@@ -255,6 +272,7 @@ class StreamService(BaseService):
         task_files: TaskFiles | None = None,
         task_sidecars: TaskSidecars | None = None,
         bytes_fetcher: BytesFetcher = fetch_bytes,
+        subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
         torrent_play: TorrentPlays | None = None,
     ) -> None:
         super().__init__()
@@ -279,6 +297,7 @@ class StreamService(BaseService):
         self._task_files = task_files
         self._task_sidecars = task_sidecars
         self._fetch_bytes = bytes_fetcher
+        self._fetch_subtitle = subtitle_fetcher
         self._torrent_play = torrent_play
 
     async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
@@ -413,8 +432,10 @@ class StreamService(BaseService):
             duration, has_video = result.duration_seconds, result.has_video
         # A page's own subtitles are #102's; its formats carry none.
         subtitles: list[SubtitleTrack] = []
+        files: dict[int, tuple[Sidecar, SidecarSource]] = {}
         if page is not None:
             tracks, track = page.audio_tracks, page.audio_track
+            subtitles, files = with_sidecars([], page.subtitles)
         else:
             tracks = list(result.audio_tracks)
             track = pick_audio_track(tracks, audio_language, audio_track)
@@ -429,6 +450,7 @@ class StreamService(BaseService):
             audio_track=track,
             site_audio=page.site_audio if page is not None else None,
             subtitle_tracks=subtitles,
+            subtitle_files=files,
         )
 
     async def _open_page(
@@ -472,6 +494,7 @@ class StreamService(BaseService):
                 (choice.id, MediaInput(resolved[choice.id].url, resolved[choice.id].headers)) for choice in choices
             ],
             audio_track=next((n for n, choice in enumerate(choices) if choice.id == playing), None),
+            subtitles=[_site_subtitle(subtitle) for subtitle in info.subtitles],
         )
 
     async def _fetch_playlists(self, inputs: list[MediaInput]) -> list[MediaPlaylist]:
@@ -787,7 +810,16 @@ class StreamService(BaseService):
         async def convert() -> None:
             if not self._is_open(session):
                 raise _session_not_found()
-            await self._convert_sidecar(*session.subtitle_files[track], destination)
+            try:
+                await self._convert_sidecar(*session.subtitle_files[track], destination)
+            except Error as error:
+                # A site's subtitle URL expires like its media's (#102): ask
+                # the site again, once, and find the same track.
+                source = session.subtitle_files[track][1]
+                if error.code != Code.FORBIDDEN or not isinstance(source, SiteSubtitleFile):
+                    raise
+                await self._refresh_site_subtitle(session, track, source)
+                await self._convert_sidecar(*session.subtitle_files[track], destination)
 
         try:
             await _produce_once(session.file_states, session.file_events, track, convert)
@@ -799,6 +831,16 @@ class StreamService(BaseService):
             raise _session_not_found()
         return destination
 
+    async def _refresh_site_subtitle(self, session: StreamSession, track: int, stale: SiteSubtitleFile) -> None:
+        if session.origin is None or self._site_client is None:
+            raise site_error.media_forbidden("The site refused its subtitles")
+        info, _ = await self._site_client.open(session.origin.page_url)
+        wanted = SiteSubtitle(stale.language, "", stale.automatic, "", "")
+        fresh = next((subtitle for subtitle in info.subtitles if same_subtitle(subtitle, wanted)), None)
+        if fresh is None:
+            raise Error.not_found("The site no longer offers those subtitles")
+        session.subtitle_files[track] = _site_subtitle(fresh)
+
     async def _convert_sidecar(self, sidecar: Sidecar, source: SidecarSource, destination: Path) -> None:
         """A subtitle file as WebVTT at ``destination``: read, decoded, written as UTF-8, then converted.
 
@@ -807,6 +849,8 @@ class StreamService(BaseService):
         """
         if isinstance(source, TorrentFile):
             raw = await self._fetch_bytes(f"{self._torrent_api_url}/torrents/{source.info_hash}/stream/{source.index}")
+        elif isinstance(source, SiteSubtitleFile):
+            raw = await self._fetch_subtitle(source.url, dict(source.headers))
         else:
             raw = await asyncio.to_thread(source.read_bytes)
         text = decode_subtitles(raw)
