@@ -34,6 +34,14 @@ def playlist_not_supported() -> Error:
     )
 
 
+def not_a_playlist() -> Error:
+    return Error.create(
+        code=Code.UNPROCESSABLE_ENTITY,
+        message="This link is a single video, not a playlist",
+        error_type=ErrorType.UNSUPPORTED_OPERATION,
+    )
+
+
 def live_not_supported() -> Error:
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,

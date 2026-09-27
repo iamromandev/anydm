@@ -6,7 +6,7 @@ The fixtures carry no URLs or header values, so the tests add them.
 import errno
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from src.core.type import Code, ErrorType
 from src.lib.site.client import (
     DownloadStopped,
     FormatProgress,
+    PlaylistEntry,
     PlaylistInfo,
     Resolved,
     SiteInfo,
@@ -607,3 +608,132 @@ def test_a_channel_home_header_keeps_its_tabs() -> None:
         {"title": "X - Videos", "url": "https://y.test/@x/videos"},
         {"title": "X - Shorts", "url": "https://y.test/@x/shorts"},
     ]
+
+
+# --- list_entries --------------------------------------------------------------
+
+
+def _raw_entry(video_id: str, **overrides: Any) -> dict[str, Any]:
+    entry = {
+        "_type": "url",
+        "ie_key": "Youtube",
+        "id": video_id,
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "title": f"Video {video_id}",
+        "duration": 60,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _listing(
+    raw: list[dict[str, Any]], *, limit: int = 10_000, stop: Callable[[], bool] = lambda: False
+) -> list[PlaylistEntry]:
+    client = YtDlpClient(entries=lambda _url: iter(raw))
+    return list(client.list_entries("https://y.test/list", limit=limit, should_stop=stop))
+
+
+def _listing_from(entries: Callable[[str], Iterator[dict[str, Any]]]) -> list[PlaylistEntry]:
+    return list(YtDlpClient(entries=entries).list_entries("https://y.test/list", limit=10, should_stop=lambda: False))
+
+
+def test_entries_are_numbered_in_order_with_repeats_dropped() -> None:
+    entries = _listing([_raw_entry("a"), _raw_entry("b"), _raw_entry("a"), _raw_entry("c")])
+
+    assert [(e.index, e.id) for e in entries] == [(1, "a"), (2, "b"), (3, "c")]
+
+
+def test_an_entry_carries_what_the_listing_knows() -> None:
+    raw = _raw_entry(
+        "a",
+        thumbnails=[
+            {"url": "https://img.test/big.jpg", "width": 640},
+            {"url": "https://img.test/small.jpg", "width": 120},
+        ],
+        timestamp=1789862400,
+    )
+
+    (entry,) = _listing([raw])
+
+    assert entry == PlaylistEntry(
+        index=1,
+        id="a",
+        url="https://www.youtube.com/watch?v=a",
+        extractor="Youtube",
+        title="Video a",
+        duration=60,
+        thumbnail="https://img.test/small.jpg",
+        timestamp=1789862400,
+        available=True,
+    )
+
+
+def test_a_bare_entry_leaves_what_it_lacks_empty() -> None:
+    # SoundCloud's sets list ids and URLs only.
+    raw = {
+        "_type": "url_transparent",
+        "ie_key": "Soundcloud",
+        "id": "75206121",
+        "url": "https://soundcloud.com/the-concept-band/world-on-fire-1",
+    }
+
+    (entry,) = _listing([raw])
+
+    assert (entry.title, entry.duration, entry.thumbnail, entry.timestamp) == (None, None, None, None)
+    assert entry.extractor == "Soundcloud"
+
+
+def test_private_and_deleted_videos_are_listed_as_unavailable() -> None:
+    entries = _listing(
+        [
+            _raw_entry("a", title="[Private video]", duration=None),
+            _raw_entry("b", title="[Deleted video]", duration=None),
+            _raw_entry("c", availability="needs_auth"),
+            _raw_entry("d"),
+        ]
+    )
+
+    assert [e.available for e in entries] == [False, False, False, True]
+
+
+def test_an_entry_without_an_id_or_url_is_skipped() -> None:
+    entries = _listing([{"_type": "url", "title": "no id"}, _raw_entry("a")])
+
+    assert [(e.index, e.id) for e in entries] == [(1, "a")]
+
+
+def test_the_listing_stops_at_the_limit_without_reading_further() -> None:
+    pulled: list[str] = []
+
+    def entries(_url: str) -> Iterator[dict[str, Any]]:
+        for video_id in "abcdef":
+            pulled.append(video_id)
+            yield _raw_entry(video_id)
+
+    listed = list(YtDlpClient(entries=entries).list_entries("https://y.test/list", limit=2, should_stop=lambda: False))
+
+    assert [e.id for e in listed] == ["a", "b"]
+    assert pulled == ["a", "b"]
+
+
+def test_the_listing_stops_when_asked() -> None:
+    asked = {"stop": False}
+    listed: list[PlaylistEntry] = []
+    client = YtDlpClient(entries=lambda _url: iter([_raw_entry("a"), _raw_entry("b"), _raw_entry("c")]))
+
+    for entry in client.list_entries("https://y.test/list", limit=10, should_stop=lambda: asked["stop"]):
+        listed.append(entry)
+        asked["stop"] = True
+
+    assert [e.id for e in listed] == ["a"]
+
+
+def test_a_failure_mid_listing_is_classified() -> None:
+    def entries(_url: str) -> Iterator[dict[str, Any]]:
+        yield _raw_entry("a")
+        raise RuntimeError("ERROR: [youtube:tab] PL1: This playlist does not exist")
+
+    with pytest.raises(Error) as caught:
+        _listing_from(entries)
+
+    assert caught.value.type == ErrorType.DOES_NOT_EXIST
