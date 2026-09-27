@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 from src.core.error import Error
-from src.lib.site.client import YtDlpClient
+from src.lib.site.client import PlaylistInfo, YtDlpClient
 from src.lib.site.format import select_plan, usable_presets
 from src.service.download.downloader import Downloader, Stopped
 from src.service.download.fragment import FragmentDownloader
@@ -135,3 +135,26 @@ async def test_a_site_serves_the_start_of_what_a_download_would_fetch(url: str, 
                 received = await _first_bytes(http, target.url, target.headers, dest)
                 expected = min(FIRST_BYTES, probed.total_bytes or FIRST_BYTES)
             assert received >= expected, f"format {part.id}: {received} of {expected} bytes"
+
+
+#: A public playlist yt-dlp's own tests use: 96 talks, one listed twice.
+PLAYLIST = "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC"
+#: A channel's Videos tab.
+CHANNEL_TAB = "https://www.youtube.com/@3blue1brown/videos"
+
+
+@pytest.mark.asyncio
+async def test_a_playlist_is_described_without_its_videos() -> None:
+    with _unless_refused():
+        info = await YtDlpClient().inspect(PLAYLIST)
+
+    assert isinstance(info, PlaylistInfo)
+    assert info.count is not None and info.count > 50
+
+
+def test_a_channel_tab_lists_its_first_ten() -> None:
+    with _unless_refused():
+        entries = list(YtDlpClient().list_entries(CHANNEL_TAB, limit=10, should_stop=lambda: False))
+
+    assert [e.index for e in entries] == list(range(1, 11))
+    assert all(e.id and e.url and e.extractor == "Youtube" for e in entries)
