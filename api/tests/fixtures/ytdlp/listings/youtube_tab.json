@@ -1,0 +1,408 @@
+{
+ "header": {
+  "id": "UCYO_jab_esuFRV4b17AJtAw",
+  "channel": "3Blue1Brown",
+  "channel_id": "UCYO_jab_esuFRV4b17AJtAw",
+  "title": "3Blue1Brown - Videos",
+  "availability": "public",
+  "channel_follower_count": 8650000,
+  "description": "My name is Grant Sanderson. Videos here cover a variety of topics in math, or adjacent fields like physics and CS, all with an emphasis on visualizing the core ideas. The goal is to use animation to help elucidate and motivate otherwise tricky topics, and for difficult problems to be made simple with changes in perspective.\n\nFor more information, other projects, FAQs, and inquiries see the website: https://www.3blue1brown.com",
+  "tags": [
+   "Mathematics"
+  ],
+  "thumbnails": [
+   {
+    "url": "https://yt3.googleusercontent.com/ytc/AIdro_nFzZFPLxPZRHcE3SSwzdrbuWqfoWYwLAu0_2iO6blQYAU=s900-c-k-c0x00ffffff-no-rj",
+    "height": 900,
+    "width": 900
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ytc/AIdro_nFzZFPLxPZRHcE3SSwzdrbuWqfoWYwLAu0_2iO6blQYAU=s0",
+    "id": "avatar_uncropped",
+    "preference": 1
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 175,
+    "width": 1060,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w1138-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 188,
+    "width": 1138,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w1707-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 283,
+    "width": 1707,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w2120-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 351,
+    "width": 2120,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w2276-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 377,
+    "width": 2276,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=w2560-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 424,
+    "width": 2560,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/JfUD9Tu79zgoYGo5-WdP5YYj0XvAjPgV3c2Snj-cgy8jslro0Ln5by024zWL7XDin7Vs-qnxVg=s0",
+    "id": "banner_uncropped",
+    "preference": -5
+   }
+  ],
+  "uploader_id": "@3blue1brown",
+  "uploader_url": "https://www.youtube.com/@3blue1brown",
+  "channel_is_verified": true,
+  "modified_date": null,
+  "view_count": null,
+  "playlist_count": null,
+  "uploader": "3Blue1Brown",
+  "channel_url": "https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw",
+  "_type": "playlist",
+  "extractor_key": "YoutubeTab",
+  "extractor": "youtube:tab",
+  "webpage_url": "https://www.youtube.com/@3blue1brown/videos",
+  "original_url": "https://www.youtube.com/@3blue1brown/videos",
+  "webpage_url_basename": "videos",
+  "webpage_url_domain": "youtube.com"
+ },
+ "entries": [
+  {
+   "title": "The last IMO problem AI could not solve",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/Nbwv5wHQoj0/hq720_custom_1.jpg?sqp=CPy-5dUG-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDzHZNTlFnPbdUxEsYHUjUIDSN7HA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/Nbwv5wHQoj0/hq720_custom_1.jpg?sqp=CPy-5dUG-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLBoNcWJkMF8g9ZDzotDzMrvuhZQgw",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 3116,
+   "view_count": null,
+   "timestamp": 1789776000,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "Nbwv5wHQoj0",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=Nbwv5wHQoj0"
+  },
+  {
+   "title": "But what is cross-entropy? | Compression is Intelligence Part 2",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/GlYgs6v2YfU/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDis-JIVU2HLSE-z9NAbMlugztiCA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/GlYgs6v2YfU/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLB5tld59W4ZBBtz7mpBQB-_S9ISMA",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 2031,
+   "view_count": 809000,
+   "timestamp": 1785196800,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "GlYgs6v2YfU",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=GlYgs6v2YfU"
+  },
+  {
+   "title": "Reinventing Entropy | Compression is Intelligence Part 1",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/l6DKRf-fAAM/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCrAXALUcL5fWlJcAZMVUKoJ2TofA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/l6DKRf-fAAM/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDmoJVuEvxSi1NbPCuUWeEnpMOVJg",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 1940,
+   "view_count": 1500000,
+   "timestamp": 1782604800,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "l6DKRf-fAAM",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=l6DKRf-fAAM"
+  },
+  {
+   "title": "How (and why) to take a logarithm of an image",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/ldxFjLJ3rVY/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDHlyDs26c4b9bMp-m2r-2_ZrSdmw",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/ldxFjLJ3rVY/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLAw7Imqpcr9uBkN4yXsfoDOi3J_EQ",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 2692,
+   "view_count": 2100000,
+   "timestamp": 1774656000,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "ldxFjLJ3rVY",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=ldxFjLJ3rVY"
+  },
+  {
+   "title": "The most beautiful formula not enough people understand",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/fsLh-NYhOoU/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCmlucdeiVdXh5DlzQlokfHkRf4IA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/fsLh-NYhOoU/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLD42RwNWf23uIrNBKEUul2Yz_Zs9w",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 3624,
+   "view_count": 1400000,
+   "timestamp": 1772236800,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "fsLh-NYhOoU",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=fsLh-NYhOoU"
+  },
+  {
+   "title": "Why you can't comb a hairy ball, and why we care",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/BHdbsHFs2P0/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCLboe6W146FhSvYnjGCb3z2mydJA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/BHdbsHFs2P0/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLAqmsda3Oy0qTl0DpRfdm_Hr-ktGA",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 1780,
+   "view_count": 3400000,
+   "timestamp": 1772236800,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "BHdbsHFs2P0",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=BHdbsHFs2P0"
+  },
+  {
+   "title": "Why Laplace transforms are so useful",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/FE-hM1kRK4Y/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCZQ36yu0qrppqsxPi1NKdks6VcBQ",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/FE-hM1kRK4Y/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLC_2Caeb-fJafNSNmnUE7g4iAi1GA",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 1385,
+   "view_count": 825000,
+   "timestamp": 1764288000,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "FE-hM1kRK4Y",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=FE-hM1kRK4Y"
+  },
+  {
+   "title": "But what is a Laplace Transform?",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/j0wJBEZdwLs/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLBdkkv67LCwn_HL-AmrAFubJCXYOg",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/j0wJBEZdwLs/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLC8AOhM-Tn75stU-e6dCUcdm7kH1w",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 2081,
+   "view_count": 1900000,
+   "timestamp": 1761609600,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "j0wJBEZdwLs",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=j0wJBEZdwLs"
+  },
+  {
+   "title": "The Physics of Euler's Formula | Laplace Transform Prelude",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/-j8PzkZ70Lg/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCZ6H8gxwtQaC3pPgWG4pXXe7fS-w",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/-j8PzkZ70Lg/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCOMnG8KG5OzKBD6I387xEtEjFesQ",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 1669,
+   "view_count": 1100000,
+   "timestamp": 1761609600,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "-j8PzkZ70Lg",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=-j8PzkZ70Lg"
+  },
+  {
+   "title": "What was Euclid really doing? | Guest video by Ben Syversen",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/M-MgQC6z3VU/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDqfqHk7LJQcSqtDFdJMQ3cHgTOJQ",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/M-MgQC6z3VU/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDZiHyzxRukRRknzwoTWavFjxb8_Q",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 2009,
+   "view_count": null,
+   "timestamp": 1759017600,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "M-MgQC6z3VU",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=M-MgQC6z3VU"
+  },
+  {
+   "title": "Exploration & Epiphany | Guest video by Paul Dancstep",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/_BrFKp-U8GI/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLCMPG6bCOuK4DaUMPWtn0tVWGTUHA",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/_BrFKp-U8GI/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLAvcHAk4VpQEmLhz6XxzVKocdXu1A",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 3132,
+   "view_count": 513000,
+   "timestamp": 1759017600,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "_BrFKp-U8GI",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=_BrFKp-U8GI"
+  },
+  {
+   "title": "Simulating and understanding phase change | Guest video by Vilas Winstein",
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/itRV2jEtV8Q/hq720.jpg?sqp=-oaymwEcCOgCEMoBSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLBGBsjxrdDHlMTB3BH01L71_9x9mw",
+     "height": 202,
+     "width": 360
+    },
+    {
+     "url": "https://i.ytimg.com/vi/itRV2jEtV8Q/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg==&rs=AOn4CLDcUxu82NWcQCbg6ddK-uJOtRaU4Q",
+     "height": 404,
+     "width": 720
+    }
+   ],
+   "duration": 2463,
+   "view_count": null,
+   "timestamp": 1759017600,
+   "live_status": null,
+   "availability": null,
+   "channel_url": null,
+   "uploader_url": null,
+   "creators": null,
+   "ie_key": "Youtube",
+   "id": "itRV2jEtV8Q",
+   "_type": "url",
+   "url": "https://www.youtube.com/watch?v=itRV2jEtV8Q"
+  }
+ ]
+}

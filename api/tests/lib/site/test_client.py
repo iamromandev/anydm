@@ -737,3 +737,33 @@ def test_a_failure_mid_listing_is_classified() -> None:
         _listing_from(entries)
 
     assert caught.value.type == ErrorType.DOES_NOT_EXIST
+
+
+# --- recorded listings ---------------------------------------------------------
+
+LISTINGS = FIXTURES / "listings"
+
+
+def _recorded(name: str) -> list[dict[str, Any]]:
+    return json.loads((LISTINGS / f"{name}.json").read_text())["entries"]
+
+
+def _list_recorded(name: str) -> list[PlaylistEntry]:
+    client = YtDlpClient(entries=lambda _url: iter(_recorded(name)))
+    return list(client.list_entries("https://y.test/list", limit=100, should_stop=lambda: False))
+
+
+@pytest.mark.parametrize("name", ["youtube_playlist", "youtube_tab", "soundcloud_set"])
+def test_recorded_listings_parse_into_entries(name: str) -> None:
+    listed = _list_recorded(name)
+
+    assert listed and all(e.id and e.url and e.extractor for e in listed)
+    assert [e.index for e in listed] == list(range(1, len(listed) + 1))
+
+
+def test_a_recorded_channel_tab_carries_approximate_dates() -> None:
+    assert all(e.timestamp for e in _list_recorded("youtube_tab"))
+
+
+def test_a_recorded_soundcloud_set_has_no_titles() -> None:
+    assert all(e.title is None and e.extractor == "Soundcloud" for e in _list_recorded("soundcloud_set"))

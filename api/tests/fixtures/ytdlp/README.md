@@ -17,3 +17,11 @@ Two things these files show that code must respect:
 - **`mhtml` formats are storyboard images**, on YouTube and Twitch. They are not media.
 
 The link each file came from is in its `webpage_url`. Re-record by running the #53 probe again when a site changes shape. The tests that read these files should say what they rely on, rather than depending on every detail.
+
+## `listings/`
+
+Flat listings recorded on 2026-09-28 with yt-dlp 2026.8.19, as `extract_info(url, process=False)` hands them over: `header` is the playlist's own fields, and `entries` its first 12 (or all of them), unresolved.
+
+- `youtube_playlist.json`: `PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC`, a public playlist of 96 talks.
+- `youtube_tab.json`: `@3blue1brown/videos`, with the `youtubetab` `approximate_date` argument, so each entry has a `timestamp`.
+- `soundcloud_set.json`: a six-track set, whose entries carry ids and URLs only.
