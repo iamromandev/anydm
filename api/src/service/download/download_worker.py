@@ -19,12 +19,15 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
+from src.core.type import ErrorType
 from src.data.db.model import Task
 from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Kind, Platform, TaskStatus
 from src.lib.event import EventHub
+from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
+from src.lib.site.entry_plan import apply_plan, is_unplanned, number_of, plan_for
 from src.lib.site.subtitles import fetch_subtitle
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
@@ -114,7 +117,18 @@ class DownloadWorker:
         await task.save(update_fields=["attempts"])
 
         try:
-            parts, fragmented = await self._download_parts(task)
+            batch = None
+            if task.platform == Platform.SITE and is_unplanned(task):
+                batch = await self._plan(task)
+            try:
+                parts, fragmented = await self._download_parts(task, batch)
+            except Error as error:
+                # A stored format the site no longer offers: plan again, once,
+                # from the preset, rather than failing for good.
+                if task.platform != Platform.SITE or error.type != ErrorType.UNPROCESSABLE_ENTITY:
+                    raise
+                logger.info("{}|re-planning {}: {}", self._name, task.id, error.message)
+                parts, fragmented = await self._download_parts(task, await self._plan(task))
             destination = final_path(self._root, task.id, task.filename)
             await self._post_processor.run(task, parts, destination, fragmented=fragmented)
             await self._mark_complete(task, destination)
@@ -151,7 +165,20 @@ class DownloadWorker:
     def _emit(self, task: Task) -> None:
         self._hub.publish("task", TaskSchema.model_validate(task).to_json())
 
-    async def _download_parts(self, task: Task) -> tuple[dict[str, Path], frozenset[str]]:
+    async def _plan(self, task: Task) -> dict[str, Resolved]:
+        """Formats for ``task``'s preset, from the one extraction that also gives their URLs (v0.5)."""
+        info, resolved = await self._client.open(task.source_url)
+        if info.is_live:
+            raise site_error.live_not_supported()
+        task.filename = number_of(task.filename, task.position)
+        fields = apply_plan(task, info, plan_for(info.formats, task.preset))
+        await task.save(update_fields=fields)
+        self._emit(task)
+        return resolved
+
+    async def _download_parts(
+        self, task: Task, batch: dict[str, Resolved] | None = None
+    ) -> tuple[dict[str, Path], frozenset[str]]:
         """Fetch every stream the plan names, resuming any ``.part`` already there.
 
         Returns the parts by name, and the names of those yt-dlp's downloader
@@ -180,7 +207,8 @@ class DownloadWorker:
         # one is worthless on a resume, and one extraction per part would double
         # what the site sees (and what trips YouTube's bot check).
         source_url = task.source_url
-        batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
+        if batch is None:
+            batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
 
         parts: dict[str, Path] = {}
         fragmented: set[str] = set()
