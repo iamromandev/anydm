@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
+from typing import Any
 
 from src.core.base import CrudRepo
 from src.core.success import Meta
@@ -29,6 +30,30 @@ class TaskRepo(CrudRepo[Task]):
         video held twice reports the task furthest along: complete, then
         queued, then failed.
         """
+        ...
+
+    @abstractmethod
+    async def create_group(self, group: dict[str, Any], entries: Sequence[dict[str, Any]]) -> Task:
+        """A playlist's row and its videos, in one transaction (v0.5).
+
+        Every video gets the group as ``parent`` and the group's ``created_at``,
+        so the queue takes them in ``position`` order.
+        """
+        ...
+
+    @abstractmethod
+    async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Task], Meta]:
+        """One page of a group's videos not removed, by ``position``."""
+        ...
+
+    @abstractmethod
+    async def entry_statuses(self, group_id: uuid.UUID) -> list[tuple[TaskStatus, int, int | None, int]]:
+        """``(status, downloaded_bytes, total_bytes, speed_bps)`` of each video not removed."""
+        ...
+
+    @abstractmethod
+    async def find_group(self, extractor: str, playlist_id: str) -> Task | None:
+        """The group not removed that was added from this playlist, if any."""
         ...
 
     @abstractmethod
