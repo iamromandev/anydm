@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,32 @@ class DownloadService(BaseService):
         parent_id = getattr(task, "parent_id", None)
         if self._groups is not None and parent_id is not None:
             await self._groups.refresh(parent_id)
+
+    async def _group_changed(self, group: Any) -> TaskSchema:
+        """The group row after its videos changed: its totals, else the row as it is."""
+        if self._groups is not None:
+            refreshed = await self._groups.refresh(group.id)
+            if refreshed is not None:
+                return refreshed
+        return self._published(group)
+
+    async def _cancel_group(self, group: Any, *, delete_files: bool) -> None:
+        """Remove a group and all of its videos (v0.5).
+
+        Keeping the files is accepted in any state: what finished is whole, and
+        the unfinished videos' working folders go either way.
+        """
+        for video in await self._repo.remove_entries(group.id):
+            self._control.request_stop(video)
+            remove_task_files(self._root, video)
+        if delete_files and group.file_path:
+            # A folder of 5,000 files shouldn't hold up the API.
+            await asyncio.to_thread(shutil.rmtree, self._root / group.file_path, ignore_errors=True)
+        group.status = TaskStatus.CANCELED
+        group.deleted_at = now()
+        group.speed_bps = 0
+        await group.save(update_fields=["status", "deleted_at", "speed_bps"])
+        self._published(group)
 
     async def _with_counts(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
         """Each group row with how its videos stand: one query per group on the page."""
@@ -294,9 +321,26 @@ class DownloadService(BaseService):
         if scope is None:
             raise Error.bad_request(message=f"Unknown bulk action: {action}")
 
-        rows = await self._repo.by_statuses(sorted(scope))
         affected = 0
+        # A group's videos move in one update rather than a row at a time (v0.5),
+        # and each group they belong to is brought up to date once.
+        touched: set[uuid.UUID] = set()
+        if action == "pause_all":
+            running, touched = await self._repo.pause_all_entries()
+            for video in running:
+                self._control.request_stop(video)
+        elif action == "resume_all":
+            touched = await self._repo.resume_all_entries()
+            self._control.wake()
 
+        # The rest one at a time, as before: standalone tasks and torrents, and
+        # for clear_finished whole groups. Never a video out of its group.
+        rows = [
+            row
+            for row in await self._repo.by_statuses(sorted(scope))
+            if getattr(row, "parent_id", None) is None
+            and (action == "clear_finished" or getattr(row, "kind", None) != Kind.PLAYLIST)
+        ]
         for row in rows:
             try:
                 if action == "pause_all":
@@ -316,6 +360,10 @@ class DownloadService(BaseService):
                     "{}|bulk {} skipped {}: {}", self._tag, action, row.id, error.message
                 )
 
+        for group_id in touched:
+            if self._groups is not None:
+                await self._groups.refresh(group_id)
+            affected += 1
         return affected
 
     async def summary(self) -> TaskSummarySchema:
@@ -456,6 +504,10 @@ class DownloadService(BaseService):
         task = await self._require(task_id)
         if task.platform == Platform.TORRENT:
             return await self._torrents.pause(task_id)
+        if task.kind == Kind.PLAYLIST:
+            for running in await self._repo.pause_entries(task_id):
+                self._control.request_stop(running)
+            return await self._group_changed(task)
         if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING):
             raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
 
@@ -477,6 +529,10 @@ class DownloadService(BaseService):
         task = await self._require(task_id)
         if task.platform == Platform.TORRENT:
             return await self._torrents.resume(task_id)
+        if task.kind == Kind.PLAYLIST:
+            await self._repo.resume_entries(task_id)
+            self._control.wake()
+            return await self._group_changed(task)
         if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
             raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
 
@@ -501,6 +557,8 @@ class DownloadService(BaseService):
         clears those.
         """
         task = await self._require(task_id)
+        if task.kind == Kind.PLAYLIST:
+            return await self._cancel_group(task, delete_files=delete_files)
         if not delete_files and task.status not in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
             raise Error.conflict(
                 message=f"Cannot keep the files of a task that is {task.status.value}"

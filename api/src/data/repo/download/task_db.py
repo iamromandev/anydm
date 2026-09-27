@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from tortoise.expressions import Q
 from tortoise.functions import Coalesce
@@ -26,6 +26,11 @@ _HELD_RANK = {
     TaskStatus.PAUSED: 2,
     TaskStatus.FAILED: 1,
 }
+
+
+async def _ids(query: Any, column: str) -> list[uuid.UUID]:
+    """One uuid column of ``query``'s rows. Tortoise types a flat ``values_list`` as tuples."""
+    return cast(list[uuid.UUID], list(await query.values_list(column, flat=True)))
 
 
 class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
@@ -226,6 +231,49 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
             "status", "downloaded_bytes", "total_bytes", "speed_bps"
         )
         return [(TaskStatus(status), done, total, speed) for status, done, total, speed in rows]
+
+    async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        return await self._pause(videos)
+
+    async def resume_entries(self, group_id: uuid.UUID) -> int:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        return await self._requeue(videos)
+
+    async def remove_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        ids = await _ids(videos, "id")
+        await videos.update(status=TaskStatus.CANCELED, deleted_at=now(), speed_bps=0, eta_seconds=None)
+        return ids
+
+    async def pause_all_entries(self) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+        videos = Task.filter(parent_id__isnull=False, deleted_at__isnull=True)
+        groups = set(
+            await _ids(videos.filter(status__in=[TaskStatus.PENDING, TaskStatus.DOWNLOADING]), "parent_id")
+        )
+        return await self._pause(videos), groups
+
+    async def resume_all_entries(self) -> set[uuid.UUID]:
+        videos = Task.filter(parent_id__isnull=False, deleted_at__isnull=True)
+        groups = set(await _ids(videos.filter(status__in=[TaskStatus.PAUSED, TaskStatus.FAILED]), "parent_id"))
+        await self._requeue(videos)
+        return groups
+
+    @staticmethod
+    async def _pause(videos: Any) -> list[uuid.UUID]:
+        """Pause what's queued or downloading among ``videos``; the ids that were downloading."""
+        running = await _ids(videos.filter(status=TaskStatus.DOWNLOADING), "id")
+        await videos.filter(status__in=[TaskStatus.PENDING, TaskStatus.DOWNLOADING]).update(
+            status=TaskStatus.PAUSED, speed_bps=0, eta_seconds=None
+        )
+        return running
+
+    @staticmethod
+    async def _requeue(videos: Any) -> int:
+        """Put the paused and failed among ``videos`` back in the queue, as a person's fresh decision."""
+        return await videos.filter(status__in=[TaskStatus.PAUSED, TaskStatus.FAILED]).update(
+            status=TaskStatus.PENDING, attempts=0, error=None, error_code=None, next_attempt_at=None
+        )
 
     async def find_group(self, extractor: str, playlist_id: str) -> Task | None:
         return await Task.filter(

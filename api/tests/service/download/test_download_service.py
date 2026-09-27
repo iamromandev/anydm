@@ -27,6 +27,10 @@ class FakeRepo:
         self.listed_sort: str | None = None
         #: What ``list_page`` answers with.
         self.page: list[Any] = []
+        #: What the group actions answer, and what they were asked (v0.5).
+        self.running: list[uuid.UUID] = []
+        self.touched: set[uuid.UUID] = set()
+        self.group_calls: list[tuple[str, Any]] = []
 
     async def list_page(
         self,
@@ -60,6 +64,26 @@ class FakeRepo:
 
     async def find_group(self, extractor: str, playlist_id: str) -> Any:
         return None
+
+    async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("pause", group_id)]
+        return list(self.running)
+
+    async def resume_entries(self, group_id: uuid.UUID) -> int:
+        self.group_calls = [*self.group_calls, ("resume", group_id)]
+        return 2
+
+    async def remove_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("remove", group_id)]
+        return list(self.running)
+
+    async def pause_all_entries(self) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+        self.group_calls = [*self.group_calls, ("pause_all", None)]
+        return list(self.running), set(self.touched)
+
+    async def resume_all_entries(self) -> set[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("resume_all", None)]
+        return set(self.touched)
 
     async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Any], Meta]:
         return list(self.page), Meta(page=page, page_size=page_size, total=len(self.page), total_pages=1)
@@ -1216,6 +1240,98 @@ async def test_a_group_row_carries_its_counts(tmp_path: Path) -> None:
     (filled,) = await service._with_counts([group])
 
     assert filled.entry_counts is not None and filled.entry_counts.total == 3
+
+
+def _group_service(tmp_path: Path) -> tuple[DownloadService, FakeRepo, RecordingGroups, uuid.UUID]:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    groups = RecordingGroups()
+    service._groups = groups  # ty: ignore[invalid-assignment]
+    group_id = uuid.uuid4()
+    (tmp_path / "List").mkdir()
+    (tmp_path / "List" / "01_done.mp4").write_bytes(b"x")
+    repo.rows[group_id] = _row(group_id, kind=Kind.PLAYLIST, status=TaskStatus.DOWNLOADING, file_path="List")
+    return service, repo, groups, group_id
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_group_pauses_its_videos_and_stops_the_running_ones(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+    running = uuid.uuid4()
+    repo.running = [running]
+
+    await service.pause(group_id)
+
+    assert repo.group_calls == [("pause", group_id)]
+    assert service._control.is_stopping(running)
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_resuming_a_group_requeues_its_videos(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+
+    await service.resume(group_id)
+
+    assert repo.group_calls == [("resume", group_id)]
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_removing_a_group_with_its_files_deletes_the_folder(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+    running = uuid.uuid4()
+    (tmp_path / str(running)).mkdir()
+    repo.running = [running]
+
+    await service.cancel(group_id, delete_files=True)
+
+    assert repo.group_calls == [("remove", group_id)]
+    assert not (tmp_path / "List").exists()
+    assert not (tmp_path / str(running)).exists()
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+
+
+@pytest.mark.asyncio
+async def test_removing_a_group_can_keep_what_finished_even_mid_download(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+
+    await service.cancel(group_id, delete_files=False)
+
+    assert (tmp_path / "List" / "01_done.mp4").exists()
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+
+
+@pytest.mark.asyncio
+async def test_pause_all_pauses_group_videos_in_one_update(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+    repo.touched = {group_id}
+    video = uuid.uuid4()
+    repo.rows[video] = _row(video, parent_id=group_id, status=TaskStatus.DOWNLOADING)
+    alone = uuid.uuid4()
+    repo.rows[alone] = _row(alone, status=TaskStatus.PENDING)
+
+    await service.bulk("pause_all")
+
+    assert ("pause_all", None) in repo.group_calls
+    # The standalone task goes through pause() as before; the group and its video don't.
+    assert repo.rows[alone].status == TaskStatus.PAUSED
+    assert repo.rows[video].status == TaskStatus.DOWNLOADING
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_takes_whole_groups_but_no_single_videos(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+    repo.rows[group_id].status = TaskStatus.COMPLETE
+    running_group = uuid.uuid4()
+    repo.rows[running_group] = _row(running_group, kind=Kind.PLAYLIST, status=TaskStatus.DOWNLOADING)
+    finished_video = uuid.uuid4()
+    repo.rows[finished_video] = _row(finished_video, parent_id=running_group, status=TaskStatus.COMPLETE)
+
+    await service.bulk("clear_finished")
+
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+    assert repo.rows[finished_video].status == TaskStatus.COMPLETE
 
 
 @pytest.mark.asyncio

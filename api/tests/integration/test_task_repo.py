@@ -450,6 +450,76 @@ async def test_entry_statuses_leave_out_removed_videos(db: None) -> None:
     assert await repo.entry_statuses(group.id) == [(TaskStatus.PENDING, 0, None, 0)]
 
 
+async def _mixed_group(repo: TaskDatabaseRepo) -> Task:
+    """Four videos: pending, downloading, paused, failed."""
+    group = await repo.create_group(GROUP, [_entry(n) for n in range(1, 5)])
+    for position, status in ((2, TaskStatus.DOWNLOADING), (3, TaskStatus.PAUSED), (4, TaskStatus.FAILED)):
+        await Task.filter(parent_id=group.id, position=position).update(status=status)
+    return group
+
+
+async def _statuses(group: Task) -> list[TaskStatus]:
+    rows = await Task.filter(parent_id=group.id, deleted_at__isnull=True).order_by("position")
+    return [row.status for row in rows]
+
+
+async def test_pausing_a_group_pauses_what_is_left_to_do(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    running = await repo.pause_entries(group.id)
+
+    assert await _statuses(group) == [TaskStatus.PAUSED, TaskStatus.PAUSED, TaskStatus.PAUSED, TaskStatus.FAILED]
+    assert len(running) == 1
+
+
+async def test_resuming_a_group_requeues_paused_and_failed_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+    await Task.filter(parent_id=group.id, position=4).update(attempts=3, error="boom")
+
+    assert await repo.resume_entries(group.id) == 2
+
+    assert await _statuses(group) == [
+        TaskStatus.PENDING,
+        TaskStatus.DOWNLOADING,
+        TaskStatus.PENDING,
+        TaskStatus.PENDING,
+    ]
+    failed = await Task.get(parent_id=group.id, position=4)
+    assert (failed.attempts, failed.error) == (0, None)
+
+
+async def test_removing_a_group_removes_its_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    removed = await repo.remove_entries(group.id)
+
+    assert len(removed) == 4
+    assert await _statuses(group) == []
+
+
+async def test_pause_all_reaches_every_group_video(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+    alone = await _pending("alone")
+
+    running, groups = await repo.pause_all_entries()
+
+    assert groups == {group.id}
+    assert len(running) == 1
+    assert (await Task.get(id=alone.id)).status == TaskStatus.PENDING  # standalone rows go through the service
+
+
+async def test_resume_all_reaches_every_group_video(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    assert await repo.resume_all_entries() == {group.id}
+    assert TaskStatus.PAUSED not in await _statuses(group)
+
+
 async def test_find_group_by_site_and_playlist(db: None) -> None:
     repo = TaskDatabaseRepo()
     group = await repo.create_group(GROUP, [])
