@@ -1175,6 +1175,49 @@ async def test_removing_a_group_video_deletes_only_its_files(tmp_path: Path) -> 
     assert not (tmp_path / str(task_id)).exists()
 
 
+class RecordingGroups:
+    def __init__(self) -> None:
+        self.refreshed: list[uuid.UUID] = []
+
+    async def refresh(self, group_id: uuid.UUID) -> None:
+        self.refreshed.append(group_id)
+
+    async def counts(self, group_id: uuid.UUID) -> Any:
+        from src.data.schema.download import EntryCountsSchema
+
+        return EntryCountsSchema(total=3, complete=1)
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    groups = RecordingGroups()
+    service._groups = groups  # ty: ignore[invalid-assignment]
+    group_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, parent_id=group_id, status=TaskStatus.DOWNLOADING)
+
+    await service.pause(task_id)
+
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_a_group_row_carries_its_counts(tmp_path: Path) -> None:
+    from src.data.schema.download import TaskSchema
+
+    service, _, _ = _service(downloads_dir=tmp_path)
+    service._groups = RecordingGroups()  # ty: ignore[invalid-assignment]
+    group = TaskSchema.model_validate(
+        {"id": uuid.uuid4(), "source_url": "u", "platform": "site", "preset": "best", "kind": "playlist",
+         "status": "downloading"}
+    )
+
+    (filled,) = await service._with_counts([group])
+
+    assert filled.entry_counts is not None and filled.entry_counts.total == 3
+
+
 @pytest.mark.asyncio
 async def test_only_a_group_has_entries(tmp_path: Path) -> None:
     service, repo, _ = _service(downloads_dir=tmp_path)

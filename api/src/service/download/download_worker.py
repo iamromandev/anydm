@@ -34,6 +34,7 @@ from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
+from src.service.download.group_totals import GroupTotals
 from src.service.download.paths import final_path, group_destination, part_path, task_dir
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
@@ -65,7 +66,9 @@ class DownloadWorker:
         disk: DiskGuard | None = None,
         fragments: FragmentDownloader | None = None,
         subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
+        groups: GroupTotals | None = None,
     ) -> None:
+        self._groups = groups
         self._fetch_subtitle = subtitle_fetcher
         self._disk = disk
         self._fragments = fragments
@@ -115,6 +118,9 @@ class DownloadWorker:
         # so a bare ``save()`` would push this stale copy's zeroes back over
         # every byte count the download has since recorded.
         await task.save(update_fields=["attempts"])
+        # Claimed: the group now has one more video downloading.
+        if self._groups is not None and task.parent_id is not None:
+            await self._groups.refresh(task.parent_id)
 
         try:
             batch = None
@@ -146,7 +152,7 @@ class DownloadWorker:
             await task.refresh_from_db()
             if task.status == TaskStatus.CANCELED:
                 remove_task_files(self._root, task.id)
-            self._emit(task)
+            await self._changed(task)
         except Error as error:
             if is_insufficient_storage(error):
                 await self._wait_for_space(task, error, refund=True)
@@ -166,6 +172,12 @@ class DownloadWorker:
 
     def _emit(self, task: Task) -> None:
         self._hub.publish("task", TaskSchema.model_validate(task).to_json())
+
+    async def _changed(self, task: Task) -> None:
+        """Publish a status change, and bring a group video's group up to date with it (v0.5)."""
+        self._emit(task)
+        if self._groups is not None and task.parent_id is not None:
+            await self._groups.refresh(task.parent_id)
 
     async def _into_group_folder(self, task: Task, destination: Path) -> Path:
         """Move a group's finished video into the group's folder (v0.5).
@@ -429,7 +441,7 @@ class DownloadWorker:
         # whose video succeeded and whose audio then failed will retry, and
         # rebuilding the video plan at zero would re-download a finished part.
         await self._segment_repo.clear(task.id)
-        self._emit(task)
+        await self._changed(task)
         logger.success("{}|completed {} -> {}", self._name, task.id, task.file_path)
 
     async def _wait_for_space(self, task: Task, error: Error, *, refund: bool = False) -> None:
@@ -457,7 +469,7 @@ class DownloadWorker:
         logger.warning(
             "{}|waiting for disk space for {}: {}", self._name, task.id, error.message
         )
-        self._emit(task)
+        await self._changed(task)
 
     async def _mark_failed(self, task: Task, error: Error) -> None:
         decision = retry_policy.decide(error, attempts=task.attempts, max_attempts=self._max_attempts)
@@ -485,7 +497,7 @@ class DownloadWorker:
         await task.save(
             update_fields=["status", "error", "error_code", "speed_bps", "eta_seconds", "next_attempt_at"]
         )
-        self._emit(task)
+        await self._changed(task)
 
 
 class WorkerPool:

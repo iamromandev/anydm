@@ -26,6 +26,7 @@ from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
 from src.service.download.download_worker import remove_task_files
+from src.service.download.group_totals import GroupTotals
 from src.service.download.torrent_service import TorrentService
 
 
@@ -78,6 +79,7 @@ class DownloadService(BaseService):
         torrents: TorrentService,
         disk: DiskGuard | None = None,
         positions: PositionRepo | None = None,
+        groups: GroupTotals | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -89,6 +91,22 @@ class DownloadService(BaseService):
         self._torrents = torrents
         self._disk = disk
         self._positions = positions
+        self._groups = groups
+
+    async def _refresh_group(self, task: Any) -> None:
+        """Bring a group video's group up to date after a change to it (v0.5)."""
+        parent_id = getattr(task, "parent_id", None)
+        if self._groups is not None and parent_id is not None:
+            await self._groups.refresh(parent_id)
+
+    async def _with_counts(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
+        """Each group row with how its videos stand: one query per group on the page."""
+        if self._groups is None:
+            return schemas
+        for schema in schemas:
+            if isinstance(schema, TaskSchema) and schema.kind == Kind.PLAYLIST:
+                schema.entry_counts = await self._groups.counts(schema.id)
+        return schemas
 
     def _require_space(self, extra_bytes: int | None = None) -> None:
         if self._disk is not None:
@@ -254,7 +272,8 @@ class DownloadService(BaseService):
         )
         # Through the torrent service, which adds a torrent's files: one query
         # for the whole page (#107).
-        return await self._with_positions(await self._torrents.schemas(tasks)), meta
+        schemas = await self._with_positions(await self._torrents.schemas(tasks))
+        return await self._with_counts(schemas), meta
 
     async def bulk(self, action: str, *, delete_files: bool = False) -> int:
         """Apply one action to every row it makes sense for.
@@ -445,7 +464,9 @@ class DownloadService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return self._published(task)
+        schema = self._published(task)
+        await self._refresh_group(task)
+        return schema
 
     async def resume(self, task_id: uuid.UUID) -> TaskSchema:
         """Put a paused or failed task back in the queue, from where its bytes stopped.
@@ -467,7 +488,9 @@ class DownloadService(BaseService):
         task.next_attempt_at = None
         await task.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
         self._control.wake()
-        return self._published(task)
+        schema = self._published(task)
+        await self._refresh_group(task)
+        return schema
 
     async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
         """Stop the task, soft-delete the row, and take the files or leave them.
@@ -496,6 +519,7 @@ class DownloadService(BaseService):
         task.eta_seconds = None
         await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
         self._published(task)
+        await self._refresh_group(task)
 
     def _published(self, task: Any) -> TaskSchema:
         """Serialise the task, announce it, and hand it back to the caller.

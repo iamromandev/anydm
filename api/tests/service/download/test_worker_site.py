@@ -226,6 +226,41 @@ async def test_a_group_video_finishes_into_the_group_folder(tmp_path: Path) -> N
     assert not (tmp_path / str(row.id)).exists()
 
 
+class RecordingGroups:
+    def __init__(self) -> None:
+        self.refreshed: list[uuid.UUID] = []
+
+    async def refresh(self, group_id: uuid.UUID) -> None:
+        self.refreshed.append(group_id)
+
+
+@pytest.mark.asyncio
+async def test_each_change_to_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    groups = RecordingGroups()
+    row = FakeRow(parent_id=group.id)
+    worker = _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    )
+    worker._groups = cast(Any, groups)
+
+    await worker.run_task(cast(Any, row))
+
+    # Once when it started, once when it finished.
+    assert groups.refreshed == [group.id, group.id]
+
+
+@pytest.mark.asyncio
+async def test_a_standalone_task_refreshes_no_group(tmp_path: Path) -> None:
+    groups = RecordingGroups()
+    worker = _worker(tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor())
+    worker._groups = cast(Any, groups)
+
+    await worker.run_task(cast(Any, FakeRow()))
+
+    assert groups.refreshed == []
+
+
 @pytest.mark.asyncio
 async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
     group = _group(tmp_path)
