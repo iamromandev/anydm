@@ -4,6 +4,8 @@ import {
     LuMinimize,
     LuPause,
     LuPlay,
+    LuSkipBack,
+    LuSkipForward,
     LuVolume2,
     LuVolumeX,
 } from "@/component/core/icons";
@@ -37,6 +39,11 @@ export interface PlayerControlsProps {
     files?: PlayableFile[];
     currentFileIndex?: number | null;
     onPickFile?: (index: number) => void;
+    /** Previous/Next buttons appear only with more than one media file (#97). */
+    onPreviousFile?: () => void;
+    onNextFile?: () => void;
+    hasPreviousFile?: boolean;
+    hasNextFile?: boolean;
     /** The source's audio tracks, when there's more than one (#99). */
     audioTracks?: AudioTrack[];
     audioTrack?: number | null;
@@ -80,6 +87,10 @@ export const PlayerControls = component$<PlayerControlsProps>(
         files,
         currentFileIndex,
         onPickFile,
+        onPreviousFile,
+        onNextFile,
+        hasPreviousFile,
+        hasNextFile,
         audioTracks,
         audioTrack,
         audioPending,
@@ -184,6 +195,22 @@ export const PlayerControls = component$<PlayerControlsProps>(
                 </div>
 
                 <div class="player-controls-row">
+                    {files && files.length > 1 && (
+                        <button
+                            type="button"
+                            class="player-controls-button"
+                            onClick$={onPreviousFile}
+                            disabled={!hasPreviousFile}
+                            aria-label="Previous file"
+                        >
+                            <LuSkipBack
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         class="player-controls-button"
@@ -200,6 +227,22 @@ export const PlayerControls = component$<PlayerControlsProps>(
                             />
                         )}
                     </button>
+
+                    {files && files.length > 1 && (
+                        <button
+                            type="button"
+                            class="player-controls-button"
+                            onClick$={onNextFile}
+                            disabled={!hasNextFile}
+                            aria-label="Next file"
+                        >
+                            <LuSkipForward
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
 
                     <button
                         type="button"

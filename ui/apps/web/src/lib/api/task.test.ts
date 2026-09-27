@@ -22,6 +22,7 @@ import {
     normalizeApiTask,
     normalizeSegments,
     normalizeFiles,
+    pickFileToOpen,
     segmentLayout,
     settlePage,
     statusView,
@@ -1161,5 +1162,77 @@ describe("where a download was left (#96)", () => {
         expect(withPosition(row("a"), pos(2, 9)).positions).toEqual([
             pos(2, 9),
         ]);
+    });
+});
+
+describe("which file Play opens (#97)", () => {
+    const file = (index: number, path: string, selected = true) => ({
+        index,
+        path,
+        sizeBytes: 1,
+        selected,
+        downloadedBytes: 1,
+    });
+    const pos = (
+        fileIndex: number,
+        positionSeconds: number,
+        watched = false,
+    ) => ({
+        fileIndex,
+        positionSeconds,
+        durationSeconds: 100,
+        watched,
+    });
+    const files = [
+        file(0, "Show.S01E1.mkv"),
+        file(1, "Show.S01E2.mkv"),
+        file(10, "Show.S01E10.mkv"),
+        file(2, "Show.S01E1.srt"),
+    ];
+
+    it("opens the file left partway through", () => {
+        expect(
+            pickFileToOpen({ files }, [
+                pos(0, 0, true),
+                pos(1, 42),
+            ]),
+        ).toBe(1);
+    });
+
+    it("else the first not yet watched, in natural order (E2 before E10)", () => {
+        expect(
+            pickFileToOpen({ files }, [
+                pos(0, 0, true),
+            ]),
+        ).toBe(1);
+    });
+
+    it("starts from the first file when nothing has been played yet", () => {
+        expect(pickFileToOpen({ files }, undefined)).toBe(0);
+        expect(pickFileToOpen({ files }, [])).toBe(0);
+    });
+
+    it("loops back to the first file once everything has been watched", () => {
+        expect(
+            pickFileToOpen({ files }, [
+                pos(0, 0, true),
+                pos(1, 0, true),
+                pos(10, 0, true),
+            ]),
+        ).toBe(0);
+    });
+
+    it("is null for a task with no media files", () => {
+        expect(pickFileToOpen({ files: [] }, undefined)).toBeNull();
+        expect(pickFileToOpen({}, undefined)).toBeNull();
+    });
+
+    it("ignores an unselected file and one that isn't media", () => {
+        const mixed = [
+            file(0, "Show.S01E1.mkv"),
+            file(1, "Show.S01E2.mkv", false),
+            file(2, "readme.txt"),
+        ];
+        expect(pickFileToOpen({ files: mixed }, undefined)).toBe(0);
     });
 });

@@ -49,7 +49,11 @@ import {
     type SubtitleTrack,
     subtitleToToggleOn,
 } from "@/lib/subtitles";
-import { defaultFileIndex, type PlayableFile } from "@/lib/media";
+import {
+    adjacentFileIndex,
+    defaultFileIndex,
+    type PlayableFile,
+} from "@/lib/media";
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
@@ -94,6 +98,9 @@ export interface PlayerModalProps {
 /** The line a cue sits on, counted up from the bottom: above the control bar (#100). */
 const SUBTITLE_LINE = -4;
 
+/** How long the up-next overlay counts down before moving on (#97). */
+const UP_NEXT_SECONDS = 10;
+
 export const PlayerModal = component$<PlayerModalProps>(
     ({
         open,
@@ -118,6 +125,12 @@ export const PlayerModal = component$<PlayerModalProps>(
         // The same, for the quality menu (#103).
         const switchQualityRef =
             useSignal<NoSerialize<(height: number | null) => Promise<void>>>();
+        // Cancel / Play now for the up-next countdown (#97), set by the task
+        // below whenever a file ends with another one to follow.
+        const upNextRef =
+            useSignal<
+                NoSerialize<{ cancel: () => void; playNow: () => void }>
+            >();
         // The file picked in the player's own menu. A signal of this
         // component's rather than a prop, so the task below reliably re-runs
         // on every pick.
@@ -170,6 +183,10 @@ export const PlayerModal = component$<PlayerModalProps>(
             // The quality menu (#103), and whether a switch is getting ready.
             quality: NO_QUALITY_MENU as QualityMenu,
             qualityPending: false,
+            // The up-next countdown (#97): the file it's counting down to,
+            // and how many seconds are left. `null` means no countdown showing.
+            upNextIndex: null as number | null,
+            upNextSecondsLeft: null as number | null,
         });
 
         useVisibleTask$(
@@ -226,6 +243,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                 switchQualityRef.value = undefined;
                 store.quality = NO_QUALITY_MENU;
                 store.qualityPending = false;
+                upNextRef.value = undefined;
+                store.upNextIndex = null;
+                store.upNextSecondsLeft = null;
                 // Read, not tracked: a change in Settings applies to the
                 // next thing played, not to this one.
                 const preferred: StreamAudio = {
@@ -513,6 +533,64 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 ] of videoListeners) {
                                     video.removeEventListener(type, handler);
                                 }
+                            });
+
+                            // A season pack counts down to its next episode
+                            // when one ends (#97); a single file just ends.
+                            let upNextTimer: ReturnType<
+                                typeof setInterval
+                            > | null = null;
+                            const clearUpNext = () => {
+                                if (upNextTimer !== null) {
+                                    clearInterval(upNextTimer);
+                                    upNextTimer = null;
+                                }
+                                store.upNextIndex = null;
+                                store.upNextSecondsLeft = null;
+                            };
+                            const goToFile = (index: number) => {
+                                clearUpNext();
+                                chosen.value = index;
+                            };
+                            const onEnded = () => {
+                                // 'ended' can in principle fire again before a
+                                // countdown resolves (seeking back into the
+                                // last frame and forward again reaches it a
+                                // second time) — clearing first means there's
+                                // never more than one timer counting down, so
+                                // an earlier one can't outlive Cancel or a
+                                // later pick and fire on its own.
+                                clearUpNext();
+                                const next = adjacentFileIndex(
+                                    files ?? [],
+                                    store.currentFileIndex,
+                                    1,
+                                );
+                                if (next === null) return;
+                                store.upNextIndex = next;
+                                store.upNextSecondsLeft = UP_NEXT_SECONDS;
+                                upNextTimer = setInterval(() => {
+                                    const left =
+                                        (store.upNextSecondsLeft ?? 1) - 1;
+                                    if (left <= 0) {
+                                        goToFile(next);
+                                        return;
+                                    }
+                                    store.upNextSecondsLeft = left;
+                                }, 1000);
+                            };
+                            video.addEventListener("ended", onEnded);
+                            cleanup(() => {
+                                video.removeEventListener("ended", onEnded);
+                                clearUpNext();
+                            });
+                            upNextRef.value = noSerialize({
+                                cancel: clearUpNext,
+                                playNow: () => {
+                                    if (store.upNextIndex !== null) {
+                                        goToFile(store.upNextIndex);
+                                    }
+                                },
                             });
 
                             // A download resumes where it was left, and says
@@ -954,6 +1032,33 @@ export const PlayerModal = component$<PlayerModalProps>(
             chosen.value = index;
         });
 
+        // The Previous/Next buttons and their shortcuts (#97): one step
+        // through `files` in the natural order the file menu already uses.
+        const handlePreviousFile = $(() => {
+            const index = adjacentFileIndex(
+                files ?? [],
+                store.currentFileIndex,
+                -1,
+            );
+            if (index !== null) chosen.value = index;
+        });
+        const handleNextFile = $(() => {
+            const index = adjacentFileIndex(
+                files ?? [],
+                store.currentFileIndex,
+                1,
+            );
+            if (index !== null) chosen.value = index;
+        });
+
+        // From the up-next overlay (#97): the task above runs the countdown.
+        const handleCancelUpNext = $(() => {
+            upNextRef.value?.cancel();
+        });
+        const handlePlayNextNow = $(() => {
+            upNextRef.value?.playNow();
+        });
+
         // From the audio menu (#99): the task above does the switch.
         // From the subtitle menu (#100): the loader below follows the pick.
         const handlePickSubtitle = $((index: number | null) => {
@@ -1204,6 +1309,12 @@ export const PlayerModal = component$<PlayerModalProps>(
                     await flash("Subtitles on");
                     return;
                 }
+                case "nextFile":
+                    await handleNextFile();
+                    return;
+                case "previousFile":
+                    await handlePreviousFile();
+                    return;
                 case "toggleHelp":
                     store.helpOpen = !store.helpOpen;
                     return;
@@ -1310,6 +1421,22 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 files={files}
                                 currentFileIndex={store.currentFileIndex}
                                 onPickFile={handlePickFile}
+                                onPreviousFile={handlePreviousFile}
+                                onNextFile={handleNextFile}
+                                hasPreviousFile={
+                                    adjacentFileIndex(
+                                        files ?? [],
+                                        store.currentFileIndex,
+                                        -1,
+                                    ) !== null
+                                }
+                                hasNextFile={
+                                    adjacentFileIndex(
+                                        files ?? [],
+                                        store.currentFileIndex,
+                                        1,
+                                    ) !== null
+                                }
                                 audioTracks={store.audioTracks}
                                 audioTrack={store.audioTrack}
                                 audioPending={store.audioPending}
@@ -1346,6 +1473,38 @@ export const PlayerModal = component$<PlayerModalProps>(
                         >
                             Start over
                         </button>
+                    </div>
+                )}
+
+                {store.upNextIndex !== null && (
+                    <div class="player-up-next" role="status">
+                        <span>
+                            Up next in {store.upNextSecondsLeft}s
+                            {(() => {
+                                const next = (files ?? []).find(
+                                    (file) => file.index === store.upNextIndex,
+                                );
+                                return next
+                                    ? `: ${next.path.split("/").pop()}`
+                                    : "";
+                            })()}
+                        </span>
+                        <div class="player-up-next-actions">
+                            <button
+                                type="button"
+                                class="player-up-next-cancel"
+                                onClick$={handleCancelUpNext}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="player-up-next-play"
+                                onClick$={handlePlayNextNow}
+                            >
+                                Play now
+                            </button>
+                        </div>
                     </div>
                 )}
 

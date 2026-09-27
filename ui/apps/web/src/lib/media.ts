@@ -65,3 +65,17 @@ export function defaultFileIndex(files: PlayableFile[]): number | null {
         file.sizeBytes > largest.sizeBytes ? file : largest,
     ).index;
 }
+
+/**
+ * The file before or after `currentIndex` in `files`' natural order (#97):
+ * `null` at either end, or when `currentIndex` isn't one of `files`.
+ */
+export function adjacentFileIndex(
+    files: PlayableFile[],
+    currentIndex: number | null,
+    direction: 1 | -1,
+): number | null {
+    const at = files.findIndex((file) => file.index === currentIndex);
+    if (at === -1) return null;
+    return files[at + direction]?.index ?? null;
+}

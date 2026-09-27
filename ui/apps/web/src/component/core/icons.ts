@@ -42,6 +42,8 @@ import {
     LuVolume2 as _LuVolume2,
     LuVolumeX as _LuVolumeX,
     LuMaximize as _LuMaximize,
+    LuSkipBack as _LuSkipBack,
+    LuSkipForward as _LuSkipForward,
     LuMinimize as _LuMinimize,
 } from "qwikset-icons-v2/lucide";
 
@@ -84,6 +86,8 @@ export const LuVolume2 = _LuVolume2;
 export const LuVolumeX = _LuVolumeX;
 export const LuMaximize = _LuMaximize;
 export const LuMinimize = _LuMinimize;
+export const LuSkipBack = _LuSkipBack;
+export const LuSkipForward = _LuSkipForward;
 
 // Simple Icons (brand logos)
 import {

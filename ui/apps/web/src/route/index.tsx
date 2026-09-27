@@ -14,6 +14,7 @@ import {
     keepSegments,
     keepPositions,
     withPosition,
+    pickFileToOpen,
     type PositionView,
     resolveTorrent,
     playsFromTorrent,
@@ -680,7 +681,12 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         store.playerUrl = "";
         store.playerKind = "";
-        store.playerFileIndex = null;
+        // The file left partway through, else the first not yet watched
+        // (#97); `null` for a task with no file list, which lets the API
+        // pick as it always has.
+        store.playerFileIndex = task
+            ? pickFileToOpen(task, task.positions)
+            : null;
         // A torrent's files, for the player's file menu (#98).
         store.playerFiles = mediaFiles(task?.files ?? []);
         // Still downloading: its stream, not its partial file (#95).

@@ -23,6 +23,8 @@ export type PlayerAction =
     | { type: "toggleMute" }
     | { type: "toggleFullscreen" }
     | { type: "toggleSubtitles" }
+    | { type: "nextFile" }
+    | { type: "previousFile" }
     | { type: "toggleHelp" }
     | { type: "escape" };
 
@@ -37,6 +39,7 @@ export type ShortcutEvent = {
     ctrlKey?: boolean;
     metaKey?: boolean;
     altKey?: boolean;
+    shiftKey?: boolean;
     target?: unknown;
 };
 
@@ -92,6 +95,14 @@ export function resolveShortcut(event: ShortcutEvent): PlayerAction | null {
         case "c":
         case "C":
             return { type: "toggleSubtitles" };
+        case "n":
+        case "N":
+            // Bare N and P are left alone; only the Shift combination moves
+            // between files, so the modal can ignore this with one media file.
+            return event.shiftKey ? { type: "nextFile" } : null;
+        case "p":
+        case "P":
+            return event.shiftKey ? { type: "previousFile" } : null;
         case "?":
             return { type: "toggleHelp" };
         case "Escape":
@@ -110,6 +121,7 @@ export const SHORTCUT_HINTS: { keys: string; description: string }[] = [
     { keys: "M", description: "Mute" },
     { keys: "F", description: "Fullscreen" },
     { keys: "C", description: "Subtitles on or off" },
+    { keys: "Shift+N / Shift+P", description: "Next or previous file" },
     { keys: "?", description: "This list" },
     { keys: "Esc", description: "Leave fullscreen, or close" },
 ];
