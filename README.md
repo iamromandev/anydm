@@ -150,7 +150,9 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset
     - `POST /download/youtube` — **deprecated**: the same as `POST /download/media`, under its old name; removed in v0.4
     - `POST /download/url` — enqueue a direct URL download
-    - `GET /download` — one page of tasks. `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_bytes`, `progress` or `speed_bps`, prefixed with `-` for descending (default `-created_at`)
+    - `POST /download/playlist` — add a playlist's chosen videos as one group: `url`, `extractor`, `playlist_id`, `title`, `channel_tab`, `preset` (a ceiling for each video), and `entries` as `GET /extract/entries` listed them. Answers 201 with the group, a task of kind `playlist` whose `file_path` is the folder its videos finish into (numbered `01_…`, unless it is a channel's tab). Nothing is extracted until each video starts; more than 10,000 videos answers 422 `payload_too_large`
+    - `GET /download/{task_id}/entries?page=…&page_size=…` — one page of a group's videos, in playlist order; 404 for a task that is not a group
+    - `GET /download` — one page of tasks, top-level only: a group's videos are listed through its entries. `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_bytes`, `progress` or `speed_bps`, prefixed with `-` for descending (default `-created_at`)
     - `GET /download/summary` — how many tasks each sidebar filter holds, counted in the database
     - `GET /download/events` — SSE task and progress stream
     - `GET /download/{task_id}` — one task

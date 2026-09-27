@@ -13,13 +13,14 @@ from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
-from src.data.schema.download import PositionSchema, TaskSchema, TaskSummarySchema
+from src.data.schema.download import PlaylistDownloadRequest, PositionSchema, TaskSchema, TaskSummarySchema
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
+from src.lib.folder import named_folder
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.filename import safe_filename
+from src.lib.site.filename import number_prefix, safe_filename
 from src.lib.site.format import select_plan
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
@@ -31,6 +32,9 @@ from src.service.download.torrent_service import TorrentService
 #: because only a torrent can be seeding and the engine accepts pausing one;
 #: failed is in both the resume set and the clear set, because a failure is
 #: equally "try again" and "give up on this".
+#: The most videos one playlist add takes; the picker stops there too.
+PLAYLIST_LIMIT = 10_000
+
 BULK_SCOPES: dict[str, frozenset[TaskStatus]] = {
     "pause_all": frozenset(
         {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING}
@@ -146,6 +150,67 @@ class DownloadService(BaseService):
         )
         self._control.wake()
         return self._published(task)
+
+    async def enqueue_playlist(self, request: PlaylistDownloadRequest) -> TaskSchema:
+        """A playlist's chosen videos, as one group of videos planned when each starts.
+
+        Nothing is extracted here: 5,000 videos cannot be planned inside one
+        request. A video that turns out private, or without a format for the
+        preset, fails inside the group rather than at add time.
+        """
+        if len(request.entries) > PLAYLIST_LIMIT:
+            raise site_error.playlist_too_large(len(request.entries))
+        self._require_space()
+        folder = named_folder(self._root, request.title, request.playlist_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        kind = Kind.AUDIO if request.preset == Preset.MP3 else Kind.VIDEO
+        largest = max(entry.index for entry in request.entries)
+        # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
+        # name single downloads and the picker's "already have it" use.
+        video_extractor = request.extractor.removesuffix("Tab")
+        group = await self._repo.create_group(
+            {
+                "source_url": request.url,
+                "platform": Platform.SITE,
+                "extractor": request.extractor,
+                "video_id": request.playlist_id,
+                "preset": request.preset,
+                "kind": Kind.PLAYLIST,
+                "title": request.title,
+                "status": TaskStatus.PENDING,
+                "progress": 0,
+                "file_path": str(folder.relative_to(self._root)),
+            },
+            [
+                {
+                    "source_url": entry.url,
+                    "platform": Platform.SITE,
+                    "extractor": video_extractor,
+                    "video_id": entry.id,
+                    "preset": request.preset,
+                    "kind": kind,
+                    "title": entry.title or "",
+                    "position": entry.index,
+                    "status": TaskStatus.PENDING,
+                    "progress": 0,
+                    "video_format": None,
+                    "audio_format": None,
+                    # The number now; choosing the formats appends the name.
+                    "filename": "" if request.channel_tab else number_prefix(entry.index, largest),
+                }
+                for entry in request.entries
+            ],
+        )
+        self._control.wake()
+        return self._published(group)
+
+    async def list_entries(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
+        """One page of a group's videos, in playlist order."""
+        group = await self._require(group_id)
+        if group.kind != Kind.PLAYLIST:
+            raise Error.not_found(message="Task is not a playlist")
+        rows, meta = await self._repo.entries_page(group_id, page=page, page_size=page_size)
+        return await self._with_positions([TaskSchema.model_validate(row) for row in rows]), meta
 
     async def list_tasks(
         self,

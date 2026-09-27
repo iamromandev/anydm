@@ -53,6 +53,17 @@ class FakeRepo:
         wanted = set(statuses)
         return [row for row in self.rows.values() if row.status in wanted]
 
+    async def create_group(self, group: dict[str, Any], entries: list[dict[str, Any]]) -> Any:
+        row = await self.create(**group)
+        self.group_entries = list(entries)
+        return row
+
+    async def find_group(self, extractor: str, playlist_id: str) -> Any:
+        return None
+
+    async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Any], Meta]:
+        return list(self.page), Meta(page=page, page_size=page_size, total=len(self.page), total_pages=1)
+
 
 def _row(task_id: uuid.UUID, **overrides: Any) -> Any:
     """A stand-in for a Task row, with a no-op ``save``."""
@@ -1056,3 +1067,102 @@ async def test_an_unfinished_download_has_no_subtitle_files_yet(tmp_path: Path) 
     repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING, file_path=None)
 
     assert await service.subtitle_files(task_id, None) == []
+
+
+# --- playlists (v0.5) ----------------------------------------------------------
+
+
+def _playlist(count: int = 3, *, channel_tab: bool = False, preset: Preset = Preset.P1080) -> Any:
+    from src.data.schema.download import PlaylistDownloadRequest
+
+    return PlaylistDownloadRequest(
+        url="https://www.youtube.com/playlist?list=PL1",
+        extractor="YoutubeTab",
+        playlist_id="PL1",
+        title="29C3: Not my department",
+        channel_tab=channel_tab,
+        preset=preset,
+        entries=[
+            {"index": n, "id": f"v{n}", "url": f"https://youtu.be/v{n}", "title": f"Talk {n}"}
+            for n in range(1, count + 1)
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_playlist_is_added_as_one_group_of_unplanned_videos(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    group = await service.enqueue_playlist(_playlist(12))
+
+    assert group.kind == Kind.PLAYLIST
+    created = repo.created[0]
+    assert (created["title"], created["video_id"], created["file_path"]) == (
+        "29C3: Not my department",
+        "PL1",
+        "29C3_ Not my department",
+    )
+    assert (tmp_path / "29C3_ Not my department").is_dir()
+    first = repo.group_entries[0]
+    assert (first["position"], first["video_id"], first["extractor"], first["kind"]) == (1, "v1", "Youtube", Kind.VIDEO)
+    assert (first["video_format"], first["audio_format"], first["filename"], first["title"]) == (
+        None,
+        None,
+        "01_",
+        "Talk 1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_channel_tab_is_not_numbered(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.enqueue_playlist(_playlist(2, channel_tab=True))
+
+    assert repo.group_entries[0]["filename"] == ""
+
+
+@pytest.mark.asyncio
+async def test_mp3_videos_are_audio(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.enqueue_playlist(_playlist(1, preset=Preset.MP3))
+
+    assert repo.group_entries[0]["kind"] == Kind.AUDIO
+
+
+@pytest.mark.asyncio
+async def test_more_than_ten_thousand_videos_are_refused(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_playlist(_playlist(10_001))
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_group_lists_its_videos(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    group_id = uuid.uuid4()
+    repo.rows[group_id] = _row(group_id, kind=Kind.PLAYLIST)
+    video_id = uuid.uuid4()
+    repo.page = [_row(video_id, parent_id=group_id, position=1)]
+
+    rows, meta = await service.list_entries(group_id, page=1, page_size=50)
+
+    assert [r.id for r in rows] == [video_id]
+    assert meta.total == 1
+
+
+@pytest.mark.asyncio
+async def test_only_a_group_has_entries(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id)
+
+    with pytest.raises(Error) as caught:
+        await service.list_entries(task_id, page=1, page_size=50)
+
+    assert caught.value.code == Code.NOT_FOUND

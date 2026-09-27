@@ -14,6 +14,7 @@ from src.data.schema.download import (
     BulkActionRequest,
     BulkResultSchema,
     MediaDownloadRequest,
+    PlaylistDownloadRequest,
     PositionRequest,
     PositionSchema,
     TaskSchema,
@@ -76,6 +77,19 @@ async def enqueue_url(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
 ) -> Response:
     data = await download_service.enqueue_url(payload.url.strip())
+    return Success.created(data=data).to_resp()
+
+
+@router.post(
+    path="/download/playlist",
+    response_model=Success[TaskSchema],
+)
+async def enqueue_playlist(
+    payload: PlaylistDownloadRequest,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    """Add a playlist's chosen videos as one group (v0.5)."""
+    data = await download_service.enqueue_playlist(payload)
     return Success.created(data=data).to_resp()
 
 
@@ -158,6 +172,18 @@ async def stream_events(
     # ``ping`` is sse-starlette's own comment heartbeat, which is what keeps a
     # proxy from reaping an idle connection.
     return EventSourceResponse(publisher(), ping=15)
+
+
+@router.get(path="/download/{task_id}/entries", response_model=Success[list[TaskSchema]])
+async def list_entries(
+    task_id: uuid.UUID,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> Response:
+    """One page of a group's videos, in playlist order (v0.5)."""
+    data, meta = await download_service.list_entries(task_id, page=page, page_size=page_size)
+    return Success.ok(data=data, meta=meta).to_resp()
 
 
 @router.get(path="/download/{task_id}/file")
