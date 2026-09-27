@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from src.core.common import now
@@ -320,3 +321,51 @@ async def test_sorting_carries_across_pages(db: None) -> None:
 
     assert [row.title for row in first] == ["a", "b"]
     assert [row.title for row in second] == ["c", "d"]
+
+
+async def _held(extractor: str, video_id: str, status: TaskStatus, **fields: Any) -> Task:
+    return await Task.create(
+        source_url=f"https://site.test/{video_id}",
+        platform=Platform.SITE,
+        extractor=extractor,
+        video_id=video_id,
+        preset=Preset.BEST,
+        kind=Kind.VIDEO,
+        status=status,
+        title=video_id,
+        filename=f"{video_id}.mp4",
+        **fields,
+    )
+
+
+async def test_statuses_by_video_reports_what_is_held(db: None) -> None:
+    await _held("Youtube", "a", TaskStatus.COMPLETE)
+    await _held("Youtube", "b", TaskStatus.PAUSED)
+    await _held("Youtube", "c", TaskStatus.FAILED)
+    await _held("Vimeo", "d", TaskStatus.COMPLETE)
+
+    found = await TaskDatabaseRepo().statuses_by_video("Youtube", ["a", "b", "c", "d", "e"])
+
+    assert found == {"a": TaskStatus.COMPLETE, "b": TaskStatus.PAUSED, "c": TaskStatus.FAILED}
+
+
+async def test_a_removed_or_canceled_task_holds_nothing(db: None) -> None:
+    await _held("Youtube", "a", TaskStatus.COMPLETE, deleted_at=now())
+    await _held("Youtube", "b", TaskStatus.CANCELED)
+
+    assert await TaskDatabaseRepo().statuses_by_video("Youtube", ["a", "b"]) == {}
+
+
+async def test_the_task_furthest_along_speaks_for_the_video(db: None) -> None:
+    await _held("Youtube", "a", TaskStatus.FAILED)
+    await _held("Youtube", "a", TaskStatus.COMPLETE)
+    await _held("Youtube", "b", TaskStatus.FAILED)
+    await _held("Youtube", "b", TaskStatus.PENDING)
+
+    found = await TaskDatabaseRepo().statuses_by_video("Youtube", ["a", "b"])
+
+    assert found == {"a": TaskStatus.COMPLETE, "b": TaskStatus.PENDING}
+
+
+async def test_no_ids_asks_nothing(db: None) -> None:
+    assert await TaskDatabaseRepo().statuses_by_video("Youtube", []) == {}

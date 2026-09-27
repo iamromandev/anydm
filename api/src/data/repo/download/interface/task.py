@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from abc import abstractmethod
+from collections.abc import Sequence
 
 from src.core.base import CrudRepo
 from src.core.success import Meta
@@ -17,6 +18,16 @@ class TaskRepo(CrudRepo[Task]):
 
         Runnable means ``next_attempt_at`` is unset or already past. Returns
         ``None`` when the queue is empty.
+        """
+        ...
+
+    @abstractmethod
+    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, TaskStatus]:
+        """Each of ``video_ids`` that a task not removed holds, with that task's status.
+
+        For the picker's "already have it". Canceled tasks hold nothing. A
+        video held twice reports the task furthest along: complete, then
+        queued, then failed.
         """
         ...
 
