@@ -342,6 +342,25 @@ export const AppShell = component$<AppShellProps>(
                     )}
                 />
 
+                <PlayerModal
+                    open={playerModalOpen}
+                    url={playerUrl}
+                    kind={playerKind}
+                    taskId={playerTaskId}
+                    fileIndex={playerFileIndex}
+                    fromTorrent={playerFromTorrent}
+                    positions={playerPositions}
+                    audioLanguage={prefs.audioLanguage}
+                    subtitleLanguage={prefs.subtitleLanguage}
+                    onPositionSaved={onPositionSaved}
+                    files={playerFiles}
+                    onClose={onPlayerModalClose}
+                />
+
+                {/* Last, after the player. Mounted before it while the player
+                    rendered nothing, the player's overlay never reached the
+                    page once opened (Qwik 2 beta.43). The picker's CSS puts
+                    it one z-index below the player instead. */}
                 {picker.value && (
                     <PlaylistPicker
                         key={picker.value.url}
@@ -362,21 +381,6 @@ export const AppShell = component$<AppShellProps>(
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
                     />
                 )}
-
-                <PlayerModal
-                    open={playerModalOpen}
-                    url={playerUrl}
-                    kind={playerKind}
-                    taskId={playerTaskId}
-                    fileIndex={playerFileIndex}
-                    fromTorrent={playerFromTorrent}
-                    positions={playerPositions}
-                    audioLanguage={prefs.audioLanguage}
-                    subtitleLanguage={prefs.subtitleLanguage}
-                    onPositionSaved={onPositionSaved}
-                    files={playerFiles}
-                    onClose={onPlayerModalClose}
-                />
             </div>
         );
     },

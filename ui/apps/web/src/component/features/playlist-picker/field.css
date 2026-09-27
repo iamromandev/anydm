@@ -1,3 +1,9 @@
+/* One below the player's 1000, so a row's Play opens the player over the
+   picker. The shell renders the picker after the player (see app-shell). */
+.modal-overlay.playlist-picker-overlay {
+    z-index: 999;
+}
+
 /* Wider than the torrent dialog: a row carries a thumbnail, a title and two
    actions. `.modal-overlay` and `.modal-panel` come from add-torrent-modal. */
 .playlist-picker {

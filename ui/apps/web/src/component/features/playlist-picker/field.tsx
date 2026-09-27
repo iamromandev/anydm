@@ -140,7 +140,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
 
         return (
             <div
-                class="modal-overlay"
+                class="modal-overlay playlist-picker-overlay"
                 onClick$={(e: MouseEvent, el: HTMLElement) => {
                     if (e.target === el) onClose();
                 }}
