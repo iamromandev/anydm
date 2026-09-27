@@ -135,10 +135,13 @@
 }
 
 @media (max-width: 640px) {
-    .playlist-picker {
+    /* Two classes: add-torrent-modal's own phone rule for `.modal-panel`
+       (95% wide, a 1rem margin) loads later and would win a tie. */
+    .modal-panel.playlist-picker {
         width: 100%;
         max-width: none;
         max-height: 100dvh;
+        margin: 0;
         border-radius: 0;
     }
 
