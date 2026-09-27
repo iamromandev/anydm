@@ -197,6 +197,49 @@ async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
     assert row.status == TaskStatus.COMPLETE
 
 
+class GroupRepo:
+    """Answers for one group row, the only one a group video's worker looks up."""
+
+    def __init__(self, group: FakeRow) -> None:
+        self.group = group
+
+    async def get_active_by_id(self, task_id: uuid.UUID) -> FakeRow | None:
+        return self.group if task_id == self.group.id else None
+
+
+def _group(tmp_path: Path) -> FakeRow:
+    (tmp_path / "List").mkdir()
+    return FakeRow(kind=Kind.PLAYLIST, file_path="List")
+
+
+@pytest.mark.asyncio
+async def test_a_group_video_finishes_into_the_group_folder(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    row = FakeRow(parent_id=group.id, filename="02_Rick_1080p.mp4")
+
+    await _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    ).run_task(cast(Any, row))
+
+    assert row.file_path == "List/02_Rick_1080p.mp4"
+    assert (tmp_path / "List" / "02_Rick_1080p.mp4").read_bytes() == b"done"
+    assert not (tmp_path / str(row.id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    (tmp_path / "List" / "Rick_1080p.mp4").write_bytes(b"other")
+    row = FakeRow(parent_id=group.id)
+
+    await _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    ).run_task(cast(Any, row))
+
+    assert row.file_path == "List/Rick_1080p_dQw4w9WgXcQ.mp4"
+    assert (tmp_path / "List" / "Rick_1080p.mp4").read_bytes() == b"other"
+
+
 @pytest.mark.asyncio
 async def test_each_part_gets_its_own_url_and_the_format_s_headers(tmp_path: Path) -> None:
     engine = RecordingEngine()

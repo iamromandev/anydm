@@ -28,10 +28,24 @@ from src.service.download.disk import DiskGuard
 from src.service.download.download_worker import remove_task_files
 from src.service.download.torrent_service import TorrentService
 
+
 #: Which rows each bulk action applies to. Seeding is in the pause set
 #: because only a torrent can be seeding and the engine accepts pausing one;
 #: failed is in both the resume set and the clear set, because a failure is
 #: equally "try again" and "give up on this".
+def remove_group_video_files(video: Path) -> None:
+    """A group video's file and the subtitle files beside it, never its folder (v0.5).
+
+    Its subtitles share its stem: ``02_Talk_720p.en.vtt`` beside ``02_Talk_720p.mp4``.
+    """
+    if not video.parent.is_dir():
+        return
+    prefix = f"{video.stem}."
+    for path in video.parent.iterdir():
+        if path == video or (path.name.startswith(prefix) and path.suffix in (".vtt", ".srt")):
+            path.unlink(missing_ok=True)
+
+
 #: The most videos one playlist add takes; the picker stops there too.
 PLAYLIST_LIMIT = 10_000
 
@@ -473,6 +487,8 @@ class DownloadService(BaseService):
         self._control.request_stop(task_id)
         if delete_files:
             remove_task_files(self._root, task_id)
+            if getattr(task, "parent_id", None) is not None and task.file_path:
+                remove_group_video_files(self._root / task.file_path)
         await self._segment_repo.clear(task_id)
         task.status = TaskStatus.CANCELED
         task.deleted_at = now()

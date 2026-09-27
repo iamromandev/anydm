@@ -1157,6 +1157,25 @@ async def test_a_group_lists_its_videos(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_removing_a_group_video_deletes_only_its_files(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    folder = tmp_path / "List"
+    folder.mkdir()
+    for name in ("02_Talk_720p.mp4", "02_Talk_720p.en.vtt", "03_Other_720p.mp4"):
+        (folder / name).write_bytes(b"x")
+    task_id = uuid.uuid4()
+    (tmp_path / str(task_id)).mkdir()
+    repo.rows[task_id] = _row(
+        task_id, parent_id=uuid.uuid4(), status=TaskStatus.COMPLETE, file_path="List/02_Talk_720p.mp4"
+    )
+
+    await service.cancel(task_id, delete_files=True)
+
+    assert sorted(p.name for p in folder.iterdir()) == ["03_Other_720p.mp4"]
+    assert not (tmp_path / str(task_id)).exists()
+
+
+@pytest.mark.asyncio
 async def test_only_a_group_has_entries(tmp_path: Path) -> None:
     service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()

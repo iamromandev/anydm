@@ -34,7 +34,7 @@ from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
-from src.service.download.paths import final_path, part_path, task_dir
+from src.service.download.paths import final_path, group_destination, part_path, task_dir
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
@@ -131,6 +131,8 @@ class DownloadWorker:
                 parts, fragmented = await self._download_parts(task, await self._plan(task))
             destination = final_path(self._root, task.id, task.filename)
             await self._post_processor.run(task, parts, destination, fragmented=fragmented)
+            if task.parent_id is not None:
+                destination = await self._into_group_folder(task, destination)
             await self._mark_complete(task, destination)
             await self._save_subtitles(task, destination)
         except Stopped:
@@ -164,6 +166,23 @@ class DownloadWorker:
 
     def _emit(self, task: Task) -> None:
         self._hub.publish("task", TaskSchema.model_validate(task).to_json())
+
+    async def _into_group_folder(self, task: Task, destination: Path) -> Path:
+        """Move a group's finished video into the group's folder (v0.5).
+
+        Before COMPLETE: a crash here requeues the task, and the move runs again,
+        replacing a file of the same name.
+        """
+        if task.parent_id is None:
+            return destination
+        group = await self._repo.get_active_by_id(task.parent_id)
+        if group is None or not group.file_path:
+            return destination
+        moved = group_destination(self._root, group.file_path, task.filename, task.video_id or str(task.id))
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        destination.replace(moved)
+        remove_task_files(self._root, task.id)
+        return moved
 
     async def _plan(self, task: Task) -> dict[str, Resolved]:
         """Formats for ``task``'s preset, from the one extraction that also gives their URLs (v0.5)."""
