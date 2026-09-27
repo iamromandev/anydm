@@ -2,10 +2,12 @@
 
 import pytest
 from src.core.error import Error
-from src.core.type import Code
+from src.core.type import Code, ErrorType
+from src.data.schema.extract import ExtractSchema, PlaylistSchema
 from src.data.type import Preset
 from src.lib.site import error as site_error
-from src.service.extract.extract_service import ExtractService
+from src.lib.site.client import PlaylistInfo, Tab
+from src.service.extract.extract_service import ExtractService, playlist_url
 
 from tests.sites import FakeSiteClient, site_info
 
@@ -18,6 +20,7 @@ def _service(site: str, **overrides: object) -> ExtractService:
 async def test_extract_describes_the_page() -> None:
     data = await _service("vimeo").extract("http://vimeo.com/75629013")
 
+    assert isinstance(data, ExtractSchema)
     assert (data.extractor, data.id) == ("Vimeo", "75629013")
     assert data.title == site_info("vimeo").title
     assert (data.uploader, data.duration) == ("Someone", 187)
@@ -37,6 +40,7 @@ async def test_extract_offers_every_preset_the_formats_can_serve() -> None:
 async def test_formats_have_string_ids_and_leave_storyboards_out() -> None:
     data = await _service("youtube").extract("https://youtu.be/dQw4w9WgXcQ")
 
+    assert isinstance(data, ExtractSchema)
     by_id = {f.id: f for f in data.formats}
     assert "sb0" not in by_id
     assert (by_id["137"].height, by_id["137"].has_video, by_id["137"].has_audio) == (1080, True, False)
@@ -64,6 +68,7 @@ async def test_a_live_stream_is_refused() -> None:
         await _service("twitch", is_live=True).extract("https://twitch.tv/x")
 
     assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert caught.value.type == ErrorType.LIVE_NOT_SUPPORTED
 
 
 @pytest.mark.asyncio
@@ -79,3 +84,74 @@ async def test_an_unsupported_link_says_so() -> None:
         Code.BAD_REQUEST,
         "unsupported_url",
     )
+
+
+PLAYLIST = PlaylistInfo(
+    extractor="YoutubeTab",
+    id="PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC",
+    title="29C3: Not my department",
+    uploader="Christiaan008",
+    thumbnail="https://img.test/pl.jpg",
+    webpage_url="https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC",
+    count=96,
+)
+
+
+def _listing_service(playlist: PlaylistInfo) -> ExtractService:
+    return ExtractService(client=FakeSiteClient(site_info("youtube"), playlist=playlist))
+
+
+@pytest.mark.asyncio
+async def test_a_video_answers_media() -> None:
+    data = await _service("vimeo").extract("http://vimeo.com/75629013")
+
+    assert isinstance(data, ExtractSchema)
+    assert data.type == "media"
+    assert data.playlist_url is None
+
+
+@pytest.mark.asyncio
+async def test_a_playlist_answers_its_header_and_every_preset() -> None:
+    data = await _listing_service(PLAYLIST).extract(PLAYLIST.webpage_url)
+
+    assert isinstance(data, PlaylistSchema)
+    assert (data.type, data.id, data.title, data.count) == ("playlist", PLAYLIST.id, PLAYLIST.title, 96)
+    assert (data.uploader, data.thumbnail, data.webpage_url) == (
+        "Christiaan008",
+        PLAYLIST.thumbnail,
+        PLAYLIST.webpage_url,
+    )
+    assert data.presets == list(Preset)
+    assert data.tabs == []
+
+
+@pytest.mark.asyncio
+async def test_a_channel_answers_its_tabs() -> None:
+    channel = PlaylistInfo(
+        extractor="YoutubeTab",
+        id="@3blue1brown",
+        title="3Blue1Brown",
+        tabs=[Tab("Videos", "https://www.youtube.com/@3blue1brown/videos")],
+    )
+
+    data = await _listing_service(channel).extract("https://www.youtube.com/@3blue1brown")
+
+    assert isinstance(data, PlaylistSchema)
+    assert data.type == "channel"
+    assert [(t.name, t.url) for t in data.tabs] == [("Videos", "https://www.youtube.com/@3blue1brown/videos")]
+
+
+@pytest.mark.asyncio
+async def test_a_watch_link_naming_a_playlist_offers_the_whole_list() -> None:
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC&index=3"
+
+    data = await _service("youtube").extract(url)
+
+    assert isinstance(data, ExtractSchema)
+    assert data.playlist_url == "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC"
+
+
+def test_a_mix_or_another_site_offers_no_playlist() -> None:
+    assert playlist_url("https://www.youtube.com/watch?v=x&list=RDx", "Youtube") is None
+    assert playlist_url("https://vimeo.com/1?list=PL1", "Vimeo") is None
+    assert playlist_url("https://www.youtube.com/watch?v=x", "Youtube") is None

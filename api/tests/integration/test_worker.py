@@ -25,6 +25,12 @@ class FakeSite:
     async def extract(self, url: str) -> Any:
         raise AssertionError("the worker must not re-extract the page")
 
+    async def inspect(self, url: str) -> Any:
+        raise AssertionError("only the add box inspects a link")
+
+    def list_entries(self, url: str, **kwargs: Any) -> Any:
+        raise AssertionError("only the picker lists a playlist")
+
     async def resolve(self, url: str, format_ids: Any) -> dict[str, Resolved]:
         return {format_id: Resolved(f"https://cdn.test/x/{format_id}") for format_id in format_ids}
 

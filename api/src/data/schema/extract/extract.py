@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -24,6 +24,7 @@ class FormatSchema(BaseSchema):
 
 
 class ExtractSchema(BaseSchema):
+    type: Literal["media"] = "media"
     #: yt-dlp's name for the site: "Youtube", "Vimeo", ...
     extractor: str
     #: The site's own id for the media.
@@ -35,4 +36,30 @@ class ExtractSchema(BaseSchema):
     webpage_url: str = ""
     formats: Annotated[list[FormatSchema], Field(default_factory=list)]
     #: The presets that can be downloaded today, in the order to offer them.
+    presets: Annotated[list[Preset], Field(default_factory=list)]
+    #: The playlist a YouTube watch link also names (``list=``), for "see all".
+    playlist_url: str | None = None
+
+
+class TabSchema(BaseSchema):
+    name: str
+    url: str
+
+
+class PlaylistSchema(BaseSchema):
+    """A list of videos: a playlist or a channel's tab (``playlist``), or a channel home (``channel``)."""
+
+    type: Literal["playlist", "channel"]
+    extractor: str
+    id: str
+    title: str = ""
+    uploader: str = ""
+    thumbnail: str = ""
+    webpage_url: str = ""
+    #: How many videos, when the site says.
+    count: int | None = None
+    #: A channel's own uploads, which part 2 won't number.
+    channel_tab: bool = False
+    tabs: Annotated[list[TabSchema], Field(default_factory=list)]
+    #: Every preset: a listing has no formats to narrow them by.
     presets: Annotated[list[Preset], Field(default_factory=list)]

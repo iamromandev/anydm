@@ -74,6 +74,8 @@ class ErrorType(StrEnum):
     UNSUPPORTED_OPERATION = "unsupported_operation"
     #: A link no extractor recognises. The add box falls back to a direct download on it.
     UNSUPPORTED_URL = "unsupported_url"
+    #: A live stream: anydm downloads and plays recordings only.
+    LIVE_NOT_SUPPORTED = "live_not_supported"
 
     # External/3rd-party issues
     EXTERNAL_API_ERROR = "external_api_error"

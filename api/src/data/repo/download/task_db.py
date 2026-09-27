@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from tortoise.expressions import Q
@@ -14,6 +15,17 @@ from src.data.db.model import Task
 from src.data.repo.download.interface import TaskRepo
 from src.data.schema.download import TaskSummarySchema
 from src.data.type import ACTIVE_STATUSES, TASK_GROUPS, Platform, TaskStatus
+
+#: Which of two tasks holding one video speaks for it: the one furthest along.
+_HELD_RANK = {
+    TaskStatus.COMPLETE: 3,
+    TaskStatus.SEEDING: 3,
+    TaskStatus.PENDING: 2,
+    TaskStatus.DOWNLOADING: 2,
+    TaskStatus.MUXING: 2,
+    TaskStatus.PAUSED: 2,
+    TaskStatus.FAILED: 1,
+}
 
 
 class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
@@ -155,6 +167,22 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
             seeding=await count("seeding"),
             completed=await count("completed"),
         )
+
+    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, TaskStatus]:
+        if not video_ids:
+            return {}
+        rows = (
+            await Task.filter(deleted_at__isnull=True, extractor=extractor, video_id__in=list(video_ids))
+            .exclude(status=TaskStatus.CANCELED)
+            .values_list("video_id", "status")
+        )
+        found: dict[str, TaskStatus] = {}
+        for video_id, raw_status in rows:
+            status = TaskStatus(raw_status)
+            current = found.get(video_id)
+            if current is None or _HELD_RANK.get(status, 0) > _HELD_RANK.get(current, 0):
+                found[video_id] = status
+        return found
 
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
         return await self.get_by_id(task_id, deleted_at__isnull=True)

@@ -22,6 +22,7 @@ from src.service.download.rate_limit import rate_limiter
 from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
+from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService
 from src.service.settings import SettingsService as SettingsService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
@@ -40,6 +41,10 @@ def get_settings_service() -> SettingsService:
 
 def get_extract_service() -> ExtractService:
     return ExtractService(client=get_site_client())
+
+
+def get_listing_service() -> ListingService:
+    return ListingService(client=get_site_client(), repo=TaskDatabaseRepo())
 
 
 @lru_cache

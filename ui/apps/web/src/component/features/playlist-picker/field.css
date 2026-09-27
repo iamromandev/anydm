@@ -1,0 +1,151 @@
+/* One below the player's 1000, so a row's Play opens the player over the
+   picker. The shell renders the picker after the player (see app-shell). */
+.modal-overlay.playlist-picker-overlay {
+    z-index: 999;
+}
+
+/* Wider than the torrent dialog: a row carries a thumbnail, a title and two
+   actions. `.modal-overlay` and `.modal-panel` come from add-torrent-modal. */
+.playlist-picker {
+    max-width: 640px;
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+}
+
+.playlist-picker-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+}
+
+.playlist-picker-summary {
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+/* A fixed height: the list draws only the rows inside it. */
+.playlist-picker-list {
+    height: min(420px, 60vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.playlist-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0 1.25rem;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.playlist-picker-row--unavailable {
+    opacity: 0.5;
+}
+
+.playlist-picker-index {
+    width: 2.75rem;
+    flex: none;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+.playlist-picker-thumb {
+    width: 64px;
+    height: 36px;
+    flex: none;
+    border-radius: 4px;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+}
+
+.playlist-picker-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.playlist-picker-title,
+.playlist-picker-meta {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.playlist-picker-title {
+    font-size: 0.875rem;
+}
+
+.playlist-picker-meta {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+.playlist-picker-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex: none;
+}
+
+/* 44px, the smallest a thumb can hit (#21). */
+.playlist-picker-action {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.playlist-picker-action:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+}
+
+.playlist-picker-action:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.playlist-picker-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--color-border);
+    min-height: 44px;
+}
+
+.playlist-picker-button {
+    min-height: 44px;
+    padding: 0 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+@media (max-width: 640px) {
+    /* Two classes: add-torrent-modal's own phone rule for `.modal-panel`
+       (95% wide, a 1rem margin) loads later and would win a tie. */
+    .modal-panel.playlist-picker {
+        width: 100%;
+        max-width: none;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    .playlist-picker-thumb {
+        display: none;
+    }
+}

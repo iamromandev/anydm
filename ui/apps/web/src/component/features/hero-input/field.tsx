@@ -22,9 +22,13 @@ import { formatTime } from "@/component/core/utils";
 import {
     choosePreset,
     lookupLink,
+    playlistMeta,
     type AddType,
+    type PlaylistPreview,
+    type PlaylistTab,
     type SitePreview,
 } from "@/lib/api/site";
+import type { PickerTarget } from "@/lib/api/playlist";
 import { detectKind, isPlayableKind } from "./kind";
 import type { InputKind } from "./kind";
 import { PRESET_OPTIONS } from "@/lib/prefs";
@@ -45,9 +49,12 @@ export interface HeroInputProps {
         preset?: string;
     }) => void | Promise<void>;
     onPlay?: (value: string, kind: string) => void | Promise<void>;
+    /** Open the picker on a playlist, or on one of a channel's tabs. */
+    onChoose?: (target: PickerTarget) => void;
 }
 
-type LookupStatus = "idle" | "looking" | "site" | "file" | "error";
+type LookupStatus =
+    "idle" | "looking" | "site" | "playlist" | "channel" | "file" | "error";
 
 function magnetName(value: string): string {
     const dn = new URLSearchParams(value.split("?")[1] || "").get("dn");
@@ -55,7 +62,7 @@ function magnetName(value: string): string {
 }
 
 export const HeroInput = component$<HeroInputProps>(
-    ({ defaultPreset, onSubmit, onPlay }) => {
+    ({ defaultPreset, onSubmit, onPlay, onChoose }) => {
         const inputRef = useSignal<HTMLInputElement>();
         /**
          * The quality picked in this session, or null to follow the
@@ -73,6 +80,10 @@ export const HeroInput = component$<HeroInputProps>(
             /** What the API said about the site link in the box, if anything. */
             lookup: "idle" as LookupStatus,
             preview: null as SitePreview | null,
+            /** The list the link names, for a playlist or a channel. */
+            playlist: null as PlaylistPreview | null,
+            /** A channel's own lists. */
+            tabs: [] as PlaylistTab[],
         });
 
         useVisibleTask$(({ track }) => {
@@ -100,11 +111,15 @@ export const HeroInput = component$<HeroInputProps>(
                 if (!value || effective !== "site") {
                     store.lookup = "idle";
                     store.preview = null;
+                    store.playlist = null;
+                    store.tabs = [];
                     return;
                 }
 
                 store.lookup = "looking";
                 store.preview = null;
+                store.playlist = null;
+                store.tabs = [];
                 const timer = setTimeout(async () => {
                     const current = () => store.value.trim() === value;
                     try {
@@ -112,6 +127,12 @@ export const HeroInput = component$<HeroInputProps>(
                         if (!current()) return;
                         store.preview =
                             found.kind === "site" ? found.preview : null;
+                        store.playlist =
+                            found.kind === "playlist" ||
+                            found.kind === "channel"
+                                ? found.preview
+                                : null;
+                        store.tabs = found.kind === "channel" ? found.tabs : [];
                         store.lookup = found.kind;
                     } catch (err) {
                         if (!current()) return;
@@ -140,6 +161,24 @@ export const HeroInput = component$<HeroInputProps>(
         const siteBlocked =
             activeKind === "site" &&
             (store.lookup === "looking" || store.lookup === "error");
+        /** A playlist or a channel: nothing here plays until part 4's Play all. */
+        const isList =
+            store.lookup === "playlist" || store.lookup === "channel";
+
+        const choosePlaylist = $(() => {
+            const list = store.playlist;
+            if (!list) return;
+            onChoose?.({ url: list.url, title: list.title, count: list.count });
+        });
+
+        const chooseTab = $((tab: PlaylistTab) => {
+            const list = store.playlist;
+            onChoose?.({
+                url: tab.url,
+                title: list ? `${list.title} · ${tab.name}` : tab.name,
+                count: null,
+            });
+        });
 
         const handleSubmit = $(async () => {
             const value = store.value.trim();
@@ -161,6 +200,15 @@ export const HeroInput = component$<HeroInputProps>(
             if (kindNow === "magnet") {
                 input = { type: "magnet", value };
             } else if (kindNow === "site") {
+                // A playlist: Download chooses its videos, and the box keeps
+                // the link in case the picker is closed.
+                if (store.lookup === "playlist" && store.playlist) {
+                    await choosePlaylist();
+                    return;
+                }
+                if (store.lookup === "channel") {
+                    return;
+                }
                 // Download stays disabled until the lookup has answered, so
                 // this is either a previewed page or a file no site claims.
                 if (store.lookup === "site" && store.preview) {
@@ -342,7 +390,9 @@ export const HeroInput = component$<HeroInputProps>(
                                 // Held back on the same terms as Download: a
                                 // page still being looked up, or one the API
                                 // has refused, would only fail in the player.
-                                disabled={store.isLoading || siteBlocked}
+                                disabled={
+                                    store.isLoading || siteBlocked || isList
+                                }
                                 onClick$={$(() =>
                                     onPlay?.(store.value.trim(), activeKind),
                                 )}
@@ -362,7 +412,8 @@ export const HeroInput = component$<HeroInputProps>(
                             disabled={
                                 !store.value.trim() ||
                                 store.isLoading ||
-                                siteBlocked
+                                siteBlocked ||
+                                store.lookup === "channel"
                             }
                             onClick$={handleSubmit}
                         >
@@ -425,7 +476,81 @@ export const HeroInput = component$<HeroInputProps>(
                                         .filter(Boolean)
                                         .join(" · ")}
                                 </span>
+                                {store.preview.playlistUrl && (
+                                    <button
+                                        type="button"
+                                        class="hero-input-preview-link"
+                                        onClick$={() => {
+                                            const list =
+                                                store.preview?.playlistUrl;
+                                            if (list) updateValue(list);
+                                        }}
+                                    >
+                                        This video is in a playlist: see all
+                                    </button>
+                                )}
                             </div>
+                        </div>
+                    )}
+
+                {activeKind === "site" &&
+                    (store.lookup === "playlist" ||
+                        store.lookup === "channel") &&
+                    store.playlist && (
+                        <div class="hero-input-preview" aria-live="polite">
+                            {store.playlist.thumbnail && (
+                                <img
+                                    class="hero-input-preview-thumb"
+                                    src={store.playlist.thumbnail}
+                                    alt=""
+                                    width={96}
+                                    height={54}
+                                    loading="lazy"
+                                    referrerPolicy="no-referrer"
+                                />
+                            )}
+                            <div class="hero-input-preview-text">
+                                <span class="hero-input-preview-title">
+                                    {store.playlist.title}
+                                </span>
+                                <span class="hero-input-preview-meta">
+                                    {store.lookup === "channel"
+                                        ? [
+                                              "Channel",
+                                              store.playlist.uploader,
+                                          ]
+                                              .filter(Boolean)
+                                              .join(" · ")
+                                        : playlistMeta(store.playlist)}
+                                </span>
+                                {store.lookup === "channel" && (
+                                    <div
+                                        class="hero-input-preview-tabs"
+                                        role="group"
+                                        aria-label="Lists on this channel"
+                                    >
+                                        {store.tabs.map((tab) => (
+                                            <button
+                                                key={tab.url}
+                                                type="button"
+                                                class="hero-input-chip"
+                                                onClick$={() => chooseTab(tab)}
+                                            >
+                                                {tab.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            {store.lookup === "playlist" && (
+                                <button
+                                    type="button"
+                                    class="hero-input-preview-action"
+                                    onClick$={choosePlaylist}
+                                >
+                                    Choose videos…
+                                </button>
+                            )}
                         </div>
                     )}
 
