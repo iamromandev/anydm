@@ -1,5 +1,5 @@
 import type { AddType } from "@/lib/api/site";
-import { component$, $ } from "@qwik.dev/core";
+import { component$, $, useSignal } from "@qwik.dev/core";
 import {
     aggregateStats,
     canPause,
@@ -19,6 +19,7 @@ import type { PlayableFile } from "@/lib/media";
 import type { PositionView } from "@/lib/api";
 import { HeroInput } from "@/component/features/hero-input";
 import { PlayerModal } from "@/component/features/player-modal";
+import { PlaylistPicker } from "@/component/features/playlist-picker";
 import { RemoveDialog } from "@/component/features/remove-dialog";
 import {
     SettingsModal,
@@ -27,6 +28,7 @@ import {
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Disk } from "@/lib/api/disk";
+import type { PickerTarget } from "@/lib/api/playlist";
 import type { Connection } from "@/lib/connection";
 import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
@@ -179,6 +181,11 @@ export const AppShell = component$<AppShellProps>(
     }) => {
         const stats = aggregateStats(tasks);
 
+        /** The list the picker is open on, if any. Held here, not in the
+            add box: `.app-shell-content` has `contain: layout`, which would
+            pin a fixed overlay to the content column. */
+        const picker = useSignal<PickerTarget | null>(null);
+
         // Counted by the API when it can be. Falling back to the loaded rows
         // keeps the numbers plausible before the first summary arrives, but
         // they are only ever a floor: the list is one page of many.
@@ -244,6 +251,9 @@ export const AppShell = component$<AppShellProps>(
                             onPlay={$((value: string, kind: string) =>
                                 onPlayClick(value, kind),
                             )}
+                            onChoose={$((target: PickerTarget) => {
+                                picker.value = target;
+                            })}
                         />
 
                         <section class="app-shell-list" aria-label="Downloads">
@@ -331,6 +341,27 @@ export const AppShell = component$<AppShellProps>(
                         ) => onPlayClick(value, kind, fileIndex, files),
                     )}
                 />
+
+                {picker.value && (
+                    <PlaylistPicker
+                        key={picker.value.url}
+                        target={picker.value}
+                        onClose={$(() => {
+                            picker.value = null;
+                        })}
+                        onDownload={$(async (url: string) => {
+                            // A listed video, queued the way a pasted link is:
+                            // looked up, then downloaded at the preferred
+                            // preset or the closest one it offers.
+                            await onAdd({
+                                type: "link",
+                                value: url,
+                                preset: prefs.defaultPreset,
+                            });
+                        })}
+                        onPlay={$((url: string) => onPlayClick(url, "site"))}
+                    />
+                )}
 
                 <PlayerModal
                     open={playerModalOpen}
