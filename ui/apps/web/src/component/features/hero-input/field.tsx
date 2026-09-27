@@ -47,7 +47,8 @@ export interface HeroInputProps {
     onPlay?: (value: string, kind: string) => void | Promise<void>;
 }
 
-type LookupStatus = "idle" | "looking" | "site" | "file" | "error";
+type LookupStatus =
+    "idle" | "looking" | "site" | "playlist" | "channel" | "file" | "error";
 
 function magnetName(value: string): string {
     const dn = new URLSearchParams(value.split("?")[1] || "").get("dn");

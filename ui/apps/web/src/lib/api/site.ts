@@ -24,10 +24,36 @@ export interface SitePreview {
     thumbnail: string;
     /** What can be downloaded from this page today, in the order to offer it. */
     presets: Preset[];
+    /** The playlist a YouTube watch link also names, for "see all"; null otherwise. */
+    playlistUrl: string | null;
+}
+
+export interface PlaylistTab {
+    name: string;
+    url: string;
+}
+
+/** A list of videos: a playlist, or a channel's own uploads. */
+export interface PlaylistPreview {
+    extractor: string;
+    site: string;
+    id: string;
+    title: string;
+    uploader: string;
+    thumbnail: string;
+    /** The page to list. */
+    url: string;
+    /** How many videos, when the site says; null until listed otherwise. */
+    count: number | null;
+    /** A channel's own uploads rather than a playlist someone made. */
+    channelTab: boolean;
 }
 
 export type LinkLookup =
-    { kind: "site"; preview: SitePreview } | { kind: "file" };
+    | { kind: "site"; preview: SitePreview }
+    | { kind: "playlist"; preview: PlaylistPreview }
+    | { kind: "channel"; preview: PlaylistPreview; tabs: PlaylistTab[] }
+    | { kind: "file" };
 
 /**
  * What the add box and the add modal hand the page to queue.
@@ -47,6 +73,8 @@ const SITE_NAMES: Record<string, string> = {
     Soundcloud: "SoundCloud",
     Twitter: "X",
     TwitchVod: "Twitch",
+    // yt-dlp names YouTube's playlists and channels by their own extractor.
+    YoutubeTab: "YouTube",
 };
 
 export function siteName(extractor: string | null | undefined): string {
@@ -80,7 +108,56 @@ export function toPreview(raw: any): SitePreview {
         presets: (Array.isArray(raw?.presets) ? raw.presets : []).filter(
             isPreset,
         ),
+        playlistUrl:
+            typeof raw?.playlist_url === "string" && raw.playlist_url
+                ? raw.playlist_url
+                : null,
     };
+}
+
+export function toPlaylistPreview(
+    raw: any,
+    requested: string,
+): PlaylistPreview {
+    const extractor = String(raw?.extractor ?? "");
+    const count = raw?.count;
+    return {
+        extractor,
+        site: siteName(extractor),
+        id: String(raw?.id ?? ""),
+        title: String(raw?.title ?? ""),
+        uploader: String(raw?.uploader ?? ""),
+        thumbnail: String(raw?.thumbnail ?? ""),
+        url: String(raw?.webpage_url || requested),
+        count:
+            typeof count === "number" && Number.isFinite(count) ? count : null,
+        channelTab: raw?.channel_tab === true,
+    };
+}
+
+function toTabs(raw: unknown): PlaylistTab[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .map((tab) => ({
+            name: String(tab?.name ?? ""),
+            url: String(tab?.url ?? ""),
+        }))
+        .filter((tab) => tab.name && tab.url);
+}
+
+/** "Playlist · 96 videos · Christiaan008", or "Channel · 3Blue1Brown" for a tab. */
+export function playlistMeta(preview: PlaylistPreview): string {
+    const count =
+        preview.count === null
+            ? ""
+            : `${preview.count.toLocaleString("en-US")} ${preview.count === 1 ? "video" : "videos"}`;
+    return [
+        preview.channelTab ? "Channel" : "Playlist",
+        count,
+        preview.uploader,
+    ]
+        .filter(Boolean)
+        .join(" · ");
 }
 
 /**
@@ -95,10 +172,18 @@ export async function lookupLink(
     post: Post = postApi,
 ): Promise<LinkLookup> {
     try {
-        return {
-            kind: "site",
-            preview: toPreview(await post<any>("/extract", { url })),
-        };
+        const raw = await post<any>("/extract", { url });
+        if (raw?.type === "playlist") {
+            return { kind: "playlist", preview: toPlaylistPreview(raw, url) };
+        }
+        if (raw?.type === "channel") {
+            return {
+                kind: "channel",
+                preview: toPlaylistPreview(raw, url),
+                tabs: toTabs(raw?.tabs),
+            };
+        }
+        return { kind: "site", preview: toPreview(raw) };
     } catch (err) {
         if (err instanceof ApiError && err.type === "unsupported_url") {
             return { kind: "file" };
@@ -120,6 +205,11 @@ export async function addLink(
     if (found.kind === "file") {
         await post("/download/url", { url });
         return;
+    }
+    if (found.kind === "playlist" || found.kind === "channel") {
+        throw new ApiError(
+            "This link is a playlist: paste it in the add box to choose its videos",
+        );
     }
     const preset = choosePreset(found.preview.presets, preferred);
     if (preset === null) {

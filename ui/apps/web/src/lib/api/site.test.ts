@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
 import { ApiError } from "./envelope";
-import { addLink, choosePreset, lookupLink, siteName, toPreview } from "./site";
+import {
+    addLink,
+    choosePreset,
+    lookupLink,
+    playlistMeta,
+    siteName,
+    toPlaylistPreview,
+    toPreview,
+} from "./site";
 
 const VIMEO = {
     extractor: "Vimeo",
@@ -105,6 +113,7 @@ describe("toPreview", () => {
                 "720",
                 "480",
             ],
+            playlistUrl: null,
         });
     });
 
@@ -147,7 +156,7 @@ describe("lookupLink", () => {
         const live = new ApiError(
             "Live streams cannot be downloaded",
             422,
-            "unsupported_operation",
+            "live_not_supported",
         );
         const { post } = fakePost({ "/extract": live });
 
@@ -193,5 +202,135 @@ describe("addLink", () => {
         await expect(
             addLink("https://vimeo.com/1", "best", post),
         ).rejects.toThrow();
+    });
+});
+
+const PLAYLIST = {
+    type: "playlist",
+    extractor: "YoutubeTab",
+    id: "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC",
+    title: "29C3: Not my department",
+    uploader: "Christiaan008",
+    thumbnail: "https://img.test/pl.jpg",
+    webpage_url:
+        "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC",
+    count: 96,
+    channel_tab: false,
+    tabs: [],
+    presets: [
+        "best",
+        "1080",
+        "mp3",
+    ],
+};
+
+describe("lookupLink, for lists", () => {
+    it("answers a playlist with its header", async () => {
+        const { post } = fakePost({ "/extract": PLAYLIST });
+
+        expect(await lookupLink("https://youtube.test/list", post)).toEqual({
+            kind: "playlist",
+            preview: {
+                extractor: "YoutubeTab",
+                site: "YouTube",
+                id: PLAYLIST.id,
+                title: "29C3: Not my department",
+                uploader: "Christiaan008",
+                thumbnail: "https://img.test/pl.jpg",
+                url: PLAYLIST.webpage_url,
+                count: 96,
+                channelTab: false,
+            },
+        });
+    });
+
+    it("answers a channel with its tabs", async () => {
+        const { post } = fakePost({
+            "/extract": {
+                ...PLAYLIST,
+                type: "channel",
+                title: "3Blue1Brown",
+                count: undefined,
+                tabs: [
+                    { name: "Videos", url: "https://y.test/@x/videos" },
+                ],
+            },
+        });
+
+        const found = await lookupLink("https://y.test/@x", post);
+
+        expect(found.kind).toBe("channel");
+        if (found.kind !== "channel") throw new Error("not a channel");
+        expect(found.tabs).toEqual([
+            { name: "Videos", url: "https://y.test/@x/videos" },
+        ]);
+        expect(found.preview.count).toBeNull();
+    });
+
+    it("carries a watch link's playlist on the video's preview", async () => {
+        const { post } = fakePost({
+            "/extract": {
+                ...VIMEO,
+                type: "media",
+                playlist_url: "https://www.youtube.com/playlist?list=PL1",
+            },
+        });
+
+        const found = await lookupLink("https://youtube.test/watch", post);
+
+        if (found.kind !== "site") throw new Error("not a site");
+        expect(found.preview.playlistUrl).toBe(
+            "https://www.youtube.com/playlist?list=PL1",
+        );
+    });
+});
+
+describe("toPlaylistPreview", () => {
+    it("falls back to the link that was asked about", () => {
+        expect(
+            toPlaylistPreview(
+                { ...PLAYLIST, webpage_url: "" },
+                "https://asked.test",
+            ).url,
+        ).toBe("https://asked.test");
+    });
+});
+
+describe("playlistMeta", () => {
+    it("says what the list is, how long, and whose", () => {
+        const preview = toPlaylistPreview(PLAYLIST, "");
+        expect(playlistMeta(preview)).toBe(
+            "Playlist · 96 videos · Christiaan008",
+        );
+        expect(playlistMeta({ ...preview, count: 1 })).toBe(
+            "Playlist · 1 video · Christiaan008",
+        );
+        expect(playlistMeta({ ...preview, count: 1240 })).toBe(
+            "Playlist · 1,240 videos · Christiaan008",
+        );
+    });
+
+    it("calls a channel's tab a channel, with no count until listed", () => {
+        const preview = {
+            ...toPlaylistPreview(PLAYLIST, ""),
+            count: null,
+            channelTab: true,
+        };
+        expect(playlistMeta(preview)).toBe("Channel · Christiaan008");
+    });
+});
+
+describe("addLink, for lists", () => {
+    it("refuses a playlist rather than queueing it as one video", async () => {
+        const { post, calls } = fakePost({ "/extract": PLAYLIST });
+
+        await expect(
+            addLink("https://youtube.test/list", "best", post),
+        ).rejects.toThrow(
+            "This link is a playlist: paste it in the add box to choose its videos",
+        );
+        expect(calls.map((c) => c.path)).toEqual([
+            "/extract",
+        ]);
     });
 });
