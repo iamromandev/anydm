@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.extract import ExtractRequest, ExtractSchema
+from src.data.schema.extract import ExtractRequest, ExtractSchema, PlaylistSchema
 from src.service import ExtractService, get_extract_service
 
 router = APIRouter()
@@ -15,11 +15,11 @@ router = APIRouter()
 # empty, which is what `prefix="/extract"` plus `path=""` produces.
 @router.post(
     path="/extract",
-    response_model=Success[ExtractSchema],
+    response_model=Success[ExtractSchema | PlaylistSchema],
 )
 async def extract(
     payload: ExtractRequest,
     extract_service: Annotated[ExtractService, Depends(get_extract_service)],
 ) -> Response:
-    data: ExtractSchema = await extract_service.extract(payload.url.strip())
+    data: ExtractSchema | PlaylistSchema = await extract_service.extract(payload.url.strip())
     return Success.ok(data=data).to_resp()

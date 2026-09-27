@@ -142,7 +142,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 - **Endpoints:**
   - Health, extract and settings
     - `GET /health/check` — health probe
-    - `POST /extract` — what a page on any site yt-dlp supports offers: title, duration, thumbnail, formats, and the `presets` that can be downloaded from it today. An unsupported link answers 400 `unsupported_url`; a live stream or a playlist answers 422
+    - `POST /extract` — what a link on any site yt-dlp supports is. A page answers `type: "media"`: its title, duration, thumbnail, formats, the `presets` that can be downloaded from it today, and, for a YouTube watch link that names a playlist, `playlist_url`. A playlist, or a channel's tab, answers `type: "playlist"` with its title, uploader, `count` when the site says, and every preset; a channel home answers `type: "channel"` with its `tabs`. An unsupported link answers 400 `unsupported_url`; a live stream answers 422 `live_not_supported`
     - `GET /settings` — how this API is configured, secrets left out, and the running yt-dlp version; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads

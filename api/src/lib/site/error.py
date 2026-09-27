@@ -46,7 +46,7 @@ def live_not_supported() -> Error:
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,
         message="Live streams cannot be downloaded or played yet",
-        error_type=ErrorType.UNSUPPORTED_OPERATION,
+        error_type=ErrorType.LIVE_NOT_SUPPORTED,
     )
 
 
