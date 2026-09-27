@@ -29,7 +29,7 @@ def unsupported_url(reason: str) -> Error:
 def playlist_not_supported() -> Error:
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,
-        message="Playlists and channels are not supported yet; link a single video",
+        message="This link is a playlist or a channel: choose its videos in the add box",
         error_type=ErrorType.UNSUPPORTED_OPERATION,
     )
 

@@ -72,6 +72,33 @@ class SiteInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class Tab:
+    """One of a channel's own lists: its videos, its Shorts, its past streams."""
+
+    name: str
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlaylistInfo:
+    """A page that lists videos rather than being one: a playlist, an album, a channel."""
+
+    extractor: str
+    id: str
+    title: str
+    uploader: str = ""
+    thumbnail: str = ""
+    webpage_url: str = ""
+    #: How many videos, when the site says. A channel's tab doesn't until it is listed.
+    count: int | None = None
+    #: A channel's own list of uploads rather than a playlist someone made.
+    #: Its order shifts with every upload, so part 2 doesn't number its files.
+    channel_tab: bool = False
+    #: A channel home's lists. Empty for a page that lists videos itself.
+    tabs: list[Tab] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class Resolved:
     """A fetchable URL for one format, and the headers its server expects."""
 
@@ -100,6 +127,14 @@ class DownloadStopped(Exception):
 class SiteClient(Protocol):
     async def extract(self, url: str) -> SiteInfo:
         """What the page at ``url`` offers."""
+        ...
+
+    async def inspect(self, url: str) -> SiteInfo | PlaylistInfo:
+        """What ``url`` is: one video's page, or a list of them. For the add box.
+
+        Unlike ``extract``, a playlist is an answer here, not a refusal, and
+        its videos are left unlisted: ``list_entries`` reads those.
+        """
         ...
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
@@ -177,6 +212,43 @@ def _to_site_info(url: str, info: dict[str, Any]) -> SiteInfo:
         is_live=bool(info.get("is_live")),
         formats=[Format.from_ytdlp(raw) for raw in _raw_formats(info)],
         subtitles=site_subtitles(info),
+    )
+
+
+def _tab_name(title: str, channel: str) -> str:
+    """ "3Blue1Brown - Videos" as "Videos": the channel's name is already on screen."""
+    prefix = f"{channel} - "
+    return title[len(prefix) :] if channel and title.startswith(prefix) else title
+
+
+def _largest_thumbnail(info: dict[str, Any]) -> str:
+    """The page's thumbnail, else the last of its list, which yt-dlp orders smallest first."""
+    if info.get("thumbnail"):
+        return str(info["thumbnail"])
+    thumbnails = [t for t in info.get("thumbnails") or [] if t.get("url")]
+    return str(thumbnails[-1]["url"]) if thumbnails else ""
+
+
+def _to_playlist_info(url: str, info: dict[str, Any]) -> PlaylistInfo:
+    channel = info.get("channel") or info.get("uploader") or ""
+    tabs = [
+        Tab(_tab_name(str(tab.get("title") or ""), channel), str(tab["url"]))
+        for tab in info.get("entries") or []
+        if tab.get("url")
+    ]
+    count = info.get("playlist_count")
+    channel_id = info.get("channel_id")
+    return PlaylistInfo(
+        extractor=str(info.get("extractor_key") or info.get("extractor") or ""),
+        id=str(info.get("id") or ""),
+        title=info.get("title") or "",
+        uploader=info.get("uploader") or channel,
+        thumbnail=_largest_thumbnail(info),
+        webpage_url=info.get("webpage_url") or url,
+        count=int(count) if count is not None else None,
+        # A tab of a channel carries the channel's own id; a playlist has its own.
+        channel_tab=not tabs and bool(channel_id) and info.get("id") == channel_id,
+        tabs=tabs,
     )
 
 
@@ -274,6 +346,32 @@ class _Log:
         logger.error("yt-dlp|{}", message)
 
 
+def _is_tab(entry: dict[str, Any]) -> bool:
+    """A channel home's entry that is one of its lists rather than a video."""
+    return entry.get("_type") == "playlist" or entry.get("ie_key") == "YoutubeTab"
+
+
+def _tab_fields(entry: dict[str, Any]) -> dict[str, Any]:
+    return {"title": entry.get("title") or "", "url": entry.get("webpage_url") or entry.get("url") or ""}
+
+
+def _playlist_header(result: dict[str, Any]) -> dict[str, Any]:
+    """A playlist's own fields, with ``entries`` cut down to a channel home's tabs.
+
+    A channel home's entries are its tabs, which cost nothing more to read.
+    Anything else lists videos, which ``list_entries`` reads later, so only
+    the first is looked at, to tell the two apart.
+    """
+    header = {key: value for key, value in result.items() if key != "entries"}
+    entries = iter(result.get("entries") or [])
+    first = next(entries, None)
+    if first is not None and _is_tab(first):
+        header["entries"] = [_tab_fields(first), *(_tab_fields(e) for e in entries if _is_tab(e))]
+    else:
+        header["entries"] = []
+    return header
+
+
 def _ytdlp_extract(url: str) -> dict[str, Any]:
     # Imported here so the module loads, and its tests run, without touching
     # yt-dlp's extractor registry until a real extraction is asked for.
@@ -288,7 +386,14 @@ def _ytdlp_extract(url: str) -> dict[str, Any]:
         "logger": _Log(),
     }
     with yt_dlp.YoutubeDL(options) as ydl:
-        return ydl.extract_info(url, download=False)
+        # Unprocessed first. Processing a playlist extracts every video in it
+        # before anything can look at the answer, so a long one timed out
+        # instead of being refused. A single video is processed as it always
+        # was; a playlist is read without listing its videos.
+        result = ydl.extract_info(url, download=False, process=False)
+        if result.get("_type") == "playlist":
+            return _playlist_header(result)
+        return ydl.process_ie_result(result, download=False)
 
 
 def _ytdlp_download(params: dict[str, Any], url: str) -> None:
@@ -312,6 +417,12 @@ class YtDlpClient(SiteClient):
 
     async def extract(self, url: str) -> SiteInfo:
         return _to_site_info(url, await self._info(url))
+
+    async def inspect(self, url: str) -> SiteInfo | PlaylistInfo:
+        info = await self._raw(url)
+        if info.get("_type") == "playlist":
+            return _to_playlist_info(url, info)
+        return _to_site_info(url, info)
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
         offered = _resolved(await self._info(url))
@@ -398,7 +509,8 @@ class YtDlpClient(SiteClient):
             logger.error("YtDlpClient|{} {} failed mid-download: {}", page_url, format_id, exc)
             raise site_error.transfer_failed(str(exc)) from exc
 
-    async def _info(self, url: str) -> dict[str, Any]:
+    async def _raw(self, url: str) -> dict[str, Any]:
+        """One extraction, under the ceiling, with yt-dlp's failures as ``Error``s."""
         try:
             # The ceiling abandons the wait, not the thread: yt-dlp cannot be
             # interrupted, and its own socket timeout bounds what it leaves behind.
@@ -411,13 +523,18 @@ class YtDlpClient(SiteClient):
         except Exception as exc:
             logger.error("YtDlpClient|{}: {}", url, exc)
             raise classify(exc) from exc
-        if info.get("_type") == "playlist":
-            raise site_error.playlist_not_supported()
         # yt-dlp's generic extractor "extracts" any file link, a PDF included,
         # as one format of unknown codecs. That is a direct download, not a
         # page on a site, and saying so lets the add box fall back to one.
         if info.get("direct"):
             raise site_error.unsupported_url(f"{url} is a file, not a page on a site")
+        return info
+
+    async def _info(self, url: str) -> dict[str, Any]:
+        """``_raw`` for callers that need one video: the downloader and the player."""
+        info = await self._raw(url)
+        if info.get("_type") == "playlist":
+            raise site_error.playlist_not_supported()
         return info
 
 

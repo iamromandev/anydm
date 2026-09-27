@@ -6,6 +6,7 @@ The fixtures carry no URLs or header values, so the tests add them.
 import errno
 import json
 import time
+from collections.abc import Iterator
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,18 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.lib.site.client import DownloadStopped, FormatProgress, Resolved, YtDlpClient, classify, ytdlp_version
+from src.lib.site.client import (
+    DownloadStopped,
+    FormatProgress,
+    PlaylistInfo,
+    Resolved,
+    SiteInfo,
+    Tab,
+    YtDlpClient,
+    _playlist_header,
+    classify,
+    ytdlp_version,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "ytdlp"
 HEADERS = {"User-Agent": "Mozilla/5.0 (test)", "Accept": "*/*"}
@@ -471,3 +483,127 @@ def test_a_failure_after_progress_is_a_retryable_transfer_error(tmp_path: Path) 
 
     assert (caught.value.code, caught.value.retry_able) == (Code.BAD_GATEWAY, True)
     assert (caught.value.message or "").startswith("Download failed")
+
+
+# --- inspect -------------------------------------------------------------------
+
+PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC"
+
+#: What ``_ytdlp_extract`` hands back for a playlist: its header, entries cut to [].
+PLAYLIST = {
+    "_type": "playlist",
+    "extractor_key": "YoutubeTab",
+    "id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC",
+    "title": "29C3: Not my department",
+    "uploader": "Christiaan008",
+    "channel": "Christiaan008",
+    "channel_id": "UCEPzS1rYsrkqzSLNp76nrcg",
+    "playlist_count": 96,
+    "thumbnails": [{"url": "https://img.test/small.jpg"}, {"url": "https://img.test/large.jpg"}],
+    "webpage_url": PLAYLIST_URL,
+    "entries": [],
+}
+
+CHANNEL_URL = "https://www.youtube.com/@3blue1brown"
+
+#: A channel home: its entries are its tabs.
+CHANNEL = {
+    "_type": "playlist",
+    "extractor_key": "YoutubeTab",
+    "id": "@3blue1brown",
+    "title": "3Blue1Brown",
+    "channel": "3Blue1Brown",
+    "channel_id": "UCYO_jab_esuFRV4b17AJtAw",
+    "webpage_url": CHANNEL_URL,
+    "entries": [
+        {"title": "3Blue1Brown - Videos", "url": "https://www.youtube.com/@3blue1brown/videos"},
+        {"title": "3Blue1Brown - Shorts", "url": "https://www.youtube.com/@3blue1brown/shorts"},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_inspect_describes_a_video_as_extract_does() -> None:
+    info = await _client(_info("vimeo")).inspect("http://vimeo.com/75629013")
+
+    assert isinstance(info, SiteInfo)
+    assert (info.extractor, info.id) == ("Vimeo", "75629013")
+
+
+@pytest.mark.asyncio
+async def test_inspect_describes_a_playlist_without_its_videos() -> None:
+    info = await _client(PLAYLIST).inspect(PLAYLIST_URL)
+
+    assert isinstance(info, PlaylistInfo)
+    assert (info.extractor, info.id, info.title) == ("YoutubeTab", PLAYLIST["id"], "29C3: Not my department")
+    assert (info.uploader, info.count, info.channel_tab, info.tabs) == ("Christiaan008", 96, False, [])
+    assert info.thumbnail == "https://img.test/large.jpg"
+    assert info.webpage_url == PLAYLIST_URL
+
+
+@pytest.mark.asyncio
+async def test_a_channel_tab_is_marked_and_has_no_count_yet() -> None:
+    tab = {
+        **PLAYLIST,
+        "id": "UCYO_jab_esuFRV4b17AJtAw",
+        "channel_id": "UCYO_jab_esuFRV4b17AJtAw",
+        "title": "3Blue1Brown - Videos",
+        "playlist_count": None,
+    }
+
+    info = await _client(tab).inspect("https://www.youtube.com/@3blue1brown/videos")
+
+    assert isinstance(info, PlaylistInfo)
+    assert (info.channel_tab, info.count) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_a_channel_home_lists_its_tabs_by_name() -> None:
+    info = await _client(CHANNEL).inspect(CHANNEL_URL)
+
+    assert isinstance(info, PlaylistInfo)
+    assert info.tabs == [
+        Tab("Videos", "https://www.youtube.com/@3blue1brown/videos"),
+        Tab("Shorts", "https://www.youtube.com/@3blue1brown/shorts"),
+    ]
+    assert info.channel_tab is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_still_refuses_a_playlist() -> None:
+    with pytest.raises(Error) as caught:
+        await _client(PLAYLIST).resolve(PLAYLIST_URL, ["18"])
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+
+
+def test_a_playlist_header_looks_at_one_video_only() -> None:
+    pulled: list[int] = []
+
+    def videos() -> Iterator[dict[str, Any]]:
+        for n in range(3):
+            pulled.append(n)
+            yield {"_type": "url", "ie_key": "Youtube", "id": f"v{n}", "url": f"https://youtu.be/v{n}"}
+
+    header = _playlist_header({"_type": "playlist", "id": "PL1", "title": "A list", "entries": videos()})
+
+    assert header["entries"] == []
+    assert header["title"] == "A list"
+    assert pulled == [0]
+
+
+def test_a_channel_home_header_keeps_its_tabs() -> None:
+    # The shape the spike found on @TED: each tab a playlist, its URL in webpage_url.
+    tabs = iter(
+        [
+            {"_type": "playlist", "title": "X - Videos", "url": None, "webpage_url": "https://y.test/@x/videos"},
+            {"_type": "url", "ie_key": "YoutubeTab", "title": "X - Shorts", "url": "https://y.test/@x/shorts"},
+        ]
+    )
+
+    header = _playlist_header({"_type": "playlist", "id": "@x", "entries": tabs})
+
+    assert header["entries"] == [
+        {"title": "X - Videos", "url": "https://y.test/@x/videos"},
+        {"title": "X - Shorts", "url": "https://y.test/@x/shorts"},
+    ]

@@ -14,7 +14,7 @@ from typing import Any
 
 from src.core.error import Error
 from src.lib.site import error as site_error
-from src.lib.site.client import FormatProgress, Resolved, SiteInfo
+from src.lib.site.client import FormatProgress, PlaylistInfo, Resolved, SiteInfo
 from src.lib.site.format import Format
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ytdlp"
@@ -50,9 +50,11 @@ def sized(info: SiteInfo, sizes: dict[str, int]) -> SiteInfo:
 class FakeSiteClient:
     """Serves one recorded site; records what was asked of it."""
 
-    def __init__(self, info: SiteInfo, *, fail: Error | None = None) -> None:
+    def __init__(self, info: SiteInfo, *, fail: Error | None = None, playlist: PlaylistInfo | None = None) -> None:
         self.info = info
         self.fail = fail
+        #: What ``inspect`` answers instead of ``info``, when a test wants a list.
+        self.playlist = playlist
         self.extracted: list[str] = []
         self.resolved: list[tuple[str, list[str]]] = []
         self.opened: list[str] = []
@@ -64,6 +66,12 @@ class FakeSiteClient:
         if self.fail is not None:
             raise self.fail
         return self.info
+
+    async def inspect(self, url: str) -> SiteInfo | PlaylistInfo:
+        self.extracted.append(url)
+        if self.fail is not None:
+            raise self.fail
+        return self.playlist or self.info
 
     async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
         self.opened.append(url)
