@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.error import Error
+from src.data.type import TaskStatus
 from src.lib.site import error as site_error
 from src.lib.site.client import FormatProgress, PlaylistEntry, PlaylistInfo, Resolved, SiteInfo
 from src.lib.site.format import Format
@@ -129,3 +130,15 @@ class FakeSiteClient:
     def _resolved(self, format_id: str) -> Resolved:
         fmt = next(f for f in self.info.formats if f.id == format_id)
         return Resolved(media_url(self.site, format_id), dict(HEADERS), fragmented=fmt.fragmented)
+
+
+class HeldVideos:
+    """A task repo that knows only which videos are held: ``(extractor, video_id) -> status``."""
+
+    def __init__(self, held: dict[tuple[str, str], TaskStatus] | None = None) -> None:
+        self.held = held or {}
+        self.asked: list[tuple[str, list[str]]] = []
+
+    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, TaskStatus]:
+        self.asked.append((extractor, list(video_ids)))
+        return {v: s for (e, v), s in self.held.items() if e == extractor and v in video_ids}

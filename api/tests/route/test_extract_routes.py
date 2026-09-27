@@ -5,12 +5,14 @@ from collections.abc import AsyncIterator, Callable, Iterator
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from src.config import get_settings
-from src.lib.site.client import PlaylistInfo, Tab
+from src.lib.site.client import PlaylistEntry, PlaylistInfo, Tab
 from src.main import app
-from src.service import ExtractService, get_extract_service
+from src.service import ExtractService, ListingService, get_extract_service, get_listing_service
+from src.service.extract.listing_service import LISTING_LIMIT
 
-from tests.sites import FakeSiteClient, site_info
+from tests.sites import FakeSiteClient, HeldVideos, site_info
 
 
 @pytest.fixture(autouse=True)
@@ -52,3 +54,54 @@ async def test_a_channel_answers_its_tabs(http: httpx.AsyncClient, use_client: C
 
     assert body["data"]["type"] == "channel"
     assert body["data"]["tabs"] == [{"name": "Videos", "url": "https://y.test/@x/videos"}]
+
+
+@pytest.fixture
+def use_listing() -> Iterator[Callable[[FakeSiteClient], None]]:
+    def use(fake: FakeSiteClient) -> None:
+        app.dependency_overrides[get_listing_service] = lambda: ListingService(client=fake, repo=HeldVideos())
+
+    yield use
+    app.dependency_overrides.clear()
+
+
+def _video(n: int) -> PlaylistEntry:
+    return PlaylistEntry(index=n, id=f"v{n}", url=f"https://youtu.be/v{n}", extractor="Youtube")
+
+
+@pytest.mark.asyncio
+async def test_entries_stream_as_server_sent_events(
+    http: httpx.AsyncClient, use_listing: Callable[[FakeSiteClient], None]
+) -> None:
+    use_listing(FakeSiteClient(site_info("youtube"), listing=[_video(1), _video(2)]))
+
+    response = await http.get("/extract/entries", params={"url": "https://y.test/list"})
+
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: entries" in response.text
+    assert "event: done" in response.text
+    assert '"count": 2' in response.text
+
+
+@pytest.mark.asyncio
+async def test_a_limit_past_the_cap_is_refused(
+    http: httpx.AsyncClient, use_listing: Callable[[FakeSiteClient], None]
+) -> None:
+    use_listing(FakeSiteClient(site_info("youtube")))
+
+    response = await http.get("/extract/entries", params={"url": "https://y.test/list", "limit": LISTING_LIMIT + 1})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_stream_takes_its_key_in_the_query(
+    http: httpx.AsyncClient, use_listing: Callable[[FakeSiteClient], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An EventSource can't send a header.
+    monkeypatch.setattr(get_settings(), "api_key", SecretStr("s3cret-key"))
+    use_listing(FakeSiteClient(site_info("youtube"), listing=[_video(1)]))
+
+    response = await http.get("/extract/entries", params={"url": "https://y.test/list", "api_key": "s3cret-key"})
+
+    assert response.status_code == 200

@@ -27,6 +27,7 @@ HEADER = "X-API-Key"
 QUERY_ROUTES = frozenset(
     {
         "/download/events",
+        "/extract/entries",
         "/stream/events",
         "/download/{task_id}/file",
         "/download/{task_id}/file/{file_index}",
