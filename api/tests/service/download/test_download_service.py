@@ -1335,6 +1335,25 @@ async def test_clear_finished_takes_whole_groups_but_no_single_videos(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_fetching_one_group_carries_its_counts(tmp_path: Path) -> None:
+    service, _, _, group_id = _group_service(tmp_path)
+    service._torrents = _PassThrough()  # ty: ignore[invalid-assignment]
+
+    fetched = await service.get_task(group_id)
+
+    assert fetched.entry_counts is not None and fetched.entry_counts.total == 3
+
+
+class _PassThrough:
+    """A torrent service that hands site rows back as they are."""
+
+    async def schema(self, task: Any) -> Any:
+        from src.data.schema.download import TaskSchema
+
+        return TaskSchema.model_validate(task)
+
+
+@pytest.mark.asyncio
 async def test_only_a_group_has_entries(tmp_path: Path) -> None:
     service, repo, _ = _service(downloads_dir=tmp_path)
     task_id = uuid.uuid4()

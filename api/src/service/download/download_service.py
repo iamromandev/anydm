@@ -371,6 +371,7 @@ class DownloadService(BaseService):
 
     async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
         (schema,) = await self._with_positions([await self._torrents.schema(await self._require(task_id))])
+        (schema,) = await self._with_counts([schema])
         return schema
 
     #: Stopping this close to the end counts as having watched it (#96).
