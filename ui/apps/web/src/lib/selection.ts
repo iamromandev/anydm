@@ -13,6 +13,14 @@ export function isSelectable(entry: PlaylistEntry): boolean {
     return entry.available && entry.have === null;
 }
 
+/**
+ * Tickable by hand: anything the site serves that hasn't finished. A held
+ * video that failed or paused, ticked, goes back in its group's queue (part 3).
+ */
+export function canTick(entry: PlaylistEntry): boolean {
+    return entry.available && entry.have !== "complete";
+}
+
 /** The ticks after a batch arrives: its selectable videos, ticked. */
 export function tickArrivals(
     selected: ReadonlySet<number>,
@@ -30,7 +38,7 @@ export function toggle(
     entry: PlaylistEntry,
 ): Set<number> {
     const next = new Set(selected);
-    if (!isSelectable(entry)) return next;
+    if (!canTick(entry)) return next;
     if (next.has(entry.index)) next.delete(entry.index);
     else next.add(entry.index);
     return next;
@@ -51,14 +59,17 @@ export function toggleRange(
     const high = Math.max(anchor, entry.index);
     const next = new Set(selected);
     for (const row of shown) {
-        if (row.index < low || row.index > high || !isSelectable(row)) continue;
+        if (row.index < low || row.index > high || !canTick(row)) continue;
         if (on) next.add(row.index);
         else next.delete(row.index);
     }
     return next;
 }
 
-/** All or None, over the rows the filter shows. Hidden rows keep their ticks. */
+/**
+ * All or None, over the rows the filter shows. Hidden rows keep their ticks.
+ * All takes only what isn't held; None clears everything shown.
+ */
 export function setAll(
     selected: ReadonlySet<number>,
     shown: readonly PlaylistEntry[],
@@ -66,9 +77,8 @@ export function setAll(
 ): Set<number> {
     const next = new Set(selected);
     for (const row of shown) {
-        if (!isSelectable(row)) continue;
-        if (on) next.add(row.index);
-        else next.delete(row.index);
+        if (on && isSelectable(row)) next.add(row.index);
+        if (!on) next.delete(row.index);
     }
     return next;
 }

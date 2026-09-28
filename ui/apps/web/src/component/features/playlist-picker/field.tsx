@@ -29,7 +29,7 @@ import {
 import { PRESET_OPTIONS, type Preset } from "@/lib/prefs";
 import {
     filterEntries,
-    isSelectable,
+    canTick,
     presetHint,
     selectionSummary,
     setAll,
@@ -377,7 +377,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                         checked={selected.value.has(
                                             entry.index,
                                         )}
-                                        disabled={!isSelectable(entry)}
+                                        disabled={!canTick(entry)}
                                         onClick$={(e: MouseEvent) =>
                                             tick(entry, e.shiftKey)
                                         }
