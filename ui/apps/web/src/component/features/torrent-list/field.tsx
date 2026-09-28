@@ -33,6 +33,8 @@ export interface TorrentListProps {
     onPauseVideo: (id: string) => void;
     onResumeVideo: (id: string) => void;
     onRemoveVideo: (groupId: string, id: string) => void;
+    /** Play all from a group's card (part 4). */
+    onPlayGroup: (id: string) => void;
 }
 
 export type TorrentFilter =
@@ -64,6 +66,7 @@ export const TorrentList = component$<TorrentListProps>(
         onPauseVideo,
         onResumeVideo,
         onRemoveVideo,
+        onPlayGroup,
     }) => {
         // One card at a time: two open at once turns a list into a wall.
         const store = useStore({ expandedId: "" as string });
@@ -165,6 +168,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onResumeVideo={onResumeVideo}
                                     onPlayVideo={onPlay}
                                     onRemoveVideo={onRemoveVideo}
+                                    onPlayGroup={onPlayGroup}
                                 />
                             ) : (
                                 <TorrentCard

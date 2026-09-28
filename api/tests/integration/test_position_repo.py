@@ -1,8 +1,11 @@
 """Where each download was left, in Postgres (#96)."""
 
+import uuid
+
 import pytest
+from src.core.common import now
 from src.data.db.model import PlaybackPosition, Task
-from src.data.repo import PositionDatabaseRepo
+from src.data.repo import PositionDatabaseRepo, TaskDatabaseRepo
 from src.data.type import Kind, Platform, Preset, TaskStatus
 
 pytestmark = pytest.mark.integration
@@ -56,3 +59,38 @@ async def test_removing_a_task_removes_its_positions(db: None) -> None:
     await task.delete()
 
     assert await PlaybackPosition.all().count() == 0
+
+
+@pytest.mark.asyncio
+async def test_watched_videos_are_counted_by_group(db: None) -> None:
+    group = await TaskDatabaseRepo().create_group(
+        {
+            "source_url": "https://y.test/list",
+            "platform": Platform.SITE,
+            "preset": Preset.BEST,
+            "kind": Kind.PLAYLIST,
+            "status": TaskStatus.PENDING,
+            "title": "list",
+        },
+        [
+            {
+                "source_url": f"https://y.test/v{n}",
+                "platform": Platform.SITE,
+                "preset": Preset.BEST,
+                "kind": Kind.VIDEO,
+                "status": TaskStatus.COMPLETE,
+                "title": f"v{n}",
+                "position": n,
+            }
+            for n in range(1, 4)
+        ],
+    )
+    videos = await Task.filter(parent_id=group.id).order_by("position")
+    repo = PositionDatabaseRepo()
+    await repo.save(videos[0].id, 0, position_seconds=0, duration_seconds=60, watched=True)
+    await repo.save(videos[1].id, 0, position_seconds=30, duration_seconds=60, watched=False)
+    await repo.save(videos[2].id, 0, position_seconds=0, duration_seconds=60, watched=True)
+    await Task.filter(id=videos[2].id).update(deleted_at=now(), status=TaskStatus.CANCELED)
+
+    other = uuid.uuid4()
+    assert await repo.watched_in_groups([group.id, other]) == {group.id: 1, other: 0}

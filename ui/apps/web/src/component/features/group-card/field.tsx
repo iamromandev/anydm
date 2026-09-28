@@ -44,6 +44,8 @@ export interface GroupCardProps {
     /** A finished video, from its file. */
     onPlayVideo: (id: string) => void;
     onRemoveVideo: (groupId: string, id: string) => void;
+    /** Play all (part 4): from where it was left. */
+    onPlayGroup: (id: string) => void;
 }
 
 /**
@@ -67,6 +69,7 @@ export const GroupCard = component$<GroupCardProps>(
         onResumeVideo,
         onPlayVideo,
         onRemoveVideo,
+        onPlayGroup,
     }) => {
         const counts = task.entryCounts;
         const status = statusView(task.status);
@@ -198,6 +201,20 @@ export const GroupCard = component$<GroupCardProps>(
                         )}
                         <span>Entries</span>
                     </button>
+                    {total > 0 && (
+                        <button
+                            type="button"
+                            class="action-btn action-btn--primary"
+                            aria-label="Play all"
+                            onClick$={() => onPlayGroup(task.id)}
+                        >
+                            <LuMonitorPlay
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
                     {canPause(task.status) && (
                         <button
                             type="button"

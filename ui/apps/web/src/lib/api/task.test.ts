@@ -1316,6 +1316,7 @@ describe("normalizeApiTask for groups", () => {
             downloading: 1,
             paused: 0,
             failed: 0,
+            watched: 0,
         });
     });
 
@@ -1360,5 +1361,9 @@ describe("normalizeEntryCounts", () => {
             failed: 0,
         });
         expect(normalizeEntryCounts(null)).toBeUndefined();
+    });
+
+    it("reads the watched count when the list sent one", () => {
+        expect(normalizeEntryCounts({ total: 2, watched: 1 })?.watched).toBe(1);
     });
 });

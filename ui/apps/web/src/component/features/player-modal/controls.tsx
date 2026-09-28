@@ -39,11 +39,13 @@ export interface PlayerControlsProps {
     files?: PlayableFile[];
     currentFileIndex?: number | null;
     onPickFile?: (index: number) => void;
-    /** Previous/Next buttons appear only with more than one media file (#97). */
+    /** Previous/Next buttons, shown when `showSteps` says so (#97, part 4). */
     onPreviousFile?: () => void;
     onNextFile?: () => void;
     hasPreviousFile?: boolean;
     hasNextFile?: boolean;
+    /** Prev and Next: a torrent's files, or a play queue (part 4). */
+    showSteps?: boolean;
     /** The source's audio tracks, when there's more than one (#99). */
     audioTracks?: AudioTrack[];
     audioTrack?: number | null;
@@ -91,6 +93,7 @@ export const PlayerControls = component$<PlayerControlsProps>(
         onNextFile,
         hasPreviousFile,
         hasNextFile,
+        showSteps,
         audioTracks,
         audioTrack,
         audioPending,
@@ -195,7 +198,7 @@ export const PlayerControls = component$<PlayerControlsProps>(
                 </div>
 
                 <div class="player-controls-row">
-                    {files && files.length > 1 && (
+                    {showSteps && (
                         <button
                             type="button"
                             class="player-controls-button"
@@ -228,7 +231,7 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         )}
                     </button>
 
-                    {files && files.length > 1 && (
+                    {showSteps && (
                         <button
                             type="button"
                             class="player-controls-button"

@@ -213,7 +213,27 @@ export function groupProgressLine(
         task.downloadedBytes > 0
             ? ` · ${formatBytes(task.downloadedBytes)}`
             : "";
-    return `${count(done)} of ${count(total)}${bytes}`;
+    const watched = task.entryCounts?.watched ?? 0;
+    const seen = watched > 0 ? ` · ${count(watched)} watched` : "";
+    return `${count(done)} of ${count(total)}${bytes}${seen}`;
+}
+
+/** Frames leave the watched count out; the list's last value stands (spec: The list). */
+export function keepWatched(rows: UiTask[], held: UiTask[]): UiTask[] {
+    const prior = new Map(
+        held.map((row) => [
+            row.id,
+            row,
+        ]),
+    );
+    return rows.map((row) => {
+        const counts = row.entryCounts;
+        const last = prior.get(row.id)?.entryCounts?.watched;
+        if (!counts || counts.watched !== undefined || last === undefined) {
+            return row;
+        }
+        return { ...row, entryCounts: { ...counts, watched: last } };
+    });
 }
 
 /** "2 downloading · 55 queued · 1 failed", leaving out what's zero. */

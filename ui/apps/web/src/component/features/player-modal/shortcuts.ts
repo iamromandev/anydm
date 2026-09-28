@@ -121,7 +121,10 @@ export const SHORTCUT_HINTS: { keys: string; description: string }[] = [
     { keys: "M", description: "Mute" },
     { keys: "F", description: "Fullscreen" },
     { keys: "C", description: "Subtitles on or off" },
-    { keys: "Shift+N / Shift+P", description: "Next or previous file" },
+    {
+        keys: "Shift+N / Shift+P",
+        description: "Next or previous file or video",
+    },
     { keys: "?", description: "This list" },
     { keys: "Esc", description: "Leave fullscreen, or close" },
 ];

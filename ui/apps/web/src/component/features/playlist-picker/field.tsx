@@ -41,6 +41,7 @@ import {
     hasDates,
     approxAge,
 } from "@/lib/selection";
+import { queueFromEntries, type QueueItem } from "@/lib/queue";
 import { virtualWindow } from "@/lib/virtual";
 import "./field.css";
 
@@ -69,6 +70,8 @@ export interface PlaylistPickerProps {
     /** Queue one video, the way a pasted link is queued. */
     onDownload: (url: string) => Promise<void>;
     onPlay: (url: string) => void;
+    /** Play the ticked videos in order, from `start` (part 4). */
+    onPlayAll?: (items: QueueItem[], start: number) => void;
     /** The preset the footer starts on. */
     defaultPreset: Preset;
     /** Add the ticked videos as one group; the shell closes the picker. */
@@ -76,13 +79,23 @@ export interface PlaylistPickerProps {
 }
 
 export const PlaylistPicker = component$<PlaylistPickerProps>(
-    ({ target, onClose, onDownload, onPlay, defaultPreset, onAdd }) => {
+    ({
+        target,
+        onClose,
+        onDownload,
+        onPlay,
+        onPlayAll,
+        defaultPreset,
+        onAdd,
+    }) => {
         const listing = useSignal<ListingState>(EMPTY_LISTING);
         const selected = useSignal<Set<number>>(new Set());
         const listRef = useSignal<HTMLElement>();
         const store = useStore({
             /** Bumped by Retry, which lists again from the start. */
             attempt: 0,
+            /** The attempt this picker last started listing; -1 before any. */
+            started: -1,
             /** Stop was pressed, or the connection dropped. */
             stopped: false,
             scrollTop: 0,
@@ -109,12 +122,21 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
          */
         useVisibleTask$(
             ({ track, cleanup }) => {
-                track(() => store.attempt);
+                const attempt = track(() => store.attempt);
                 const stopped = track(() => store.stopped);
                 if (stopped) {
                     listing.value = stopListing(listing.value);
                     return;
                 }
+                // Qwik (beta.43) re-runs this task when the player opens over
+                // the picker, though nothing it tracks changed. The same
+                // attempt keeps its list and ticks; one still listing stops,
+                // with Retry, rather than silently starting over (part 4).
+                if (store.started === attempt) {
+                    listing.value = stopListing(listing.value);
+                    return;
+                }
+                store.started = attempt;
                 listing.value = EMPTY_LISTING;
                 selected.value = new Set();
                 const source = new EventSource(entriesUrl(target.url));
@@ -194,6 +216,25 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             // The start of that day, where the person is.
             const since = new Date(`${value}T00:00:00`).getTime() / 1000;
             selected.value = tickUploadedAfter(listing.value.entries, since);
+        });
+
+        /** Play all, or a row's Play: the ticked videos in order, from that row. */
+        const playFrom = $((entry: PlaylistEntry | null) => {
+            const items = queueFromEntries(
+                listing.value.entries,
+                selected.value,
+            );
+            if (!onPlayAll || items.length === 0) {
+                if (entry) onPlay(entry.url);
+                return;
+            }
+            // A row's Play starts at that row when it's ticked; else it plays alone.
+            const at = entry ? items.findIndex((i) => i.key === entry.url) : 0;
+            if (entry && at === -1) {
+                onPlay(entry.url);
+                return;
+            }
+            onPlayAll(items, Math.max(0, at));
         });
 
         const add = $(async () => {
@@ -417,7 +458,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                             type="button"
                                             class="playlist-picker-action"
                                             disabled={!entry.available}
-                                            onClick$={() => onPlay(entry.url)}
+                                            onClick$={() => playFrom(entry)}
                                             aria-label={`Play ${label}`}
                                         >
                                             <LuPlay
@@ -520,6 +561,14 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                     Retry
                                 </button>
                             )}
+                            <button
+                                type="button"
+                                class="playlist-picker-button"
+                                disabled={chosen === 0}
+                                onClick$={() => playFrom(null)}
+                            >
+                                Play all
+                            </button>
                             <button
                                 type="button"
                                 class="playlist-picker-button playlist-picker-button--primary"

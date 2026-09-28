@@ -133,12 +133,19 @@ class DownloadService(BaseService):
         self._published(group)
 
     async def _with_counts(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
-        """Each group row with how its videos stand: one query per group on the page."""
+        """Each group row with how its videos stand, and how many were watched."""
         if self._groups is None:
             return schemas
-        for schema in schemas:
-            if isinstance(schema, TaskSchema) and schema.kind == Kind.PLAYLIST:
-                schema.entry_counts = await self._groups.counts(schema.id)
+        groups = [s for s in schemas if isinstance(s, TaskSchema) and s.kind == Kind.PLAYLIST]
+        watched = (
+            await self._positions.watched_in_groups([g.id for g in groups])
+            if self._positions is not None and groups
+            else {}
+        )
+        for schema in groups:
+            counts = await self._groups.counts(schema.id)
+            counts.watched = watched.get(schema.id, 0)
+            schema.entry_counts = counts
         return schemas
 
     def _require_space(self, extra_bytes: int | None = None) -> None:

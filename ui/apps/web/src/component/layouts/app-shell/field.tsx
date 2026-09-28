@@ -30,6 +30,7 @@ import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Disk } from "@/lib/api/disk";
 import type { PickerTarget, PlaylistRequest } from "@/lib/api/playlist";
+import type { QueueItem } from "@/lib/queue";
 import type { Connection } from "@/lib/connection";
 import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
@@ -130,6 +131,15 @@ export interface AppShellProps {
     onPauseVideo: (id: string) => void;
     onResumeVideo: (id: string) => void;
     onRemoveVideo: (groupId: string, id: string) => void;
+    /** Play all (part 4): a picker's ticked videos, or a group's. */
+    onPlayQueue: (items: QueueItem[], start: number) => void;
+    onPlayGroup: (id: string) => void;
+    /** Where the play queue stands, for the player's Prev, Next and up-next. */
+    playerHasPreviousItem: boolean;
+    playerHasNextItem: boolean;
+    playerNextItemTitle: string;
+    onNextItem: () => void;
+    onPreviousItem: () => void;
 }
 
 export const AppShell = component$<AppShellProps>(
@@ -200,6 +210,13 @@ export const AppShell = component$<AppShellProps>(
         onPauseVideo,
         onResumeVideo,
         onRemoveVideo,
+        onPlayQueue,
+        onPlayGroup,
+        playerHasPreviousItem,
+        playerHasNextItem,
+        playerNextItemTitle,
+        onNextItem,
+        onPreviousItem,
     }) => {
         const stats = aggregateStats(tasks);
 
@@ -314,6 +331,7 @@ export const AppShell = component$<AppShellProps>(
                                 onPauseVideo={onPauseVideo}
                                 onResumeVideo={onResumeVideo}
                                 onRemoveVideo={onRemoveVideo}
+                                onPlayGroup={onPlayGroup}
                             />
                         </section>
                     </div>
@@ -382,6 +400,11 @@ export const AppShell = component$<AppShellProps>(
                     subtitleLanguage={prefs.subtitleLanguage}
                     onPositionSaved={onPositionSaved}
                     files={playerFiles}
+                    hasPreviousItem={playerHasPreviousItem}
+                    hasNextItem={playerHasNextItem}
+                    nextItemTitle={playerNextItemTitle}
+                    onNextItem={onNextItem}
+                    onPreviousItem={onPreviousItem}
                     onClose={onPlayerModalClose}
                 />
 
@@ -407,6 +430,7 @@ export const AppShell = component$<AppShellProps>(
                             });
                         })}
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
+                        onPlayAll={onPlayQueue}
                         defaultPreset={prefs.defaultPreset}
                         onAdd={$(async (request: PlaylistRequest) => {
                             await onAddPlaylist(request);

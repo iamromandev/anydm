@@ -92,6 +92,16 @@ export interface PlayerModalProps {
     audioLanguage?: string;
     /** The subtitle language to show from the start; "" for none (#100). */
     subtitleLanguage?: string;
+    /**
+     * A play queue around this item (part 4), owned by the page. When there's
+     * no next or previous file, Next and Previous, and the up-next countdown,
+     * move through the queue instead.
+     */
+    hasPreviousItem?: boolean;
+    hasNextItem?: boolean;
+    nextItemTitle?: string;
+    onNextItem?: () => void | Promise<void>;
+    onPreviousItem?: () => void | Promise<void>;
     onClose: () => void;
 }
 
@@ -114,6 +124,11 @@ export const PlayerModal = component$<PlayerModalProps>(
         onPositionSaved,
         audioLanguage,
         subtitleLanguage,
+        hasPreviousItem,
+        hasNextItem,
+        nextItemTitle,
+        onNextItem,
+        onPreviousItem,
         onClose,
     }) => {
         const videoRef = useSignal<HTMLVideoElement>();
@@ -135,6 +150,10 @@ export const PlayerModal = component$<PlayerModalProps>(
         // component's rather than a prop, so the task below reliably re-runs
         // on every pick.
         const chosen = useSignal<number | null>(null);
+        // Bumped after the page swaps the source for the next queue item.
+        // The task tracks this, not the source props: tracking a prop
+        // re-runs a task only once in this Qwik beta.
+        const step = useSignal(0);
         const panelRef = useSignal<HTMLDivElement>();
         const store = useStore({
             isLoading: false,
@@ -187,6 +206,19 @@ export const PlayerModal = component$<PlayerModalProps>(
             // and how many seconds are left. `null` means no countdown showing.
             upNextIndex: null as number | null,
             upNextSecondsLeft: null as number | null,
+            // Counting down to the queue's next video rather than a file (part
+            // 4), and what the overlay calls whichever comes next.
+            upNextItem: false as boolean,
+            upNextTitle: "" as string,
+        });
+
+        /** Another queue item: the page swaps the source, then the task re-runs. */
+        const goItem = $(async (dir: 1 | -1) => {
+            const move = dir === 1 ? onNextItem : onPreviousItem;
+            if (!move) return;
+            chosen.value = null;
+            await move();
+            step.value += 1;
         });
 
         useVisibleTask$(
@@ -197,6 +229,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                 const sourceTask = track(() => taskId) ?? "";
                 const sourceFileIndex = track(() => fileIndex) ?? null;
                 const picked = track(() => chosen.value);
+                track(() => step.value);
                 const sourceFromTorrent = Boolean(track(() => fromTorrent));
 
                 if (!isOpen || (!sourceUrl && !sourceTask)) {
@@ -246,6 +279,8 @@ export const PlayerModal = component$<PlayerModalProps>(
                 upNextRef.value = undefined;
                 store.upNextIndex = null;
                 store.upNextSecondsLeft = null;
+                store.upNextItem = false;
+                store.upNextTitle = "";
                 // Read, not tracked: a change in Settings applies to the
                 // next thing played, not to this one.
                 const preferred: StreamAudio = {
@@ -547,6 +582,8 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 }
                                 store.upNextIndex = null;
                                 store.upNextSecondsLeft = null;
+                                store.upNextItem = false;
+                                store.upNextTitle = "";
                             };
                             const goToFile = (index: number) => {
                                 clearUpNext();
@@ -566,14 +603,28 @@ export const PlayerModal = component$<PlayerModalProps>(
                                     store.currentFileIndex,
                                     1,
                                 );
-                                if (next === null) return;
+                                // A torrent's next file, else the queue's next
+                                // video (part 4), else nothing: it just ends.
+                                if (next === null && !hasNextItem) return;
                                 store.upNextIndex = next;
+                                store.upNextItem = next === null;
+                                store.upNextTitle =
+                                    next !== null
+                                        ? ((files ?? [])
+                                              .find((f) => f.index === next)
+                                              ?.path.split("/")
+                                              .pop() ?? "")
+                                        : (nextItemTitle ?? "");
                                 store.upNextSecondsLeft = UP_NEXT_SECONDS;
                                 upNextTimer = setInterval(() => {
                                     const left =
                                         (store.upNextSecondsLeft ?? 1) - 1;
                                     if (left <= 0) {
-                                        goToFile(next);
+                                        if (next !== null) goToFile(next);
+                                        else {
+                                            clearUpNext();
+                                            goItem(1);
+                                        }
                                         return;
                                     }
                                     store.upNextSecondsLeft = left;
@@ -589,6 +640,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 playNow: () => {
                                     if (store.upNextIndex !== null) {
                                         goToFile(store.upNextIndex);
+                                    } else if (store.upNextItem) {
+                                        clearUpNext();
+                                        goItem(1);
                                     }
                                 },
                             });
@@ -1034,21 +1088,23 @@ export const PlayerModal = component$<PlayerModalProps>(
 
         // The Previous/Next buttons and their shortcuts (#97): one step
         // through `files` in the natural order the file menu already uses.
-        const handlePreviousFile = $(() => {
+        const handlePreviousFile = $(async () => {
             const index = adjacentFileIndex(
                 files ?? [],
                 store.currentFileIndex,
                 -1,
             );
             if (index !== null) chosen.value = index;
+            else if (hasPreviousItem) await goItem(-1);
         });
-        const handleNextFile = $(() => {
+        const handleNextFile = $(async () => {
             const index = adjacentFileIndex(
                 files ?? [],
                 store.currentFileIndex,
                 1,
             );
             if (index !== null) chosen.value = index;
+            else if (hasNextItem) await goItem(1);
         });
 
         // From the up-next overlay (#97): the task above runs the countdown.
@@ -1423,19 +1479,23 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 onPickFile={handlePickFile}
                                 onPreviousFile={handlePreviousFile}
                                 onNextFile={handleNextFile}
+                                showSteps={
+                                    (files?.length ?? 0) > 1 ||
+                                    Boolean(hasNextItem || hasPreviousItem)
+                                }
                                 hasPreviousFile={
                                     adjacentFileIndex(
                                         files ?? [],
                                         store.currentFileIndex,
                                         -1,
-                                    ) !== null
+                                    ) !== null || Boolean(hasPreviousItem)
                                 }
                                 hasNextFile={
                                     adjacentFileIndex(
                                         files ?? [],
                                         store.currentFileIndex,
                                         1,
-                                    ) !== null
+                                    ) !== null || Boolean(hasNextItem)
                                 }
                                 audioTracks={store.audioTracks}
                                 audioTrack={store.audioTrack}
@@ -1476,18 +1536,11 @@ export const PlayerModal = component$<PlayerModalProps>(
                     </div>
                 )}
 
-                {store.upNextIndex !== null && (
+                {(store.upNextIndex !== null || store.upNextItem) && (
                     <div class="player-up-next" role="status">
                         <span>
                             Up next in {store.upNextSecondsLeft}s
-                            {(() => {
-                                const next = (files ?? []).find(
-                                    (file) => file.index === store.upNextIndex,
-                                );
-                                return next
-                                    ? `: ${next.path.split("/").pop()}`
-                                    : "";
-                            })()}
+                            {store.upNextTitle ? `: ${store.upNextTitle}` : ""}
                         </span>
                         <div class="player-up-next-actions">
                             <button
