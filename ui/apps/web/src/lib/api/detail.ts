@@ -8,6 +8,7 @@
  */
 
 import type { UiTask } from "./task";
+import { countsLine } from "./group";
 import { siteName } from "./site";
 
 export type DetailRow = {
@@ -84,6 +85,24 @@ export function detailRows(task: UiTask, now: number): DetailRow[] {
     if (task.filename) {
         const size = task.fileSize ? ` · ${formatBytes(task.fileSize)}` : "";
         rows.push({ label: "File", value: `${task.filename}${size}` });
+    }
+
+    if (task.kind === "playlist") {
+        if (task.folder) {
+            rows.push({
+                label: "Folder",
+                value: task.folder,
+                copy: task.folder,
+            });
+        }
+        const counts = task.entryCounts;
+        if (counts) {
+            const line = countsLine(counts);
+            rows.push({
+                label: "Videos",
+                value: `${counts.complete} of ${counts.total} finished${line ? ` · ${line}` : ""}`,
+            });
+        }
     }
 
     if (task.infoHash) {

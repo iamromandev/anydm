@@ -6,3 +6,4 @@ export * from "./stream";
 export * from "./task";
 export * from "./torrent";
 export * from "./site";
+export * from "./group";

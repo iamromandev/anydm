@@ -134,3 +134,29 @@ describe("detailRows", () => {
         );
     });
 });
+
+describe("detailRows for a group", () => {
+    it("gives a group its folder and how its videos stand", () => {
+        const rows = detailRows(
+            task({
+                kind: "playlist",
+                folder: "29C3_ Not my department",
+                entryCounts: {
+                    total: 96,
+                    complete: 38,
+                    active: 57,
+                    downloading: 2,
+                    paused: 0,
+                    failed: 1,
+                },
+            }),
+            NOW,
+        );
+        expect(rows.find((r) => r.label === "Folder")?.value).toBe(
+            "29C3_ Not my department",
+        );
+        expect(rows.find((r) => r.label === "Videos")?.value).toBe(
+            "38 of 96 finished · 2 downloading · 55 queued · 1 failed",
+        );
+    });
+});
