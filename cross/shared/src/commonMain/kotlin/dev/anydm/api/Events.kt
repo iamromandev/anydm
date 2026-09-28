@@ -6,6 +6,8 @@ import dev.anydm.model.ProgressDto
 import dev.anydm.model.Task
 import dev.anydm.model.TaskDto
 import dev.anydm.model.toTask
+import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
@@ -58,6 +60,11 @@ internal fun AnydmApi.openEvents(): Flow<ServerEvent> =
         val url = URLBuilder(baseUrl).apply { appendPathSegments("download", "events") }.buildString()
         http
             .prepareGet(url) {
+                // Open for as long as the server keeps it: a time limit would cut it and reconnect.
+                timeout {
+                    requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                    socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                }
                 apiKey?.let { header(API_KEY_HEADER, it) }
                 header(HttpHeaders.Accept, ContentType.Text.EventStream.toString())
             }.execute { response ->
