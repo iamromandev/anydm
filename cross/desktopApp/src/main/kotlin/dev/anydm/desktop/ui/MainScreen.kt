@@ -128,10 +128,23 @@ fun MainScreen(
                     items(shown, key = { it.id }) { task ->
                         TaskCard(cardView(task, now)) { action ->
                             when (action) {
-                                CardAction.PAUSE -> scope.launch { store.pause(task.id) }
-                                CardAction.RESUME, CardAction.RETRY -> scope.launch { store.resume(task.id) }
-                                CardAction.STOP_SEEDING -> scope.launch { store.stopSeeding(task.id) }
-                                CardAction.REMOVE -> remove(task)
+                                CardAction.PAUSE -> {
+                                    scope.launch { store.pause(task.id) }
+                                }
+
+                                CardAction.RESUME, CardAction.RETRY -> {
+                                    scope.launch { store.resume(task.id) }
+                                }
+
+                                CardAction.STOP_SEEDING -> {
+                                    scope.launch { store.stopSeeding(task.id) }
+                                }
+
+                                CardAction.PLAY, CardAction.SAVE -> {}
+
+                                CardAction.REMOVE -> {
+                                    remove(task)
+                                }
                             }
                         }
                     }

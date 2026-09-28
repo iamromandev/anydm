@@ -24,6 +24,8 @@ private val ACTION_LABELS =
         CardAction.RESUME to "Resume",
         CardAction.RETRY to "Retry",
         CardAction.STOP_SEEDING to "Stop seeding",
+        CardAction.PLAY to "Play",
+        CardAction.SAVE to "Save",
         CardAction.REMOVE to "Remove",
     )
 
