@@ -3,7 +3,6 @@ package dev.anydm.desktop
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.remember
@@ -14,6 +13,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import dev.anydm.desktop.ui.ConnectScreen
+import dev.anydm.desktop.ui.MainScreen
 import dev.anydm.settings.JvmSettingsFile
 import dev.anydm.settings.SettingsStore
 import dev.anydm.settings.defaultSettingsPath
@@ -41,7 +41,7 @@ fun main() =
                         }
 
                         is Screen.Main -> {
-                            Text("Connected")
+                            MainScreen(screen.store, model.settings, onSignOut = { model.signOut(null) })
                         }
                     }
                 }
