@@ -64,12 +64,22 @@ import { mediaFiles, type PlayableFile } from "@/lib/media";
 import type { ServerSettings } from "@/component/features/settings-modal";
 import { removePrompt } from "@/component/features/remove-dialog/prompt";
 import type { PlaylistRequest } from "@/lib/api/playlist";
+import {
+    adjacentItem,
+    queueFromVideos,
+    resumeItem,
+    startItem,
+    type QueueItem,
+} from "@/lib/queue";
 
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
 
 /** Videos per Entries page. The API caps a page at 100. */
 const ENTRIES_PAGE = 50;
+
+/** Videos per page when a group's play queue fetches more. The API caps it at 100. */
+const QUEUE_PAGE = 100;
 
 type BulkAction = "pause_all" | "resume_all" | "clear_finished";
 
@@ -148,6 +158,15 @@ export default component$(() => {
         entries: {} as Record<string, EntriesView>,
         // Each running group video's speed, for its group's live speed.
         videoSpeeds: {} as VideoSpeeds,
+        // A play queue (part 4): its items, the one playing, and for a group,
+        // which of its /entries pages are loaded. Empty when nothing queues.
+        queue: [] as QueueItem[],
+        queueIndex: -1,
+        queueGroup: null as {
+            id: string;
+            page: number;
+            totalPages: number;
+        } | null,
     });
 
     const notify = $((tone: ToastTone, message: string) => {
@@ -815,6 +834,9 @@ export default component$(() => {
             fileIndex: number | null = null,
             files: PlayableFile[] = [],
         ) => {
+            store.queue = [];
+            store.queueIndex = -1;
+            store.queueGroup = null;
             store.playerTaskId = "";
             // A torrent from the dialog: which file, and the ones to switch between (#98).
             store.playerFileIndex = fileIndex;
@@ -828,6 +850,9 @@ export default component$(() => {
 
     // A finished download, played from its file rather than its source (#94).
     const handlePlayTask = $((taskId: string) => {
+        store.queue = [];
+        store.queueIndex = -1;
+        store.queueGroup = null;
         const task = store.tasks.find((t) => t.id === taskId);
         store.playerUrl = "";
         store.playerKind = "";
@@ -865,7 +890,92 @@ export default component$(() => {
     });
 
     const handlePlayerModalClose = $(() => {
+        store.queue = [];
+        store.queueIndex = -1;
+        store.queueGroup = null;
         store.playerModalOpen = false;
+    });
+
+    /** Point the player at one queue item. Synchronous: the player re-runs on its own signal. */
+    const playQueueItem = $((index: number) => {
+        const item = store.queue[index];
+        if (!item) return;
+        store.queueIndex = index;
+        store.playerFileIndex = null;
+        store.playerFiles = [];
+        store.playerFromTorrent = false;
+        if ("taskId" in item.source) {
+            store.playerUrl = "";
+            store.playerKind = "";
+            store.playerPositions = item.positions ?? [];
+            store.playerTaskId = item.source.taskId;
+        } else {
+            store.playerTaskId = "";
+            store.playerPositions = [];
+            store.playerKind = "site";
+            store.playerUrl = item.source.url;
+        }
+        store.playerModalOpen = true;
+    });
+
+    /** The next page of a group's videos onto the queue, if there is one. */
+    const loadQueuePage = $(async () => {
+        const group = store.queueGroup;
+        if (!group || group.page >= group.totalPages) return false;
+        const result = await getPageApi<any[]>(
+            `/download/${group.id}/entries?page=${group.page + 1}&page_size=${QUEUE_PAGE}`,
+        ).catch(() => null);
+        // Read again: the queue may have been closed or replaced meanwhile.
+        if (result === null || store.queueGroup?.id !== group.id) return false;
+        store.queue = [
+            ...store.queue,
+            ...queueFromVideos(result.data.map(normalizeApiTask)),
+        ];
+        store.queueGroup = {
+            id: group.id,
+            page: result.meta.page,
+            totalPages: result.meta.totalPages,
+        };
+        return true;
+    });
+
+    /** Next or Previous from the player; near the end of what's loaded, load more. */
+    const stepQueue = $(async (dir: 1 | -1) => {
+        let next = adjacentItem(store.queue, store.queueIndex, dir);
+        if (next === null && dir === 1 && (await loadQueuePage())) {
+            next = adjacentItem(store.queue, store.queueIndex, dir);
+        }
+        if (next === null) return;
+        await playQueueItem(next);
+        if (dir === 1 && store.queue.length - next <= 3) loadQueuePage();
+    });
+
+    /** Play all from the picker: its ticked videos, streamed in order. */
+    const handlePlayQueue = $(async (items: QueueItem[], start: number) => {
+        store.queueGroup = null;
+        store.queue = items;
+        await playQueueItem(start);
+    });
+
+    /**
+     * Play all from a group's card: from where it was left, finished videos
+     * from their files and the rest from their pages. Pages are loaded until
+     * one holds a video to resume, or there are none left.
+     */
+    const handlePlayGroup = $(async (groupId: string) => {
+        store.queue = [];
+        store.queueIndex = -1;
+        store.queueGroup = { id: groupId, page: 0, totalPages: 1 };
+        while (resumeItem(store.queue) === null && (await loadQueuePage())) {
+            // keep loading
+        }
+        if (store.queueGroup?.id !== groupId) return;
+        const start = startItem(store.queue);
+        if (start === null) {
+            notify("info", "Nothing in this playlist can be played yet");
+            return;
+        }
+        await playQueueItem(start);
     });
 
     const handleResolveTorrent = $(
@@ -1019,6 +1129,25 @@ export default component$(() => {
             onPauseVideo={$((id: string) => handleVideoAction(id, "pause"))}
             onResumeVideo={$((id: string) => handleVideoAction(id, "resume"))}
             onRemoveVideo={handleRemoveVideo}
+            onPlayQueue={handlePlayQueue}
+            onPlayGroup={handlePlayGroup}
+            playerHasPreviousItem={
+                adjacentItem(store.queue, store.queueIndex, -1) !== null
+            }
+            playerHasNextItem={
+                adjacentItem(store.queue, store.queueIndex, 1) !== null ||
+                Boolean(
+                    store.queueGroup &&
+                    store.queueGroup.page < store.queueGroup.totalPages,
+                )
+            }
+            playerNextItemTitle={
+                store.queue[
+                    adjacentItem(store.queue, store.queueIndex, 1) ?? -1
+                ]?.title ?? ""
+            }
+            onNextItem={$(() => stepQueue(1))}
+            onPreviousItem={$(() => stepQueue(-1))}
         />
     );
 });
