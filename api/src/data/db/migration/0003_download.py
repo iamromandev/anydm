@@ -31,6 +31,21 @@ class Migration(migrations.Migration):
             bases=['LinkBase'],
         ),
         ops.CreateModel(
+            name='PlaybackPosition',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('task', fields.ForeignKeyField('model.Task', source_field='task_id', db_constraint=True, to_field='id', related_name='playback_positions', on_delete=OnDelete.CASCADE)),
+                ('file_index', fields.IntField(default=0)),
+                ('position_seconds', fields.FloatField(default=0.0)),
+                ('duration_seconds', fields.FloatField(default=0.0)),
+                ('watched', fields.BooleanField(default=False)),
+            ],
+            options={'table': 'playback_position', 'app': 'model', 'unique_together': (('task', 'file_index'),), 'pk_attr': 'id', 'table_description': 'PlaybackPosition'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
             name='Segment',
             fields=[
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),

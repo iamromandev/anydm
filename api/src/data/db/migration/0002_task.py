@@ -2,6 +2,7 @@ from typing import ClassVar
 from uuid import uuid4
 
 from tortoise import fields, migrations
+from tortoise.fields.base import OnDelete
 from tortoise.fields.db_defaults import Now
 from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
@@ -24,16 +25,19 @@ class Migration(migrations.Migration):
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('deleted_at', fields.DatetimeField(null=True, db_index=True, auto_now=False, auto_now_add=False)),
                 ('source_url', fields.TextField(unique=False)),
-                ('platform', fields.CharEnumField(db_index=True, description='YOUTUBE: youtube\nDIRECT: direct\nTORRENT: torrent', enum_type=Platform, max_length=16)),
-                ('video_id', fields.CharField(null=True, db_index=True, max_length=64)),
+                ('platform', fields.CharEnumField(db_index=True, description='SITE: site\nDIRECT: direct\nTORRENT: torrent', enum_type=Platform, max_length=16)),
+                ('extractor', fields.CharField(null=True, description='yt-dlp\'s name for the site a ``site`` task came from: "Youtube", "Vimeo", ...', max_length=64)),
+                ('video_id', fields.CharField(null=True, db_index=True, description="The site's own id for the media. Named for YouTube, which came first.", max_length=64)),
                 ('info_hash', fields.CharField(null=True, db_index=True, description="The torrent's info hash, and the only torrent identifier stored. rqbit", max_length=40)),
+                ('parent', fields.ForeignKeyField('model.Task', source_field='parent_id', null=True, description='The playlist this video was added from; ``None`` for a standalone task.', db_constraint=True, to_field='id', related_name='playlist_entries', on_delete=OnDelete.CASCADE)),
+                ('position', fields.IntField(null=True, description="The video's number in the listing it was added from.")),
                 ('preset', fields.CharEnumField(description='BEST: best\nP2160: 2160\nP1440: 1440\nP1080: 1080\nP720: 720\nP480: 480\nMP3: mp3', enum_type=Preset, max_length=8)),
-                ('kind', fields.CharEnumField(description='VIDEO: video\nAUDIO: audio\nFILE: file\nTORRENT: torrent', enum_type=Kind, max_length=8)),
+                ('kind', fields.CharEnumField(description='VIDEO: video\nAUDIO: audio\nFILE: file\nTORRENT: torrent\nPLAYLIST: playlist', enum_type=Kind, max_length=8)),
                 ('title', fields.CharField(default='', max_length=512)),
                 ('filename', fields.CharField(default='', max_length=512)),
                 ('mime_type', fields.CharField(null=True, max_length=128)),
-                ('video_itag', fields.IntField(null=True)),
-                ('audio_itag', fields.IntField(null=True)),
+                ('video_format', fields.CharField(null=True, max_length=64)),
+                ('audio_format', fields.CharField(null=True, max_length=64)),
                 ('status', fields.CharEnumField(db_index=True, description='PENDING: pending\nDOWNLOADING: downloading\nMUXING: muxing\nPAUSED: paused\nSEEDING: seeding\nCOMPLETE: complete\nFAILED: failed\nCANCELED: canceled', enum_type=TaskStatus, max_length=16)),
                 ('progress', fields.IntField(default=0)),
                 ('downloaded_bytes', fields.BigIntField(default=0)),
@@ -53,7 +57,7 @@ class Migration(migrations.Migration):
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
                 ('heartbeat_at', fields.DatetimeField(null=True, description='Written by the progress flush. Startup recovery does not consult it —', auto_now=False, auto_now_add=False)),
             ],
-            options={'table': 'task', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_task_status_created')], 'pk_attr': 'id', 'table_description': 'Task'},
+            options={'table': 'task', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_task_status_created'), Index(fields=['parent_id'], name='idx_task_parent'), Index(fields=['parent_id', 'position'], name='idx_task_parent_position')], 'pk_attr': 'id', 'table_description': 'Task'},
             bases=['Base'],
         ),
     ]

@@ -100,4 +100,9 @@ class Task(Base):
             # The queue scan and the newest-first listing read the same two
             # columns in the same order.
             Index(fields=["status", "created_at"], name="idx_task_status_created"),
+            # A group's videos: Tortoise gives a foreign key no index of its
+            # own, and claim_next and paging /entries read by parent, then
+            # position (v0.5).
+            Index(fields=["parent_id"], name="idx_task_parent"),
+            Index(fields=["parent_id", "position"], name="idx_task_parent_position"),
         )
