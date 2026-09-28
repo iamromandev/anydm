@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
+from typing import Any
 
 from src.core.base import CrudRepo
 from src.core.success import Meta
@@ -29,6 +30,58 @@ class TaskRepo(CrudRepo[Task]):
         video held twice reports the task furthest along: complete, then
         queued, then failed.
         """
+        ...
+
+    @abstractmethod
+    async def create_group(self, group: dict[str, Any], entries: Sequence[dict[str, Any]]) -> Task:
+        """A playlist's row and its videos, in one transaction (v0.5).
+
+        Every video gets the group as ``parent`` and the group's ``created_at``,
+        so the queue takes them in ``position`` order.
+        """
+        ...
+
+    @abstractmethod
+    async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Task], Meta]:
+        """One page of a group's videos not removed, by ``position``."""
+        ...
+
+    @abstractmethod
+    async def entry_statuses(self, group_id: uuid.UUID) -> list[tuple[TaskStatus, int, int | None, int]]:
+        """``(status, downloaded_bytes, total_bytes, speed_bps)`` of each video not removed."""
+        ...
+
+    @abstractmethod
+    async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        """Pause a group's queued and downloading videos; the ids of those that were downloading."""
+        ...
+
+    @abstractmethod
+    async def resume_entries(self, group_id: uuid.UUID) -> int:
+        """Requeue a group's paused and failed videos, their attempts reset. Returns how many."""
+        ...
+
+    @abstractmethod
+    async def remove_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        """Soft-delete all of a group's videos; their ids."""
+        ...
+
+    @abstractmethod
+    async def pause_all_entries(self) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+        """Pause every group's queued and downloading videos, in one update.
+
+        Returns the ids of those that were downloading, and the groups touched.
+        """
+        ...
+
+    @abstractmethod
+    async def resume_all_entries(self) -> set[uuid.UUID]:
+        """Requeue every group's paused and failed videos, in one update; the groups touched."""
+        ...
+
+    @abstractmethod
+    async def find_group(self, extractor: str, playlist_id: str) -> Task | None:
+        """The group not removed that was added from this playlist, if any."""
         ...
 
     @abstractmethod

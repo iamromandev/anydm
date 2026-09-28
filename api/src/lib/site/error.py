@@ -34,6 +34,14 @@ def playlist_not_supported() -> Error:
     )
 
 
+def playlist_too_large(count: int) -> Error:
+    return Error.create(
+        code=Code.UNPROCESSABLE_ENTITY,
+        message=f"A playlist of {count:,} videos is more than the 10,000 one add takes",
+        error_type=ErrorType.PAYLOAD_TOO_LARGE,
+    )
+
+
 def not_a_playlist() -> Error:
     return Error.create(
         code=Code.UNPROCESSABLE_ENTITY,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,24 +14,43 @@ from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
-from src.data.schema.download import PositionSchema, TaskSchema, TaskSummarySchema
+from src.data.schema.download import PlaylistDownloadRequest, PositionSchema, TaskSchema, TaskSummarySchema
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
+from src.lib.folder import named_folder
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.filename import safe_filename
+from src.lib.site.filename import number_prefix, safe_filename
 from src.lib.site.format import select_plan
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
 from src.service.download.download_worker import remove_task_files
+from src.service.download.group_totals import GroupTotals
 from src.service.download.torrent_service import TorrentService
+
 
 #: Which rows each bulk action applies to. Seeding is in the pause set
 #: because only a torrent can be seeding and the engine accepts pausing one;
 #: failed is in both the resume set and the clear set, because a failure is
 #: equally "try again" and "give up on this".
+def remove_group_video_files(video: Path) -> None:
+    """A group video's file and the subtitle files beside it, never its folder (v0.5).
+
+    Its subtitles share its stem: ``02_Talk_720p.en.vtt`` beside ``02_Talk_720p.mp4``.
+    """
+    if not video.parent.is_dir():
+        return
+    prefix = f"{video.stem}."
+    for path in video.parent.iterdir():
+        if path == video or (path.name.startswith(prefix) and path.suffix in (".vtt", ".srt")):
+            path.unlink(missing_ok=True)
+
+
+#: The most videos one playlist add takes; the picker stops there too.
+PLAYLIST_LIMIT = 10_000
+
 BULK_SCOPES: dict[str, frozenset[TaskStatus]] = {
     "pause_all": frozenset(
         {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING}
@@ -60,6 +80,7 @@ class DownloadService(BaseService):
         torrents: TorrentService,
         disk: DiskGuard | None = None,
         positions: PositionRepo | None = None,
+        groups: GroupTotals | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -71,6 +92,48 @@ class DownloadService(BaseService):
         self._torrents = torrents
         self._disk = disk
         self._positions = positions
+        self._groups = groups
+
+    async def _refresh_group(self, task: Any) -> None:
+        """Bring a group video's group up to date after a change to it (v0.5)."""
+        parent_id = getattr(task, "parent_id", None)
+        if self._groups is not None and parent_id is not None:
+            await self._groups.refresh(parent_id)
+
+    async def _group_changed(self, group: Any) -> TaskSchema:
+        """The group row after its videos changed: its totals, else the row as it is."""
+        if self._groups is not None:
+            refreshed = await self._groups.refresh(group.id)
+            if refreshed is not None:
+                return refreshed
+        return self._published(group)
+
+    async def _cancel_group(self, group: Any, *, delete_files: bool) -> None:
+        """Remove a group and all of its videos (v0.5).
+
+        Keeping the files is accepted in any state: what finished is whole, and
+        the unfinished videos' working folders go either way.
+        """
+        for video in await self._repo.remove_entries(group.id):
+            self._control.request_stop(video)
+            remove_task_files(self._root, video)
+        if delete_files and group.file_path:
+            # A folder of 5,000 files shouldn't hold up the API.
+            await asyncio.to_thread(shutil.rmtree, self._root / group.file_path, ignore_errors=True)
+        group.status = TaskStatus.CANCELED
+        group.deleted_at = now()
+        group.speed_bps = 0
+        await group.save(update_fields=["status", "deleted_at", "speed_bps"])
+        self._published(group)
+
+    async def _with_counts(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
+        """Each group row with how its videos stand: one query per group on the page."""
+        if self._groups is None:
+            return schemas
+        for schema in schemas:
+            if isinstance(schema, TaskSchema) and schema.kind == Kind.PLAYLIST:
+                schema.entry_counts = await self._groups.counts(schema.id)
+        return schemas
 
     def _require_space(self, extra_bytes: int | None = None) -> None:
         if self._disk is not None:
@@ -147,6 +210,67 @@ class DownloadService(BaseService):
         self._control.wake()
         return self._published(task)
 
+    async def enqueue_playlist(self, request: PlaylistDownloadRequest) -> TaskSchema:
+        """A playlist's chosen videos, as one group of videos planned when each starts.
+
+        Nothing is extracted here: 5,000 videos cannot be planned inside one
+        request. A video that turns out private, or without a format for the
+        preset, fails inside the group rather than at add time.
+        """
+        if len(request.entries) > PLAYLIST_LIMIT:
+            raise site_error.playlist_too_large(len(request.entries))
+        self._require_space()
+        folder = named_folder(self._root, request.title, request.playlist_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        kind = Kind.AUDIO if request.preset == Preset.MP3 else Kind.VIDEO
+        largest = max(entry.index for entry in request.entries)
+        # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
+        # name single downloads and the picker's "already have it" use.
+        video_extractor = request.extractor.removesuffix("Tab")
+        group = await self._repo.create_group(
+            {
+                "source_url": request.url,
+                "platform": Platform.SITE,
+                "extractor": request.extractor,
+                "video_id": request.playlist_id,
+                "preset": request.preset,
+                "kind": Kind.PLAYLIST,
+                "title": request.title,
+                "status": TaskStatus.PENDING,
+                "progress": 0,
+                "file_path": str(folder.relative_to(self._root)),
+            },
+            [
+                {
+                    "source_url": entry.url,
+                    "platform": Platform.SITE,
+                    "extractor": video_extractor,
+                    "video_id": entry.id,
+                    "preset": request.preset,
+                    "kind": kind,
+                    "title": entry.title or "",
+                    "position": entry.index,
+                    "status": TaskStatus.PENDING,
+                    "progress": 0,
+                    "video_format": None,
+                    "audio_format": None,
+                    # The number now; choosing the formats appends the name.
+                    "filename": "" if request.channel_tab else number_prefix(entry.index, largest),
+                }
+                for entry in request.entries
+            ],
+        )
+        self._control.wake()
+        return self._published(group)
+
+    async def list_entries(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
+        """One page of a group's videos, in playlist order."""
+        group = await self._require(group_id)
+        if group.kind != Kind.PLAYLIST:
+            raise Error.not_found(message="Task is not a playlist")
+        rows, meta = await self._repo.entries_page(group_id, page=page, page_size=page_size)
+        return await self._with_positions([TaskSchema.model_validate(row) for row in rows]), meta
+
     async def list_tasks(
         self,
         page: int,
@@ -175,7 +299,8 @@ class DownloadService(BaseService):
         )
         # Through the torrent service, which adds a torrent's files: one query
         # for the whole page (#107).
-        return await self._with_positions(await self._torrents.schemas(tasks)), meta
+        schemas = await self._with_positions(await self._torrents.schemas(tasks))
+        return await self._with_counts(schemas), meta
 
     async def bulk(self, action: str, *, delete_files: bool = False) -> int:
         """Apply one action to every row it makes sense for.
@@ -196,9 +321,26 @@ class DownloadService(BaseService):
         if scope is None:
             raise Error.bad_request(message=f"Unknown bulk action: {action}")
 
-        rows = await self._repo.by_statuses(sorted(scope))
         affected = 0
+        # A group's videos move in one update rather than a row at a time (v0.5),
+        # and each group they belong to is brought up to date once.
+        touched: set[uuid.UUID] = set()
+        if action == "pause_all":
+            running, touched = await self._repo.pause_all_entries()
+            for video in running:
+                self._control.request_stop(video)
+        elif action == "resume_all":
+            touched = await self._repo.resume_all_entries()
+            self._control.wake()
 
+        # The rest one at a time, as before: standalone tasks and torrents, and
+        # for clear_finished whole groups. Never a video out of its group.
+        rows = [
+            row
+            for row in await self._repo.by_statuses(sorted(scope))
+            if getattr(row, "parent_id", None) is None
+            and (action == "clear_finished" or getattr(row, "kind", None) != Kind.PLAYLIST)
+        ]
         for row in rows:
             try:
                 if action == "pause_all":
@@ -218,6 +360,10 @@ class DownloadService(BaseService):
                     "{}|bulk {} skipped {}: {}", self._tag, action, row.id, error.message
                 )
 
+        for group_id in touched:
+            if self._groups is not None:
+                await self._groups.refresh(group_id)
+            affected += 1
         return affected
 
     async def summary(self) -> TaskSummarySchema:
@@ -225,6 +371,7 @@ class DownloadService(BaseService):
 
     async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
         (schema,) = await self._with_positions([await self._torrents.schema(await self._require(task_id))])
+        (schema,) = await self._with_counts([schema])
         return schema
 
     #: Stopping this close to the end counts as having watched it (#96).
@@ -358,6 +505,10 @@ class DownloadService(BaseService):
         task = await self._require(task_id)
         if task.platform == Platform.TORRENT:
             return await self._torrents.pause(task_id)
+        if task.kind == Kind.PLAYLIST:
+            for running in await self._repo.pause_entries(task_id):
+                self._control.request_stop(running)
+            return await self._group_changed(task)
         if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING):
             raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
 
@@ -366,7 +517,9 @@ class DownloadService(BaseService):
         task.speed_bps = 0
         task.eta_seconds = None
         await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return self._published(task)
+        schema = self._published(task)
+        await self._refresh_group(task)
+        return schema
 
     async def resume(self, task_id: uuid.UUID) -> TaskSchema:
         """Put a paused or failed task back in the queue, from where its bytes stopped.
@@ -377,6 +530,10 @@ class DownloadService(BaseService):
         task = await self._require(task_id)
         if task.platform == Platform.TORRENT:
             return await self._torrents.resume(task_id)
+        if task.kind == Kind.PLAYLIST:
+            await self._repo.resume_entries(task_id)
+            self._control.wake()
+            return await self._group_changed(task)
         if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
             raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
 
@@ -388,7 +545,9 @@ class DownloadService(BaseService):
         task.next_attempt_at = None
         await task.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
         self._control.wake()
-        return self._published(task)
+        schema = self._published(task)
+        await self._refresh_group(task)
+        return schema
 
     async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
         """Stop the task, soft-delete the row, and take the files or leave them.
@@ -399,6 +558,8 @@ class DownloadService(BaseService):
         clears those.
         """
         task = await self._require(task_id)
+        if task.kind == Kind.PLAYLIST:
+            return await self._cancel_group(task, delete_files=delete_files)
         if not delete_files and task.status not in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
             raise Error.conflict(
                 message=f"Cannot keep the files of a task that is {task.status.value}"
@@ -408,6 +569,8 @@ class DownloadService(BaseService):
         self._control.request_stop(task_id)
         if delete_files:
             remove_task_files(self._root, task_id)
+            if getattr(task, "parent_id", None) is not None and task.file_path:
+                remove_group_video_files(self._root / task.file_path)
         await self._segment_repo.clear(task_id)
         task.status = TaskStatus.CANCELED
         task.deleted_at = now()
@@ -415,6 +578,7 @@ class DownloadService(BaseService):
         task.eta_seconds = None
         await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
         self._published(task)
+        await self._refresh_group(task)
 
     def _published(self, task: Any) -> TaskSchema:
         """Serialise the task, announce it, and hand it back to the caller.

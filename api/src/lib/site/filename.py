@@ -23,6 +23,11 @@ def safe_filename(title: str, suffix: str, extension: str) -> str:
     return f"{stem}{tail}.{extension}"
 
 
+def number_prefix(index: int, largest: int) -> str:
+    """``007_`` for the 7th of 120: a playlist's order survives a file listing (v0.5)."""
+    return f"{index:0{max(2, len(str(largest)))}d}_"
+
+
 _LANGUAGE = re.compile(r"[^A-Za-z0-9-]")
 
 

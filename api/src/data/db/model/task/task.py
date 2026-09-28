@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+from uuid import UUID
 
 from tortoise import fields
 from tortoise.indexes import Index
@@ -24,6 +25,18 @@ class Task(Base):
     #: accepts it anywhere it accepts its own numeric id, and that numeric id
     #: does not survive a restart of the engine.
     info_hash: str | None = fields.CharField(max_length=40, null=True, db_index=True)
+
+    # group (v0.5)
+    #: The playlist this video was added from; ``None`` for a standalone task.
+    #: Not named ``entries`` or ``files``: ``TaskSchema`` has fields of those names.
+    parent = fields.ForeignKeyField(
+        "model.Task", related_name="playlist_entries", null=True, on_delete=fields.CASCADE
+    )
+    #: The video's number in the listing it was added from.
+    position: int | None = fields.IntField(null=True)
+    if TYPE_CHECKING:
+        #: The column Tortoise creates for ``parent``.
+        parent_id: UUID | None
 
     # request
     preset: Preset = fields.CharEnumField(Preset, max_length=8)

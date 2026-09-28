@@ -38,6 +38,10 @@ class FakeRow:
         self.total_bytes: int | None = None
         self.attempts = 0
         self.status = TaskStatus.DOWNLOADING
+        self.parent_id: uuid.UUID | None = None
+        self.position: int | None = None
+        self.mime_type: str | None = None
+        self.file_path: str | None = None
         for key, value in overrides.items():
             setattr(self, key, value)
 
@@ -150,6 +154,128 @@ async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path) -> None:
+    # A playlist's video, added with its number and no formats (v0.5).
+    client = FakeSiteClient(site_info("vimeo"))
+    row = FakeRow(
+        source_url="http://vimeo.com/75629013",
+        extractor="Vimeo",
+        video_format=None,
+        audio_format=None,
+        filename="03_",
+        title="listed title",
+        preset=Preset.P720,
+        position=3,
+    )
+
+    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+
+    assert client.opened == ["http://vimeo.com/75629013"]
+    # The plan's extraction also gave the URLs.
+    assert client.resolved == []
+    assert row.filename.startswith("03_") and row.video_format
+    assert row.title == site_info("vimeo").title
+    assert row.status == TaskStatus.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
+    client = FakeSiteClient(site_info("vimeo"))
+    row = FakeRow(
+        source_url="http://vimeo.com/75629013",
+        extractor="Vimeo",
+        video_format="http-9999p",
+        audio_format=None,
+        filename="Key_9999p.mp4",
+        preset=Preset.P720,
+    )
+
+    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+
+    assert row.video_format != "http-9999p"
+    assert client.opened == ["http://vimeo.com/75629013"]
+    assert row.status == TaskStatus.COMPLETE
+
+
+class GroupRepo:
+    """Answers for one group row, the only one a group video's worker looks up."""
+
+    def __init__(self, group: FakeRow) -> None:
+        self.group = group
+
+    async def get_active_by_id(self, task_id: uuid.UUID) -> FakeRow | None:
+        return self.group if task_id == self.group.id else None
+
+
+def _group(tmp_path: Path) -> FakeRow:
+    (tmp_path / "List").mkdir()
+    return FakeRow(kind=Kind.PLAYLIST, file_path="List")
+
+
+@pytest.mark.asyncio
+async def test_a_group_video_finishes_into_the_group_folder(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    row = FakeRow(parent_id=group.id, filename="02_Rick_1080p.mp4")
+
+    await _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    ).run_task(cast(Any, row))
+
+    assert row.file_path == "List/02_Rick_1080p.mp4"
+    assert (tmp_path / "List" / "02_Rick_1080p.mp4").read_bytes() == b"done"
+    assert not (tmp_path / str(row.id)).exists()
+
+
+class RecordingGroups:
+    def __init__(self) -> None:
+        self.refreshed: list[uuid.UUID] = []
+
+    async def refresh(self, group_id: uuid.UUID) -> None:
+        self.refreshed.append(group_id)
+
+
+@pytest.mark.asyncio
+async def test_each_change_to_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    groups = RecordingGroups()
+    row = FakeRow(parent_id=group.id)
+    worker = _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    )
+    worker._groups = cast(Any, groups)
+
+    await worker.run_task(cast(Any, row))
+
+    # Once when it started, once when it finished.
+    assert groups.refreshed == [group.id, group.id]
+
+
+@pytest.mark.asyncio
+async def test_a_standalone_task_refreshes_no_group(tmp_path: Path) -> None:
+    groups = RecordingGroups()
+    worker = _worker(tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor())
+    worker._groups = cast(Any, groups)
+
+    await worker.run_task(cast(Any, FakeRow()))
+
+    assert groups.refreshed == []
+
+
+@pytest.mark.asyncio
+async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
+    group = _group(tmp_path)
+    (tmp_path / "List" / "Rick_1080p.mp4").write_bytes(b"other")
+    row = FakeRow(parent_id=group.id)
+
+    await _worker(
+        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
+    ).run_task(cast(Any, row))
+
+    assert row.file_path == "List/Rick_1080p_dQw4w9WgXcQ.mp4"
+    assert (tmp_path / "List" / "Rick_1080p.mp4").read_bytes() == b"other"
+
+
+@pytest.mark.asyncio
 async def test_each_part_gets_its_own_url_and_the_format_s_headers(tmp_path: Path) -> None:
     engine = RecordingEngine()
     post = TouchingPostProcessor()
@@ -177,14 +303,17 @@ async def test_a_combined_format_is_a_single_video_part(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_format_the_site_no_longer_offers_fails_the_task(tmp_path: Path) -> None:
-    row = FakeRow(video_format="99999")
+async def test_a_vanished_format_with_nothing_to_re_plan_to_fails_the_task(tmp_path: Path) -> None:
+    # The format is gone, and the page no longer has audio for an MP3: one
+    # re-plan, then the task fails for good.
+    info = site_info("youtube")
+    client = FakeSiteClient(replace(info, formats=[f for f in info.formats if not f.has_audio]))
+    row = FakeRow(video_format=None, audio_format="99999", preset=Preset.MP3, kind=Kind.AUDIO)
 
-    await _worker(tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor()).run_task(
-        cast(Any, row)
-    )
+    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
 
     assert row.status == TaskStatus.FAILED
+    assert client.opened == ["https://youtu.be/dQw4w9WgXcQ"]
 
 
 def _dailymotion() -> FakeRow:

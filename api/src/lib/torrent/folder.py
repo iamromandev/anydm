@@ -8,13 +8,10 @@ task recorded was one rqbit never used.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from pathlib import Path
 
-#: Path separators, characters Windows refuses, and control characters.
-_UNSAFE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
-_MAX_NAME = 150
+from src.lib.folder import named_folder
 
 
 def torrent_folder(root: Path, name: str, info_hash: str) -> Path:
@@ -24,12 +21,9 @@ def torrent_folder(root: Path, name: str, info_hash: str) -> Path:
     ``root`` or hide behind a leading dot. A folder already holding files
     belongs to something else, so the torrent goes beside it with its hash;
     an empty one, what a deleted torrent of the same name leaves, is reused.
+    The rules are ``named_folder``'s, which a playlist's folder shares (v0.5).
     """
-    stem = _UNSAFE.sub("_", name).strip(" .")[:_MAX_NAME].strip(" .") or info_hash
-    folder = root / stem
-    if folder.exists() and not (folder.is_dir() and not any(folder.iterdir())):
-        folder = root / f"{stem} [{info_hash[:8]}]"
-    return folder
+    return named_folder(root, name, info_hash)
 
 
 def stored_folder(file_path: str | None, root: Path, paths: Iterable[str]) -> Path:

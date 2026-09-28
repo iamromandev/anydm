@@ -27,6 +27,10 @@ class FakeRepo:
         self.listed_sort: str | None = None
         #: What ``list_page`` answers with.
         self.page: list[Any] = []
+        #: What the group actions answer, and what they were asked (v0.5).
+        self.running: list[uuid.UUID] = []
+        self.touched: set[uuid.UUID] = set()
+        self.group_calls: list[tuple[str, Any]] = []
 
     async def list_page(
         self,
@@ -52,6 +56,37 @@ class FakeRepo:
     async def by_statuses(self, statuses: list[Any]) -> list[Any]:
         wanted = set(statuses)
         return [row for row in self.rows.values() if row.status in wanted]
+
+    async def create_group(self, group: dict[str, Any], entries: list[dict[str, Any]]) -> Any:
+        row = await self.create(**group)
+        self.group_entries = list(entries)
+        return row
+
+    async def find_group(self, extractor: str, playlist_id: str) -> Any:
+        return None
+
+    async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("pause", group_id)]
+        return list(self.running)
+
+    async def resume_entries(self, group_id: uuid.UUID) -> int:
+        self.group_calls = [*self.group_calls, ("resume", group_id)]
+        return 2
+
+    async def remove_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("remove", group_id)]
+        return list(self.running)
+
+    async def pause_all_entries(self) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+        self.group_calls = [*self.group_calls, ("pause_all", None)]
+        return list(self.running), set(self.touched)
+
+    async def resume_all_entries(self) -> set[uuid.UUID]:
+        self.group_calls = [*self.group_calls, ("resume_all", None)]
+        return set(self.touched)
+
+    async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Any], Meta]:
+        return list(self.page), Meta(page=page, page_size=page_size, total=len(self.page), total_pages=1)
 
 
 def _row(task_id: uuid.UUID, **overrides: Any) -> Any:
@@ -1056,3 +1091,275 @@ async def test_an_unfinished_download_has_no_subtitle_files_yet(tmp_path: Path) 
     repo.rows[task_id] = _row(task_id, status=TaskStatus.DOWNLOADING, file_path=None)
 
     assert await service.subtitle_files(task_id, None) == []
+
+
+# --- playlists (v0.5) ----------------------------------------------------------
+
+
+def _playlist(count: int = 3, *, channel_tab: bool = False, preset: Preset = Preset.P1080) -> Any:
+    from src.data.schema.download import PlaylistDownloadRequest
+
+    return PlaylistDownloadRequest(
+        url="https://www.youtube.com/playlist?list=PL1",
+        extractor="YoutubeTab",
+        playlist_id="PL1",
+        title="29C3: Not my department",
+        channel_tab=channel_tab,
+        preset=preset,
+        entries=[
+            {"index": n, "id": f"v{n}", "url": f"https://youtu.be/v{n}", "title": f"Talk {n}"}
+            for n in range(1, count + 1)
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_playlist_is_added_as_one_group_of_unplanned_videos(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    group = await service.enqueue_playlist(_playlist(12))
+
+    assert group.kind == Kind.PLAYLIST
+    created = repo.created[0]
+    assert (created["title"], created["video_id"], created["file_path"]) == (
+        "29C3: Not my department",
+        "PL1",
+        "29C3_ Not my department",
+    )
+    assert (tmp_path / "29C3_ Not my department").is_dir()
+    first = repo.group_entries[0]
+    assert (first["position"], first["video_id"], first["extractor"], first["kind"]) == (1, "v1", "Youtube", Kind.VIDEO)
+    assert (first["video_format"], first["audio_format"], first["filename"], first["title"]) == (
+        None,
+        None,
+        "01_",
+        "Talk 1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_channel_tab_is_not_numbered(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.enqueue_playlist(_playlist(2, channel_tab=True))
+
+    assert repo.group_entries[0]["filename"] == ""
+
+
+@pytest.mark.asyncio
+async def test_mp3_videos_are_audio(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    await service.enqueue_playlist(_playlist(1, preset=Preset.MP3))
+
+    assert repo.group_entries[0]["kind"] == Kind.AUDIO
+
+
+@pytest.mark.asyncio
+async def test_more_than_ten_thousand_videos_are_refused(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_playlist(_playlist(10_001))
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_group_lists_its_videos(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    group_id = uuid.uuid4()
+    repo.rows[group_id] = _row(group_id, kind=Kind.PLAYLIST)
+    video_id = uuid.uuid4()
+    repo.page = [_row(video_id, parent_id=group_id, position=1)]
+
+    rows, meta = await service.list_entries(group_id, page=1, page_size=50)
+
+    assert [r.id for r in rows] == [video_id]
+    assert meta.total == 1
+
+
+@pytest.mark.asyncio
+async def test_removing_a_group_video_deletes_only_its_files(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    folder = tmp_path / "List"
+    folder.mkdir()
+    for name in ("02_Talk_720p.mp4", "02_Talk_720p.en.vtt", "03_Other_720p.mp4"):
+        (folder / name).write_bytes(b"x")
+    task_id = uuid.uuid4()
+    (tmp_path / str(task_id)).mkdir()
+    repo.rows[task_id] = _row(
+        task_id, parent_id=uuid.uuid4(), status=TaskStatus.COMPLETE, file_path="List/02_Talk_720p.mp4"
+    )
+
+    await service.cancel(task_id, delete_files=True)
+
+    assert sorted(p.name for p in folder.iterdir()) == ["03_Other_720p.mp4"]
+    assert not (tmp_path / str(task_id)).exists()
+
+
+class RecordingGroups:
+    def __init__(self) -> None:
+        self.refreshed: list[uuid.UUID] = []
+
+    async def refresh(self, group_id: uuid.UUID) -> None:
+        self.refreshed.append(group_id)
+
+    async def counts(self, group_id: uuid.UUID) -> Any:
+        from src.data.schema.download import EntryCountsSchema
+
+        return EntryCountsSchema(total=3, complete=1)
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    groups = RecordingGroups()
+    service._groups = groups  # ty: ignore[invalid-assignment]
+    group_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id, parent_id=group_id, status=TaskStatus.DOWNLOADING)
+
+    await service.pause(task_id)
+
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_a_group_row_carries_its_counts(tmp_path: Path) -> None:
+    from src.data.schema.download import TaskSchema
+
+    service, _, _ = _service(downloads_dir=tmp_path)
+    service._groups = RecordingGroups()  # ty: ignore[invalid-assignment]
+    group = TaskSchema.model_validate(
+        {"id": uuid.uuid4(), "source_url": "u", "platform": "site", "preset": "best", "kind": "playlist",
+         "status": "downloading"}
+    )
+
+    (filled,) = await service._with_counts([group])
+
+    assert filled.entry_counts is not None and filled.entry_counts.total == 3
+
+
+def _group_service(tmp_path: Path) -> tuple[DownloadService, FakeRepo, RecordingGroups, uuid.UUID]:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    groups = RecordingGroups()
+    service._groups = groups  # ty: ignore[invalid-assignment]
+    group_id = uuid.uuid4()
+    (tmp_path / "List").mkdir()
+    (tmp_path / "List" / "01_done.mp4").write_bytes(b"x")
+    repo.rows[group_id] = _row(group_id, kind=Kind.PLAYLIST, status=TaskStatus.DOWNLOADING, file_path="List")
+    return service, repo, groups, group_id
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_group_pauses_its_videos_and_stops_the_running_ones(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+    running = uuid.uuid4()
+    repo.running = [running]
+
+    await service.pause(group_id)
+
+    assert repo.group_calls == [("pause", group_id)]
+    assert service._control.is_stopping(running)
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_resuming_a_group_requeues_its_videos(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+
+    await service.resume(group_id)
+
+    assert repo.group_calls == [("resume", group_id)]
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_removing_a_group_with_its_files_deletes_the_folder(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+    running = uuid.uuid4()
+    (tmp_path / str(running)).mkdir()
+    repo.running = [running]
+
+    await service.cancel(group_id, delete_files=True)
+
+    assert repo.group_calls == [("remove", group_id)]
+    assert not (tmp_path / "List").exists()
+    assert not (tmp_path / str(running)).exists()
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+
+
+@pytest.mark.asyncio
+async def test_removing_a_group_can_keep_what_finished_even_mid_download(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+
+    await service.cancel(group_id, delete_files=False)
+
+    assert (tmp_path / "List" / "01_done.mp4").exists()
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+
+
+@pytest.mark.asyncio
+async def test_pause_all_pauses_group_videos_in_one_update(tmp_path: Path) -> None:
+    service, repo, groups, group_id = _group_service(tmp_path)
+    repo.touched = {group_id}
+    video = uuid.uuid4()
+    repo.rows[video] = _row(video, parent_id=group_id, status=TaskStatus.DOWNLOADING)
+    alone = uuid.uuid4()
+    repo.rows[alone] = _row(alone, status=TaskStatus.PENDING)
+
+    await service.bulk("pause_all")
+
+    assert ("pause_all", None) in repo.group_calls
+    # The standalone task goes through pause() as before; the group and its video don't.
+    assert repo.rows[alone].status == TaskStatus.PAUSED
+    assert repo.rows[video].status == TaskStatus.DOWNLOADING
+    assert groups.refreshed == [group_id]
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_takes_whole_groups_but_no_single_videos(tmp_path: Path) -> None:
+    service, repo, _, group_id = _group_service(tmp_path)
+    repo.rows[group_id].status = TaskStatus.COMPLETE
+    running_group = uuid.uuid4()
+    repo.rows[running_group] = _row(running_group, kind=Kind.PLAYLIST, status=TaskStatus.DOWNLOADING)
+    finished_video = uuid.uuid4()
+    repo.rows[finished_video] = _row(finished_video, parent_id=running_group, status=TaskStatus.COMPLETE)
+
+    await service.bulk("clear_finished")
+
+    assert repo.rows[group_id].status == TaskStatus.CANCELED
+    assert repo.rows[finished_video].status == TaskStatus.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_fetching_one_group_carries_its_counts(tmp_path: Path) -> None:
+    service, _, _, group_id = _group_service(tmp_path)
+    service._torrents = _PassThrough()  # ty: ignore[invalid-assignment]
+
+    fetched = await service.get_task(group_id)
+
+    assert fetched.entry_counts is not None and fetched.entry_counts.total == 3
+
+
+class _PassThrough:
+    """A torrent service that hands site rows back as they are."""
+
+    async def schema(self, task: Any) -> Any:
+        from src.data.schema.download import TaskSchema
+
+        return TaskSchema.model_validate(task)
+
+
+@pytest.mark.asyncio
+async def test_only_a_group_has_entries(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    task_id = uuid.uuid4()
+    repo.rows[task_id] = _row(task_id)
+
+    with pytest.raises(Error) as caught:
+        await service.list_entries(task_id, page=1, page_size=50)
+
+    assert caught.value.code == Code.NOT_FOUND

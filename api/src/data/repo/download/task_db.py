@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from tortoise.expressions import Q
 from tortoise.functions import Coalesce
@@ -14,7 +14,7 @@ from src.core.success import Meta
 from src.data.db.model import Task
 from src.data.repo.download.interface import TaskRepo
 from src.data.schema.download import TaskSummarySchema
-from src.data.type import ACTIVE_STATUSES, TASK_GROUPS, Platform, TaskStatus
+from src.data.type import ACTIVE_STATUSES, TASK_GROUPS, Kind, Platform, TaskStatus
 
 #: Which of two tasks holding one video speaks for it: the one furthest along.
 _HELD_RANK = {
@@ -26,6 +26,11 @@ _HELD_RANK = {
     TaskStatus.PAUSED: 2,
     TaskStatus.FAILED: 1,
 }
+
+
+async def _ids(query: Any, column: str) -> list[uuid.UUID]:
+    """One uuid column of ``query``'s rows. Tortoise types a flat ``values_list`` as tuples."""
+    return cast(list[uuid.UUID], list(await query.values_list(column, flat=True)))
 
 
 class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
@@ -41,16 +46,31 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         commits with the lock, so the row is unclaimable the moment it is taken.
         """
         async with in_transaction() as conn:
-            task = await (
+            runnable = (
                 Task.filter(status=TaskStatus.PENDING, deleted_at__isnull=True)
                 .exclude(platform=Platform.TORRENT)
+                .exclude(kind=Kind.PLAYLIST)
                 .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
+            )
+            # Standalone tasks first, so a pasted link never waits behind a
+            # channel archive; then a group's videos in playlist order.
+            task = await (
+                runnable.filter(parent_id__isnull=True)
                 .order_by("created_at")
                 .limit(1)
                 .select_for_update(skip_locked=True)
                 .using_db(conn)
                 .first()
             )
+            if task is None:
+                task = await (
+                    runnable.filter(parent_id__isnull=False)
+                    .order_by("created_at", "position")
+                    .limit(1)
+                    .select_for_update(skip_locked=True)
+                    .using_db(conn)
+                    .first()
+                )
             if task is None:
                 return None
 
@@ -114,7 +134,8 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         rows the caller will never be sent is a "load more" button that never
         stops offering.
         """
-        filters: dict[str, Any] = {"deleted_at__isnull": True}
+        # Top-level rows only: a group's videos are listed through its card.
+        filters: dict[str, Any] = {"deleted_at__isnull": True, "parent_id__isnull": True}
         if statuses:
             filters["status__in"] = list(statuses)
 
@@ -156,7 +177,7 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
         """
 
         async def count(group: str | None = None) -> int:
-            query = Task.filter(deleted_at__isnull=True)
+            query = Task.filter(deleted_at__isnull=True, parent_id__isnull=True)
             if group is not None:
                 query = query.filter(status__in=list(TASK_GROUPS[group]))
             return await query.count()
@@ -183,6 +204,81 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
             if current is None or _HELD_RANK.get(status, 0) > _HELD_RANK.get(current, 0):
                 found[video_id] = status
         return found
+
+    async def create_group(self, group: dict[str, Any], entries: Sequence[dict[str, Any]]) -> Task:
+        async with in_transaction() as conn:
+            row = await Task.create(using_db=conn, **group)
+            if entries:
+                await Task.bulk_create(
+                    [Task(**entry, parent_id=row.id, created_at=row.created_at) for entry in entries],
+                    batch_size=500,
+                    using_db=conn,
+                )
+        return row
+
+    async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Task], Meta]:
+        tasks, meta = await self.get_paginated(
+            order_by="position",
+            page=page,
+            page_size=page_size,
+            deleted_at__isnull=True,
+            parent_id=group_id,
+        )
+        return tasks, Meta(**meta)
+
+    async def entry_statuses(self, group_id: uuid.UUID) -> list[tuple[TaskStatus, int, int | None, int]]:
+        rows = await Task.filter(parent_id=group_id, deleted_at__isnull=True).values_list(
+            "status", "downloaded_bytes", "total_bytes", "speed_bps"
+        )
+        return [(TaskStatus(status), done, total, speed) for status, done, total, speed in rows]
+
+    async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        return await self._pause(videos)
+
+    async def resume_entries(self, group_id: uuid.UUID) -> int:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        return await self._requeue(videos)
+
+    async def remove_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
+        videos = Task.filter(parent_id=group_id, deleted_at__isnull=True)
+        ids = await _ids(videos, "id")
+        await videos.update(status=TaskStatus.CANCELED, deleted_at=now(), speed_bps=0, eta_seconds=None)
+        return ids
+
+    async def pause_all_entries(self) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+        videos = Task.filter(parent_id__isnull=False, deleted_at__isnull=True)
+        groups = set(
+            await _ids(videos.filter(status__in=[TaskStatus.PENDING, TaskStatus.DOWNLOADING]), "parent_id")
+        )
+        return await self._pause(videos), groups
+
+    async def resume_all_entries(self) -> set[uuid.UUID]:
+        videos = Task.filter(parent_id__isnull=False, deleted_at__isnull=True)
+        groups = set(await _ids(videos.filter(status__in=[TaskStatus.PAUSED, TaskStatus.FAILED]), "parent_id"))
+        await self._requeue(videos)
+        return groups
+
+    @staticmethod
+    async def _pause(videos: Any) -> list[uuid.UUID]:
+        """Pause what's queued or downloading among ``videos``; the ids that were downloading."""
+        running = await _ids(videos.filter(status=TaskStatus.DOWNLOADING), "id")
+        await videos.filter(status__in=[TaskStatus.PENDING, TaskStatus.DOWNLOADING]).update(
+            status=TaskStatus.PAUSED, speed_bps=0, eta_seconds=None
+        )
+        return running
+
+    @staticmethod
+    async def _requeue(videos: Any) -> int:
+        """Put the paused and failed among ``videos`` back in the queue, as a person's fresh decision."""
+        return await videos.filter(status__in=[TaskStatus.PAUSED, TaskStatus.FAILED]).update(
+            status=TaskStatus.PENDING, attempts=0, error=None, error_code=None, next_attempt_at=None
+        )
+
+    async def find_group(self, extractor: str, playlist_id: str) -> Task | None:
+        return await Task.filter(
+            kind=Kind.PLAYLIST, extractor=extractor, video_id=playlist_id, deleted_at__isnull=True
+        ).first()
 
     async def get_active_by_id(self, task_id: uuid.UUID) -> Task | None:
         return await self.get_by_id(task_id, deleted_at__isnull=True)

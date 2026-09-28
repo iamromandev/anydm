@@ -37,6 +37,41 @@ class MediaDownloadRequest(BaseSchema):
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
 
 
+class PlaylistEntryRequest(BaseSchema):
+    """One chosen video, as ``GET /extract/entries`` listed it."""
+
+    index: Annotated[int, Field(ge=1)]
+    id: Annotated[str, Field(min_length=1)]
+    url: Annotated[str, Field(pattern=r"^https?://")]
+    title: str | None = None
+    duration: int | None = None
+
+
+class PlaylistDownloadRequest(BaseSchema):
+    """A playlist's chosen videos, to add as one group (v0.5)."""
+
+    url: Annotated[str, Field(min_length=1, description="The playlist, or the channel's tab")]
+    extractor: str
+    playlist_id: Annotated[str, Field(min_length=1)]
+    title: str = ""
+    #: A channel's own uploads: its files aren't numbered.
+    channel_tab: bool = False
+    preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset, a ceiling for each video")]
+    entries: Annotated[list[PlaylistEntryRequest], Field(min_length=1)]
+
+
+class EntryCountsSchema(BaseSchema):
+    """How a group's videos stand, by kind of status."""
+
+    total: int = 0
+    complete: int = 0
+    #: Queued or downloading.
+    active: int = 0
+    paused: int = 0
+    failed: int = 0
+    watched: int = 0
+
+
 class UrlDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
 
@@ -81,6 +116,9 @@ class TaskSchema(BaseSchema):
     #: yt-dlp's name for the site of a ``site`` task: "Youtube", "Vimeo", ...
     extractor: str | None = None
     video_id: str | None = None
+    #: The group this video was added in (v0.5).
+    parent_id: uuid.UUID | None = None
+    position: int | None = None
     preset: Preset
     kind: Kind
     title: str = ""
@@ -103,6 +141,8 @@ class TaskSchema(BaseSchema):
     #: Where each file was left in the player (#96). Filled on the list and a
     #: single task, not on the event stream's frames, which the UI merges.
     positions: list[PositionSchema] | None = None
+    #: A group's videos by kind of status; ``None`` for anything else.
+    entry_counts: EntryCountsSchema | None = None
     file_size: int | None = None
     error: str | None = None
     error_code: str | None = None

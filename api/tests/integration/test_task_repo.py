@@ -369,3 +369,162 @@ async def test_the_task_furthest_along_speaks_for_the_video(db: None) -> None:
 
 async def test_no_ids_asks_nothing(db: None) -> None:
     assert await TaskDatabaseRepo().statuses_by_video("Youtube", []) == {}
+
+
+GROUP = {
+    "source_url": "https://y.test/list",
+    "platform": Platform.SITE,
+    "preset": Preset.BEST,
+    "kind": Kind.PLAYLIST,
+    "status": TaskStatus.PENDING,
+    "title": "list",
+    "extractor": "YoutubeTab",
+    "video_id": "PL1",
+}
+
+
+def _entry(n: int) -> dict[str, Any]:
+    return {
+        "source_url": f"https://y.test/v{n}",
+        "platform": Platform.SITE,
+        "preset": Preset.BEST,
+        "kind": Kind.VIDEO,
+        "status": TaskStatus.PENDING,
+        "title": f"v{n}",
+        "position": n,
+        "extractor": "Youtube",
+        "video_id": f"v{n}",
+    }
+
+
+async def test_create_group_inserts_the_videos_under_it(db: None) -> None:
+    group = await TaskDatabaseRepo().create_group(GROUP, [_entry(n) for n in range(1, 4)])
+
+    videos = await Task.filter(parent_id=group.id).order_by("position")
+    assert [v.position for v in videos] == [1, 2, 3]
+    assert {v.created_at for v in videos} == {group.created_at}
+
+
+async def test_the_list_and_summary_count_only_top_level_rows(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    await repo.create_group(GROUP, [_entry(n) for n in range(1, 4)])
+    await _pending("alone")
+
+    rows, meta = await repo.list_page(page=1, page_size=50)
+
+    assert sorted(r.title for r in rows) == ["alone", "list"]
+    assert meta.total == 2
+    assert (await repo.summary()).all == 2
+
+
+async def test_entries_come_in_playlist_order(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await repo.create_group(GROUP, [_entry(n) for n in (3, 1, 2)])
+
+    rows, meta = await repo.entries_page(group.id, page=1, page_size=2)
+
+    assert [r.position for r in rows] == [1, 2]
+    assert meta.total == 3
+
+
+async def test_claim_takes_a_standalone_task_before_queued_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    await repo.create_group(GROUP, [_entry(n) for n in range(1, 3)])
+    later = await _pending("pasted later")
+
+    first = await repo.claim_next()
+    second = await repo.claim_next()
+    third = await repo.claim_next()
+
+    assert first is not None and first.id == later.id
+    assert [second and second.position, third and third.position] == [1, 2]
+    # The group row itself is never claimed.
+    assert await repo.claim_next() is None
+
+
+async def test_entry_statuses_leave_out_removed_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await repo.create_group(GROUP, [_entry(n) for n in range(1, 3)])
+    await Task.filter(parent_id=group.id, position=2).update(deleted_at=now(), status=TaskStatus.CANCELED)
+
+    assert await repo.entry_statuses(group.id) == [(TaskStatus.PENDING, 0, None, 0)]
+
+
+async def _mixed_group(repo: TaskDatabaseRepo) -> Task:
+    """Four videos: pending, downloading, paused, failed."""
+    group = await repo.create_group(GROUP, [_entry(n) for n in range(1, 5)])
+    for position, status in ((2, TaskStatus.DOWNLOADING), (3, TaskStatus.PAUSED), (4, TaskStatus.FAILED)):
+        await Task.filter(parent_id=group.id, position=position).update(status=status)
+    return group
+
+
+async def _statuses(group: Task) -> list[TaskStatus]:
+    rows = await Task.filter(parent_id=group.id, deleted_at__isnull=True).order_by("position")
+    return [row.status for row in rows]
+
+
+async def test_pausing_a_group_pauses_what_is_left_to_do(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    running = await repo.pause_entries(group.id)
+
+    assert await _statuses(group) == [TaskStatus.PAUSED, TaskStatus.PAUSED, TaskStatus.PAUSED, TaskStatus.FAILED]
+    assert len(running) == 1
+
+
+async def test_resuming_a_group_requeues_paused_and_failed_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+    await Task.filter(parent_id=group.id, position=4).update(attempts=3, error="boom")
+
+    assert await repo.resume_entries(group.id) == 2
+
+    assert await _statuses(group) == [
+        TaskStatus.PENDING,
+        TaskStatus.DOWNLOADING,
+        TaskStatus.PENDING,
+        TaskStatus.PENDING,
+    ]
+    failed = await Task.get(parent_id=group.id, position=4)
+    assert (failed.attempts, failed.error) == (0, None)
+
+
+async def test_removing_a_group_removes_its_videos(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    removed = await repo.remove_entries(group.id)
+
+    assert len(removed) == 4
+    assert await _statuses(group) == []
+
+
+async def test_pause_all_reaches_every_group_video(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+    alone = await _pending("alone")
+
+    running, groups = await repo.pause_all_entries()
+
+    assert groups == {group.id}
+    assert len(running) == 1
+    assert (await Task.get(id=alone.id)).status == TaskStatus.PENDING  # standalone rows go through the service
+
+
+async def test_resume_all_reaches_every_group_video(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await _mixed_group(repo)
+
+    assert await repo.resume_all_entries() == {group.id}
+    assert TaskStatus.PAUSED not in await _statuses(group)
+
+
+async def test_find_group_by_site_and_playlist(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await repo.create_group(GROUP, [])
+
+    found = await repo.find_group("YoutubeTab", "PL1")
+
+    assert found is not None and found.id == group.id
+    assert await repo.find_group("YoutubeTab", "PL2") is None

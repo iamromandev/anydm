@@ -17,6 +17,7 @@ from src.service.download.disk_monitor import DiskMonitor
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.fragment import FragmentDownloader, fragment_limits
+from src.service.download.group_totals import GroupTotals
 from src.service.download.post_process import FfmpegPostProcessor
 from src.service.download.rate_limit import rate_limiter
 from src.service.download.segmented import SegmentedDownloader
@@ -64,6 +65,10 @@ def get_disk_monitor() -> DiskMonitor:
     return DiskMonitor(get_disk_guard(), get_event_hub())
 
 
+def get_group_totals() -> GroupTotals:
+    return GroupTotals(repo=TaskDatabaseRepo(), hub=get_event_hub())
+
+
 def get_download_service() -> DownloadService:
     settings = get_settings()
     return DownloadService(
@@ -76,6 +81,7 @@ def get_download_service() -> DownloadService:
         torrents=get_torrent_service(),
         disk=get_disk_guard(),
         positions=PositionDatabaseRepo(),
+        groups=get_group_totals(),
     )
 
 
@@ -195,6 +201,7 @@ def build_worker_pool() -> WorkerPool:
             segments=settings.download_segments,
             disk=get_disk_guard(),
             fragments=fragments,
+            groups=get_group_totals(),
         )
         for index in range(settings.download_workers)
     ]

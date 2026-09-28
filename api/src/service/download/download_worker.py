@@ -19,19 +19,23 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
+from src.core.type import ErrorType
 from src.data.db.model import Task
 from src.data.repo.download.interface import SegmentRepo, TaskRepo
 from src.data.schema.download import TaskSchema
 from src.data.type import Kind, Platform, TaskStatus
 from src.lib.event import EventHub
+from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
+from src.lib.site.entry_plan import apply_plan, is_unplanned, number_of, plan_for
 from src.lib.site.subtitles import fetch_subtitle
 from src.service.download import retry as retry_policy
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
-from src.service.download.paths import final_path, part_path, task_dir
+from src.service.download.group_totals import GroupTotals
+from src.service.download.paths import final_path, group_destination, part_path, task_dir
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
@@ -62,7 +66,9 @@ class DownloadWorker:
         disk: DiskGuard | None = None,
         fragments: FragmentDownloader | None = None,
         subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
+        groups: GroupTotals | None = None,
     ) -> None:
+        self._groups = groups
         self._fetch_subtitle = subtitle_fetcher
         self._disk = disk
         self._fragments = fragments
@@ -112,11 +118,27 @@ class DownloadWorker:
         # so a bare ``save()`` would push this stale copy's zeroes back over
         # every byte count the download has since recorded.
         await task.save(update_fields=["attempts"])
+        # Claimed: the group now has one more video downloading.
+        if self._groups is not None and task.parent_id is not None:
+            await self._groups.refresh(task.parent_id)
 
         try:
-            parts, fragmented = await self._download_parts(task)
+            batch = None
+            if task.platform == Platform.SITE and is_unplanned(task):
+                batch = await self._plan(task)
+            try:
+                parts, fragmented = await self._download_parts(task, batch)
+            except Error as error:
+                # A stored format the site no longer offers: plan again, once,
+                # from the preset, rather than failing for good.
+                if task.platform != Platform.SITE or error.type != ErrorType.UNPROCESSABLE_ENTITY:
+                    raise
+                logger.info("{}|re-planning {}: {}", self._name, task.id, error.message)
+                parts, fragmented = await self._download_parts(task, await self._plan(task))
             destination = final_path(self._root, task.id, task.filename)
             await self._post_processor.run(task, parts, destination, fragmented=fragmented)
+            if task.parent_id is not None:
+                destination = await self._into_group_folder(task, destination)
             await self._mark_complete(task, destination)
             await self._save_subtitles(task, destination)
         except Stopped:
@@ -130,7 +152,7 @@ class DownloadWorker:
             await task.refresh_from_db()
             if task.status == TaskStatus.CANCELED:
                 remove_task_files(self._root, task.id)
-            self._emit(task)
+            await self._changed(task)
         except Error as error:
             if is_insufficient_storage(error):
                 await self._wait_for_space(task, error, refund=True)
@@ -151,7 +173,43 @@ class DownloadWorker:
     def _emit(self, task: Task) -> None:
         self._hub.publish("task", TaskSchema.model_validate(task).to_json())
 
-    async def _download_parts(self, task: Task) -> tuple[dict[str, Path], frozenset[str]]:
+    async def _changed(self, task: Task) -> None:
+        """Publish a status change, and bring a group video's group up to date with it (v0.5)."""
+        self._emit(task)
+        if self._groups is not None and task.parent_id is not None:
+            await self._groups.refresh(task.parent_id)
+
+    async def _into_group_folder(self, task: Task, destination: Path) -> Path:
+        """Move a group's finished video into the group's folder (v0.5).
+
+        Before COMPLETE: a crash here requeues the task, and the move runs again,
+        replacing a file of the same name.
+        """
+        if task.parent_id is None:
+            return destination
+        group = await self._repo.get_active_by_id(task.parent_id)
+        if group is None or not group.file_path:
+            return destination
+        moved = group_destination(self._root, group.file_path, task.filename, task.video_id or str(task.id))
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        destination.replace(moved)
+        remove_task_files(self._root, task.id)
+        return moved
+
+    async def _plan(self, task: Task) -> dict[str, Resolved]:
+        """Formats for ``task``'s preset, from the one extraction that also gives their URLs (v0.5)."""
+        info, resolved = await self._client.open(task.source_url)
+        if info.is_live:
+            raise site_error.live_not_supported()
+        task.filename = number_of(task.filename, task.position)
+        fields = apply_plan(task, info, plan_for(info.formats, task.preset))
+        await task.save(update_fields=fields)
+        self._emit(task)
+        return resolved
+
+    async def _download_parts(
+        self, task: Task, batch: dict[str, Resolved] | None = None
+    ) -> tuple[dict[str, Path], frozenset[str]]:
         """Fetch every stream the plan names, resuming any ``.part`` already there.
 
         Returns the parts by name, and the names of those yt-dlp's downloader
@@ -180,7 +238,8 @@ class DownloadWorker:
         # one is worthless on a resume, and one extraction per part would double
         # what the site sees (and what trips YouTube's bot check).
         source_url = task.source_url
-        batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
+        if batch is None:
+            batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
 
         parts: dict[str, Path] = {}
         fragmented: set[str] = set()
@@ -382,7 +441,7 @@ class DownloadWorker:
         # whose video succeeded and whose audio then failed will retry, and
         # rebuilding the video plan at zero would re-download a finished part.
         await self._segment_repo.clear(task.id)
-        self._emit(task)
+        await self._changed(task)
         logger.success("{}|completed {} -> {}", self._name, task.id, task.file_path)
 
     async def _wait_for_space(self, task: Task, error: Error, *, refund: bool = False) -> None:
@@ -410,7 +469,7 @@ class DownloadWorker:
         logger.warning(
             "{}|waiting for disk space for {}: {}", self._name, task.id, error.message
         )
-        self._emit(task)
+        await self._changed(task)
 
     async def _mark_failed(self, task: Task, error: Error) -> None:
         decision = retry_policy.decide(error, attempts=task.attempts, max_attempts=self._max_attempts)
@@ -438,7 +497,7 @@ class DownloadWorker:
         await task.save(
             update_fields=["status", "error", "error_code", "speed_bps", "eta_seconds", "next_attempt_at"]
         )
-        self._emit(task)
+        await self._changed(task)
 
 
 class WorkerPool:

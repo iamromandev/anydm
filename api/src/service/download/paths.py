@@ -27,3 +27,12 @@ def final_path(root: Path, task_id: uuid.UUID, filename: str) -> Path:
     file outside the task's own directory.
     """
     return task_dir(root, task_id) / Path(filename).name
+
+
+def group_destination(root: Path, folder: str, filename: str, video_id: str) -> Path:
+    """Where a group's video ends up: its group's folder, under its own name
+    unless that is taken, when the video's id tells the two apart (v0.5)."""
+    target = root / folder / Path(filename).name
+    if target.exists():
+        target = target.with_name(f"{target.stem}_{video_id}{target.suffix}")
+    return target

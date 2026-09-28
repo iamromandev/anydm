@@ -44,6 +44,9 @@ class Kind(StrEnum):
     #: A whole torrent, which may hold many files. The selected ones live in
     #: ``torrent_file``; this row is the torrent itself.
     TORRENT = "torrent"
+    #: A playlist or a channel's tab, added as one group (v0.5). Its videos are
+    #: ordinary site tasks whose ``parent`` is this row; it downloads nothing itself.
+    PLAYLIST = "playlist"
 
 
 class TaskStatus(StrEnum):
