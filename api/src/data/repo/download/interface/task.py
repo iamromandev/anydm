@@ -85,6 +85,21 @@ class TaskRepo(CrudRepo[Task]):
         ...
 
     @abstractmethod
+    async def held_entries(self, group_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, TaskStatus, int | None]]:
+        """A group's videos not removed, by site id: task id, status and position."""
+        ...
+
+    @abstractmethod
+    async def add_entries(self, group: Task, entries: Sequence[dict[str, Any]]) -> None:
+        """More videos under an existing group."""
+        ...
+
+    @abstractmethod
+    async def requeue_videos(self, ids: Sequence[uuid.UUID]) -> int:
+        """Put the paused and failed among these videos back in the queue."""
+        ...
+
+    @abstractmethod
     async def recover_orphans(self) -> int:
         """Requeue every task left mid-flight by a dead process. Returns the count."""
         ...

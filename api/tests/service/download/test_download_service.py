@@ -31,6 +31,11 @@ class FakeRepo:
         self.running: list[uuid.UUID] = []
         self.touched: set[uuid.UUID] = set()
         self.group_calls: list[tuple[str, Any]] = []
+        #: A group already held, and its videos, for adding a list again (part 3).
+        self.group: Any = None
+        self.held: dict[str, tuple[uuid.UUID, Any, int | None]] = {}
+        self.added: list[dict[str, Any]] = []
+        self.requeued: list[uuid.UUID] = []
 
     async def list_page(
         self,
@@ -63,7 +68,17 @@ class FakeRepo:
         return row
 
     async def find_group(self, extractor: str, playlist_id: str) -> Any:
-        return None
+        return self.group
+
+    async def held_entries(self, group_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, Any, int | None]]:
+        return dict(self.held)
+
+    async def add_entries(self, group: Any, entries: list[dict[str, Any]]) -> None:
+        self.added = list(entries)
+
+    async def requeue_videos(self, ids: list[uuid.UUID]) -> int:
+        self.requeued = list(ids)
+        return len(ids)
 
     async def pause_entries(self, group_id: uuid.UUID) -> list[uuid.UUID]:
         self.group_calls = [*self.group_calls, ("pause", group_id)]
@@ -1164,6 +1179,79 @@ async def test_more_than_ten_thousand_videos_are_refused(tmp_path: Path) -> None
 
     assert caught.value.code == Code.UNPROCESSABLE_ENTITY
     assert repo.created == []
+
+
+def _held_group(tmp_path: Path, repo: FakeRepo) -> Any:
+    group_id = uuid.uuid4()
+    group = _row(group_id, kind=Kind.PLAYLIST, file_path="29C3_ Not my department", video_id="PL1")
+    repo.rows[group_id] = group
+    repo.group = group
+    (tmp_path / "29C3_ Not my department").mkdir()
+    return group
+
+
+@pytest.mark.asyncio
+async def test_adding_a_list_again_joins_its_group(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    group = _held_group(tmp_path, repo)
+    repo.held = {
+        "v1": (uuid.uuid4(), TaskStatus.COMPLETE, 1),
+        "v2": (uuid.uuid4(), TaskStatus.COMPLETE, 2),
+    }
+
+    joined = await service.enqueue_playlist(_playlist(4))
+
+    assert joined.id == group.id
+    assert repo.created == []  # no second group
+    assert [(e["video_id"], e["position"], e["filename"]) for e in repo.added] == [
+        ("v3", 3, "03_"),
+        ("v4", 4, "04_"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_joining_appends_after_the_highest_position(tmp_path: Path) -> None:
+    """A tab lists newest first, so a later listing's numbers would collide."""
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    _held_group(tmp_path, repo)
+    repo.held = {"v3": (uuid.uuid4(), TaskStatus.COMPLETE, 7)}
+
+    await service.enqueue_playlist(_playlist(3, channel_tab=True))
+
+    assert [(e["video_id"], e["position"], e["filename"]) for e in repo.added] == [
+        ("v1", 8, ""),
+        ("v2", 9, ""),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    _held_group(tmp_path, repo)
+    failed, paused, done = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    repo.held = {
+        "v1": (failed, TaskStatus.FAILED, 1),
+        "v2": (paused, TaskStatus.PAUSED, 2),
+        "v3": (done, TaskStatus.COMPLETE, 3),
+    }
+
+    await service.enqueue_playlist(_playlist(3))
+
+    assert repo.added == []
+    assert sorted(map(str, repo.requeued)) == sorted(map(str, [failed, paused]))
+
+
+@pytest.mark.asyncio
+async def test_a_join_past_ten_thousand_is_refused(tmp_path: Path) -> None:
+    service, repo, _ = _service(downloads_dir=tmp_path)
+    _held_group(tmp_path, repo)
+    repo.held = {f"x{n}": (uuid.uuid4(), TaskStatus.COMPLETE, n) for n in range(1, 9_999)}
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue_playlist(_playlist(3))
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.added == []
 
 
 @pytest.mark.asyncio

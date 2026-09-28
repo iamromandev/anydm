@@ -14,7 +14,13 @@ from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
-from src.data.schema.download import PlaylistDownloadRequest, PositionSchema, TaskSchema, TaskSummarySchema
+from src.data.schema.download import (
+    PlaylistDownloadRequest,
+    PlaylistEntryRequest,
+    PositionSchema,
+    TaskSchema,
+    TaskSummarySchema,
+)
 from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
 from src.lib.event import EventHub
 from src.lib.folder import named_folder
@@ -220,13 +226,12 @@ class DownloadService(BaseService):
         if len(request.entries) > PLAYLIST_LIMIT:
             raise site_error.playlist_too_large(len(request.entries))
         self._require_space()
+        group = await self._repo.find_group(request.extractor, request.playlist_id)
+        if group is not None:
+            return await self._join_group(group, request)
         folder = named_folder(self._root, request.title, request.playlist_id)
         folder.mkdir(parents=True, exist_ok=True)
-        kind = Kind.AUDIO if request.preset == Preset.MP3 else Kind.VIDEO
         largest = max(entry.index for entry in request.entries)
-        # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
-        # name single downloads and the picker's "already have it" use.
-        video_extractor = request.extractor.removesuffix("Tab")
         group = await self._repo.create_group(
             {
                 "source_url": request.url,
@@ -240,28 +245,69 @@ class DownloadService(BaseService):
                 "progress": 0,
                 "file_path": str(folder.relative_to(self._root)),
             },
-            [
-                {
-                    "source_url": entry.url,
-                    "platform": Platform.SITE,
-                    "extractor": video_extractor,
-                    "video_id": entry.id,
-                    "preset": request.preset,
-                    "kind": kind,
-                    "title": entry.title or "",
-                    "position": entry.index,
-                    "status": TaskStatus.PENDING,
-                    "progress": 0,
-                    "video_format": None,
-                    "audio_format": None,
-                    # The number now; choosing the formats appends the name.
-                    "filename": "" if request.channel_tab else number_prefix(entry.index, largest),
-                }
-                for entry in request.entries
-            ],
+            [self._entry_row(entry, request, position=entry.index, largest=largest) for entry in request.entries],
         )
         self._control.wake()
         return self._published(group)
+
+    @staticmethod
+    def _entry_row(
+        entry: PlaylistEntryRequest, request: PlaylistDownloadRequest, *, position: int, largest: int
+    ) -> dict[str, Any]:
+        """One video's row, unplanned: its formats and name are chosen when it starts."""
+        return {
+            "source_url": entry.url,
+            "platform": Platform.SITE,
+            # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
+            # name single downloads and the picker's "already have it" use.
+            "extractor": request.extractor.removesuffix("Tab"),
+            "video_id": entry.id,
+            "preset": request.preset,
+            "kind": Kind.AUDIO if request.preset == Preset.MP3 else Kind.VIDEO,
+            "title": entry.title or "",
+            "position": position,
+            "status": TaskStatus.PENDING,
+            "progress": 0,
+            "video_format": None,
+            "audio_format": None,
+            # The number now; choosing the formats appends the name.
+            "filename": "" if request.channel_tab else number_prefix(position, largest),
+        }
+
+    async def _join_group(self, group: Any, request: PlaylistDownloadRequest) -> TaskSchema:
+        """The same list added again: its new videos join the group, in its folder (part 3).
+
+        New videos go after the group's highest position, in this listing's
+        order: a channel's tab lists newest first, so its numbers shift with
+        every upload. A video already held isn't added twice; ticked while
+        paused or failed, it goes back in the queue.
+        """
+        held = await self._repo.held_entries(group.id)
+        fresh = [entry for entry in request.entries if entry.id not in held]
+        if len(held) + len(fresh) > PLAYLIST_LIMIT:
+            raise site_error.playlist_too_large(len(held) + len(fresh))
+        again = [
+            held[entry.id][0]
+            for entry in request.entries
+            if entry.id in held and held[entry.id][1] in (TaskStatus.PAUSED, TaskStatus.FAILED)
+        ]
+        top = max((position or 0 for _, _, position in held.values()), default=0)
+        largest = top + len(fresh)
+        if group.file_path:
+            # Removed by hand since the first add: the videos still finish into it.
+            (self._root / group.file_path).mkdir(parents=True, exist_ok=True)
+        if fresh:
+            await self._repo.add_entries(
+                group,
+                [
+                    self._entry_row(entry, request, position=top + offset, largest=largest)
+                    for offset, entry in enumerate(fresh, start=1)
+                ],
+            )
+        await self._repo.requeue_videos(again)
+        self._control.wake()
+        # Recounted: back to downloading, with one frame for the group.
+        return await self._group_changed(group)
 
     async def list_entries(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
         """One page of a group's videos, in playlist order."""

@@ -29,13 +29,17 @@ import {
 import { PRESET_OPTIONS, type Preset } from "@/lib/prefs";
 import {
     filterEntries,
-    isSelectable,
+    canTick,
     presetHint,
     selectionSummary,
     setAll,
     tickArrivals,
     toggle,
     toggleRange,
+    tickNewest,
+    tickUploadedAfter,
+    hasDates,
+    approxAge,
 } from "@/lib/selection";
 import { virtualWindow } from "@/lib/virtual";
 import "./field.css";
@@ -89,6 +93,10 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             query: "",
             preset: defaultPreset as Preset,
             adding: false,
+            /** "Tick newest [N]" (part 3). */
+            newest: 50,
+            /** The "Uploaded after" date input's value, as it gives it. */
+            since: "",
         });
 
         /**
@@ -175,6 +183,19 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             selected.value = setAll(selected.value, shown, on);
         });
 
+        const pickNewest = $(() => {
+            const n = Math.max(0, Math.floor(store.newest));
+            selected.value = tickNewest(listing.value.entries, n);
+        });
+
+        const pickSince = $((value: string) => {
+            store.since = value;
+            if (!value) return;
+            // The start of that day, where the person is.
+            const since = new Date(`${value}T00:00:00`).getTime() / 1000;
+            selected.value = tickUploadedAfter(listing.value.entries, since);
+        });
+
         const add = $(async () => {
             const request = playlistRequest(
                 target,
@@ -195,6 +216,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
 
         const state = listing.value;
         const shown = filterEntries(state.entries, store.query);
+        const dated = hasDates(state.entries);
         const chosen = state.entries.filter((e) =>
             selected.value.has(e.index),
         ).length;
@@ -271,6 +293,50 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                         </button>
                     </div>
 
+                    {(target.channelTab || dated) && (
+                        <div class="playlist-picker-archive">
+                            {target.channelTab && (
+                                <label class="playlist-picker-newest">
+                                    <button
+                                        type="button"
+                                        class="playlist-picker-button"
+                                        onClick$={pickNewest}
+                                    >
+                                        Tick newest
+                                    </button>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={10000}
+                                        class="playlist-picker-number"
+                                        aria-label="How many of the newest"
+                                        value={store.newest}
+                                        onInput$={(_, el) => {
+                                            store.newest =
+                                                Number(el.value) || 0;
+                                        }}
+                                    />
+                                </label>
+                            )}
+                            {dated && (
+                                <label class="playlist-picker-since">
+                                    <span>Uploaded after</span>
+                                    <input
+                                        type="date"
+                                        class="playlist-picker-date"
+                                        value={store.since}
+                                        onChange$={(_, el) =>
+                                            pickSince(el.value)
+                                        }
+                                    />
+                                    <span class="playlist-picker-hint">
+                                        Older dates are rough
+                                    </span>
+                                </label>
+                            )}
+                        </div>
+                    )}
+
                     <div
                         ref={listRef}
                         class="playlist-picker-list"
@@ -290,6 +356,9 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                 entry.duration
                                     ? formatTime(entry.duration)
                                     : "",
+                                entry.timestamp !== null
+                                    ? approxAge(entry.timestamp, Date.now())
+                                    : "",
                                 entry.available ? "" : "Unavailable",
                                 entry.have ? HAVE_LABELS[entry.have] : "",
                                 row === "added" ? "Added" : "",
@@ -308,7 +377,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                         checked={selected.value.has(
                                             entry.index,
                                         )}
-                                        disabled={!isSelectable(entry)}
+                                        disabled={!canTick(entry)}
                                         onClick$={(e: MouseEvent) =>
                                             tick(entry, e.shiftKey)
                                         }

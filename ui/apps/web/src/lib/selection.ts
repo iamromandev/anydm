@@ -13,6 +13,14 @@ export function isSelectable(entry: PlaylistEntry): boolean {
     return entry.available && entry.have === null;
 }
 
+/**
+ * Tickable by hand: anything the site serves that hasn't finished. A held
+ * video that failed or paused, ticked, goes back in its group's queue (part 3).
+ */
+export function canTick(entry: PlaylistEntry): boolean {
+    return entry.available && entry.have !== "complete";
+}
+
 /** The ticks after a batch arrives: its selectable videos, ticked. */
 export function tickArrivals(
     selected: ReadonlySet<number>,
@@ -30,7 +38,7 @@ export function toggle(
     entry: PlaylistEntry,
 ): Set<number> {
     const next = new Set(selected);
-    if (!isSelectable(entry)) return next;
+    if (!canTick(entry)) return next;
     if (next.has(entry.index)) next.delete(entry.index);
     else next.add(entry.index);
     return next;
@@ -51,14 +59,17 @@ export function toggleRange(
     const high = Math.max(anchor, entry.index);
     const next = new Set(selected);
     for (const row of shown) {
-        if (row.index < low || row.index > high || !isSelectable(row)) continue;
+        if (row.index < low || row.index > high || !canTick(row)) continue;
         if (on) next.add(row.index);
         else next.delete(row.index);
     }
     return next;
 }
 
-/** All or None, over the rows the filter shows. Hidden rows keep their ticks. */
+/**
+ * All or None, over the rows the filter shows. Hidden rows keep their ticks.
+ * All takes only what isn't held; None clears everything shown.
+ */
 export function setAll(
     selected: ReadonlySet<number>,
     shown: readonly PlaylistEntry[],
@@ -66,9 +77,8 @@ export function setAll(
 ): Set<number> {
     const next = new Set(selected);
     for (const row of shown) {
-        if (!isSelectable(row)) continue;
-        if (on) next.add(row.index);
-        else next.delete(row.index);
+        if (on && isSelectable(row)) next.add(row.index);
+        if (!on) next.delete(row.index);
     }
     return next;
 }
@@ -113,4 +123,56 @@ export function presetHint(preset: string): string {
         (option) => option.value === preset,
     )?.label;
     return label ? `Videos without ${label} get the closest below` : "";
+}
+
+/** "Tick newest N": a tab lists newest first, so the first N not held (part 3). */
+export function tickNewest(
+    entries: readonly PlaylistEntry[],
+    n: number,
+): Set<number> {
+    const next = new Set<number>();
+    for (const entry of entries) {
+        if (next.size >= n) break;
+        if (isSelectable(entry)) next.add(entry.index);
+    }
+    return next;
+}
+
+/** "Uploaded after": everything selectable from `since` (seconds) on. Undated videos aren't. */
+export function tickUploadedAfter(
+    entries: readonly PlaylistEntry[],
+    since: number,
+): Set<number> {
+    const next = new Set<number>();
+    for (const entry of entries) {
+        if (
+            isSelectable(entry) &&
+            entry.timestamp !== null &&
+            entry.timestamp >= since
+        ) {
+            next.add(entry.index);
+        }
+    }
+    return next;
+}
+
+/** The date filter shows only for a listing that has dates to filter by. */
+export function hasDates(entries: readonly PlaylistEntry[]): boolean {
+    return entries.some((entry) => entry.timestamp !== null);
+}
+
+const plural = (n: number, unit: string) =>
+    `~${n} ${unit}${n === 1 ? "" : "s"} ago`;
+
+/**
+ * "~3 weeks ago". YouTube gives only "3 weeks ago", which yt-dlp turns into a
+ * timestamp, so the tilde says it's no more precise than that.
+ */
+export function approxAge(timestamp: number, now: number): string {
+    const days = Math.floor((now / 1000 - timestamp) / 86_400);
+    if (days < 1) return "~today";
+    if (days < 14) return plural(days, "day");
+    if (days < 60) return plural(Math.round(days / 7), "week");
+    if (days < 365) return plural(Math.round(days / 30), "month");
+    return plural(Math.floor(days / 365), "year");
 }
