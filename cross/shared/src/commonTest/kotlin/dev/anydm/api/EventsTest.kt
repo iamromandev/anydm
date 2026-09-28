@@ -75,3 +75,34 @@ class EventsTest {
             assertIs<Unauthorized>(kotlin.runCatching { api.events().toList() }.exceptionOrNull())
         }
 }
+
+class StreamTimeoutTest {
+    @Test
+    fun `the event stream has no request time limit, while ordinary calls keep one`() =
+        runTest {
+            val limits = mutableMapOf<String, Long?>()
+            val api =
+                AnydmApi(
+                    ServerConfig("http://nas:8030", null),
+                    MockEngine { request ->
+                        limits[request.url.encodedPath] =
+                            request.getCapabilityOrNull(io.ktor.client.plugins.HttpTimeoutCapability)?.requestTimeoutMillis
+                        if (request.url.encodedPath == "/download/events") {
+                            respond("", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/event-stream"))
+                        } else {
+                            respond(
+                                """{"status":"success","data":{"all":0}}""",
+                                HttpStatusCode.OK,
+                                headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        }
+                    },
+                )
+
+            api.summary()
+            api.events().toList()
+
+            assertEquals(io.ktor.client.plugins.HttpTimeoutConfig.INFINITE_TIMEOUT_MS, limits["/download/events"])
+            assertEquals(REQUEST_TIMEOUT_MS, limits["/download/summary"])
+        }
+}

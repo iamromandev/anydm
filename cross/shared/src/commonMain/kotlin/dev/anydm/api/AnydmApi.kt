@@ -9,6 +9,7 @@ import dev.anydm.model.SummaryDto
 import dev.anydm.model.TaskDto
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.request
@@ -30,6 +31,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 const val API_KEY_HEADER = "X-API-Key"
+
+/** How long an ordinary call may take. The event stream has no limit: it's meant to stay open. */
+const val REQUEST_TIMEOUT_MS = 30_000L
 
 /** One page of a list, and where it sits among the rest. */
 data class Page<T>(
@@ -60,7 +64,11 @@ class AnydmApi(
     engine: HttpClientEngine,
 ) : TaskApi {
     private val config = config.normalized()
-    private val client = HttpClient(engine) { expectSuccess = false }
+    private val client =
+        HttpClient(engine) {
+            expectSuccess = false
+            install(HttpTimeout) { requestTimeoutMillis = REQUEST_TIMEOUT_MS }
+        }
 
     override suspend fun listTasks(
         page: Int,
