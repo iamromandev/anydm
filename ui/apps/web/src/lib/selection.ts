@@ -114,3 +114,55 @@ export function presetHint(preset: string): string {
     )?.label;
     return label ? `Videos without ${label} get the closest below` : "";
 }
+
+/** "Tick newest N": a tab lists newest first, so the first N not held (part 3). */
+export function tickNewest(
+    entries: readonly PlaylistEntry[],
+    n: number,
+): Set<number> {
+    const next = new Set<number>();
+    for (const entry of entries) {
+        if (next.size >= n) break;
+        if (isSelectable(entry)) next.add(entry.index);
+    }
+    return next;
+}
+
+/** "Uploaded after": everything selectable from `since` (seconds) on. Undated videos aren't. */
+export function tickUploadedAfter(
+    entries: readonly PlaylistEntry[],
+    since: number,
+): Set<number> {
+    const next = new Set<number>();
+    for (const entry of entries) {
+        if (
+            isSelectable(entry) &&
+            entry.timestamp !== null &&
+            entry.timestamp >= since
+        ) {
+            next.add(entry.index);
+        }
+    }
+    return next;
+}
+
+/** The date filter shows only for a listing that has dates to filter by. */
+export function hasDates(entries: readonly PlaylistEntry[]): boolean {
+    return entries.some((entry) => entry.timestamp !== null);
+}
+
+const plural = (n: number, unit: string) =>
+    `~${n} ${unit}${n === 1 ? "" : "s"} ago`;
+
+/**
+ * "~3 weeks ago". YouTube gives only "3 weeks ago", which yt-dlp turns into a
+ * timestamp, so the tilde says it's no more precise than that.
+ */
+export function approxAge(timestamp: number, now: number): string {
+    const days = Math.floor((now / 1000 - timestamp) / 86_400);
+    if (days < 1) return "~today";
+    if (days < 14) return plural(days, "day");
+    if (days < 60) return plural(Math.round(days / 7), "week");
+    if (days < 365) return plural(Math.round(days / 30), "month");
+    return plural(Math.floor(days / 365), "year");
+}
