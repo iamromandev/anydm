@@ -41,7 +41,7 @@ fun main() =
                         }
 
                         is Screen.Main -> {
-                            MainScreen(screen.store, model.settings, onSignOut = { model.signOut(null) })
+                            MainScreen(screen.store, model.settings, screen.fileUrl, onSignOut = { model.signOut(null) })
                         }
                     }
                 }

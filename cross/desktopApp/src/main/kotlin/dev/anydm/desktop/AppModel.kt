@@ -26,6 +26,7 @@ sealed interface Screen {
 
     data class Main(
         val store: TaskStore,
+        val fileUrl: (String, Int?) -> String,
     ) : Screen
 }
 
@@ -79,7 +80,7 @@ class AppModel(
         api = candidate
         val store = TaskStore(candidate, scope, System::currentTimeMillis)
         store.start()
-        screen = Screen.Main(store)
+        screen = Screen.Main(store) { id, index -> candidate.fileUrl(id, index) }
         // A 401 later, from the stream or an action, returns here with the key's message.
         watcher =
             scope.launch {

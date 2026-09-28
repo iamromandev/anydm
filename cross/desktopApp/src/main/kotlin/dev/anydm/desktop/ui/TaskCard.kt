@@ -33,6 +33,7 @@ private val ACTION_LABELS =
 @Composable
 fun TaskCard(
     view: CardView,
+    saving: String?,
     onAction: (CardAction) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
@@ -46,6 +47,7 @@ fun TaskCard(
             }
             LinearProgressIndicator(progress = { view.progress }, modifier = Modifier.fillMaxWidth())
             if (view.detail.isNotEmpty()) Text(view.detail, style = MaterialTheme.typography.bodySmall)
+            if (saving != null) Text(saving, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             view.retry?.let { retry ->
                 val colour = if (retry.tone == RetryTone.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
                 Text(retry.headline, color = colour, style = MaterialTheme.typography.bodySmall)

@@ -42,3 +42,16 @@ fun play(
         if (player is Player.Command) "Couldn't start ${player.path}" else "Couldn't open $url"
     }
 }
+
+/** Show a saved file in the OS's file manager; its folder where revealing one file isn't supported. */
+fun revealFile(path: java.nio.file.Path) {
+    val desktop = Desktop.getDesktop()
+    if (desktop.isSupported(
+            Desktop.Action.BROWSE_FILE_DIR,
+        )
+    ) {
+        desktop.browseFileDirectory(path.toFile())
+    } else {
+        desktop.open(path.parent.toFile())
+    }
+}
