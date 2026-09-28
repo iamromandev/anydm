@@ -85,4 +85,42 @@ object Glyphs {
             lineTo(8f, 10f)
             lineTo(12f, 6f)
         }
+
+    val Remove =
+        glyph("remove") {
+            moveTo(4f, 4f)
+            lineTo(12f, 12f)
+            moveTo(12f, 4f)
+            lineTo(4f, 12f)
+        }
+
+    /** An arrow into a tray: save. */
+    val Save =
+        glyph("save") {
+            moveTo(8f, 2.5f)
+            lineTo(8f, 10f)
+            moveTo(5f, 7f)
+            lineTo(8f, 10f)
+            lineTo(11f, 7f)
+            moveTo(3f, 11f)
+            lineTo(3f, 13.5f)
+            lineTo(13f, 13.5f)
+            lineTo(13f, 11f)
+        }
+
+    /** A circling arrow: retry. */
+    val Retry =
+        glyph("retry") {
+            moveTo(12.5f, 8f)
+            arcTo(4.5f, 4.5f, 0f, true, true, 10.9f, 4.6f)
+            moveTo(11f, 2f)
+            lineTo(11f, 4.8f)
+            lineTo(8.2f, 4.8f)
+        }
+    val ChevronRight =
+        glyph("chevron-right") {
+            moveTo(6f, 4f)
+            lineTo(10f, 8f)
+            lineTo(6f, 12f)
+        }
 }
