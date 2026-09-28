@@ -121,7 +121,23 @@ async def test_an_unsegmented_flush_omits_the_key_entirely() -> None:
 
     _, data = await anext(aiter(subscription))
     assert "segments" not in data
+    assert "parent_id" not in data
     assert segment_repo.flushed == []
+    subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_a_group_video_flush_names_its_group() -> None:
+    """The browser routes it to the group's card, never the list (v0.5)."""
+    hub = EventHub()
+    subscription = hub.subscribe()
+    worker = _worker(hub)
+    group_id = uuid.uuid4()
+
+    await worker._flush(uuid.uuid4(), "video", _sample(()), offset=0, total=1000, parent_id=group_id)
+
+    _, data = await anext(aiter(subscription))
+    assert data["parent_id"] == str(group_id)
     subscription.close()
 
 

@@ -31,6 +31,7 @@ def test_counts_sum_by_kind_of_status() -> None:
     counts = counts_of(ROWS)
 
     assert (counts.total, counts.complete, counts.active, counts.failed, counts.paused) == (4, 1, 2, 1, 0)
+    assert counts.downloading == 1
 
 
 class _Group:

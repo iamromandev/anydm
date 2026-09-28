@@ -153,14 +153,14 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/{task_id}/entries?page=…&page_size=…` — one page of a group's videos, in playlist order; 404 for a task that is not a group
     - `GET /download` — one page of tasks, top-level only: a group's videos are listed through its entries. `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_bytes`, `progress` or `speed_bps`, prefixed with `-` for descending (default `-created_at`)
     - `GET /download/summary` — how many tasks each sidebar filter holds, counted in the database
-    - `GET /download/events` — SSE task and progress stream
+    - `GET /download/events` — SSE task and progress stream; a group's videos carry `parent_id` in both
     - `GET /download/{task_id}` — one task
     - `GET /download/{task_id}/file` — serve the finished file; for a torrent, its one selected file (409 when it has several)
     - `PUT /download/{task_id}/position` — where a download was left in the player (`file_index` for a torrent's file), so it resumes on any device; within its last 30 s it's marked watched instead. Tasks carry these as `positions`
     - `GET /download/{task_id}/media` — what the player needs to play a finished download: its MIME type for `canPlayType`, duration, and file URL (`?file_index=` for a torrent's file, else its largest media file), with its audio and subtitle tracks
     - `GET /download/{task_id}/subtitles/{track}.vtt` — one of those subtitle tracks, embedded or a subtitle file beside it, whole, as WebVTT, for a file the browser plays itself (`?file_index=` as above)
     - `POST /download/{task_id}/pause` · `POST /download/{task_id}/resume`
-    - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise. For a group, it removes every video: `delete_files=true` takes the group's folder, and `false`, accepted in any state, keeps what finished. `POST /download/{task_id}/pause` and `/resume` on a group act on its videos. A group's row carries `entry_counts` (`total`, `complete`, `active`, `paused`, `failed`), and its status, progress and byte counts are its videos'
+    - `DELETE /download/{task_id}` — remove a task and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` task, and answered 409 otherwise. For a group, it removes every video: `delete_files=true` takes the group's folder, and `false`, accepted in any state, keeps what finished. `POST /download/{task_id}/pause` and `/resume` on a group act on its videos. A group's row carries `entry_counts` (`total`, `complete`, `active`, `downloading`, `paused`, `failed`), and its status, progress and byte counts are its videos'
     - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
   - Torrents
     - `POST /download/torrent/resolve` — inspect a magnet or `.torrent` without downloading

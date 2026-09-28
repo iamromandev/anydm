@@ -40,6 +40,7 @@ def counts_of(rows: Sequence[EntryRow]) -> EntryCountsSchema:
         total=len(statuses),
         complete=sum(s in (TaskStatus.COMPLETE, TaskStatus.SEEDING) for s in statuses),
         active=sum(s in _ACTIVE for s in statuses),
+        downloading=sum(s in (TaskStatus.DOWNLOADING, TaskStatus.MUXING) for s in statuses),
         paused=statuses.count(TaskStatus.PAUSED),
         failed=statuses.count(TaskStatus.FAILED),
     )

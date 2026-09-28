@@ -67,6 +67,8 @@ class EntryCountsSchema(BaseSchema):
     complete: int = 0
     #: Queued or downloading.
     active: int = 0
+    #: Downloading or muxing, of ``active``.
+    downloading: int = 0
     paused: int = 0
     failed: int = 0
     watched: int = 0
