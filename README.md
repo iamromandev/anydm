@@ -148,7 +148,6 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
     - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset
-    - `POST /download/youtube` — **deprecated**: the same as `POST /download/media`, under its old name; removed in v0.4
     - `POST /download/url` — enqueue a direct URL download
     - `POST /download/playlist` — add a playlist's chosen videos as one group: `url`, `extractor`, `playlist_id`, `title`, `channel_tab`, `preset` (a ceiling for each video), and `entries` as `GET /extract/entries` listed them. Answers 201 with the group, a task of kind `playlist` whose `file_path` is the folder its videos finish into (numbered `01_…`, unless it is a channel's tab). Nothing is extracted until each video starts; more than 10,000 videos answers 422 `payload_too_large`
     - `GET /download/{task_id}/entries?page=…&page_size=…` — one page of a group's videos, in playlist order; 404 for a task that is not a group

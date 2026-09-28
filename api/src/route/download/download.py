@@ -40,7 +40,7 @@ router = APIRouter()
 # prefix: FastAPI refuses a route whose prefix and path are both empty.
 #
 # Declaration order matters. FastAPI matches in order, so every fixed segment
-# under /download — /media, /youtube, /url — must be declared before /download/{task_id},
+# under /download — /media, /url, /playlist — must be declared before /download/{task_id},
 # or the parameterised route swallows them.
 @router.post(
     path="/download/media",
@@ -53,19 +53,6 @@ async def enqueue_media(
     """Queue a download from any page yt-dlp supports, for a quality preset."""
     data = await download_service.enqueue_media(payload.url.strip(), payload.preset)
     return Success.created(data=data).to_resp()
-
-
-@router.post(
-    path="/download/youtube",
-    response_model=Success[TaskSchema],
-    deprecated=True,
-)
-async def enqueue_youtube(
-    payload: MediaDownloadRequest,
-    download_service: Annotated[DownloadService, Depends(get_download_service)],
-) -> Response:
-    """Deprecated: ``POST /download/media``, under its old name. Removed in v0.4."""
-    return await enqueue_media(payload, download_service)
 
 
 @router.post(
