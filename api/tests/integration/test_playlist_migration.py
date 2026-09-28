@@ -1,4 +1,4 @@
-"""0006: the group's columns, and the indexes AddField would have skipped."""
+"""``0002_task``: a group's columns, and the indexes Tortoise doesn't generate."""
 
 import pytest
 from src.data.db.model import Task
