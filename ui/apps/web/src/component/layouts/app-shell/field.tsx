@@ -28,7 +28,7 @@ import {
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Disk } from "@/lib/api/disk";
-import type { PickerTarget } from "@/lib/api/playlist";
+import type { PickerTarget, PlaylistRequest } from "@/lib/api/playlist";
 import type { Connection } from "@/lib/connection";
 import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
@@ -115,6 +115,8 @@ export interface AppShellProps {
         files?: number[];
     }) => void;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
+    /** Add a playlist's ticked videos as one group (v0.5). */
+    onAddPlaylist: (request: PlaylistRequest) => Promise<void>;
 }
 
 export const AppShell = component$<AppShellProps>(
@@ -178,6 +180,7 @@ export const AppShell = component$<AppShellProps>(
         onStopSeeding,
         onAdd,
         onResolve,
+        onAddPlaylist,
     }) => {
         const stats = aggregateStats(tasks);
 
@@ -379,6 +382,11 @@ export const AppShell = component$<AppShellProps>(
                             });
                         })}
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
+                        defaultPreset={prefs.defaultPreset}
+                        onAdd={$(async (request: PlaylistRequest) => {
+                            await onAddPlaylist(request);
+                            picker.value = null;
+                        })}
                     />
                 )}
             </div>

@@ -59,6 +59,7 @@ import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from "@/lib/prefs";
 import { mediaFiles, type PlayableFile } from "@/lib/media";
 import type { ServerSettings } from "@/component/features/settings-modal";
 import { removePrompt } from "@/component/features/remove-dialog/prompt";
+import type { PlaylistRequest } from "@/lib/api/playlist";
 
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
@@ -804,6 +805,23 @@ export default component$(() => {
         },
     );
 
+    /** A playlist's ticked videos, as one group. Its row arrives by its frame. */
+    const handleAddPlaylist = $(async (request: PlaylistRequest) => {
+        try {
+            await postApi("/download/playlist", request);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            // Rethrown so the picker stays open on what was ticked.
+            throw err;
+        }
+        const n = request.entries.length;
+        notify(
+            "info",
+            `Added ${n.toLocaleString("en-US")} ${n === 1 ? "video" : "videos"}`,
+        );
+        loadSummary();
+    });
+
     const handleStopSeeding = $(async (taskId: string) => {
         try {
             await postApi(`/download/${taskId}/seed/stop`, {});
@@ -883,6 +901,7 @@ export default component$(() => {
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             onStopSeeding={handleStopSeeding}
+            onAddPlaylist={handleAddPlaylist}
         />
     );
 });

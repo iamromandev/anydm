@@ -134,6 +134,79 @@
     cursor: pointer;
 }
 
+.playlist-picker-tools {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.playlist-picker-filter {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: inherit;
+}
+
+.playlist-picker-check {
+    width: 20px;
+    height: 20px;
+    flex: none;
+}
+
+.playlist-picker-footer {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.playlist-picker-choice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.playlist-picker-preset {
+    min-height: 44px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: inherit;
+    padding: 0 0.5rem;
+}
+
+.playlist-picker-count,
+.playlist-picker-hint {
+    font-size: 0.8125rem;
+}
+
+.playlist-picker-hint {
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+.playlist-picker-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.playlist-picker-button--primary {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+}
+
+.playlist-picker-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 @media (max-width: 640px) {
     /* Two classes: add-torrent-modal's own phone rule for `.modal-panel`
        (95% wide, a 1rem margin) loads later and would win a tie. */
