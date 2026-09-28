@@ -1,0 +1,5 @@
+root = true
+
+[*.{kt,kts}]
+# Compose names its UI functions like types: `ConnectScreen()`, not `connectScreen()`.
+ktlint_function_naming_ignore_when_annotated_with = Composable
