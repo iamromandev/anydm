@@ -577,6 +577,45 @@ export default component$(() => {
         store.addModalOpen = true;
     });
 
+    /** The next page of a group's open Entries list. */
+    const loadEntries = $(async (groupId: string) => {
+        const view = store.entries[groupId];
+        if (!view) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]: { ...view, loading: true },
+        };
+        const result = await getPageApi<any[]>(
+            `/download/${groupId}/entries?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
+        ).catch(() => null);
+        // Read again: the stream may have written while the page was out.
+        const current = store.entries[groupId];
+        // Shut meanwhile: nothing to add it to.
+        if (!current) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]:
+                result === null
+                    ? { ...current, loading: false }
+                    : addEntriesPage(
+                          current,
+                          result.data.map(normalizeApiTask),
+                          result.meta.page,
+                          result.meta.totalPages,
+                      ),
+        };
+        if (result === null) {
+            notify("error", "Couldn't load this group's videos");
+        }
+    });
+
+    /** An open Entries list, from its first page again. */
+    const reloadEntries = $(async (groupId: string) => {
+        if (!store.entries[groupId]) return;
+        store.entries = { ...store.entries, [groupId]: EMPTY_ENTRIES };
+        await loadEntries(groupId);
+    });
+
     const handleTaskAction = $(
         async (taskId: string, action: "pause" | "resume") => {
             const task = store.tasks.find((t) => t.id === taskId);
@@ -593,6 +632,9 @@ export default component$(() => {
                         t.id === taskId ? row : t,
                     );
                 }
+                // A group moves its videos in one UPDATE and publishes only
+                // its own frame, so an open Entries list is read again.
+                if (task.kind === "playlist") await reloadEntries(taskId);
             } catch (err) {
                 notify("error", errorMessage(err));
             }
@@ -650,38 +692,6 @@ export default component$(() => {
             status: task.status,
             videos,
         };
-    });
-
-    /** The next page of a group's open Entries list. */
-    const loadEntries = $(async (groupId: string) => {
-        const view = store.entries[groupId];
-        if (!view) return;
-        store.entries = {
-            ...store.entries,
-            [groupId]: { ...view, loading: true },
-        };
-        const result = await getPageApi<any[]>(
-            `/download/${groupId}/entries?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
-        ).catch(() => null);
-        // Read again: the stream may have written while the page was out.
-        const current = store.entries[groupId];
-        // Shut meanwhile: nothing to add it to.
-        if (!current) return;
-        store.entries = {
-            ...store.entries,
-            [groupId]:
-                result === null
-                    ? { ...current, loading: false }
-                    : addEntriesPage(
-                          current,
-                          result.data.map(normalizeApiTask),
-                          result.meta.page,
-                          result.meta.totalPages,
-                      ),
-        };
-        if (result === null) {
-            notify("error", "Couldn't load this group's videos");
-        }
     });
 
     /** Open a group's Entries, fetching its first page; or shut them. */
