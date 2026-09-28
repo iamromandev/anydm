@@ -8,6 +8,7 @@
 # the API's own targets.
 API := api
 UI := ui
+CROSS := cross
 BUN := bun
 UI_PORT := 3030
 
@@ -15,10 +16,11 @@ UI_PORT := 3030
 .PHONY: check down restart clean-volumes help \
 	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-install api-export api-clean-all api-clean-volumes api-clean-host \
-	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format
+	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format \
+	cross-check cross-test cross-run cross-package
 
 ## both stacks
-check: api-check ui-check # Lint + typecheck both stacks
+check: api-check ui-check cross-check # Lint + typecheck all three stacks
 
 down: api-down ui-down # Stop both stacks: remove the API containers, kill the UI dev server
 
@@ -102,6 +104,19 @@ ui-test: # Run the UI unit tests
 
 ui-format: # Format the UI sources
 	$(BUN) run --cwd $(UI) web:format
+
+## cross — the Kotlin Multiplatform client (cross/, Gradle wrapper, JDK 21)
+cross-check: # Lint + test + compile the cross/ client
+	cd $(CROSS) && ./gradlew check
+
+cross-test: # Run the cross/ shared tests
+	cd $(CROSS) && ./gradlew :shared:allTests
+
+cross-run: # Open the desktop app
+	cd $(CROSS) && ./gradlew :desktopApp:run
+
+cross-package: # Build a dmg / msi / deb for this OS
+	cd $(CROSS) && ./gradlew :desktopApp:packageDistributionForCurrentOS
 
 # help
 help:

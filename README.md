@@ -17,7 +17,7 @@ anydm/
 └── makefile      # delegates to api/makefile and ui/package.json
 ```
 
-**Planned (not in repo yet):** `apps/desktop` (Tauri) and `apps/mobile`. Torrent streaming and on-demand transcoding have since shipped; see [docs/architecture.md](docs/architecture.md).
+**Planned:** `apps/mobile`. A native desktop client is in progress in [`cross/`](cross/README.md), a Kotlin Multiplatform project that talks to the API. Torrent streaming and on-demand transcoding have since shipped; see [docs/architecture.md](docs/architecture.md).
 
 For how the pieces fit together — the background loops, a task's life, how
 streaming works — see [docs/architecture.md](docs/architecture.md).
