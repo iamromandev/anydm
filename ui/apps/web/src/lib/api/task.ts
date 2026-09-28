@@ -32,6 +32,8 @@ export type EntryCounts = {
     downloading: number;
     paused: number;
     failed: number;
+    /** Watched to the end; only the list's reads carry it (part 4). */
+    watched?: number;
 };
 
 export type UiTask = {
@@ -219,6 +221,7 @@ export function normalizeEntryCounts(raw: any): EntryCounts | undefined {
         downloading: raw.downloading ?? 0,
         paused: raw.paused ?? 0,
         failed: raw.failed ?? 0,
+        ...(typeof raw.watched === "number" ? { watched: raw.watched } : {}),
     };
 }
 

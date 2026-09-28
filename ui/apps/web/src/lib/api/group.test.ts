@@ -11,6 +11,7 @@ import {
     groupProgressLine,
     groupSpeed,
     groupToast,
+    keepWatched,
     placeRows,
     trackVideoSpeed,
     videoStatus,
@@ -278,6 +279,15 @@ describe("the card's lines", () => {
         );
     });
 
+    it("adds how many were watched, once any were", () => {
+        expect(
+            groupProgressLine({
+                ...group,
+                entryCounts: { ...COUNTS, watched: 12 },
+            }),
+        ).toBe("38 of 96 · 12.4 GB · 12 watched");
+    });
+
     it("says what's running, queued and failed, leaving out zeros", () => {
         expect(countsLine(COUNTS)).toBe("2 downloading · 55 queued · 1 failed");
         expect(countsLine(undefined)).toBe("");
@@ -334,5 +344,30 @@ describe("groupToast", () => {
         expect(groupToast(undefined, ended("complete", COUNTS))).toBeNull();
         expect(groupToast("downloading", ended("paused", COUNTS))).toBeNull();
         expect(groupToast("pending", ended("downloading", COUNTS))).toBeNull();
+    });
+});
+
+describe("keepWatched", () => {
+    it("keeps the last watched count a frame left out", () => {
+        const held = row("g", "downloading", {
+            kind: "playlist",
+            entryCounts: { ...COUNTS, watched: 5 },
+        });
+        const frame = row("g", "downloading", {
+            kind: "playlist",
+            entryCounts: { ...COUNTS, complete: 39 },
+        });
+        const [
+            kept,
+        ] = keepWatched(
+            [
+                frame,
+            ],
+            [
+                held,
+            ],
+        );
+        expect(kept.entryCounts?.watched).toBe(5);
+        expect(kept.entryCounts?.complete).toBe(39);
     });
 });

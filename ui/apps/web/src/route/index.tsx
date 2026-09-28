@@ -27,6 +27,7 @@ import {
     addLink,
     type AddType,
     placeRows,
+    keepWatched,
     trackVideoSpeed,
     withGroupSpeeds,
     applyVideoRows,
@@ -308,7 +309,13 @@ export default component$(() => {
         // canceled row leaves: cancelling publishes the row it removed.
         // Stream frames carry neither segments nor positions (#96).
         store.tasks = withGroupSpeeds(
-            placeRows(before, keepPositions(keepSegments(top, before), before)),
+            placeRows(
+                before,
+                keepWatched(
+                    keepPositions(keepSegments(top, before), before),
+                    before,
+                ),
+            ),
             store.videoSpeeds,
         );
 
