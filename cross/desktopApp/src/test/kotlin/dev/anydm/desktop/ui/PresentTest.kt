@@ -61,8 +61,21 @@ class PresentTest {
     fun `a failed card offers retry, a paused one resume, a seeding one stop`() {
         assertEquals(listOf(CardAction.RETRY, CardAction.REMOVE), cardView(task("failed"), 0).actions)
         assertEquals(listOf(CardAction.RESUME, CardAction.REMOVE), cardView(task("paused"), 0).actions)
-        assertEquals(listOf(CardAction.PAUSE, CardAction.STOP_SEEDING, CardAction.REMOVE), cardView(task("seeding"), 0).actions)
+        assertEquals(
+            listOf(CardAction.PAUSE, CardAction.STOP_SEEDING, CardAction.SAVE, CardAction.REMOVE),
+            cardView(task("seeding"), 0).actions,
+        )
         assertEquals("Queued", cardView(task("pending"), 0).detail)
+    }
+
+    @Test
+    fun `a finished media file can be played and saved, anything else only saved`() {
+        val video = task("complete").copy(filename = "clip.mp4")
+        assertEquals(listOf(CardAction.PLAY, CardAction.SAVE, CardAction.REMOVE), cardView(video, 0).actions)
+        val iso = task("complete").copy(filename = "debian.iso")
+        assertEquals(listOf(CardAction.SAVE, CardAction.REMOVE), cardView(iso, 0).actions)
+        val group = TaskDto(id = "g", kind = "playlist", status = "complete", title = "29C3").toTask()
+        assertEquals(listOf(CardAction.REMOVE), cardView(group, 0).actions)
     }
 
     @Test

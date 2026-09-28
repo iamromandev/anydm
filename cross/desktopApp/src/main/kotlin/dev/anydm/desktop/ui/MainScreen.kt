@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,6 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.anydm.desktop.files.Saver
+import dev.anydm.desktop.files.downloadsDir
+import dev.anydm.desktop.files.isMedia
+import dev.anydm.desktop.files.play
+import dev.anydm.desktop.files.revealFile
+import dev.anydm.desktop.files.saveTargets
 import dev.anydm.model.DiskDto
 import dev.anydm.model.SummaryDto
 import dev.anydm.model.Task
@@ -54,6 +61,7 @@ import kotlinx.coroutines.launch
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import java.nio.file.Path
 import java.util.Base64
 
 private val FILTER_LABELS =
@@ -66,6 +74,7 @@ private fun videosOf(task: Task): Int? = if (task.kind == TaskKind.PLAYLIST) tas
 fun MainScreen(
     store: TaskStore,
     settings: SettingsStore,
+    fileUrl: (String, Int?) -> String,
     onSignOut: () -> Unit,
 ) {
     val state by store.state.collectAsState()
@@ -74,6 +83,10 @@ fun MainScreen(
     val snackbar = remember { SnackbarHostState() }
     var removing by remember { mutableStateOf<Task?>(null) }
     var clearing by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    val saver = remember { Saver() }
+    // A card's save line while it runs: "Saving 2 of 3… 40%".
+    var saving by remember { mutableStateOf(mapOf<String, String>()) }
     // The clock retry countdowns read, ticked once a second (web: `store.now`).
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -94,6 +107,31 @@ fun MainScreen(
         }
     }
 
+    fun save(task: Task) {
+        val targets = saveTargets(task, fileUrl)
+        scope.launch {
+            var last: Path? = null
+            try {
+                targets.forEachIndexed { i, target ->
+                    last =
+                        saver.save(target, downloadsDir()) { done, total ->
+                            val percent = total?.takeIf { it > 0 }?.let { " ${done * 100 / it}%" } ?: ""
+                            val which = if (targets.size > 1) " ${i + 1} of ${targets.size}" else ""
+                            saving = saving + (task.id to "Saving$which…$percent")
+                        }
+                }
+                saving = saving - task.id
+                val where = last
+                val shown = if (targets.size == 1) "Saved ${where?.fileName}" else "Saved ${targets.size} files"
+                val result = snackbar.showSnackbar(shown, actionLabel = "Reveal", withDismissAction = true)
+                if (result == SnackbarResult.ActionPerformed && where != null) revealFile(where)
+            } catch (error: Exception) {
+                saving = saving - task.id
+                snackbar.showSnackbar("Couldn't save ${task.title}: ${error.message ?: "the transfer failed"}")
+            }
+        }
+    }
+
     fun addTorrentFile(file: File) {
         scope.launch { store.addTorrent(Base64.getEncoder().encodeToString(file.readBytes())) }
     }
@@ -108,6 +146,7 @@ fun MainScreen(
                 summary = state.summary,
                 onFilter = store::setFilter,
                 onBulk = { action -> if (action == BulkAction.CLEAR_FINISHED) clearing = true else scope.launch { store.bulk(action) } },
+                onSettings = { showSettings = true },
                 onSignOut = onSignOut,
             )
             Column(Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -126,12 +165,34 @@ fun MainScreen(
                 }
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(shown, key = { it.id }) { task ->
-                        TaskCard(cardView(task, now)) { action ->
+                        TaskCard(cardView(task, now), saving[task.id]) { action ->
                             when (action) {
-                                CardAction.PAUSE -> scope.launch { store.pause(task.id) }
-                                CardAction.RESUME, CardAction.RETRY -> scope.launch { store.resume(task.id) }
-                                CardAction.STOP_SEEDING -> scope.launch { store.stopSeeding(task.id) }
-                                CardAction.REMOVE -> remove(task)
+                                CardAction.PAUSE -> {
+                                    scope.launch { store.pause(task.id) }
+                                }
+
+                                CardAction.RESUME, CardAction.RETRY -> {
+                                    scope.launch { store.resume(task.id) }
+                                }
+
+                                CardAction.STOP_SEEDING -> {
+                                    scope.launch { store.stopSeeding(task.id) }
+                                }
+
+                                CardAction.PLAY -> {
+                                    val index = task.files?.firstOrNull { it.selected && isMedia(it.path) }?.index
+                                    play(prefs.player, fileUrl(task.id, index))?.let { message ->
+                                        scope.launch { snackbar.showSnackbar(message) }
+                                    }
+                                }
+
+                                CardAction.SAVE -> {
+                                    save(task)
+                                }
+
+                                CardAction.REMOVE -> {
+                                    remove(task)
+                                }
                             }
                         }
                     }
@@ -153,6 +214,7 @@ fun MainScreen(
             scope.launch { store.remove(task.id, deleteFiles) }
         }
     }
+    if (showSettings) SettingsDialog(settings) { showSettings = false }
     if (clearing) {
         ClearFinishedDialog(onCancel = { clearing = false }) {
             clearing = false
@@ -237,6 +299,7 @@ private fun Sidebar(
     summary: SummaryDto?,
     onFilter: (ListFilter) -> Unit,
     onBulk: (BulkAction) -> Unit,
+    onSettings: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     Column(Modifier.width(200.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -260,6 +323,7 @@ private fun Sidebar(
         TextButton(onClick = { onBulk(BulkAction.RESUME_ALL) }) { Text("Resume all") }
         TextButton(onClick = { onBulk(BulkAction.CLEAR_FINISHED) }) { Text("Clear finished") }
         HorizontalDivider()
+        TextButton(onClick = onSettings) { Text("Settings…") }
         TextButton(onClick = onSignOut) { Text("Change server…") }
     }
 }

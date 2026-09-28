@@ -27,6 +27,11 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "anydm"
             packageVersion = "1.0.0"
+            description = "anydm desktop client"
+            vendor = "anydm"
+            macOS {
+                bundleID = "dev.anydm.desktop"
+            }
         }
     }
 }

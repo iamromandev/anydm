@@ -2,6 +2,7 @@ package dev.anydm.desktop.ui
 
 import dev.anydm.api.ApiException
 import dev.anydm.api.Unauthorized
+import dev.anydm.desktop.files.isMedia
 import dev.anydm.model.EntryCounts
 import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
@@ -83,7 +84,7 @@ val PRESET_OPTIONS =
 
 private fun presetLabel(preset: String?) = PRESET_OPTIONS.firstOrNull { it.first == preset }?.second ?: ""
 
-enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, REMOVE }
+enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, PLAY, SAVE, REMOVE }
 
 /** Everything one card draws, decided here so it's tested without a window. */
 data class CardView(
@@ -106,10 +107,19 @@ private fun countsLine(counts: EntryCounts): String =
 
 private fun actionsOf(task: Task): List<CardAction> =
     buildList {
+        val finished = task.status == TaskStatus.COMPLETE || task.status == TaskStatus.SEEDING
         if (task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING)) add(CardAction.PAUSE)
         if (task.status == TaskStatus.PAUSED) add(CardAction.RESUME)
         if (task.status == TaskStatus.FAILED) add(CardAction.RETRY)
         if (task.status == TaskStatus.SEEDING) add(CardAction.STOP_SEEDING)
+        if (finished && task.kind != TaskKind.PLAYLIST) {
+            val playable =
+                task.kind == TaskKind.VIDEO || task.kind == TaskKind.AUDIO ||
+                    isMedia(task.filename ?: "") ||
+                    task.files.orEmpty().any { it.selected && isMedia(it.path) }
+            if (playable) add(CardAction.PLAY)
+            add(CardAction.SAVE)
+        }
         add(CardAction.REMOVE)
     }
 
