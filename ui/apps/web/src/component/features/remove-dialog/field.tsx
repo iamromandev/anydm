@@ -4,7 +4,13 @@ import "./field.css";
 
 export interface RemoveDialogProps {
     /** The task being removed, or `null` when the dialog is closed. */
-    task: { id: string; title: string; status: string } | null;
+    task: {
+        id: string;
+        title: string;
+        status: string;
+        /** A group's video count (v0.5). */
+        videos?: number;
+    } | null;
     onCancel: () => void;
     onConfirm: (id: string, deleteFiles: boolean) => void;
 }
@@ -17,7 +23,7 @@ export const RemoveDialog = component$<RemoveDialogProps>(
 
         if (!task) return null;
 
-        const prompt = removePrompt(task.status);
+        const prompt = removePrompt(task.status, task.videos);
 
         return (
             <div

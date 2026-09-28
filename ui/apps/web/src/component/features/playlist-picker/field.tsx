@@ -19,11 +19,24 @@ import {
     entriesUrl,
     entryLabel,
     listingSummary,
+    playlistRequest,
     stopListing,
     type ListingState,
     type PickerTarget,
     type PlaylistEntry,
+    type PlaylistRequest,
 } from "@/lib/api/playlist";
+import { PRESET_OPTIONS, type Preset } from "@/lib/prefs";
+import {
+    filterEntries,
+    isSelectable,
+    presetHint,
+    selectionSummary,
+    setAll,
+    tickArrivals,
+    toggle,
+    toggleRange,
+} from "@/lib/selection";
 import { virtualWindow } from "@/lib/virtual";
 import "./field.css";
 
@@ -52,11 +65,17 @@ export interface PlaylistPickerProps {
     /** Queue one video, the way a pasted link is queued. */
     onDownload: (url: string) => Promise<void>;
     onPlay: (url: string) => void;
+    /** The preset the footer starts on. */
+    defaultPreset: Preset;
+    /** Add the ticked videos as one group; the shell closes the picker. */
+    onAdd: (request: PlaylistRequest) => Promise<void>;
 }
 
 export const PlaylistPicker = component$<PlaylistPickerProps>(
-    ({ target, onClose, onDownload, onPlay }) => {
+    ({ target, onClose, onDownload, onPlay, defaultPreset, onAdd }) => {
         const listing = useSignal<ListingState>(EMPTY_LISTING);
+        const selected = useSignal<Set<number>>(new Set());
+        const listRef = useSignal<HTMLElement>();
         const store = useStore({
             /** Bumped by Retry, which lists again from the start. */
             attempt: 0,
@@ -65,6 +84,11 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             scrollTop: 0,
             viewport: VIEWPORT_PX,
             rows: {} as Record<number, RowState>,
+            /** The last row clicked, for a shift-click range. */
+            anchor: null as number | null,
+            query: "",
+            preset: defaultPreset as Preset,
+            adding: false,
         });
 
         /**
@@ -84,13 +108,21 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                     return;
                 }
                 listing.value = EMPTY_LISTING;
+                selected.value = new Set();
                 const source = new EventSource(entriesUrl(target.url));
                 for (const event of FRAMES) {
                     source.addEventListener(event, (e: Event) => {
                         const data = JSON.parse(
                             (e as MessageEvent<string>).data,
                         );
+                        const before = listing.value.entries.length;
                         listing.value = applyFrame(listing.value, event, data);
+                        // Everything arrives ticked except what's held or
+                        // unavailable (spec: Picker selection).
+                        selected.value = tickArrivals(
+                            selected.value,
+                            listing.value.entries.slice(before),
+                        );
                         // Closed before the server hangs up. Left open, the
                         // EventSource would reconnect and list everything again.
                         if (event !== "entries") source.close();
@@ -129,14 +161,51 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             }
         });
 
+        const tick = $((entry: PlaylistEntry, range: boolean) => {
+            const shown = filterEntries(listing.value.entries, store.query);
+            selected.value =
+                range && store.anchor !== null
+                    ? toggleRange(selected.value, shown, store.anchor, entry)
+                    : toggle(selected.value, entry);
+            store.anchor = entry.index;
+        });
+
+        const setShown = $((on: boolean) => {
+            const shown = filterEntries(listing.value.entries, store.query);
+            selected.value = setAll(selected.value, shown, on);
+        });
+
+        const add = $(async () => {
+            const request = playlistRequest(
+                target,
+                store.preset,
+                listing.value.entries,
+                selected.value,
+            );
+            if (request.entries.length === 0) return;
+            store.adding = true;
+            try {
+                // The shell closes the picker once it's added.
+                await onAdd(request);
+            } catch {
+                // The page has already said why, as a toast.
+                store.adding = false;
+            }
+        });
+
         const state = listing.value;
+        const shown = filterEntries(state.entries, store.query);
+        const chosen = state.entries.filter((e) =>
+            selected.value.has(e.index),
+        ).length;
+        const hint = presetHint(store.preset);
         const win = virtualWindow(
-            state.entries.length,
+            shown.length,
             ROW_PX,
             store.scrollTop,
             store.viewport,
         );
-        const visible = state.entries.slice(win.start, win.end);
+        const visible = shown.slice(win.start, win.end);
 
         return (
             <div
@@ -173,7 +242,37 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                         </button>
                     </div>
 
+                    <div class="playlist-picker-tools">
+                        <input
+                            type="search"
+                            class="playlist-picker-filter"
+                            placeholder="Filter by title"
+                            aria-label="Filter by title"
+                            value={store.query}
+                            onInput$={(_, el) => {
+                                store.query = el.value;
+                                store.scrollTop = 0;
+                                if (listRef.value) listRef.value.scrollTop = 0;
+                            }}
+                        />
+                        <button
+                            type="button"
+                            class="playlist-picker-button"
+                            onClick$={() => setShown(true)}
+                        >
+                            All
+                        </button>
+                        <button
+                            type="button"
+                            class="playlist-picker-button"
+                            onClick$={() => setShown(false)}
+                        >
+                            None
+                        </button>
+                    </div>
+
                     <div
+                        ref={listRef}
                         class="playlist-picker-list"
                         onScroll$={(_: Event, el: HTMLElement) => {
                             store.scrollTop = el.scrollTop;
@@ -203,6 +302,18 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                                     class={`playlist-picker-row ${entry.available ? "" : "playlist-picker-row--unavailable"}`}
                                     style={{ height: `${ROW_PX}px` }}
                                 >
+                                    <input
+                                        type="checkbox"
+                                        class="playlist-picker-check"
+                                        checked={selected.value.has(
+                                            entry.index,
+                                        )}
+                                        disabled={!isSelectable(entry)}
+                                        onClick$={(e: MouseEvent) =>
+                                            tick(entry, e.shiftKey)
+                                        }
+                                        aria-label={`Choose ${label}`}
+                                    />
                                     <span class="playlist-picker-index">
                                         {entry.index}
                                     </span>
@@ -289,25 +400,68 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                     </div>
 
                     <div class="playlist-picker-footer">
-                        {state.status === "listing" && (
+                        <div class="playlist-picker-choice">
+                            <select
+                                class="playlist-picker-preset"
+                                aria-label="Quality"
+                                value={store.preset}
+                                onChange$={(_, el) => {
+                                    store.preset = el.value as Preset;
+                                }}
+                            >
+                                {PRESET_OPTIONS.map((option) => (
+                                    <option
+                                        key={option.value}
+                                        value={option.value}
+                                    >
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <span
+                                class="playlist-picker-count"
+                                aria-live="polite"
+                            >
+                                {selectionSummary(
+                                    state.entries,
+                                    selected.value,
+                                )}
+                            </span>
+                            {hint && (
+                                <span class="playlist-picker-hint">{hint}</span>
+                            )}
+                        </div>
+                        <div class="playlist-picker-buttons">
+                            {state.status === "listing" && (
+                                <button
+                                    type="button"
+                                    class="playlist-picker-button"
+                                    onClick$={stop}
+                                >
+                                    Stop
+                                </button>
+                            )}
+                            {(state.status === "stopped" ||
+                                state.status === "failed") && (
+                                <button
+                                    type="button"
+                                    class="playlist-picker-button"
+                                    onClick$={retry}
+                                >
+                                    Retry
+                                </button>
+                            )}
                             <button
                                 type="button"
-                                class="playlist-picker-button"
-                                onClick$={stop}
+                                class="playlist-picker-button playlist-picker-button--primary"
+                                disabled={chosen === 0 || store.adding}
+                                onClick$={add}
                             >
-                                Stop
+                                {store.adding
+                                    ? "Adding…"
+                                    : `Add ${chosen.toLocaleString("en-US")} ${chosen === 1 ? "video" : "videos"}`}
                             </button>
-                        )}
-                        {(state.status === "stopped" ||
-                            state.status === "failed") && (
-                            <button
-                                type="button"
-                                class="playlist-picker-button"
-                                onClick$={retry}
-                            >
-                                Retry
-                            </button>
-                        )}
+                        </div>
                     </div>
                 </div>
             </div>

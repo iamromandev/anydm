@@ -295,6 +295,7 @@ class DownloadWorker:
     ) -> None:
         task_id = task.id
         expected_total = task.total_bytes
+        parent_id = getattr(task, "parent_id", None)
 
         async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
             result = await self._segment_repo.reconcile(
@@ -322,7 +323,9 @@ class DownloadWorker:
             reconcile=reconcile,
             on_probe=on_probe,
             on_discard=discard,
-            on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
+            on_sample=lambda sample: self._flush(
+                task_id, part, sample, offset=offset, total=expected_total, parent_id=parent_id
+            ),
             should_stop=lambda: self._control.is_stopping(task_id),
         )
 
@@ -333,11 +336,14 @@ class DownloadWorker:
             raise Error.internal(message="This worker has no fragment downloader")
         task_id = task.id
         expected_total = task.total_bytes
+        parent_id = getattr(task, "parent_id", None)
         await self._fragments.fetch(
             page_url,
             format_id,
             destination,
-            on_sample=lambda sample: self._flush(task_id, part, sample, offset=offset, total=expected_total),
+            on_sample=lambda sample: self._flush(
+                task_id, part, sample, offset=offset, total=expected_total, parent_id=parent_id
+            ),
             should_stop=lambda: self._control.is_stopping(task_id),
         )
 
@@ -349,6 +355,7 @@ class DownloadWorker:
         *,
         offset: int,
         total: int | None,
+        parent_id: uuid.UUID | None = None,
     ) -> None:
         """Report progress for the whole task, and persist the segment watermarks.
 
@@ -402,6 +409,10 @@ class DownloadWorker:
                 }
                 for segment in sample.segments
             ]
+        # A group's video: the browser folds it into the group's card and
+        # speed, and never lists it (v0.5). Absent for anything else.
+        if parent_id is not None:
+            frame["parent_id"] = str(parent_id)
         self._hub.publish("progress", frame)
 
     async def _save_subtitles(self, task: Task, destination: Path) -> None:

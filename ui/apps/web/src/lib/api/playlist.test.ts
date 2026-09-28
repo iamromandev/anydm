@@ -6,6 +6,7 @@ import {
     entriesUrl,
     entryLabel,
     listingSummary,
+    playlistRequest,
     stopListing,
     toEntry,
     type ListingState,
@@ -163,5 +164,54 @@ describe("listingSummary", () => {
         expect(
             listingSummary({ entries: [], status: "failed", error: "Nope" }),
         ).toBe("Nope");
+    });
+});
+
+describe("playlistRequest", () => {
+    it("sends the target and the ticked videos, in order", () => {
+        const target = {
+            url: "https://www.youtube.com/playlist?list=PL1",
+            title: "29C3",
+            count: 3,
+            extractor: "YoutubeTab",
+            playlistId: "PL1",
+            channelTab: false,
+        };
+        const entries = [
+            1,
+            2,
+            3,
+        ].map((index) =>
+            toEntry({ ...RAW, index, id: `v${index}`, duration: 60.4 }),
+        );
+
+        expect(
+            playlistRequest(
+                target,
+                "1080",
+                entries,
+                new Set([
+                    3,
+                    1,
+                ]),
+            ),
+        ).toEqual({
+            url: target.url,
+            extractor: "YoutubeTab",
+            playlist_id: "PL1",
+            title: "29C3",
+            channel_tab: false,
+            preset: "1080",
+            entries: [
+                1,
+                3,
+            ].map((index) => ({
+                index,
+                id: `v${index}`,
+                url: RAW.url,
+                title: "Video 1",
+                duration: 60,
+            })),
+        });
     });
 });

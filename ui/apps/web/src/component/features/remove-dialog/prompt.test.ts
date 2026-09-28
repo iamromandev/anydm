@@ -50,3 +50,12 @@ describe("removePrompt", () => {
         expect(prompt.canKeepFiles).toBe(false);
     });
 });
+
+describe("removePrompt for a group", () => {
+    it("counts a group's videos, and always offers to keep what finished", () => {
+        const prompt = removePrompt("downloading", 96);
+        expect(prompt.heading).toBe("Remove 96 videos?");
+        expect(prompt.canKeepFiles).toBe(true);
+        expect(removePrompt("complete", 1).heading).toBe("Remove 1 video?");
+    });
+});

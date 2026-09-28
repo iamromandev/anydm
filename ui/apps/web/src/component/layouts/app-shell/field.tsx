@@ -6,6 +6,7 @@ import {
     canResume,
     isActive,
     isSeeding,
+    type EntriesView,
     type ResolvedTorrent,
     type TaskSummary,
     type UiTask,
@@ -28,7 +29,7 @@ import {
 import { ConfirmDialog } from "@/component/shared/confirm-dialog";
 import { Toaster } from "@/component/shared/toast";
 import type { Disk } from "@/lib/api/disk";
-import type { PickerTarget } from "@/lib/api/playlist";
+import type { PickerTarget, PlaylistRequest } from "@/lib/api/playlist";
 import type { Connection } from "@/lib/connection";
 import type { Prefs } from "@/lib/prefs";
 import type { SortValue } from "@/lib/sort";
@@ -96,7 +97,12 @@ export interface AppShellProps {
     /** Play a finished download (#94). */
     onPlay: (id: string) => void;
     onRemove: (id: string) => void;
-    removing: { id: string; title: string; status: string } | null;
+    removing: {
+        id: string;
+        title: string;
+        status: string;
+        videos?: number;
+    } | null;
     onRemoveCancel: () => void;
     onRemoveConfirm: (id: string, deleteFiles: boolean) => void;
     onBulk: (action: "pause_all" | "resume_all" | "clear_finished") => void;
@@ -115,6 +121,15 @@ export interface AppShellProps {
         files?: number[];
     }) => void;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
+    /** Add a playlist's ticked videos as one group (v0.5). */
+    onAddPlaylist: (request: PlaylistRequest) => Promise<void>;
+    /** Each open group's Entries list, by group id (v0.5). */
+    entries: Record<string, EntriesView>;
+    onToggleEntries: (id: string) => void;
+    onLoadMoreEntries: (id: string) => void;
+    onPauseVideo: (id: string) => void;
+    onResumeVideo: (id: string) => void;
+    onRemoveVideo: (groupId: string, id: string) => void;
 }
 
 export const AppShell = component$<AppShellProps>(
@@ -178,6 +193,13 @@ export const AppShell = component$<AppShellProps>(
         onStopSeeding,
         onAdd,
         onResolve,
+        onAddPlaylist,
+        entries,
+        onToggleEntries,
+        onLoadMoreEntries,
+        onPauseVideo,
+        onResumeVideo,
+        onRemoveVideo,
     }) => {
         const stats = aggregateStats(tasks);
 
@@ -286,6 +308,12 @@ export const AppShell = component$<AppShellProps>(
                                 onPlay={onPlay}
                                 onRemove={onRemove}
                                 onStopSeeding={onStopSeeding}
+                                entries={entries}
+                                onToggleEntries={onToggleEntries}
+                                onLoadMoreEntries={onLoadMoreEntries}
+                                onPauseVideo={onPauseVideo}
+                                onResumeVideo={onResumeVideo}
+                                onRemoveVideo={onRemoveVideo}
                             />
                         </section>
                     </div>
@@ -379,6 +407,11 @@ export const AppShell = component$<AppShellProps>(
                             });
                         })}
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
+                        defaultPreset={prefs.defaultPreset}
+                        onAdd={$(async (request: PlaylistRequest) => {
+                            await onAddPlaylist(request);
+                            picker.value = null;
+                        })}
                     />
                 )}
             </div>

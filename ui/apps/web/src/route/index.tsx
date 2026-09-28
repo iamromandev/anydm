@@ -26,6 +26,17 @@ import {
     type UiTask,
     addLink,
     type AddType,
+    placeRows,
+    trackVideoSpeed,
+    withGroupSpeeds,
+    applyVideoRows,
+    applyVideoProgress,
+    groupToast,
+    type EntriesView,
+    type VideoSpeeds,
+    EMPTY_ENTRIES,
+    addEntriesPage,
+    dropVideo,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
@@ -51,9 +62,13 @@ import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from "@/lib/prefs";
 import { mediaFiles, type PlayableFile } from "@/lib/media";
 import type { ServerSettings } from "@/component/features/settings-modal";
 import { removePrompt } from "@/component/features/remove-dialog/prompt";
+import type { PlaylistRequest } from "@/lib/api/playlist";
 
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
+
+/** Videos per Entries page. The API caps a page at 100. */
+const ENTRIES_PAGE = 50;
 
 type BulkAction = "pause_all" | "resume_all" | "clear_finished";
 
@@ -78,7 +93,12 @@ export default component$(() => {
         summary: null as TaskSummary | null,
         toasts: [] as Toast[],
         // The task the remove dialog is asking about, or null when it is shut.
-        removing: null as { id: string; title: string; status: string } | null,
+        removing: null as {
+            id: string;
+            title: string;
+            status: string;
+            videos?: number;
+        } | null,
         // The sweep waiting to be confirmed, or null when nothing is pending.
         pendingBulk: null as BulkAction | null,
         // Ticked only while a retry is actually pending; see the clock below.
@@ -122,6 +142,11 @@ export default component$(() => {
         // tasks seen this session and no faster.
         streamSeq: 0,
         streamTouched: {} as Record<string, number>,
+        // Each open Entries list, by group id (v0.5). Only open lists are
+        // held, and a video frame for a shut one is dropped.
+        entries: {} as Record<string, EntriesView>,
+        // Each running group video's speed, for its group's live speed.
+        videoSpeeds: {} as VideoSpeeds,
     });
 
     const notify = $((tone: ToastTone, message: string) => {
@@ -155,7 +180,10 @@ export default component$(() => {
         let announced = false;
 
         for (const row of rows) {
-            const announcement = transitionToast(previous.get(row.id), row);
+            const announcement =
+                row.kind === "playlist"
+                    ? groupToast(previous.get(row.id), row)
+                    : transitionToast(previous.get(row.id), row);
             if (announcement) {
                 announced = true;
                 next = raise(
@@ -249,35 +277,43 @@ export default component$(() => {
      */
     const mergeTasks = $(async (rows: UiTask[]) => {
         const before = store.tasks;
+        const top = rows.filter((row) => row.parentId === undefined);
+        const videos = rows.filter((row) => row.parentId !== undefined);
 
         // What lets a page fetch in flight know these rows are newer than its
-        // copies of them.
+        // copies of them. Videos never reach a page of the list.
         store.streamSeq += 1;
-        for (const row of rows) store.streamTouched[row.id] = store.streamSeq;
+        for (const row of top) store.streamTouched[row.id] = store.streamSeq;
 
-        // A canceled row is soft-deleted, and the list endpoint never returns
-        // one — but cancelling publishes the row it just removed, so without
-        // this the announcement of a removal puts the row straight back, now
-        // labelled "Canceled". Taking the hint the other way also means a
-        // removal in one tab reaches the others.
-        const removed = new Set(
-            rows
-                .filter((row) => row.status === "canceled")
-                .map((row) => row.id),
+        // A group's videos update its open Entries list, and one that has
+        // stopped stops counting towards its speed (v0.5).
+        if (videos.length > 0) {
+            let speeds = store.videoSpeeds;
+            for (const video of videos) {
+                if (video.status !== "downloading") {
+                    speeds = trackVideoSpeed(
+                        speeds,
+                        video.parentId!,
+                        video.id,
+                        0,
+                    );
+                }
+            }
+            store.videoSpeeds = speeds;
+            store.entries = applyVideoRows(store.entries, videos);
+        }
+
+        // In place, not moved to the top: a group recounts on every video's
+        // status change, and would otherwise jump up the list each time. A
+        // canceled row leaves: cancelling publishes the row it removed.
+        // Stream frames carry neither segments nor positions (#96).
+        store.tasks = withGroupSpeeds(
+            placeRows(before, keepPositions(keepSegments(top, before), before)),
+            store.videoSpeeds,
         );
-        const live = rows.filter((row) => row.status !== "canceled");
 
-        const incoming = new Set(live.map((row) => row.id));
-        const kept = before.filter(
-            (t) => !incoming.has(t.id) && !removed.has(t.id),
-        );
-        store.tasks = [
-            // Stream frames carry neither segments nor positions (#96).
-            ...keepPositions(keepSegments(live, before), before),
-            ...kept,
-        ];
-
-        await noteTransitions(rows, before);
+        // A video raises no toast; its group does, when it ends.
+        await noteTransitions(top, before);
     });
 
     /**
@@ -288,6 +324,20 @@ export default component$(() => {
      * "unchanged", not "zero" — defaulting to 0 blanked the size mid-download.
      */
     const applyProgress = $((data: any) => {
+        // A group's video: its row in an open Entries list, and its group's
+        // live speed. Never a row of the list.
+        if (data.parent_id) {
+            const groupId = String(data.parent_id);
+            store.videoSpeeds = trackVideoSpeed(
+                store.videoSpeeds,
+                groupId,
+                data.id,
+                data.speed_bps ?? 0,
+            );
+            store.entries = applyVideoProgress(store.entries, groupId, data);
+            store.tasks = withGroupSpeeds(store.tasks, store.videoSpeeds);
+            return;
+        }
         store.tasks = store.tasks.map((t) =>
             t.id === data.id
                 ? {
@@ -527,6 +577,45 @@ export default component$(() => {
         store.addModalOpen = true;
     });
 
+    /** The next page of a group's open Entries list. */
+    const loadEntries = $(async (groupId: string) => {
+        const view = store.entries[groupId];
+        if (!view) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]: { ...view, loading: true },
+        };
+        const result = await getPageApi<any[]>(
+            `/download/${groupId}/entries?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
+        ).catch(() => null);
+        // Read again: the stream may have written while the page was out.
+        const current = store.entries[groupId];
+        // Shut meanwhile: nothing to add it to.
+        if (!current) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]:
+                result === null
+                    ? { ...current, loading: false }
+                    : addEntriesPage(
+                          current,
+                          result.data.map(normalizeApiTask),
+                          result.meta.page,
+                          result.meta.totalPages,
+                      ),
+        };
+        if (result === null) {
+            notify("error", "Couldn't load this group's videos");
+        }
+    });
+
+    /** An open Entries list, from its first page again. */
+    const reloadEntries = $(async (groupId: string) => {
+        if (!store.entries[groupId]) return;
+        store.entries = { ...store.entries, [groupId]: EMPTY_ENTRIES };
+        await loadEntries(groupId);
+    });
+
     const handleTaskAction = $(
         async (taskId: string, action: "pause" | "resume") => {
             const task = store.tasks.find((t) => t.id === taskId);
@@ -543,6 +632,9 @@ export default component$(() => {
                         t.id === taskId ? row : t,
                     );
                 }
+                // A group moves its videos in one UPDATE and publishes only
+                // its own frame, so an open Entries list is read again.
+                if (task.kind === "playlist") await reloadEntries(taskId);
             } catch (err) {
                 notify("error", errorMessage(err));
             }
@@ -569,6 +661,9 @@ export default component$(() => {
             }
 
             store.tasks = store.tasks.filter((t) => t.id !== taskId);
+            // A video leaves its Entries list; a group's own list shuts.
+            const { [taskId]: _shut, ...open } = store.entries;
+            store.entries = dropVideo(open, taskId);
         },
     );
 
@@ -576,11 +671,17 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
+        // A group asks about its videos, and can always keep what finished.
+        const videos =
+            task.kind === "playlist"
+                ? (task.entryCounts?.total ?? 0)
+                : undefined;
+
         if (!store.prefs.confirmBeforeRemove) {
             // Straight through, on the same terms the dialog would have
             // offered by default: keep a finished download's files, and take
             // the partial remains of anything else.
-            const keepable = removePrompt(task.status).canKeepFiles;
+            const keepable = removePrompt(task.status, videos).canKeepFiles;
             await handleRemoveConfirm(task.id, !keepable);
             return;
         }
@@ -589,6 +690,48 @@ export default component$(() => {
             id: task.id,
             title: task.title,
             status: task.status,
+            videos,
+        };
+    });
+
+    /** Open a group's Entries, fetching its first page; or shut them. */
+    const handleToggleEntries = $(async (groupId: string) => {
+        if (store.entries[groupId]) {
+            const { [groupId]: _shut, ...open } = store.entries;
+            store.entries = open;
+            return;
+        }
+        store.entries = { ...store.entries, [groupId]: EMPTY_ENTRIES };
+        await loadEntries(groupId);
+    });
+
+    /** A video's own pause or resume. Its new row arrives by its frame. */
+    const handleVideoAction = $(
+        async (videoId: string, action: "pause" | "resume") => {
+            try {
+                await postApi(`/download/${videoId}/${action}`, {});
+            } catch (err) {
+                notify("error", errorMessage(err));
+            }
+        },
+    );
+
+    const handleRemoveVideo = $(async (groupId: string, videoId: string) => {
+        const video = store.entries[groupId]?.rows.find(
+            (row) => row.id === videoId,
+        );
+        if (!video) return;
+        if (!store.prefs.confirmBeforeRemove) {
+            await handleRemoveConfirm(
+                video.id,
+                !removePrompt(video.status).canKeepFiles,
+            );
+            return;
+        }
+        store.removing = {
+            id: video.id,
+            title: video.title,
+            status: video.status,
         };
     });
 
@@ -760,9 +903,28 @@ export default component$(() => {
             }
 
             store.addModalOpen = false;
-            syncTask();
+            // The new row arrives by its own frame, on top, without taking
+            // the list back to page 1. Only the counts need asking again.
+            loadSummary();
         },
     );
+
+    /** A playlist's ticked videos, as one group. Its row arrives by its frame. */
+    const handleAddPlaylist = $(async (request: PlaylistRequest) => {
+        try {
+            await postApi("/download/playlist", request);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            // Rethrown so the picker stays open on what was ticked.
+            throw err;
+        }
+        const n = request.entries.length;
+        notify(
+            "info",
+            `Added ${n.toLocaleString("en-US")} ${n === 1 ? "video" : "videos"}`,
+        );
+        loadSummary();
+    });
 
     const handleStopSeeding = $(async (taskId: string) => {
         try {
@@ -843,6 +1005,13 @@ export default component$(() => {
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             onStopSeeding={handleStopSeeding}
+            onAddPlaylist={handleAddPlaylist}
+            entries={store.entries}
+            onToggleEntries={handleToggleEntries}
+            onLoadMoreEntries={loadEntries}
+            onPauseVideo={$((id: string) => handleVideoAction(id, "pause"))}
+            onResumeVideo={$((id: string) => handleVideoAction(id, "resume"))}
+            onRemoveVideo={handleRemoveVideo}
         />
     );
 });
