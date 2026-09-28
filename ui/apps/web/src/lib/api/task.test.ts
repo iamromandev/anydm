@@ -20,6 +20,7 @@ import {
     watchedProgress,
     withPosition,
     normalizeApiTask,
+    normalizeEntryCounts,
     normalizeSegments,
     normalizeFiles,
     pickFileToOpen,
@@ -1234,5 +1235,81 @@ describe("which file Play opens (#97)", () => {
             file(2, "readme.txt"),
         ];
         expect(pickFileToOpen({ files: mixed }, undefined)).toBe(0);
+    });
+});
+
+describe("normalizeApiTask for groups", () => {
+    it("reads a group's counts and folder", () => {
+        const group = normalizeApiTask({
+            id: "g",
+            kind: "playlist",
+            status: "downloading",
+            source_url: "https://y.test/list",
+            title: "29C3",
+            file_path: "29C3",
+            entry_counts: {
+                total: 3,
+                complete: 1,
+                active: 2,
+                downloading: 1,
+                paused: 0,
+                failed: 0,
+                watched: 0,
+            },
+        });
+
+        expect(group.kind).toBe("playlist");
+        expect(group.folder).toBe("29C3");
+        expect(group.entryCounts).toEqual({
+            total: 3,
+            complete: 1,
+            active: 2,
+            downloading: 1,
+            paused: 0,
+            failed: 0,
+        });
+    });
+
+    it("reads a video's group and place", () => {
+        const video = normalizeApiTask({
+            id: "v",
+            kind: "video",
+            status: "pending",
+            source_url: "https://y.test/v",
+            parent_id: "g",
+            position: 2,
+            file_path: "29C3/02_v.mp4",
+        });
+
+        expect(video.parentId).toBe("g");
+        expect(video.position).toBe(2);
+        expect(video.entryCounts).toBeUndefined();
+        expect(video.folder).toBeUndefined();
+    });
+
+    it("leaves a standalone task out of any group", () => {
+        const task = normalizeApiTask({
+            id: "t",
+            kind: "video",
+            status: "pending",
+            source_url: "https://y.test/t",
+            parent_id: null,
+        });
+
+        expect(task.parentId).toBeUndefined();
+    });
+});
+
+describe("normalizeEntryCounts", () => {
+    it("reads what's missing as zero, and no object as none", () => {
+        expect(normalizeEntryCounts({ total: 2 })).toEqual({
+            total: 2,
+            complete: 0,
+            active: 0,
+            downloading: 0,
+            paused: 0,
+            failed: 0,
+        });
+        expect(normalizeEntryCounts(null)).toBeUndefined();
     });
 });

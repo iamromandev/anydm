@@ -19,8 +19,20 @@ export type TaskStatus =
     | "failed"
     | "canceled";
 
-/** `torrent` has no API counterpart yet; the card already draws it. */
-export type TaskKind = "video" | "audio" | "file" | "torrent";
+/** `torrent` has no API counterpart yet; the card already draws it. `playlist` is a group (v0.5). */
+export type TaskKind = "video" | "audio" | "file" | "torrent" | "playlist";
+
+/** How a group's videos stand (v0.5). */
+export type EntryCounts = {
+    total: number;
+    complete: number;
+    /** Queued or downloading. */
+    active: number;
+    /** Downloading, of `active`. */
+    downloading: number;
+    paused: number;
+    failed: number;
+};
 
 export type UiTask = {
     id: string;
@@ -62,6 +74,14 @@ export type UiTask = {
      * task carry it; stream frames don't, and `keepPositions` holds it.
      */
     positions?: PositionView[];
+    /** A group's video: its group's id. Such a row never enters the list. */
+    parentId?: string;
+    /** A group's video: its number in the listing. */
+    position?: number;
+    /** A group's own row: how its videos stand. */
+    entryCounts?: EntryCounts;
+    /** A group's own row: the folder its videos finish into. */
+    folder?: string;
     /**
      * Torrent-only, and never filled: the engine reports connected peers and
      * does not split a swarm into seeders and leechers. Kept because the card
@@ -181,6 +201,25 @@ export function normalizeApiTask(raw: any): UiTask {
             downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
         files: normalizeFiles(raw),
         positions: normalizePositions(raw?.positions),
+        parentId: raw.parent_id ?? undefined,
+        position: raw.position ?? undefined,
+        entryCounts: normalizeEntryCounts(raw.entry_counts),
+        // A video's file_path is its file; only a group's is a folder.
+        folder:
+            raw.kind === "playlist" ? raw.file_path || undefined : undefined,
+    };
+}
+
+/** A group's counts, or `undefined` for any other row. `watched` waits for part 4. */
+export function normalizeEntryCounts(raw: any): EntryCounts | undefined {
+    if (!raw || typeof raw !== "object") return undefined;
+    return {
+        total: raw.total ?? 0,
+        complete: raw.complete ?? 0,
+        active: raw.active ?? 0,
+        downloading: raw.downloading ?? 0,
+        paused: raw.paused ?? 0,
+        failed: raw.failed ?? 0,
     };
 }
 

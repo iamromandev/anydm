@@ -17,6 +17,7 @@ import {
     LuRotateCcw,
     LuUpload,
     LuCircle,
+    LuList,
     SiYoutube,
 } from "@/component/core/icons";
 import {
@@ -109,6 +110,7 @@ const PLATFORM_ICONS: Record<TaskKind, typeof LuMagnet> = {
     audio: LuMusic2,
     file: LuGlobe,
     torrent: LuMagnet,
+    playlist: LuList,
 };
 
 const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
