@@ -21,7 +21,21 @@ const FINISHED = new Set([
     "seeding",
 ]);
 
-export function removePrompt(status: string): RemovePrompt {
+export function removePrompt(status: string, videos?: number): RemovePrompt {
+    // A group (v0.5): the API takes `delete_files=false` in any state, and
+    // keeps whatever finished.
+    if (videos !== undefined) {
+        return {
+            heading:
+                videos === 1
+                    ? "Remove 1 video?"
+                    : `Remove ${videos.toLocaleString("en-US")} videos?`,
+            body: "Any still downloading stop. What finished stays in its folder unless you ask for it to go too.",
+            canKeepFiles: true,
+            confirmLabel: "Remove",
+        };
+    }
+
     if (status === "seeding") {
         return {
             heading: "Remove this torrent?",

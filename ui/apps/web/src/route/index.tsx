@@ -34,6 +34,9 @@ import {
     groupToast,
     type EntriesView,
     type VideoSpeeds,
+    EMPTY_ENTRIES,
+    addEntriesPage,
+    dropVideo,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
@@ -64,6 +67,9 @@ import type { PlaylistRequest } from "@/lib/api/playlist";
 /** Rows per request. The API caps this at 100. */
 const PAGE_SIZE = 25;
 
+/** Videos per Entries page. The API caps a page at 100. */
+const ENTRIES_PAGE = 50;
+
 type BulkAction = "pause_all" | "resume_all" | "clear_finished";
 
 /** What each sweep did, for the line it leaves behind. */
@@ -87,7 +93,12 @@ export default component$(() => {
         summary: null as TaskSummary | null,
         toasts: [] as Toast[],
         // The task the remove dialog is asking about, or null when it is shut.
-        removing: null as { id: string; title: string; status: string } | null,
+        removing: null as {
+            id: string;
+            title: string;
+            status: string;
+            videos?: number;
+        } | null,
         // The sweep waiting to be confirmed, or null when nothing is pending.
         pendingBulk: null as BulkAction | null,
         // Ticked only while a retry is actually pending; see the clock below.
@@ -608,6 +619,9 @@ export default component$(() => {
             }
 
             store.tasks = store.tasks.filter((t) => t.id !== taskId);
+            // A video leaves its Entries list; a group's own list shuts.
+            const { [taskId]: _shut, ...open } = store.entries;
+            store.entries = dropVideo(open, taskId);
         },
     );
 
@@ -615,11 +629,17 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
+        // A group asks about its videos, and can always keep what finished.
+        const videos =
+            task.kind === "playlist"
+                ? (task.entryCounts?.total ?? 0)
+                : undefined;
+
         if (!store.prefs.confirmBeforeRemove) {
             // Straight through, on the same terms the dialog would have
             // offered by default: keep a finished download's files, and take
             // the partial remains of anything else.
-            const keepable = removePrompt(task.status).canKeepFiles;
+            const keepable = removePrompt(task.status, videos).canKeepFiles;
             await handleRemoveConfirm(task.id, !keepable);
             return;
         }
@@ -628,6 +648,80 @@ export default component$(() => {
             id: task.id,
             title: task.title,
             status: task.status,
+            videos,
+        };
+    });
+
+    /** The next page of a group's open Entries list. */
+    const loadEntries = $(async (groupId: string) => {
+        const view = store.entries[groupId];
+        if (!view) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]: { ...view, loading: true },
+        };
+        const result = await getPageApi<any[]>(
+            `/download/${groupId}/entries?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
+        ).catch(() => null);
+        // Read again: the stream may have written while the page was out.
+        const current = store.entries[groupId];
+        // Shut meanwhile: nothing to add it to.
+        if (!current) return;
+        store.entries = {
+            ...store.entries,
+            [groupId]:
+                result === null
+                    ? { ...current, loading: false }
+                    : addEntriesPage(
+                          current,
+                          result.data.map(normalizeApiTask),
+                          result.meta.page,
+                          result.meta.totalPages,
+                      ),
+        };
+        if (result === null) {
+            notify("error", "Couldn't load this group's videos");
+        }
+    });
+
+    /** Open a group's Entries, fetching its first page; or shut them. */
+    const handleToggleEntries = $(async (groupId: string) => {
+        if (store.entries[groupId]) {
+            const { [groupId]: _shut, ...open } = store.entries;
+            store.entries = open;
+            return;
+        }
+        store.entries = { ...store.entries, [groupId]: EMPTY_ENTRIES };
+        await loadEntries(groupId);
+    });
+
+    /** A video's own pause or resume. Its new row arrives by its frame. */
+    const handleVideoAction = $(
+        async (videoId: string, action: "pause" | "resume") => {
+            try {
+                await postApi(`/download/${videoId}/${action}`, {});
+            } catch (err) {
+                notify("error", errorMessage(err));
+            }
+        },
+    );
+
+    const handleRemoveVideo = $(async (groupId: string, videoId: string) => {
+        const video = store.entries[groupId]?.rows.find(
+            (row) => row.id === videoId,
+        );
+        if (!video) return;
+        if (!store.prefs.confirmBeforeRemove) {
+            await handleRemoveConfirm(
+                video.id,
+                !removePrompt(video.status).canKeepFiles,
+            );
+            return;
+        }
+        store.removing = {
+            id: video.id,
+            title: video.title,
+            status: video.status,
         };
     });
 
@@ -902,6 +996,12 @@ export default component$(() => {
             onResolve={handleResolveTorrent}
             onStopSeeding={handleStopSeeding}
             onAddPlaylist={handleAddPlaylist}
+            entries={store.entries}
+            onToggleEntries={handleToggleEntries}
+            onLoadMoreEntries={loadEntries}
+            onPauseVideo={$((id: string) => handleVideoAction(id, "pause"))}
+            onResumeVideo={$((id: string) => handleVideoAction(id, "resume"))}
+            onRemoveVideo={handleRemoveVideo}
         />
     );
 });

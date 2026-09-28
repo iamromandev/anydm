@@ -3,8 +3,9 @@ import {
     TorrentCard,
     type TorrentTask,
 } from "@/component/features/torrent-card";
+import { GroupCard } from "@/component/features/group-card";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
-import { isActive, isSeeding } from "@/lib/api";
+import { isActive, isSeeding, type EntriesView } from "@/lib/api";
 import { matchesSearch } from "@/lib/search";
 import "./field.css";
 
@@ -25,6 +26,13 @@ export interface TorrentListProps {
     onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
+    /** Each open group's Entries list, by group id (v0.5). */
+    entries: Record<string, EntriesView>;
+    onToggleEntries: (id: string) => void;
+    onLoadMoreEntries: (id: string) => void;
+    onPauseVideo: (id: string) => void;
+    onResumeVideo: (id: string) => void;
+    onRemoveVideo: (groupId: string, id: string) => void;
 }
 
 export type TorrentFilter =
@@ -50,6 +58,12 @@ export const TorrentList = component$<TorrentListProps>(
         onPlay,
         onRemove,
         onStopSeeding,
+        entries,
+        onToggleEntries,
+        onLoadMoreEntries,
+        onPauseVideo,
+        onResumeVideo,
+        onRemoveVideo,
     }) => {
         // One card at a time: two open at once turns a list into a wall.
         const store = useStore({ expandedId: "" as string });
@@ -135,18 +149,37 @@ export const TorrentList = component$<TorrentListProps>(
                             class="torrent-list-item"
                             style={{ contentVisibility: "auto" }}
                         >
-                            <TorrentCard
-                                now={now}
-                                expanded={store.expandedId === task.id}
-                                onToggleDetail={toggleDetail}
-                                task={task}
-                                onPause={onPause}
-                                onResume={onResume}
-                                onDownloadFile={onDownloadFile}
-                                onPlay={onPlay}
-                                onRemove={onRemove}
-                                onStopSeeding={onStopSeeding}
-                            />
+                            {task.kind === "playlist" ? (
+                                <GroupCard
+                                    now={now}
+                                    expanded={store.expandedId === task.id}
+                                    onToggleDetail={toggleDetail}
+                                    task={task}
+                                    entries={entries[task.id]}
+                                    onToggleEntries={onToggleEntries}
+                                    onLoadMoreEntries={onLoadMoreEntries}
+                                    onPause={onPause}
+                                    onResume={onResume}
+                                    onRemove={onRemove}
+                                    onPauseVideo={onPauseVideo}
+                                    onResumeVideo={onResumeVideo}
+                                    onPlayVideo={onPlay}
+                                    onRemoveVideo={onRemoveVideo}
+                                />
+                            ) : (
+                                <TorrentCard
+                                    now={now}
+                                    expanded={store.expandedId === task.id}
+                                    onToggleDetail={toggleDetail}
+                                    task={task}
+                                    onPause={onPause}
+                                    onResume={onResume}
+                                    onDownloadFile={onDownloadFile}
+                                    onPlay={onPlay}
+                                    onRemove={onRemove}
+                                    onStopSeeding={onStopSeeding}
+                                />
+                            )}
                         </div>
                     ))}
                 </div>
