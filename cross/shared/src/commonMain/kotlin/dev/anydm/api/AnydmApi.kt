@@ -19,6 +19,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.URLBuilder
 import io.ktor.http.appendPathSegments
 import io.ktor.http.contentType
+import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -57,15 +58,15 @@ fun choosePreset(
 class AnydmApi(
     config: ServerConfig,
     engine: HttpClientEngine,
-) {
+) : TaskApi {
     private val config = config.normalized()
     private val client = HttpClient(engine) { expectSuccess = false }
 
-    suspend fun listTasks(
+    override suspend fun listTasks(
         page: Int,
         pageSize: Int,
-        group: String = "all",
-        sort: String = "-created_at",
+        group: String,
+        sort: String,
     ): Page<TaskDto> {
         val envelope =
             call(
@@ -76,7 +77,7 @@ class AnydmApi(
         return Page(decode(envelope.data), envelope.meta ?: PageMetaDto())
     }
 
-    suspend fun summary(): SummaryDto = decode(call(HttpMethod.Get, listOf("download", "summary")).data)
+    override suspend fun summary(): SummaryDto = decode(call(HttpMethod.Get, listOf("download", "summary")).data)
 
     suspend fun extract(url: String): Extracted {
         val data = call(HttpMethod.Post, listOf("extract"), body = obj("url" to url)).data
@@ -101,9 +102,9 @@ class AnydmApi(
     suspend fun addUrl(url: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", "url"), body = obj("url" to url)).data)
 
     /** A magnet link, or a `.torrent` file base64-encoded. An empty list takes every file. */
-    suspend fun addTorrent(
+    override suspend fun addTorrent(
         torrent: String,
-        files: List<Int> = emptyList(),
+        files: List<Int>,
     ): TaskDto =
         decode(
             call(
@@ -118,7 +119,7 @@ class AnydmApi(
      * [preferred] or the closest preset it offers, a link no site supports is a direct download,
      * and a playlist or channel is refused with [PlaylistLink].
      */
-    suspend fun addLink(
+    override suspend fun addLink(
         url: String,
         preferred: String,
     ): TaskDto {
@@ -143,23 +144,23 @@ class AnydmApi(
         }
     }
 
-    suspend fun pause(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "pause")).data)
+    override suspend fun pause(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "pause")).data)
 
-    suspend fun resume(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "resume")).data)
+    override suspend fun resume(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "resume")).data)
 
-    suspend fun remove(
+    override suspend fun remove(
         id: String,
         deleteFiles: Boolean,
     ) {
         call(HttpMethod.Delete, listOf("download", id), query = mapOf("delete_files" to deleteFiles))
     }
 
-    suspend fun stopSeeding(id: String) {
+    override suspend fun stopSeeding(id: String) {
         call(HttpMethod.Post, listOf("download", id, "seed", "stop"))
     }
 
     /** `pause_all`, `resume_all` or `clear_finished`; how many rows it touched. */
-    suspend fun bulk(action: String): Int =
+    override suspend fun bulk(action: String): Int =
         decode<BulkResultDto>(call(HttpMethod.Post, listOf("download", "bulk"), body = obj("action" to action)).data).affected
 
     /** A finished file's URL, with the key in its query: for a player or a save that can't send headers. */
@@ -173,6 +174,9 @@ class AnydmApi(
                 if (fileIndex != null) appendPathSegments(fileIndex.toString())
                 config.apiKey?.let { parameters.append("api_key", it) }
             }.buildString()
+
+    /** The live stream (see [openEvents]). A member, so it can stand in for [TaskApi.events]. */
+    override fun events(): Flow<ServerEvent> = openEvents()
 
     fun close() = client.close()
 

@@ -53,7 +53,7 @@ fun toServerEvent(frame: SseFrame): ServerEvent? =
  * The live stream, until the server closes it. A refusal is thrown as the API's own error
  * ([Unauthorized] for a bad key). Reconnecting is the caller's job: the store in part 2.
  */
-fun AnydmApi.events(): Flow<ServerEvent> =
+internal fun AnydmApi.openEvents(): Flow<ServerEvent> =
     flow {
         val url = URLBuilder(baseUrl).apply { appendPathSegments("download", "events") }.buildString()
         http
