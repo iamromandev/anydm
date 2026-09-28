@@ -48,6 +48,57 @@ export interface PickerTarget {
     url: string;
     title: string;
     count: number | null;
+    /** yt-dlp's name for the list's site, which the group keeps. */
+    extractor: string;
+    /** The playlist's id, or the channel's for one of its tabs. */
+    playlistId: string;
+    /** A channel's own uploads: their files aren't numbered. */
+    channelTab: boolean;
+}
+
+/** `POST /download/playlist`'s body. */
+export interface PlaylistRequest {
+    url: string;
+    extractor: string;
+    playlist_id: string;
+    title: string;
+    channel_tab: boolean;
+    preset: string;
+    entries: {
+        index: number;
+        id: string;
+        url: string;
+        title: string | null;
+        duration: number | null;
+    }[];
+}
+
+/** The ticked videos, in listing order, as one group to add. */
+export function playlistRequest(
+    target: PickerTarget,
+    preset: string,
+    entries: readonly PlaylistEntry[],
+    selected: ReadonlySet<number>,
+): PlaylistRequest {
+    return {
+        url: target.url,
+        extractor: target.extractor,
+        playlist_id: target.playlistId,
+        title: target.title,
+        channel_tab: target.channelTab,
+        preset,
+        entries: entries
+            .filter((entry) => selected.has(entry.index))
+            .map((entry) => ({
+                index: entry.index,
+                id: entry.id,
+                url: entry.url,
+                title: entry.title,
+                // The API takes whole seconds.
+                duration:
+                    entry.duration === null ? null : Math.round(entry.duration),
+            })),
+    };
 }
 
 export function entriesUrl(url: string, limit: number = LISTING_LIMIT): string {

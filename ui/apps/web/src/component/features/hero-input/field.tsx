@@ -168,15 +168,27 @@ export const HeroInput = component$<HeroInputProps>(
         const choosePlaylist = $(() => {
             const list = store.playlist;
             if (!list) return;
-            onChoose?.({ url: list.url, title: list.title, count: list.count });
+            onChoose?.({
+                url: list.url,
+                title: list.title,
+                count: list.count,
+                extractor: list.extractor,
+                playlistId: list.id,
+                channelTab: list.channelTab,
+            });
         });
 
         const chooseTab = $((tab: PlaylistTab) => {
             const list = store.playlist;
+            if (!list) return;
             onChoose?.({
                 url: tab.url,
-                title: list ? `${list.title} · ${tab.name}` : tab.name,
+                title: `${list.title} · ${tab.name}`,
                 count: null,
+                extractor: list.extractor,
+                // A channel tab's id is the channel's (spec: Findings).
+                playlistId: list.id,
+                channelTab: true,
             });
         });
 
