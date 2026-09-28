@@ -9,6 +9,7 @@ that says which spec to open.
 ```mermaid
 graph LR
     UI["UI<br/>Qwik 2 · :3030"]
+    CROSS["cross/ desktop client<br/>Kotlin · Compose"]
     API["API<br/>FastAPI · :8030"]
     PG[("Postgres<br/>:5430")]
     RQ["rqbit<br/>torrent engine"]
@@ -16,6 +17,7 @@ graph LR
     VOL[("download volume")]
 
     UI -->|"REST + SSE"| API
+    CROSS -->|"REST + SSE"| API
     API --> PG
     API -->|"control API, loopback only"| RQ
     API -->|"spawns per segment"| FF
@@ -23,6 +25,8 @@ graph LR
     RQ --> VOL
     FF --> VOL
 ```
+
+The desktop client in [`cross/`](../cross/README.md) uses the same API as the web UI and holds no server state of its own.
 
 The API owns the database and every decision. It performs its own HTTP
 downloads, but delegates torrent transfers to rqbit and all media work to
