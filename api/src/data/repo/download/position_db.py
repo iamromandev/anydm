@@ -29,6 +29,20 @@ class PositionDatabaseRepo(PositionRepo):
         )
         return row
 
+    async def watched_in_groups(self, group_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many of each group's videos have been watched, in one query (v0.5)."""
+        counts: dict[uuid.UUID, int] = dict.fromkeys(group_ids, 0)
+        if not counts:
+            return counts
+        parents = await PlaybackPosition.filter(
+            watched=True,
+            task__parent_id__in=list(counts),
+            task__deleted_at__isnull=True,
+        ).values_list("task__parent_id", flat=True)
+        for parent_id in parents:
+            counts[parent_id] += 1  # ty: ignore[invalid-argument-type]
+        return counts
+
     async def list_for_tasks(
         self, task_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, list[PlaybackPosition]]:

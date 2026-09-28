@@ -963,6 +963,7 @@ class FakePositionRepo:
     def __init__(self) -> None:
         self.rows: dict[tuple[uuid.UUID, int], Any] = {}
         self.batches: list[list[uuid.UUID]] = []
+        self.watched: dict[uuid.UUID, int] = {}
 
     async def save(
         self, task_id: uuid.UUID, file_index: int, *, position_seconds: float, duration_seconds: float,
@@ -972,6 +973,9 @@ class FakePositionRepo:
                              "duration_seconds": duration_seconds, "watched": watched})()
         self.rows[(task_id, file_index)] = row
         return row
+
+    async def watched_in_groups(self, group_ids: Any) -> dict[uuid.UUID, int]:
+        return {group_id: self.watched.get(group_id, 0) for group_id in group_ids}
 
     async def list_for_tasks(self, task_ids: Any) -> dict[uuid.UUID, list[Any]]:
         self.batches.append(list(task_ids))
@@ -1451,3 +1455,27 @@ async def test_only_a_group_has_entries(tmp_path: Path) -> None:
         await service.list_entries(task_id, page=1, page_size=50)
 
     assert caught.value.code == Code.NOT_FOUND
+
+
+class _Counts:
+    async def counts(self, group_id: uuid.UUID) -> Any:
+        from src.data.schema.download import EntryCountsSchema
+
+        return EntryCountsSchema(total=3, complete=2)
+
+
+@pytest.mark.asyncio
+async def test_a_group_on_the_list_counts_its_watched_videos(tmp_path: Path) -> None:
+    from src.data.schema.download import TaskSchema
+
+    positions = FakePositionRepo()
+    service, _, _ = _service(downloads_dir=tmp_path)
+    service._positions = positions  # ty: ignore[invalid-assignment]
+    service._groups = _Counts()  # ty: ignore[invalid-assignment]
+    group_id = uuid.uuid4()
+    positions.watched[group_id] = 2
+
+    (schema,) = await service._with_counts([TaskSchema.model_validate(_row(group_id, kind=Kind.PLAYLIST))])
+
+    assert schema.entry_counts is not None
+    assert (schema.entry_counts.total, schema.entry_counts.watched) == (3, 2)

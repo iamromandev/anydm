@@ -71,7 +71,8 @@ class EntryCountsSchema(BaseSchema):
     downloading: int = 0
     paused: int = 0
     failed: int = 0
-    watched: int = 0
+    #: Videos watched to the end; counted when the list is read, left out of frames.
+    watched: int | None = None
 
 
 class UrlDownloadRequest(BaseSchema):

@@ -24,6 +24,11 @@ class PositionRepo(ABC):
         ...
 
     @abstractmethod
+    async def watched_in_groups(self, group_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many of each group's videos were watched. Every group asked for has a key."""
+        ...
+
+    @abstractmethod
     async def list_for_tasks(
         self, task_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, list[PlaybackPosition]]:

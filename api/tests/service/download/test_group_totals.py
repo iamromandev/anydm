@@ -32,6 +32,7 @@ def test_counts_sum_by_kind_of_status() -> None:
 
     assert (counts.total, counts.complete, counts.active, counts.failed, counts.paused) == (4, 1, 2, 1, 0)
     assert counts.downloading == 1
+    assert counts.watched is None  # a frame leaves it out
 
 
 class _Group:
