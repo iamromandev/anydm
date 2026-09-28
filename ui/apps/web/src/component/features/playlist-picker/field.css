@@ -207,6 +207,37 @@
     cursor: default;
 }
 
+.playlist-picker-archive {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.5rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.8125rem;
+}
+
+.playlist-picker-newest,
+.playlist-picker-since {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.playlist-picker-number,
+.playlist-picker-date {
+    min-height: 44px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: inherit;
+    padding: 0 0.5rem;
+}
+
+.playlist-picker-number {
+    width: 6rem;
+}
+
 @media (max-width: 640px) {
     /* Two classes: add-torrent-modal's own phone rule for `.modal-panel`
        (95% wide, a 1rem margin) loads later and would win a tie. */
