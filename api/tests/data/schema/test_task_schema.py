@@ -56,3 +56,19 @@ def test_the_attempt_budget_comes_from_settings() -> None:
 
     assert schema.max_attempts == get_settings().download_max_attempts
     assert schema.max_attempts >= 1
+
+
+def test_a_group_names_its_folder() -> None:
+    """The detail view shows where a group's videos land (v0.5)."""
+    encoded = TaskSchema.model_validate(
+        _row(kind=Kind.PLAYLIST, platform=Platform.SITE, file_path="29C3_ Not my department")
+    ).to_json()
+
+    assert encoded["folder"] == "29C3_ Not my department"
+
+
+def test_any_other_task_keeps_its_path_to_itself() -> None:
+    encoded = TaskSchema.model_validate(_row(file_path="abc/a.mkv")).to_json()
+
+    assert "folder" not in encoded
+    assert "file_path" not in encoded

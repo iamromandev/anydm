@@ -204,9 +204,8 @@ export function normalizeApiTask(raw: any): UiTask {
         parentId: raw.parent_id ?? undefined,
         position: raw.position ?? undefined,
         entryCounts: normalizeEntryCounts(raw.entry_counts),
-        // A video's file_path is its file; only a group's is a folder.
-        folder:
-            raw.kind === "playlist" ? raw.file_path || undefined : undefined,
+        // Only a group's row carries one.
+        folder: raw.folder || undefined,
     };
 }
 

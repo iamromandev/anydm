@@ -1295,7 +1295,7 @@ describe("normalizeApiTask for groups", () => {
             status: "downloading",
             source_url: "https://y.test/list",
             title: "29C3",
-            file_path: "29C3",
+            folder: "29C3",
             entry_counts: {
                 total: 3,
                 complete: 1,

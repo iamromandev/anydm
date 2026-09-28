@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, model_validator
 
 from src.config import get_settings
 from src.core.base import BaseSchema
@@ -145,6 +145,9 @@ class TaskSchema(BaseSchema):
     positions: list[PositionSchema] | None = None
     #: A group's videos by kind of status; ``None`` for anything else.
     entry_counts: EntryCountsSchema | None = None
+    #: A group's folder under ``DOWNLOAD_DIR``, read from its ``file_path``.
+    #: Only a group's: any other task's path stays on the server.
+    folder: Annotated[str | None, Field(validation_alias=AliasChoices("folder", "file_path"))] = None
     file_size: int | None = None
     error: str | None = None
     error_code: str | None = None
@@ -163,3 +166,9 @@ class TaskSchema(BaseSchema):
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _only_a_group_names_a_folder(self) -> TaskSchema:
+        if self.kind != Kind.PLAYLIST:
+            self.folder = None
+        return self
