@@ -26,6 +26,14 @@ import {
     type UiTask,
     addLink,
     type AddType,
+    placeRows,
+    trackVideoSpeed,
+    withGroupSpeeds,
+    applyVideoRows,
+    applyVideoProgress,
+    groupToast,
+    type EntriesView,
+    type VideoSpeeds,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
@@ -122,6 +130,11 @@ export default component$(() => {
         // tasks seen this session and no faster.
         streamSeq: 0,
         streamTouched: {} as Record<string, number>,
+        // Each open Entries list, by group id (v0.5). Only open lists are
+        // held, and a video frame for a shut one is dropped.
+        entries: {} as Record<string, EntriesView>,
+        // Each running group video's speed, for its group's live speed.
+        videoSpeeds: {} as VideoSpeeds,
     });
 
     const notify = $((tone: ToastTone, message: string) => {
@@ -155,7 +168,10 @@ export default component$(() => {
         let announced = false;
 
         for (const row of rows) {
-            const announcement = transitionToast(previous.get(row.id), row);
+            const announcement =
+                row.kind === "playlist"
+                    ? groupToast(previous.get(row.id), row)
+                    : transitionToast(previous.get(row.id), row);
             if (announcement) {
                 announced = true;
                 next = raise(
@@ -249,35 +265,43 @@ export default component$(() => {
      */
     const mergeTasks = $(async (rows: UiTask[]) => {
         const before = store.tasks;
+        const top = rows.filter((row) => row.parentId === undefined);
+        const videos = rows.filter((row) => row.parentId !== undefined);
 
         // What lets a page fetch in flight know these rows are newer than its
-        // copies of them.
+        // copies of them. Videos never reach a page of the list.
         store.streamSeq += 1;
-        for (const row of rows) store.streamTouched[row.id] = store.streamSeq;
+        for (const row of top) store.streamTouched[row.id] = store.streamSeq;
 
-        // A canceled row is soft-deleted, and the list endpoint never returns
-        // one — but cancelling publishes the row it just removed, so without
-        // this the announcement of a removal puts the row straight back, now
-        // labelled "Canceled". Taking the hint the other way also means a
-        // removal in one tab reaches the others.
-        const removed = new Set(
-            rows
-                .filter((row) => row.status === "canceled")
-                .map((row) => row.id),
+        // A group's videos update its open Entries list, and one that has
+        // stopped stops counting towards its speed (v0.5).
+        if (videos.length > 0) {
+            let speeds = store.videoSpeeds;
+            for (const video of videos) {
+                if (video.status !== "downloading") {
+                    speeds = trackVideoSpeed(
+                        speeds,
+                        video.parentId!,
+                        video.id,
+                        0,
+                    );
+                }
+            }
+            store.videoSpeeds = speeds;
+            store.entries = applyVideoRows(store.entries, videos);
+        }
+
+        // In place, not moved to the top: a group recounts on every video's
+        // status change, and would otherwise jump up the list each time. A
+        // canceled row leaves: cancelling publishes the row it removed.
+        // Stream frames carry neither segments nor positions (#96).
+        store.tasks = withGroupSpeeds(
+            placeRows(before, keepPositions(keepSegments(top, before), before)),
+            store.videoSpeeds,
         );
-        const live = rows.filter((row) => row.status !== "canceled");
 
-        const incoming = new Set(live.map((row) => row.id));
-        const kept = before.filter(
-            (t) => !incoming.has(t.id) && !removed.has(t.id),
-        );
-        store.tasks = [
-            // Stream frames carry neither segments nor positions (#96).
-            ...keepPositions(keepSegments(live, before), before),
-            ...kept,
-        ];
-
-        await noteTransitions(rows, before);
+        // A video raises no toast; its group does, when it ends.
+        await noteTransitions(top, before);
     });
 
     /**
@@ -288,6 +312,20 @@ export default component$(() => {
      * "unchanged", not "zero" — defaulting to 0 blanked the size mid-download.
      */
     const applyProgress = $((data: any) => {
+        // A group's video: its row in an open Entries list, and its group's
+        // live speed. Never a row of the list.
+        if (data.parent_id) {
+            const groupId = String(data.parent_id);
+            store.videoSpeeds = trackVideoSpeed(
+                store.videoSpeeds,
+                groupId,
+                data.id,
+                data.speed_bps ?? 0,
+            );
+            store.entries = applyVideoProgress(store.entries, groupId, data);
+            store.tasks = withGroupSpeeds(store.tasks, store.videoSpeeds);
+            return;
+        }
         store.tasks = store.tasks.map((t) =>
             t.id === data.id
                 ? {
@@ -760,7 +798,9 @@ export default component$(() => {
             }
 
             store.addModalOpen = false;
-            syncTask();
+            // The new row arrives by its own frame, on top, without taking
+            // the list back to page 1. Only the counts need asking again.
+            loadSummary();
         },
     );
 

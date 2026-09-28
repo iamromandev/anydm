@@ -764,6 +764,55 @@ describe("settlePage", () => {
         ]);
     });
 
+    it("keeps every row a burst of frames wrote while the page was out", () => {
+        // v0.5: a group recounts on every video's status change, so a page
+        // can land after several frames have touched rows, including a new
+        // row and one removed.
+        const settled = settlePage(
+            [
+                row("g", "downloading"),
+                row("a"),
+                row("gone"),
+                row("b"),
+            ],
+            [
+                row("new"),
+                row("g", "paused"),
+                row("a", "complete"),
+            ],
+            new Set([
+                "new",
+                "g",
+                "a",
+                "gone",
+            ]),
+        );
+
+        expect(
+            settled.map((t) => [
+                t.id,
+                t.status,
+            ]),
+        ).toEqual([
+            [
+                "new",
+                "downloading",
+            ],
+            [
+                "g",
+                "paused",
+            ],
+            [
+                "a",
+                "complete",
+            ],
+            [
+                "b",
+                "downloading",
+            ],
+        ]);
+    });
+
     it("takes the page's copy of every row the stream left alone", () => {
         const settled = settlePage(
             [
