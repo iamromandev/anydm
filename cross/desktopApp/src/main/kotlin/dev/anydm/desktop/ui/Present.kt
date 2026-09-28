@@ -8,6 +8,7 @@ import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
 import dev.anydm.store.Connection
+import dev.anydm.store.RetryTone
 import dev.anydm.store.RetryView
 import dev.anydm.store.count
 import dev.anydm.store.retryLabel
@@ -84,7 +85,7 @@ val PRESET_OPTIONS =
 
 private fun presetLabel(preset: String?) = PRESET_OPTIONS.firstOrNull { it.first == preset }?.second ?: ""
 
-enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, PLAY, SAVE, REMOVE }
+enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, PLAY, SAVE, COPY_LINK, REMOVE }
 
 /** Everything one card draws, decided here so it's tested without a window. */
 data class CardView(
@@ -184,6 +185,143 @@ fun cardView(
         detail = detail,
         retry = retry,
         actions = actionsOf(task),
+    )
+}
+
+enum class IconKind { SITE, TORRENT, GROUP, FILE }
+
+enum class Glyph { DOWN, PAUSED, DONE, RETRY, SEEDING }
+
+enum class DetailTone { NORMAL, WARN, ERROR }
+
+/** Everything one native row draws (spec: "Rows"), decided here so it's tested without a window. */
+data class RowView(
+    val title: String,
+    val detail: String,
+    val tone: DetailTone,
+    val icon: IconKind,
+    val glyph: Glyph,
+    val progress: Float?,
+    val hover: List<CardAction>,
+    val menu: List<CardAction>,
+    val expandable: Boolean,
+)
+
+private val ACTION_LABELS =
+    mapOf(
+        CardAction.PAUSE to "Pause",
+        CardAction.RESUME to "Resume",
+        CardAction.RETRY to "Retry",
+        CardAction.STOP_SEEDING to "Stop seeding",
+        CardAction.PLAY to "Open file",
+        CardAction.SAVE to "Save to Downloads",
+        CardAction.COPY_LINK to "Copy link",
+        CardAction.REMOVE to "Remove…",
+    )
+
+fun actionLabel(action: CardAction): String = ACTION_LABELS.getValue(action)
+
+private fun sizeOf(task: Task): String =
+    if (task.totalBytes > 0) "${formatBytes(task.downloadedBytes)} of ${formatBytes(task.totalBytes)}" else "${task.progress}%"
+
+fun rowView(
+    task: Task,
+    nowMillis: Long,
+): RowView {
+    val actions = actionsOf(task)
+    val menu = if (task.url.isNotBlank()) actions.dropLast(1) + CardAction.COPY_LINK + CardAction.REMOVE else actions
+    val primary = actions.firstOrNull { it != CardAction.REMOVE && it != CardAction.STOP_SEEDING }
+    val hover = listOfNotNull(primary, CardAction.REMOVE)
+    val retry = retryLabel(task, nowMillis)
+    val glyph =
+        when {
+            retry != null || task.status == TaskStatus.FAILED -> Glyph.RETRY
+            task.status == TaskStatus.PAUSED -> Glyph.PAUSED
+            task.status == TaskStatus.SEEDING -> Glyph.SEEDING
+            task.status == TaskStatus.COMPLETE -> Glyph.DONE
+            else -> Glyph.DOWN
+        }
+    val counts = task.entryCounts
+    if (task.kind == TaskKind.PLAYLIST) {
+        val total = counts?.total ?: 0
+        return RowView(
+            title = task.title,
+            detail = cardView(task, nowMillis).detail,
+            tone = if ((counts?.failed ?: 0) > 0) DetailTone.WARN else DetailTone.NORMAL,
+            icon = IconKind.GROUP,
+            glyph = glyph,
+            progress = if (total > 0 && task.status != TaskStatus.COMPLETE) (counts?.complete ?: 0).toFloat() / total else null,
+            hover = hover,
+            menu = menu,
+            expandable = true,
+        )
+    }
+    val site = siteName(task.extractor)
+    val body =
+        when {
+            retry != null -> {
+                retry.headline
+            }
+
+            task.status == TaskStatus.DOWNLOADING -> {
+                listOfNotNull(
+                    sizeOf(task),
+                    task.downloadSpeed.takeIf { it > 0 }?.let(::formatSpeed),
+                    task.etaSeconds?.takeIf { it > 0 }?.let { "${formatEta(it)} left" },
+                ).joinToString(" · ")
+            }
+
+            task.status == TaskStatus.PENDING -> {
+                "Queued"
+            }
+
+            task.status == TaskStatus.MUXING -> {
+                "Processing…"
+            }
+
+            task.status == TaskStatus.PAUSED -> {
+                "Paused · ${sizeOf(task)}"
+            }
+
+            task.status == TaskStatus.SEEDING -> {
+                "Seeding · ↑ ${formatSpeed(task.uploadSpeed)}"
+            }
+
+            task.status == TaskStatus.COMPLETE -> {
+                if (task.totalBytes > 0) "${formatBytes(task.totalBytes)} · Finished" else "Finished"
+            }
+
+            task.status == TaskStatus.FAILED -> {
+                listOfNotNull("Failed", task.error).joinToString(" · ")
+            }
+
+            else -> {
+                statusLabel(task.status)
+            }
+        }
+    val tone =
+        when {
+            retry?.tone == RetryTone.ERROR || task.status == TaskStatus.FAILED -> DetailTone.ERROR
+            retry != null -> DetailTone.WARN
+            else -> DetailTone.NORMAL
+        }
+    val icon =
+        when {
+            task.kind == TaskKind.TORRENT -> IconKind.TORRENT
+            site.isNotEmpty() || task.kind == TaskKind.VIDEO || task.kind == TaskKind.AUDIO -> IconKind.SITE
+            else -> IconKind.FILE
+        }
+    val inFlight = task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.PAUSED)
+    return RowView(
+        title = task.title,
+        detail = if (site.isNotEmpty() && retry == null) "$site · $body" else body,
+        tone = tone,
+        icon = icon,
+        glyph = glyph,
+        progress = if (inFlight && retry == null) task.progress / 100f else null,
+        hover = hover,
+        menu = menu,
+        expandable = false,
     )
 }
 

@@ -18,17 +18,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.anydm.store.RetryTone
 
-private val ACTION_LABELS =
-    mapOf(
-        CardAction.PAUSE to "Pause",
-        CardAction.RESUME to "Resume",
-        CardAction.RETRY to "Retry",
-        CardAction.STOP_SEEDING to "Stop seeding",
-        CardAction.PLAY to "Play",
-        CardAction.SAVE to "Save",
-        CardAction.REMOVE to "Remove",
-    )
-
 /** One row of the list, drawn from its [CardView]. */
 @Composable
 fun TaskCard(
@@ -54,7 +43,7 @@ fun TaskCard(
                 retry.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                view.actions.forEach { action -> TextButton(onClick = { onAction(action) }) { Text(ACTION_LABELS.getValue(action)) } }
+                view.actions.forEach { action -> TextButton(onClick = { onAction(action) }) { Text(actionLabel(action)) } }
             }
         }
     }

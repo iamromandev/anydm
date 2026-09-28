@@ -224,6 +224,10 @@ fun MainScreen(
                                         save(task)
                                     }
 
+                                    CardAction.COPY_LINK -> {
+                                        copyText(task.url)
+                                    }
+
                                     CardAction.REMOVE -> {
                                         remove(task)
                                     }
@@ -285,4 +289,11 @@ private fun SortMenu(
             }
         }
     }
+}
+
+private fun copyText(text: String) {
+    java.awt.Toolkit
+        .getDefaultToolkit()
+        .systemClipboard
+        .setContents(java.awt.datatransfer.StringSelection(text), null)
 }
