@@ -1,10 +1,7 @@
 package dev.anydm.desktop
 
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +16,9 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
+import dev.anydm.desktop.chrome.LocalWindowDrag
+import dev.anydm.desktop.theme.DesktopTheme
+import dev.anydm.desktop.theme.isMac
 import dev.anydm.desktop.ui.ConnectScreen
 import dev.anydm.desktop.ui.MainScreen
 import dev.anydm.desktop.ui.TrayIcon
@@ -62,6 +62,14 @@ fun main() {
             title = "anydm",
             state = rememberWindowState(size = DpSize(1100.dp, 760.dp)),
         ) {
+            // Unified toolbar (spec: "The window"): content runs under a transparent title bar on macOS.
+            if (isMac()) {
+                LaunchedEffect(Unit) {
+                    window.rootPane.putClientProperty("apple.awt.fullWindowContent", true)
+                    window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
+                    window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+                }
+            }
             // A notice becomes a native notification when the window isn't in front.
             LaunchedEffect(store) {
                 store?.events?.collect { event ->
@@ -76,8 +84,8 @@ fun main() {
                     }
                 }
             }
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                Surface {
+            DesktopTheme {
+                CompositionLocalProvider(LocalWindowDrag provides { content -> WindowDraggableArea { content() } }) {
                     when (val screen = model.screen) {
                         is Screen.Connect -> {
                             val saved = model.settings.settings.value
