@@ -528,3 +528,25 @@ async def test_find_group_by_site_and_playlist(db: None) -> None:
 
     assert found is not None and found.id == group.id
     assert await repo.find_group("YoutubeTab", "PL2") is None
+
+
+async def test_a_group_takes_more_videos_and_requeues_by_id(db: None) -> None:
+    repo = TaskDatabaseRepo()
+    group = await repo.create_group(GROUP, [_entry(n) for n in range(1, 3)])
+    await Task.filter(parent_id=group.id, position=2).update(status=TaskStatus.FAILED, attempts=3)
+
+    held = await repo.held_entries(group.id)
+    await repo.add_entries(group, [_entry(3)])
+    requeued = await repo.requeue_videos([held["v2"][0]])
+
+    assert sorted(held) == ["v1", "v2"]
+    assert held["v2"][1:] == (TaskStatus.FAILED, 2)
+    assert requeued == 1
+    videos = await Task.filter(parent_id=group.id).order_by("position")
+    assert [(v.position, v.status) for v in videos] == [
+        (1, TaskStatus.PENDING),
+        (2, TaskStatus.PENDING),
+        (3, TaskStatus.PENDING),
+    ]
+    assert {v.created_at for v in videos} == {group.created_at}
+    assert await repo.requeue_videos([]) == 0

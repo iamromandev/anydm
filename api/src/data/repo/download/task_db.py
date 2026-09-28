@@ -216,6 +216,29 @@ class TaskDatabaseRepo(BaseRepo[Task], TaskRepo):
                 )
         return row
 
+    async def held_entries(self, group_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, TaskStatus, int | None]]:
+        """A group's videos by their site id: which task, how it stands, where it sits."""
+        rows = cast(
+            list[tuple[str, uuid.UUID, str, int | None]],
+            await Task.filter(parent_id=group_id, deleted_at__isnull=True).values_list(
+                "video_id", "id", "status", "position"
+            ),
+        )
+        return {video_id: (task_id, TaskStatus(status), position) for video_id, task_id, status, position in rows}
+
+    async def add_entries(self, group: Task, entries: Sequence[dict[str, Any]]) -> None:
+        """More videos under a group, queued with its first ones (by its ``created_at``)."""
+        await Task.bulk_create(
+            [Task(**entry, parent_id=group.id, created_at=group.created_at) for entry in entries],
+            batch_size=500,
+        )
+
+    async def requeue_videos(self, ids: Sequence[uuid.UUID]) -> int:
+        """These videos back in the queue, as a person's fresh decision."""
+        if not ids:
+            return 0
+        return await self._requeue(Task.filter(id__in=list(ids), deleted_at__isnull=True))
+
     async def entries_page(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Task], Meta]:
         tasks, meta = await self.get_paginated(
             order_by="position",
