@@ -1,5 +1,6 @@
 package dev.anydm.desktop.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.anydm.desktop.theme.LocalTokens
+import dev.anydm.desktop.theme.isMac
 
 /** The server's URL and optional key; nothing is kept until the server answers (spec: Connect). */
 @Composable
@@ -36,7 +39,11 @@ fun ConnectScreen(
     var url by remember { mutableStateOf(initialUrl.ifBlank { "http://localhost:8030" }) }
     var key by remember { mutableStateOf(initialKey.orEmpty()) }
     val submit = { if (!connecting && url.isNotBlank()) onConnect(url, key) }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // No toolbar here, so on macOS the top 28 dp stays clear of the traffic lights.
+    Box(
+        Modifier.fillMaxSize().background(LocalTokens.current.content).padding(top = if (isMac()) 28.dp else 0.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(Modifier.width(420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Connect to anydm", style = MaterialTheme.typography.headlineSmall)
             OutlinedTextField(url, { url = it }, label = { Text("Server URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
