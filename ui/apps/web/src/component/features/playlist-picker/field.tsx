@@ -94,6 +94,8 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
         const store = useStore({
             /** Bumped by Retry, which lists again from the start. */
             attempt: 0,
+            /** The attempt this picker last started listing; -1 before any. */
+            started: -1,
             /** Stop was pressed, or the connection dropped. */
             stopped: false,
             scrollTop: 0,
@@ -120,12 +122,21 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
          */
         useVisibleTask$(
             ({ track, cleanup }) => {
-                track(() => store.attempt);
+                const attempt = track(() => store.attempt);
                 const stopped = track(() => store.stopped);
                 if (stopped) {
                     listing.value = stopListing(listing.value);
                     return;
                 }
+                // Qwik (beta.43) re-runs this task when the player opens over
+                // the picker, though nothing it tracks changed. The same
+                // attempt keeps its list and ticks; one still listing stops,
+                // with Retry, rather than silently starting over (part 4).
+                if (store.started === attempt) {
+                    listing.value = stopListing(listing.value);
+                    return;
+                }
+                store.started = attempt;
                 listing.value = EMPTY_LISTING;
                 selected.value = new Set();
                 const source = new EventSource(entriesUrl(target.url));
