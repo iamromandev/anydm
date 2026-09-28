@@ -76,4 +76,12 @@ class FakeApi : TaskApi {
     }
 
     override suspend fun bulk(action: String): Int = affected
+
+    val entries = mutableMapOf<String, List<TaskDto>>()
+    val entryCalls = mutableListOf<String>()
+
+    override suspend fun entries(id: String): List<TaskDto> {
+        entryCalls += id
+        return entries[id].orEmpty()
+    }
 }
