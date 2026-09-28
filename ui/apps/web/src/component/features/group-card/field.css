@@ -15,8 +15,25 @@
     padding: 0 0.625rem;
 }
 
+/* The card is a flex row (details, actions); Entries takes a line of its
+   own below both, the card's full width, whatever its titles' lengths. */
+.group-card {
+    flex-wrap: wrap;
+}
+
+.group-card > .torrent-card-main {
+    flex: 1 1 0;
+    align-self: stretch;
+    min-width: 0;
+}
+
 /* A fixed height, so a 5,000-video group can't stretch the list (spec). */
 .group-entries {
+    flex: 1 0 100%;
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     max-height: 360px;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -72,6 +89,17 @@
 }
 
 @media (max-width: 640px) {
+    /* The card is a column here already. Wrapping a column sizes each line
+       to its widest item, not the card, so a long title pushed past it. */
+    .group-card {
+        flex-wrap: nowrap;
+    }
+
+    .group-card > .torrent-card-main,
+    .group-entries {
+        flex: none;
+    }
+
     .group-entry-status {
         display: none;
     }
