@@ -21,6 +21,7 @@ data class DesktopTokens(
     val ok: Color,
     val warn: Color,
     val error: Color,
+    val destructive: Color,
 )
 
 val LightTokens =
@@ -40,6 +41,7 @@ val LightTokens =
         ok = Color(0xFF28A745),
         warn = Color(0xFFE0A100),
         error = Color(0xFFD93025),
+        destructive = Color(0xFFC62828),
     )
 
 val DarkTokens =
@@ -60,6 +62,7 @@ val DarkTokens =
         ok = Color(0xFF32D74B),
         warn = Color(0xFFFFD60A),
         error = Color(0xFFFF453A),
+        destructive = Color(0xFFC62828),
     )
 
 val LocalTokens = staticCompositionLocalOf { LightTokens }
