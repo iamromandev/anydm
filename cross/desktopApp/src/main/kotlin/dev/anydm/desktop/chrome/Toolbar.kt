@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -111,6 +112,7 @@ fun Toolbar(
     onResumeAll: () -> Unit,
     onTorrent: () -> Unit,
     onSettings: () -> Unit,
+    onLinkFocus: (Boolean) -> Unit = {},
 ) {
     val t = LocalTokens.current
     LocalWindowDrag.current {
@@ -126,7 +128,18 @@ fun Toolbar(
             ToolButton(Glyphs.Add, "Add a link") { focus.requestFocus() }
             ToolButton(Glyphs.Pause, "Pause all", onClick = onPauseAll)
             ToolButton(Glyphs.Resume, "Resume all", onClick = onResumeAll)
-            LinkField(link, onLink, onSubmit, adding, preset, presets, onPreset, focus, Modifier.weight(1f).widthIn(max = 640.dp))
+            LinkField(
+                link,
+                onLink,
+                onSubmit,
+                adding,
+                preset,
+                presets,
+                onPreset,
+                focus,
+                onLinkFocus,
+                Modifier.weight(1f).widthIn(max = 640.dp),
+            )
             ToolButton(Glyphs.Torrent, "Open a .torrent…", onClick = onTorrent)
             ToolButton(Glyphs.Settings, "Settings", onClick = onSettings)
         }
@@ -144,6 +157,7 @@ private fun LinkField(
     presets: List<Pair<String, String>>,
     onPreset: (String) -> Unit,
     focus: FocusRequester,
+    onLinkFocus: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
     val t = LocalTokens.current
@@ -169,6 +183,7 @@ private fun LinkField(
                     Modifier
                         .fillMaxWidth()
                         .focusRequester(focus)
+                        .onFocusChanged { onLinkFocus(it.isFocused) }
                         .testTag("link")
                         .onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
