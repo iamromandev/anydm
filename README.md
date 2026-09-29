@@ -110,6 +110,10 @@ cp api/.env.example api/.env
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
 | `TORRENT_DOWNLOAD_LIMIT_BPS` | `0` | rqbit's total download cap in bytes per second. `0` is unlimited. Pushed to rqbit by the API, again after rqbit restarts |
 | `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
+| `SEARCH_INDEXERS` | empty | Torznab indexers to search, as `name=url` pairs separated by commas (Prowlarr: `http://prowlarr:9696/<id>/api`; Jackett: `…/api/v2.0/indexers/<id>/results/torznab`). Empty turns search off |
+| `SEARCH_INDEXER_KEYS` | empty | Their API keys, as `name=key` pairs by the same names. Never logged |
+| `SEARCH_TIMEOUT_S` | `15` | How long each indexer has to answer a search |
+| `SEARCH_LIMIT` | `100` | Results a search answers with, after merging duplicates |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux a site's separate video and audio, to make MP3s, and to transcode stream segments |
 | `FFPROBE_PATH` | `ffprobe` | ffprobe executable; reads a source's duration and streams before a session starts |
 | `STREAM_DIR` | `./stream` | Scratch directory for on-demand HLS segments |
