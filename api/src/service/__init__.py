@@ -25,6 +25,7 @@ from src.service.download.torrent_monitor import TorrentMonitor
 from src.service.extract import ExtractService as ExtractService
 from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService
+from src.service.search import SearchService as SearchService
 from src.service.settings import SettingsService as SettingsService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
@@ -46,6 +47,18 @@ def get_extract_service() -> ExtractService:
 
 def get_listing_service() -> ListingService:
     return ListingService(client=get_site_client(), repo=TaskDatabaseRepo())
+
+
+@lru_cache
+def get_search_service() -> SearchService:
+    settings = get_settings()
+    # One client for the process: indexers are few and asked often, so connections are worth keeping.
+    return SearchService(
+        settings.indexers,
+        httpx.AsyncClient(headers={"User-Agent": "anydm"}),
+        timeout_s=settings.search_timeout_s,
+        limit=settings.search_limit,
+    )
 
 
 @lru_cache

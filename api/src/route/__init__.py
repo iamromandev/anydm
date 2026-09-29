@@ -5,6 +5,7 @@ from src.core.auth import require_api_key
 from .download import router as _download_router
 from .extract import router as _extract_router
 from .health import router as _health_router
+from .search import router as _search_router
 from .settings import router as _settings_router
 from .stream import router as _stream_router
 from .system import router as _system_router
@@ -14,6 +15,7 @@ from .system import router as _system_router
 _subrouters = [
     _extract_router,
     _download_router,
+    _search_router,
     _stream_router,
     _settings_router,
     _system_router,

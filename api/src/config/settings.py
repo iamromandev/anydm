@@ -1,10 +1,11 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.core.type import Env
+from src.lib.torznab.torznab import Indexer, parse_indexers
 
 
 class Settings(BaseSettings):
@@ -111,6 +112,23 @@ class Settings(BaseSettings):
         int,
         Field(default=0, ge=0, description="rqbit upload cap, pushed at runtime, 0 = unlimited"),
     ]
+    # search
+    search_indexers: Annotated[
+        str,
+        Field(default="", description="Torznab indexers as name=url pairs, comma-separated; empty turns search off"),
+    ]
+    search_indexer_keys: Annotated[
+        str,
+        Field(default="", description="API keys as name=key pairs, by the names in SEARCH_INDEXERS"),
+    ]
+    search_timeout_s: Annotated[
+        int,
+        Field(default=15, ge=1, le=120, description="How long each indexer has to answer a search"),
+    ]
+    search_limit: Annotated[
+        int,
+        Field(default=100, ge=1, le=500, description="Results a search answers with, after merging"),
+    ]
     # media
     ffmpeg_path: Annotated[str, Field(default="ffmpeg", description="ffmpeg executable")]
     ffprobe_path: Annotated[str, Field(default="ffprobe", description="ffprobe executable")]
@@ -155,6 +173,16 @@ class Settings(BaseSettings):
             description="How often to delete rqbit torrents no Task or live stream session owns",
         ),
     ]
+
+    @model_validator(mode="after")
+    def _check_indexers(self) -> Settings:
+        # Raises with the problem named, which stops startup: a typo shouldn't silently turn search off.
+        parse_indexers(self.search_indexers, self.search_indexer_keys)
+        return self
+
+    @property
+    def indexers(self) -> list[Indexer]:
+        return parse_indexers(self.search_indexers, self.search_indexer_keys)
 
     @property
     def is_local(self) -> bool:

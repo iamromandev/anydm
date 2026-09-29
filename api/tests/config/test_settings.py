@@ -113,3 +113,11 @@ def test_rate_limits_default_to_unlimited() -> None:
 def test_a_rate_limit_cannot_be_negative(name: str) -> None:
     with pytest.raises(ValidationError):
         _settings(**{name: -1})
+
+
+def test_search_indexers_come_from_env_and_a_bad_one_stops_startup() -> None:
+    settings = _settings(search_indexers="p=http://p/api", search_indexer_keys="p=k")
+    assert [(i.name, i.key) for i in settings.indexers] == [("p", "k")]
+    assert _settings().indexers == []
+    with pytest.raises(ValidationError, match="SEARCH_INDEXERS"):
+        _settings(search_indexers="nope")

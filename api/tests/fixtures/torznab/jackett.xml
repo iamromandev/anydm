@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>Big Buck Bunny 1080p</title>
+      <size>725614592</size>
+      <link>magnet:?xt=urn:btih:DD8255ECDC7CA55FB0BBF81323D87062DB1F6D1C&amp;dn=Big+Buck+Bunny</link>
+      <enclosure url="magnet:?xt=urn:btih:DD8255ECDC7CA55FB0BBF81323D87062DB1F6D1C&amp;dn=Big+Buck+Bunny" length="725614592" type="application/x-bittorrent" />
+      <torznab:attr name="category" value="2000" />
+      <torznab:attr name="seeders" value="150" />
+      <torznab:attr name="peers" value="160" />
+    </item>
+    <item>
+      <title>Debian 13 netinst</title>
+      <size>abc</size>
+      <link>http://jackett:9117/dl/debian/?jackett_apikey=def&amp;path=q</link>
+      <torznab:attr name="category" value="4000" />
+      <torznab:attr name="seeders" value="-1" />
+    </item>
+    <item>
+      <title>Nothing to download</title>
+      <torznab:attr name="category" value="8000" />
+    </item>
+  </channel>
+</rss>

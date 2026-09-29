@@ -110,6 +110,10 @@ cp api/.env.example api/.env
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
 | `TORRENT_DOWNLOAD_LIMIT_BPS` | `0` | rqbit's total download cap in bytes per second. `0` is unlimited. Pushed to rqbit by the API, again after rqbit restarts |
 | `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
+| `SEARCH_INDEXERS` | empty | Torznab indexers to search, as `name=url` pairs separated by commas (Prowlarr: `http://prowlarr:9696/<id>/api`; Jackett: `…/api/v2.0/indexers/<id>/results/torznab`). Empty turns search off |
+| `SEARCH_INDEXER_KEYS` | empty | Their API keys, as `name=key` pairs by the same names. Never logged |
+| `SEARCH_TIMEOUT_S` | `15` | How long each indexer has to answer a search |
+| `SEARCH_LIMIT` | `100` | Results a search answers with, after merging duplicates |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux a site's separate video and audio, to make MP3s, and to transcode stream segments |
 | `FFPROBE_PATH` | `ffprobe` | ffprobe executable; reads a source's duration and streams before a session starts |
 | `STREAM_DIR` | `./stream` | Scratch directory for on-demand HLS segments |
@@ -167,6 +171,10 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/torrent` — enqueue a torrent with a file selection
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
+  - Search (Torznab indexers from `SEARCH_INDEXERS`)
+    - `GET /search/sources` — whether search is on, and the indexers' names; never their URLs or keys
+    - `GET /search?q=…&category=…` — ask every indexer at once. `q` is 2–200 characters; `category` is `all`, `movies`, `tv`, `music`, `software`, `books` or `other`. Answers `results` (one per torrent, merged across indexers by info hash, most seeded first: `title`, `size`, `seeders`, `leechers`, `published`, `category`, `info_hash`, `magnet`, `link`, `indexers`), `errors` (an indexer that failed, and why), and `took_ms`. 404 `search_disabled` with no indexers; 502 `search_failed` when none answered
+    - `POST /search/torrent` — fetch a result's `.torrent` from its indexer: answers `torrent` (base64), or `magnet` when the indexer redirects to one. The link must share a configured indexer's scheme, host and port (400 `link_not_from_indexer`); over 10 MB is 413, and anything but a torrent file is 422 `not_a_torrent`
   - Streaming (independent of downloading — nothing is kept)
     - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain files, or its HLS when it has nothing else), a media URL, a magnet or a `.torrent` (with `file_index`, that one of its files rather than the largest), or a finished download read from disk (`task_id`, and `file_index` for a torrent); `audio_language` picks the audio track, or `audio_track` names one
     - `POST /stream/{session_id}/quality` — a new session at another of `qualities` (`null` for the default: a site's 1080p pick, or a file as it is), built from this one, which keeps playing until the player stops it; `/stream/start` takes `quality` too
