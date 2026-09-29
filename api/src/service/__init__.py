@@ -8,6 +8,7 @@ from src.data.repo import FileDatabaseRepo, PositionDatabaseRepo, SegmentDatabas
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
+from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torrent.client import RqbitClient
 from src.service.download import DownloadService as DownloadService
 from src.service.download import TorrentService as TorrentService
@@ -54,7 +55,7 @@ def get_search_service() -> SearchService:
     settings = get_settings()
     # One client for the process: indexers are few and asked often, so connections are worth keeping.
     return SearchService(
-        settings.indexers,
+        [TorznabSource(i) for i in settings.indexers],
         httpx.AsyncClient(headers={"User-Agent": "anydm"}),
         timeout_s=settings.search_timeout_s,
         limit=settings.search_limit,

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ import httpx
 import pytest
 from src.core.error import Error
 from src.core.type import ErrorType
+from src.lib.sources.source import Result, SourceError
+from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torznab.torznab import Indexer
 from src.service.search.search_service import SearchService
 
@@ -25,7 +28,8 @@ def _service(
     clock: Callable[[], float] = lambda: 0.0,
 ) -> SearchService:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return SearchService(indexers if indexers is not None else [PROWLARR, JACKETT], client, timeout_s=1, limit=100, clock=clock)
+    sources = [TorznabSource(i) for i in (indexers if indexers is not None else [PROWLARR, JACKETT])]
+    return SearchService(sources, client, timeout_s=1, limit=100, clock=clock)
 
 
 def _fixture(name: str) -> httpx.Response:
@@ -167,7 +171,7 @@ async def test_a_redirect_elsewhere_is_refused() -> None:
 )
 async def test_a_fetch_that_goes_wrong_says_how(link: str, respond: Callable[[httpx.Request], httpx.Response], kind: ErrorType) -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-    service = SearchService([PROWLARR, JACKETT], client, timeout_s=1, limit=100, max_torrent_bytes=32)
+    service = SearchService([TorznabSource(PROWLARR), TorznabSource(JACKETT)], client, timeout_s=1, limit=100, max_torrent_bytes=32)
 
     with pytest.raises(Error) as caught:
         await service.fetch_torrent(link)
@@ -304,3 +308,87 @@ async def test_a_search_with_a_query_is_never_cached() -> None:
     await service.search("bunny", "all")
 
     assert asked == ["bunny", "bunny"]
+
+
+BUNNY_HASH = "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c"
+
+
+@dataclass
+class _Fake:
+    """A built-in stand-in: canned results, optionally browse-only or failing."""
+
+    name: str
+    results: list[Result] = field(default_factory=list)
+    browse_only: bool = False
+    error: str | None = None
+    asked: int = 0
+
+    def supports(self, q: str, category: str) -> bool:
+        return not (self.browse_only and q)
+
+    async def fetch(self, client: httpx.AsyncClient, q: str, category: str, timeout_s: float) -> list[Result]:
+        self.asked += 1
+        if self.error:
+            raise SourceError(self.error)
+        return self.results
+
+
+def _fake_bunny(name: str = "fake", seeders: int = 500) -> Result:
+    return Result("Big Buck Bunny 1080p", 725614592, seeders, 20, None, "movies", BUNNY_HASH, f"magnet:?xt=urn:btih:{BUNNY_HASH}", None, (name,))
+
+
+def _with(sources: list[Any], handler: Callable[[httpx.Request], Any] | None = None) -> SearchService:
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler or (lambda r: _fixture("prowlarr.xml"))))
+    return SearchService(sources, client, timeout_s=1, limit=100)
+
+
+@pytest.mark.asyncio
+async def test_asked_names_every_source_the_request_went_to() -> None:
+    answer = await _service(lambda r: _fixture("prowlarr.xml")).search("bunny", "all")
+
+    assert answer.asked == ["prowlarr-1", "jackett-all"]
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_does_not_support_the_request_is_not_asked() -> None:
+    browse_only = _Fake("eztv", browse_only=True)
+
+    answer = await _with([TorznabSource(PROWLARR), browse_only]).search("bunny", "all")
+
+    assert browse_only.asked == 0
+    assert answer.asked == ["prowlarr-1"]
+    assert answer.errors == []
+
+
+@pytest.mark.asyncio
+async def test_when_no_source_supports_the_request_the_answer_is_empty_not_a_failure() -> None:
+    answer = await _with([_Fake("eztv", browse_only=True)]).search("bunny", "all")
+
+    assert (answer.results, answer.errors, answer.asked) == ([], [], [])
+
+
+@pytest.mark.asyncio
+async def test_a_builtin_and_an_indexer_are_merged_by_hash() -> None:
+    fake = _Fake("fake", [_fake_bunny()])
+
+    answer = await _with([TorznabSource(PROWLARR), fake]).search("bunny", "all")
+
+    bunny = next(r for r in answer.results if r.title == "Big Buck Bunny 1080p")
+    assert (bunny.seeders, bunny.indexers) == (500, ["prowlarr-1", "fake"])
+    assert answer.asked == ["prowlarr-1", "fake"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_builtin_is_an_error_line_and_the_others_still_answer() -> None:
+    answer = await _with([TorznabSource(PROWLARR), _Fake("fake", error="boom")]).search("bunny", "all")
+
+    assert [(e.indexer, e.message) for e in answer.errors] == [("fake", "boom")]
+    assert answer.results and answer.asked == ["prowlarr-1", "fake"]
+
+
+@pytest.mark.asyncio
+async def test_a_service_of_only_builtins_fetches_no_torrent_links() -> None:
+    with pytest.raises(Error) as caught:
+        await _with([_Fake("fake")]).fetch_torrent("http://prowlarr:9696/1/dl")
+
+    assert caught.value.type == ErrorType.LINK_NOT_FROM_INDEXER
