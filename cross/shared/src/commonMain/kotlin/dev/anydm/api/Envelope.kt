@@ -2,8 +2,10 @@ package dev.anydm.api
 
 import dev.anydm.model.AnydmJson
 import dev.anydm.model.PageMetaDto
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -40,11 +42,22 @@ fun unwrap(
             ?: json["error"]?.jsonPrimitive?.contentOrNull
             ?: "Request failed (HTTP $httpStatus)"
     val code = json["code"]?.jsonPrimitive?.intOrNull ?: httpStatus
-    fail(code, message, json["type"]?.jsonPrimitive?.contentOrNull)
+    fail(code, message, json["type"]?.jsonPrimitive?.contentOrNull, detailsOf(json))
 }
+
+private fun detailsOf(json: JsonObject): List<ErrorDetail> =
+    (json["details"] as? JsonArray).orEmpty().mapNotNull { element ->
+        (element as? JsonObject)?.let { detail ->
+            ErrorDetail(
+                (detail["subject"] as? JsonPrimitive)?.contentOrNull,
+                (detail["description"] as? JsonPrimitive)?.contentOrNull,
+            )
+        }
+    }
 
 private fun fail(
     code: Int,
     message: String,
     type: String?,
-): Nothing = throw if (code == 401) Unauthorized(message) else ApiException(message, code, type)
+    details: List<ErrorDetail> = emptyList(),
+): Nothing = throw if (code == 401) Unauthorized(message) else ApiException(message, code, type, details)
