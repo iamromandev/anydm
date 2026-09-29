@@ -133,7 +133,11 @@ export const SearchView = component$<SearchViewProps>(
                     <button
                         class="search-view-go"
                         type="submit"
-                        disabled={!canSearch(state.q, state.busy)}
+                        // Disabled only while a search runs: a browser won't submit on Enter
+                        // while the submit button is disabled, and on a first visit the input's
+                        // handler is still loading, so the button can lag the typing.
+                        // runSearch ignores a query under 2 characters itself.
+                        disabled={state.busy}
                     >
                         {state.busy ? (
                             <span class="search-view-spin">
