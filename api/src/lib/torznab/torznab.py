@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
@@ -74,7 +75,9 @@ def build_url(indexer: Indexer, q: str, category: str) -> str:
     """The indexer's own URL with a Torznab search added to its query."""
     parts = urlsplit(indexer.url)
     query = parse_qsl(parts.query, keep_blank_values=True)
-    query += [("t", "search"), ("q", q)]
+    query.append(("t", "search"))
+    if q:
+        query.append(("q", q))
     cat = CATEGORIES.get(category)
     if cat is not None:
         query.append(("cat", cat))
@@ -199,8 +202,8 @@ def _most(a: int | None, b: int | None) -> int | None:
     return b if a is None else a if b is None else max(a, b)
 
 
-def merge(per_indexer: list[list[Result]], limit: int) -> list[Result]:
-    """One result per torrent, most seeded first (unknown last), then largest; at most ``limit``."""
+def merge(per_indexer: list[list[Result]], limit: int, order: Literal["seeders", "newest"] = "seeders") -> list[Result]:
+    """One result per torrent; most seeded first (``seeders``) or newest first (``newest``); at most ``limit``."""
     merged: dict[tuple[str, ...], Result] = {}
     for results in per_indexer:
         for result in results:
@@ -219,7 +222,13 @@ def merge(per_indexer: list[list[Result]], limit: int) -> list[Result]:
                 link=seen.link or result.link,
                 indexers=seen.indexers + tuple(n for n in result.indexers if n not in seen.indexers),
             )
-    ordered = sorted(merged.values(), key=lambda r: (r.seeders is None, -(r.seeders or 0), -(r.size or 0)))
+    if order == "newest":
+        ordered = sorted(
+            merged.values(),
+            key=lambda r: (r.published is None, -(r.published.timestamp() if r.published else 0), r.seeders is None, -(r.seeders or 0)),
+        )
+    else:
+        ordered = sorted(merged.values(), key=lambda r: (r.seeders is None, -(r.seeders or 0), -(r.size or 0)))
     return ordered[:limit]
 
 
