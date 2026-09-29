@@ -82,6 +82,38 @@ class TaskStore(
         scope.launch { loadPage(1) }
     }
 
+    /** Open a group: fetch its videos; frames keep them current until [collapse]. */
+    fun expand(id: String) {
+        scope.launch {
+            val rows = read { api.entries(id) } ?: return@launch
+            mutableState.update {
+                it.copy(
+                    entries =
+                        it.entries + (id to rows.map { dto -> dto.toTask() }.sortedBy { t -> t.position ?: Int.MAX_VALUE }),
+                )
+            }
+        }
+    }
+
+    fun collapse(id: String) {
+        mutableState.update { it.copy(entries = it.entries - id) }
+    }
+
+    internal suspend fun onFrame(event: ServerEvent) = handle(event)
+
+    /** A video's frame, kept when its group is open; the top list never shows videos. */
+    private fun mergeEntries(rows: List<Task>) {
+        mutableState.update { state ->
+            var entries = state.entries
+            rows.filter { it.parentId != null && it.parentId in entries }.forEach { row ->
+                val list = entries.getValue(row.parentId!!)
+                val next = if (list.any { it.id == row.id }) list.map { if (it.id == row.id) row else it } else list + row
+                entries = entries + (row.parentId to next.sortedBy { it.position ?: Int.MAX_VALUE })
+            }
+            state.copy(entries = entries)
+        }
+    }
+
     fun loadMore() {
         val current = state.value
         if (current.loadingMore || current.page >= current.totalPages) return
@@ -205,16 +237,26 @@ class TaskStore(
     private suspend fun handle(event: ServerEvent) {
         when (event) {
             is ServerEvent.Snapshot -> {
+                mergeEntries(event.tasks)
                 merge(event.tasks)
             }
 
             is ServerEvent.TaskChanged -> {
+                mergeEntries(listOf(event.task))
                 merge(listOf(event.task))
             }
 
             is ServerEvent.Progress -> {
-                if (event.progress.parentId == null) {
+                val parent = event.progress.parentId
+                if (parent == null) {
                     mutableState.update { it.copy(tasks = applyProgress(it.tasks, event.progress)) }
+                } else if (parent in state.value.entries) {
+                    mutableState.update {
+                        it.copy(
+                            entries =
+                                it.entries + (parent to applyProgress(it.entries.getValue(parent), event.progress)),
+                        )
+                    }
                 }
             }
 

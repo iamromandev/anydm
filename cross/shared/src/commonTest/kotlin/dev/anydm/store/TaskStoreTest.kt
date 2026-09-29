@@ -9,6 +9,7 @@ import dev.anydm.model.PageMetaDto
 import dev.anydm.model.PlaylistDto
 import dev.anydm.model.ProgressDto
 import dev.anydm.model.TaskDto
+import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus.CANCELED
 import dev.anydm.model.TaskStatus.COMPLETE
 import dev.anydm.model.TaskStatus.DOWNLOADING
@@ -269,5 +270,46 @@ class TaskStoreTest {
             runCurrent()
             assertEquals(1 to "completed", api.listCalls.last())
             assertEquals(ListFilter.COMPLETED, store.state.value.filter)
+        }
+
+    @Test
+    fun `an open group's videos load, follow their frames, and go when it closes`() =
+        runTest {
+            api.entries["g"] = listOf(dto("v2").copy(parentId = "g", position = 2), dto("v1").copy(parentId = "g", position = 1))
+            api.stream = {
+                emit(ServerEvent.Snapshot(listOf(task("g", kind = TaskKind.PLAYLIST))))
+                awaitCancellation()
+            }
+            val store = store()
+            store.start()
+            runCurrent()
+
+            store.expand("g")
+            runCurrent()
+            assertEquals(
+                listOf("v1", "v2"),
+                store.state.value.entries["g"]
+                    ?.map { it.id },
+            )
+
+            api.stream = {}
+            store.onFrame(ServerEvent.TaskChanged(task("v1", COMPLETE, parentId = "g")))
+            store.onFrame(ServerEvent.Progress(ProgressDto(id = "v2", parentId = "g", progress = 55)))
+            store.onFrame(ServerEvent.TaskChanged(task("other", parentId = "closed")))
+            runCurrent()
+            val open =
+                store.state.value.entries
+                    .getValue("g")
+            assertEquals(COMPLETE, open.first { it.id == "v1" }.status)
+            assertEquals(55, open.first { it.id == "v2" }.progress)
+            assertEquals(setOf("g"), store.state.value.entries.keys)
+            assertEquals(
+                listOf("g"),
+                store.state.value.tasks
+                    .map { it.id },
+            )
+
+            store.collapse("g")
+            assertEquals(emptyMap(), store.state.value.entries)
         }
 }

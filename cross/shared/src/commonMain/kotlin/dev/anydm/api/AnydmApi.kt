@@ -87,6 +87,8 @@ class AnydmApi(
 
     override suspend fun summary(): SummaryDto = decode(call(HttpMethod.Get, listOf("download", "summary")).data)
 
+    override suspend fun entries(id: String): List<TaskDto> = decode(call(HttpMethod.Get, listOf("download", id, "entries")).data)
+
     suspend fun extract(url: String): Extracted {
         val data = call(HttpMethod.Post, listOf("extract"), body = obj("url" to url)).data
         val type =

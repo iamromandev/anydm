@@ -15,6 +15,9 @@ interface TaskApi {
 
     suspend fun summary(): SummaryDto
 
+    /** A group's videos, in playlist order. */
+    suspend fun entries(id: String): List<TaskDto>
+
     fun events(): Flow<ServerEvent>
 
     suspend fun addLink(

@@ -10,13 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +46,7 @@ import dev.anydm.desktop.files.isMedia
 import dev.anydm.desktop.files.play
 import dev.anydm.desktop.files.revealFile
 import dev.anydm.desktop.files.saveTargets
+import dev.anydm.desktop.list.DownloadList
 import dev.anydm.desktop.theme.LocalTokens
 import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
@@ -57,7 +55,6 @@ import dev.anydm.store.BulkAction
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
 import dev.anydm.store.Tone
-import dev.anydm.store.matches
 import dev.anydm.store.removePrompt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -191,50 +188,51 @@ fun MainScreen(
                     width = sidebarWidth,
                     onWidth = { sidebarWidth = it },
                 )
-                Column(Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SortMenu(state.sort, store::setSort)
-                    val shown = state.tasks.filter { state.filter.matches(it) }
-                    if (shown.isEmpty()) {
-                        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("No downloads here yet") }
-                    }
-                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(shown, key = { it.id }) { task ->
-                            TaskCard(cardView(task, now), saving[task.id]) { action ->
-                                when (action) {
-                                    CardAction.PAUSE -> {
-                                        scope.launch { store.pause(task.id) }
-                                    }
+                    DownloadList(
+                        tasks = state.tasks,
+                        entries = state.entries,
+                        now = now,
+                        saving = saving,
+                        filter = state.filter,
+                        page = state.page,
+                        totalPages = state.totalPages,
+                        loadingMore = state.loadingMore,
+                        onLoadMore = store::loadMore,
+                        onExpand = store::expand,
+                        onCollapse = store::collapse,
+                    ) { task, action ->
+                        when (action) {
+                            CardAction.PAUSE -> {
+                                scope.launch { store.pause(task.id) }
+                            }
 
-                                    CardAction.RESUME, CardAction.RETRY -> {
-                                        scope.launch { store.resume(task.id) }
-                                    }
+                            CardAction.RESUME, CardAction.RETRY -> {
+                                scope.launch { store.resume(task.id) }
+                            }
 
-                                    CardAction.STOP_SEEDING -> {
-                                        scope.launch { store.stopSeeding(task.id) }
-                                    }
+                            CardAction.STOP_SEEDING -> {
+                                scope.launch { store.stopSeeding(task.id) }
+                            }
 
-                                    CardAction.PLAY -> {
-                                        val index = task.files?.firstOrNull { it.selected && isMedia(it.path) }?.index
-                                        play(prefs.player, fileUrl(task.id, index))?.let { message ->
-                                            banners.push(Banner(Tone.ERROR, message))
-                                        }
-                                    }
-
-                                    CardAction.SAVE -> {
-                                        save(task)
-                                    }
-
-                                    CardAction.REMOVE -> {
-                                        remove(task)
-                                    }
+                            CardAction.PLAY -> {
+                                val index = task.files?.firstOrNull { it.selected && isMedia(it.path) }?.index
+                                play(prefs.player, fileUrl(task.id, index))?.let { message ->
+                                    banners.push(Banner(Tone.ERROR, message))
                                 }
                             }
-                        }
-                        if (state.page < state.totalPages) {
-                            item {
-                                OutlinedButton(onClick = store::loadMore, enabled = !state.loadingMore) {
-                                    Text(if (state.loadingMore) "Loading…" else "Load more")
-                                }
+
+                            CardAction.SAVE -> {
+                                save(task)
+                            }
+
+                            CardAction.COPY_LINK -> {
+                                copyText(task.url)
+                            }
+
+                            CardAction.REMOVE -> {
+                                remove(task)
                             }
                         }
                     }
@@ -285,4 +283,11 @@ private fun SortMenu(
             }
         }
     }
+}
+
+private fun copyText(text: String) {
+    java.awt.Toolkit
+        .getDefaultToolkit()
+        .systemClipboard
+        .setContents(java.awt.datatransfer.StringSelection(text), null)
 }

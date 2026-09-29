@@ -180,4 +180,13 @@ class AnydmApiTest {
         assertEquals("1080", choosePreset(listOf("1080", "720"), "2160"))
         assertEquals(null, choosePreset(emptyList(), "best"))
     }
+
+    @Test
+    fun `a group's videos come from its entries`() =
+        runTest {
+            val rows = api { json(ok("[$TASK]")) }.entries("g1")
+            assertEquals("/download/g1/entries", seen.last().url.encodedPath)
+            assertEquals(HttpMethod.Get, seen.last().method)
+            assertEquals(listOf("t1"), rows.map { it.id })
+        }
 }

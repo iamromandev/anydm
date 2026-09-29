@@ -63,6 +63,8 @@ data class ListState(
     val disk: DiskDto? = null,
     val connection: Connection = Connection.Connecting,
     val loadingMore: Boolean = false,
+    /** The videos of each group that's open, by group id, in playlist order. */
+    val entries: Map<String, List<Task>> = emptyMap(),
 )
 
 /** One-off things the UI shows once: a notice, or being signed out by a 401. */
