@@ -12,6 +12,8 @@ from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
+from src.lib.sources.source import Result, SourceError
+
 _NAME = re.compile(r"^[a-z0-9-]+$")
 
 #: The spec's categories and Torznab's top-level numbers; ``all`` sends none.
@@ -42,7 +44,7 @@ class Indexer:
         return parts.scheme, (parts.hostname or "").lower(), parts.port or (443 if parts.scheme == "https" else 80)
 
 
-def _pairs(raw: str, setting: str) -> dict[str, str]:
+def parse_pairs(raw: str, setting: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for part in (p.strip() for p in raw.split(",")):
         if not part:
@@ -59,8 +61,8 @@ def _pairs(raw: str, setting: str) -> dict[str, str]:
 
 def parse_indexers(urls: str, keys: str) -> list[Indexer]:
     """``SEARCH_INDEXERS`` and ``SEARCH_INDEXER_KEYS``; a mistake raises, naming it."""
-    by_name = _pairs(urls, "SEARCH_INDEXERS")
-    key_by_name = _pairs(keys, "SEARCH_INDEXER_KEYS")
+    by_name = parse_pairs(urls, "SEARCH_INDEXERS")
+    key_by_name = parse_pairs(keys, "SEARCH_INDEXER_KEYS")
     unknown = sorted(set(key_by_name) - set(by_name))
     if unknown:
         raise ValueError(f"SEARCH_INDEXER_KEYS names {', '.join(unknown)}, which SEARCH_INDEXERS doesn't")
@@ -102,26 +104,8 @@ _BTIH = re.compile(r"xt=urn:btih:([A-Za-z0-9]+)")
 _GROUPS = {"2": "movies", "5": "tv", "3": "music", "4": "software", "7": "books"}
 
 
-@dataclass(frozen=True)
-class Result:
-    title: str
-    size: int | None
-    seeders: int | None
-    leechers: int | None
-    published: datetime | None
-    category: str
-    info_hash: str | None
-    magnet: str | None
-    link: str | None
-    indexers: tuple[str, ...]
-
-
-class TorznabError(Exception):
+class TorznabError(SourceError):
     """An indexer's answer that holds no results, in words fit to show."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
 
 
 def _count(value: str | None) -> int | None:
