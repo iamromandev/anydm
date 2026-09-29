@@ -1,4 +1,4 @@
-"""Ask every Torznab indexer at once, merge what they find, and fetch a result's .torrent (spec: magnet hub)."""
+"""Ask every source at once, merge what they find, and fetch a result's .torrent (spec: magnet hub)."""
 
 import asyncio
 import base64
@@ -16,7 +16,9 @@ from src.data.schema.search import (
     SearchTorrentSchema,
     SourcesSchema,
 )
-from src.lib.torznab.torznab import Indexer, Result, TorznabError, build_url, link_allowed, merge, parse, redact
+from src.lib.sources.source import Result, Source, SourceError
+from src.lib.sources.torznab_source import TorznabSource
+from src.lib.torznab.torznab import Indexer, link_allowed, merge, redact
 from src.service.search import error as search_error
 
 MAX_REDIRECTS = 3
@@ -27,14 +29,16 @@ BROWSE_TTL_S = 300
 class SearchService:
     def __init__(
         self,
-        indexers: Sequence[Indexer],
+        sources: Sequence[Source],
         client: httpx.AsyncClient,
         timeout_s: float,
         limit: int,
         max_torrent_bytes: int = 10 * 1024 * 1024,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._indexers = list(indexers)
+        self._sources = list(sources)
+        #: The Torznab indexers among them: the only origins a result's link may come from.
+        self._indexers: list[Indexer] = [s.indexer for s in self._sources if isinstance(s, TorznabSource)]
         self._client = client
         self._timeout = timeout_s
         self._limit = limit
@@ -44,11 +48,11 @@ class SearchService:
         self._browsed: dict[str, tuple[float, SearchSchema]] = {}
 
     def sources(self) -> SourcesSchema:
-        return SourcesSchema(enabled=bool(self._indexers), indexers=[i.name for i in self._indexers])
+        return SourcesSchema(enabled=bool(self._sources), indexers=[s.name for s in self._sources])
 
     async def search(self, q: str, category: str, fresh: bool = False) -> SearchSchema:
         """Search for ``q``, or, when it is empty, browse the latest releases (cached for BROWSE_TTL_S)."""
-        if not self._indexers:
+        if not self._sources:
             raise search_error.disabled()
         browsing = q == ""
         if browsing and not fresh:
@@ -56,8 +60,11 @@ class SearchService:
             if stored is not None and self._clock() - stored[0] < BROWSE_TTL_S:
                 logger.info(f"SearchService|browse {category}: cached")
                 return stored[1]
+        asked = [s for s in self._sources if s.supports(q, category)]
+        if not asked:
+            return SearchSchema(results=[], errors=[], asked=[], took_ms=0)
         started = time.monotonic()
-        answers = await asyncio.gather(*(self._ask(i, q, category) for i in self._indexers))
+        answers = await asyncio.gather(*(self._ask(s, q, category) for s in asked))
         found = [a for a in answers if isinstance(a, list)]
         errors = [a for a in answers if isinstance(a, IndexerErrorSchema)]
         if not found:
@@ -65,37 +72,30 @@ class SearchService:
         answer = SearchSchema(
             results=[_schema(r) for r in merge(found, self._limit, "newest" if browsing else "seeders")],
             errors=errors,
+            asked=[s.name for s in asked],
             took_ms=round((time.monotonic() - started) * 1000),
         )
         if browsing and not errors:
             self._browsed[category] = (self._clock(), answer)
         return answer
 
-    async def _ask(self, indexer: Indexer, q: str, category: str) -> list[Result] | IndexerErrorSchema:
-        url = build_url(indexer, q, category)
-
+    async def _ask(self, source: Source, q: str, category: str) -> list[Result] | IndexerErrorSchema:
         def failed(message: str) -> IndexerErrorSchema:
-            logger.warning(f"SearchService|{indexer.name}: {message} ({redact(url)})")
-            return IndexerErrorSchema(indexer=indexer.name, message=message)
+            logger.warning(f"SearchService|{source.name}: {message}")
+            return IndexerErrorSchema(indexer=source.name, message=message)
 
         try:
-            response = await self._client.get(url, timeout=self._timeout)
+            return await source.fetch(self._client, q, category, self._timeout)
         except httpx.TimeoutException:
             return failed(f"timed out after {self._timeout:g} s")
         except httpx.HTTPError:
             return failed("couldn't reach it")
-        if response.status_code in (401, 403):
-            return failed("the indexer refused the key")
-        if response.status_code >= 400:
-            return failed(f"answered {response.status_code}")
-        try:
-            return parse(response.content, indexer.name)
-        except TorznabError as error:
+        except SourceError as error:
             return failed(error.message)
 
     async def fetch_torrent(self, link: str) -> SearchTorrentSchema:
         """A result's .torrent, from its indexer only; a redirect to a magnet answers the magnet."""
-        if not self._indexers:
+        if not self._sources:
             raise search_error.disabled()
         if not link_allowed(link, self._indexers):
             raise search_error.link_not_from_indexer()

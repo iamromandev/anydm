@@ -27,6 +27,8 @@ class IndexerErrorSchema(BaseSchema):
 class SearchSchema(BaseSchema):
     results: list[SearchResultSchema]
     errors: list[IndexerErrorSchema]
+    #: Every source the request was sent to, whether it answered or failed.
+    asked: list[str]
     took_ms: int
 
 

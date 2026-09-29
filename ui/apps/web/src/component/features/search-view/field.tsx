@@ -35,7 +35,6 @@ import "./field.css";
 
 export interface SearchViewProps {
     state: SearchState;
-    indexerCount: number;
     onAdd: (initial: AddInitial) => void;
     onNotify: (tone: "error" | "info", message: string) => void;
 }
@@ -50,7 +49,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
 ];
 
 export const SearchView = component$<SearchViewProps>(
-    ({ state, indexerCount, onAdd, onNotify }) => {
+    ({ state, onAdd, onNotify }) => {
         // Declared before its callers: a $() captures only what is above it.
         /** Ask for `text` ("" browses the latest); `fresh` skips the API's browse cache. */
         const run = $(async (text: string, fresh: boolean) => {
@@ -130,8 +129,8 @@ export const SearchView = component$<SearchViewProps>(
                     <input
                         class="search-view-query"
                         type="search"
-                        placeholder="Search your indexers"
-                        aria-label="Search your indexers"
+                        placeholder="Search"
+                        aria-label="Search"
                         value={state.q}
                         onInput$={(_, el) => {
                             state.q = el.value;
@@ -193,7 +192,8 @@ export const SearchView = component$<SearchViewProps>(
                         <span>
                             {statusLine(
                                 state.answer.results.length,
-                                indexerCount - state.answer.errors.length,
+                                state.answer.asked.length -
+                                    state.answer.errors.length,
                                 state.answer.tookMs,
                                 state.mode,
                             )}
@@ -241,7 +241,7 @@ export const SearchView = component$<SearchViewProps>(
                                 />
                             </span>
                         ) : (
-                            "Search your indexers"
+                            "Search"
                         )}
                     </p>
                 )}

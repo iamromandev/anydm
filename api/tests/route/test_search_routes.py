@@ -7,6 +7,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from src.config import get_settings
+from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torznab.torznab import Indexer
 from src.main import app
 from src.service import get_search_service
@@ -29,7 +30,7 @@ def _indexers(request: httpx.Request) -> httpx.Response:
 @pytest.fixture
 def indexers() -> Iterator[None]:
     client = httpx.AsyncClient(transport=httpx.MockTransport(_indexers))
-    service = SearchService([Indexer("prowlarr-1", "http://prowlarr:9696/1/api", "abc")], client, timeout_s=1, limit=100)
+    service = SearchService([TorznabSource(Indexer("prowlarr-1", "http://prowlarr:9696/1/api", "abc"))], client, timeout_s=1, limit=100)
     app.dependency_overrides[get_search_service] = lambda: service
     yield
     app.dependency_overrides.clear()
@@ -57,6 +58,7 @@ async def test_a_search_answers_results_and_how_long_it_took(http: httpx.AsyncCl
     assert data["results"][0]["title"] == "Big Buck Bunny 1080p"
     assert data["results"][0]["indexers"] == ["prowlarr-1"]
     assert data["errors"] == []
+    assert data["asked"] == ["prowlarr-1"]
     assert isinstance(data["took_ms"], int)
 
 

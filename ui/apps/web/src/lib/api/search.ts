@@ -31,6 +31,8 @@ export type IndexerError = { indexer: string; message: string };
 export type SearchAnswer = {
     results: FoundTorrent[];
     errors: IndexerError[];
+    /** Every source the request went to, whether it answered or failed. */
+    asked: string[];
     tookMs: number;
 };
 
@@ -71,6 +73,9 @@ export function normalizeSearch(raw: any): SearchAnswer {
                   indexer: e?.indexer ?? "",
                   message: e?.message ?? "",
               }))
+            : [],
+        asked: Array.isArray(raw?.asked)
+            ? raw.asked.filter((n: unknown) => typeof n === "string")
             : [],
         tookMs: numberOrNull(raw?.took_ms) ?? 0,
     };

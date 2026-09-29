@@ -135,7 +135,6 @@ export default component$(() => {
         // Null until the API answers, and after it refuses.
         serverSettings: null as ServerSettings | null,
         searchEnabled: false as boolean,
-        searchIndexerCount: 0,
         addInitial: null as (AddInitial & { id: number }) | null,
         addInitialSeq: 0,
         apiKey: "" as string,
@@ -406,7 +405,6 @@ export default component$(() => {
             searchSources()
                 .then((sources) => {
                     store.searchEnabled = sources.enabled;
-                    store.searchIndexerCount = sources.indexers.length;
                 })
                 .catch(() => {
                     store.searchEnabled = false;
@@ -1145,7 +1143,6 @@ export default component$(() => {
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             searchEnabled={store.searchEnabled}
-            searchIndexerCount={store.searchIndexerCount}
             addInitial={store.addInitial}
             onAddFound={handleAddFound}
             onNotify={notify}
