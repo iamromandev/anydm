@@ -85,8 +85,26 @@ describe("normalizeSearch", () => {
         expect(normalizeSearch({})).toEqual({
             results: [],
             errors: [],
+            asked: [],
             tookMs: 0,
         });
+    });
+
+    it("reads which sources were asked", () => {
+        expect(
+            normalizeSearch({
+                results: [],
+                asked: [
+                    "apibay",
+                    "nyaa",
+                    7,
+                ],
+                took_ms: 5,
+            }).asked,
+        ).toEqual([
+            "apibay",
+            "nyaa",
+        ]);
     });
 });
 

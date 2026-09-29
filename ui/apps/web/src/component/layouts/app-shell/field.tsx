@@ -148,7 +148,6 @@ export interface AppShellProps {
     onPreviousItem: () => void;
     /** Search (the magnet hub): shown when the API has indexers. */
     searchEnabled: boolean;
-    searchIndexerCount: number;
     /** What the add dialog opens on; a new id remounts it. */
     addInitial: (AddInitial & { id: number }) | null;
     onAddFound: (initial: AddInitial) => void;
@@ -231,7 +230,6 @@ export const AppShell = component$<AppShellProps>(
         onNextItem,
         onPreviousItem,
         searchEnabled,
-        searchIndexerCount,
         addInitial,
         onAddFound,
         onNotify,
@@ -312,7 +310,6 @@ export const AppShell = component$<AppShellProps>(
                         {view.value === "search" && searchEnabled ? (
                             <SearchView
                                 state={search}
-                                indexerCount={searchIndexerCount}
                                 onAdd={onAddFound}
                                 onNotify={onNotify}
                             />
