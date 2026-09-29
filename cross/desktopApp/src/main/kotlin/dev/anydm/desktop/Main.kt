@@ -21,12 +21,14 @@ import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
 import dev.anydm.desktop.chrome.LocalWindowDrag
 import dev.anydm.desktop.list.Command
+import dev.anydm.desktop.theme.AppIcon
 import dev.anydm.desktop.theme.DesktopTheme
 import dev.anydm.desktop.theme.isMac
 import dev.anydm.desktop.theme.shortcutLabel
 import dev.anydm.desktop.ui.ConnectScreen
 import dev.anydm.desktop.ui.MainScreen
 import dev.anydm.desktop.ui.TrayIcon
+import dev.anydm.desktop.ui.TrayTemplateIcon
 import dev.anydm.settings.JvmSettingsFile
 import dev.anydm.settings.SettingsStore
 import dev.anydm.settings.defaultSettingsPath
@@ -39,6 +41,7 @@ import kotlinx.coroutines.launch
 /** The desktop client: Connect, then the list, with a tray that keeps it running. */
 fun main() {
     System.setProperty("apple.awt.use-file-dialog-packages", "false")
+    if (isMac()) System.setProperty("apple.awt.enableTemplateImages", "true")
     application {
         // Compose's main dispatcher is Swing's thread: the one thread TaskStore needs.
         val scope = rememberCoroutineScope()
@@ -49,7 +52,7 @@ fun main() {
         val store = (model.screen as? Screen.Main)?.store
 
         Tray(
-            icon = TrayIcon,
+            icon = if (isMac()) TrayTemplateIcon else TrayIcon,
             state = trayState,
             tooltip = "anydm",
             onAction = { visible = true },
@@ -63,6 +66,7 @@ fun main() {
         )
 
         Window(
+            icon = AppIcon,
             // Closing keeps anydm in the tray; Quit there ends it (spec: Tray).
             onCloseRequest = { visible = false },
             visible = visible,

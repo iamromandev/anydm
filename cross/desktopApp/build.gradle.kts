@@ -32,6 +32,13 @@ compose.desktop {
             vendor = "anydm"
             macOS {
                 bundleID = "dev.anydm.desktop"
+                iconFile.set(project.file("icons/anydm.icns"))
+            }
+            windows {
+                iconFile.set(project.file("icons/anydm.ico"))
+            }
+            linux {
+                iconFile.set(project.file("icons/anydm.png"))
             }
         }
     }
