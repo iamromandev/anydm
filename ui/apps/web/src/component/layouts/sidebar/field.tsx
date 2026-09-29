@@ -6,6 +6,7 @@ import {
     LuChevronDown,
     LuChevronRight,
     LuX,
+    LuSearch,
 } from "@/component/core/icons";
 import "./field.css";
 
@@ -21,6 +22,8 @@ export interface SidebarProps {
     onPauseAll: () => void;
     onResumeAll: () => void;
     onClearFinished: () => void;
+    /** The Search item: shown when the API has indexers. */
+    search?: { enabled: boolean; active: boolean; onOpen: () => void };
 }
 
 export interface BulkAvailability {
@@ -67,6 +70,7 @@ export const Sidebar = component$<SidebarProps>(
         onPauseAll,
         onResumeAll,
         onClearFinished,
+        search,
     }) => {
         const store = useStore({
             downloadsExpanded: true,
@@ -113,7 +117,7 @@ export const Sidebar = component$<SidebarProps>(
                         <button
                             key={f.id}
                             type="button"
-                            class={`sidebar-filter ${filter === f.id ? "sidebar-filter--active" : ""}`}
+                            class={`sidebar-filter ${!search?.active && filter === f.id ? "sidebar-filter--active" : ""}`}
                             onClick$={() => onFilterChange(f.id)}
                         >
                             <FilterIcon id={f.id} />
@@ -124,6 +128,26 @@ export const Sidebar = component$<SidebarProps>(
                         </button>
                     ))}
                 </nav>
+
+                {search?.enabled && (
+                    <nav
+                        class="sidebar-nav sidebar-nav--search"
+                        aria-label="Search"
+                    >
+                        <button
+                            type="button"
+                            class={`sidebar-filter ${search.active ? "sidebar-filter--active" : ""}`}
+                            onClick$={search.onOpen}
+                        >
+                            <LuSearch
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                            <span class="sidebar-filter-label">Search</span>
+                        </button>
+                    </nav>
+                )}
 
                 {(bulk.pausable > 0 ||
                     bulk.resumable > 0 ||

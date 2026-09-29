@@ -17,6 +17,8 @@ import {
     pickFileToOpen,
     type PositionView,
     resolveTorrent,
+    searchSources,
+    type AddInitial,
     playsFromTorrent,
     settlePage,
     type ResolvedTorrent,
@@ -132,6 +134,10 @@ export default component$(() => {
         prefs: DEFAULT_PREFS as Prefs,
         // Null until the API answers, and after it refuses.
         serverSettings: null as ServerSettings | null,
+        searchEnabled: false as boolean,
+        searchIndexerCount: 0,
+        addInitial: null as (AddInitial & { id: number }) | null,
+        addInitialSeq: 0,
         apiKey: "" as string,
         // Set by the first 401 and kept: it is what puts the key field first,
         // and what stops every later 401 from reopening a closed modal.
@@ -396,6 +402,15 @@ export default component$(() => {
                 store.settingsOpen = true;
             });
             syncTask();
+            // Search shows only when the API has indexers; a failure here just hides it.
+            searchSources()
+                .then((sources) => {
+                    store.searchEnabled = sources.enabled;
+                    store.searchIndexerCount = sources.indexers.length;
+                })
+                .catch(() => {
+                    store.searchEnabled = false;
+                });
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
             const sweeper = setInterval(() => {
@@ -600,6 +615,14 @@ export default component$(() => {
     });
 
     const handleAddClick = $(() => {
+        store.addInitial = null;
+        store.addModalOpen = true;
+    });
+
+    /** Add on a search result: the dialog opens on it, already resolving. */
+    const handleAddFound = $((initial: AddInitial) => {
+        store.addInitialSeq += 1;
+        store.addInitial = { ...initial, id: store.addInitialSeq };
         store.addModalOpen = true;
     });
 
@@ -1121,6 +1144,11 @@ export default component$(() => {
             onBulkConfirm={handleBulkConfirm}
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
+            searchEnabled={store.searchEnabled}
+            searchIndexerCount={store.searchIndexerCount}
+            addInitial={store.addInitial}
+            onAddFound={handleAddFound}
+            onNotify={notify}
             onStopSeeding={handleStopSeeding}
             onAddPlaylist={handleAddPlaylist}
             entries={store.entries}
