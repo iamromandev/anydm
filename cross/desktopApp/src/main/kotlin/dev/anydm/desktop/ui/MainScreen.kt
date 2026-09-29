@@ -407,7 +407,7 @@ fun MainScreen(
                 scope.launch { gone.forEach { store.remove(it.id, deleteFiles) } }
             }
         }
-        if (showSettings) SettingsDialog(settings) { showSettings = false }
+        if (showSettings) SettingsWindow(settings, onChangeServer = onSignOut) { showSettings = false }
         if (clearing) {
             ClearFinishedDialog(onCancel = { clearing = false }) {
                 clearing = false
