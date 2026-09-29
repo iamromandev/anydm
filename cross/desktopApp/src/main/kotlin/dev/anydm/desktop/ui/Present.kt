@@ -8,6 +8,7 @@ import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
 import dev.anydm.store.Connection
+import dev.anydm.store.RemovePrompt
 import dev.anydm.store.RetryTone
 import dev.anydm.store.RetryView
 import dev.anydm.store.count
@@ -323,6 +324,43 @@ fun rowView(
         menu = menu,
         expandable = false,
     )
+}
+
+/** One action for many rows, and the rows it applies to. */
+data class Intent(
+    val action: CardAction,
+    val targets: List<Task>,
+)
+
+private val RUNNING = setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.SEEDING)
+
+/** Space on a selection: pause what runs; if nothing does, resume what's paused or failed. */
+fun bulkIntent(tasks: List<Task>): Intent? {
+    val running = tasks.filter { it.status in RUNNING }
+    if (running.isNotEmpty()) return Intent(CardAction.PAUSE, running)
+    val stopped = tasks.filter { it.status == TaskStatus.PAUSED || it.status == TaskStatus.FAILED }
+    return if (stopped.isNotEmpty()) Intent(CardAction.RESUME, stopped) else null
+}
+
+/** One question for several removals; keeping files is offered only when every one allows it. */
+fun removeManyPrompt(prompts: List<RemovePrompt>): RemovePrompt {
+    if (prompts.size == 1) return prompts.single()
+    val keep = prompts.all { it.canKeepFiles }
+    return RemovePrompt(
+        "Remove ${count(prompts.size)} downloads?",
+        if (keep) {
+            "What finished stays on disk unless you ask for it to go too."
+        } else {
+            "Anything still downloading stops, and what it downloaded is discarded."
+        },
+        keep,
+        "Remove",
+    )
+}
+
+fun removeTitle(titles: List<String>): String {
+    val named = titles.take(3).joinToString(", ")
+    return if (titles.size > 3) "$named and ${titles.size - 3} more" else named
 }
 
 /** What Connect says when a server won't do: the key, the API's own words, or no answer at all. */
