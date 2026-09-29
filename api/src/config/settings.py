@@ -5,8 +5,6 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.core.type import Env
-from src.lib.sources.registry import DEFAULT_SOURCES, parse_sources
-from src.lib.sources.source import Source
 from src.lib.torznab.torznab import Indexer, parse_indexers
 
 
@@ -123,14 +121,6 @@ class Settings(BaseSettings):
         str,
         Field(default="", description="API keys as name=key pairs, by the names in SEARCH_INDEXERS"),
     ]
-    search_sources: Annotated[
-        str,
-        Field(default=DEFAULT_SOURCES, description="Built-in public sources to search, comma-separated; empty turns them off"),
-    ]
-    search_source_urls: Annotated[
-        str,
-        Field(default="", description="Base-URL overrides as name=url pairs, by the names in SEARCH_SOURCES"),
-    ]
     search_timeout_s: Annotated[
         int,
         Field(default=15, ge=1, le=120, description="How long each indexer has to answer a search"),
@@ -185,19 +175,14 @@ class Settings(BaseSettings):
     ]
 
     @model_validator(mode="after")
-    def _check_search(self) -> Settings:
+    def _check_indexers(self) -> Settings:
         # Raises with the problem named, which stops startup: a typo shouldn't silently turn search off.
-        indexers = parse_indexers(self.search_indexers, self.search_indexer_keys)
-        parse_sources(self.search_sources, self.search_source_urls, {i.name for i in indexers})
+        parse_indexers(self.search_indexers, self.search_indexer_keys)
         return self
 
     @property
     def indexers(self) -> list[Indexer]:
         return parse_indexers(self.search_indexers, self.search_indexer_keys)
-
-    @property
-    def builtin_sources(self) -> list[Source]:
-        return parse_sources(self.search_sources, self.search_source_urls, {i.name for i in self.indexers})
 
     @property
     def is_local(self) -> bool:

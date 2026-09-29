@@ -112,8 +112,6 @@ cp api/.env.example api/.env
 | `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
 | `SEARCH_INDEXERS` | empty | Torznab indexers to search, as `name=url` pairs separated by commas (Prowlarr: `http://prowlarr:9696/<id>/api`; Jackett: `…/api/v2.0/indexers/<id>/results/torznab`). Empty means no indexers; the built-in sources still run |
 | `SEARCH_INDEXER_KEYS` | empty | Their API keys, as `name=key` pairs by the same names. Never logged |
-| `SEARCH_SOURCES` | `apibay,nyaa,eztv` | Built-in public sources to search, comma separated. Empty turns them off; Torznab indexers keep working either way |
-| `SEARCH_SOURCE_URLS` | empty | `name=url` pairs overriding a built-in's base URL, for when a site moves |
 | `SEARCH_TIMEOUT_S` | `15` | How long each indexer has to answer a search |
 | `SEARCH_LIMIT` | `100` | Results a search answers with, after merging duplicates |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg executable; used to mux a site's separate video and audio, to make MP3s, and to transcode stream segments |
@@ -173,9 +171,14 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/torrent` — enqueue a torrent with a file selection
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
-  - Search and browse the latest releases (built-in public sources from `SEARCH_SOURCES`, plus Torznab indexers from `SEARCH_INDEXERS`)
-    - `GET /search/sources` — whether search is on, and the indexers' names; never their URLs or keys
-    - `GET /search?q=…&category=…` — ask every indexer at once. `q` is 2–200 characters; `category` is `all`, `movies`, `tv`, `music`, `software`, `books` or `other`. Answers `results` (one per torrent, merged across indexers by info hash, most seeded first: `title`, `size`, `seeders`, `leechers`, `published`, `category`, `info_hash`, `magnet`, `link`, `indexers`), `errors` (an indexer that failed, and why), and `took_ms`. 404 `search_disabled` with no indexers; 502 `search_failed` when none answered
+  - Search and browse the latest releases (the built-in public sources, kept in the database and managed below, plus Torznab indexers from `SEARCH_INDEXERS`)
+    - `GET /search/sources` — whether search is on, and the sources' names (enabled built-ins and indexers); never their URLs or keys
+    - `GET /search?q=…&category=…&fresh=1` — ask every source that can answer at once. `q` is 2–200 characters, or empty to browse each source's latest releases (newest first, cached for five minutes; `fresh=1` skips the cache); `category` is `all`, `movies`, `tv`, `music`, `software`, `books` or `other`. Answers `results` (one per torrent, merged across sources by info hash: `title`, `size`, `seeders`, `leechers`, `published`, `category`, `info_hash`, `magnet`, `link`, `indexers`), `errors` (a source that failed, and why), `asked` (every source the request went to) and `took_ms`. 404 `search_disabled` with no sources; 502 `search_failed` when every source asked failed
+    - `GET /search/builtin` — the built-in public sources (apibay, Nyaa, EZTV): `name`, `label`, `enabled`, `base_url` and the built-in `default_url` of each
+    - `PATCH /search/builtin/{name}` — turn a source on or off (`enabled`) or point it at another address (`base_url`, http or https); at least one is required (422). The choice is kept in the database and shared by every client. This is the one setting the API changes at runtime; 404 `source_not_found` for an unknown name
+    - `POST /search/builtin/{name}/reset` — put a source back to its built-in address and turn it on
+    - `POST /search/builtin/{name}/test` — ask a source a small question (optionally at an unsaved `base_url`) and answer `ok`, `count`, `took_ms` and a `message`; a source that fails is a 200 with the reason. Never returns a result's contents
+    - The built-in sources live in the database, not in `.env`. They are seeded when the API starts and by `make migrate` (which also runs `python -m scripts.seed_sources`), which only adds a source that has no row and never overwrites an edited one. Manage them in Settings → Search sources in the web and desktop apps. **Upgrading:** `SEARCH_SOURCES` and `SEARCH_SOURCE_URLS` no longer do anything (leaving them in `.env` is harmless); all three sources start on, at their built-in addresses, and any narrowing or mirror you had is set again in the app
     - `POST /search/torrent` — fetch a result's `.torrent` from its indexer: answers `torrent` (base64), or `magnet` when the indexer redirects to one. The link must share a configured indexer's scheme, host and port (400 `link_not_from_indexer`); over 10 MB is 413, and anything but a torrent file is 422 `not_a_torrent`
   - Streaming (independent of downloading — nothing is kept)
     - `POST /stream/start` — open a session for a page on any site yt-dlp supports (at up to 1080p, from its plain files, or its HLS when it has nothing else), a media URL, a magnet or a `.torrent` (with `file_index`, that one of its files rather than the largest), or a finished download read from disk (`task_id`, and `file_index` for a torrent); `audio_language` picks the audio track, or `audio_track` names one

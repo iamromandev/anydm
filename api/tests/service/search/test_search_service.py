@@ -117,14 +117,15 @@ async def test_indexers_are_asked_at_the_same_time() -> None:
 async def test_no_indexers_is_search_disabled() -> None:
     service = _service(lambda r: httpx.Response(200), [])
 
-    assert service.sources().enabled is False
+    assert (await service.sources()).enabled is False
     with pytest.raises(Error) as caught:
         await service.search("bunny", "all")
     assert caught.value.type == ErrorType.SEARCH_DISABLED
 
 
-def test_sources_name_the_indexers_and_nothing_else() -> None:
-    sources = _service(lambda r: httpx.Response(200)).sources()
+@pytest.mark.asyncio
+async def test_sources_name_the_indexers_and_nothing_else() -> None:
+    sources = await _service(lambda r: httpx.Response(200)).sources()
 
     assert sources.model_dump() == {"enabled": True, "indexers": ["prowlarr-1", "jackett-all"]}
 
@@ -322,6 +323,12 @@ class _Fake:
     browse_only: bool = False
     error: str | None = None
     asked: int = 0
+    address: str = ""
+
+    @property
+    def base(self) -> str:
+        """Where it is asked; the browse cache key reads this from a source that has one."""
+        return self.address
 
     def supports(self, q: str, category: str) -> bool:
         return not (self.browse_only and q)
@@ -392,3 +399,77 @@ async def test_a_service_of_only_builtins_fetches_no_torrent_links() -> None:
         await _with([_Fake("fake")]).fetch_torrent("http://prowlarr:9696/1/dl")
 
     assert caught.value.type == ErrorType.LINK_NOT_FROM_INDEXER
+
+
+def _found(title: str) -> Result:
+    digest = title.lower().encode().hex().ljust(40, "0")[:40]
+    return Result(title, 1, 1, 1, None, "other", digest, f"magnet:?xt=urn:btih:{digest}", None, ("a",))
+
+
+def _provided(fakes: list[_Fake], clock: Callable[[], float] | None = None) -> SearchService:
+    """A service whose built-ins come from a provider that can change between requests."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: _fixture("prowlarr.xml")))
+
+    async def provider() -> list[_Fake]:
+        return fakes
+
+    kwargs: dict[str, Any] = {"clock": clock} if clock else {}
+    return SearchService([], client, timeout_s=1, limit=100, builtins=provider, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_builtins_come_from_the_provider_on_every_request() -> None:
+    fakes = [_Fake("a", [_found("A")])]
+    service = _provided(fakes)
+
+    first = await service.search("x", "all")
+    fakes.append(_Fake("b", [_found("B")]))
+    second = await service.search("x", "all")
+
+    assert first.asked == ["a"]
+    assert second.asked == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_with_no_indexer_and_no_enabled_builtin_search_is_off_then_on_again() -> None:
+    fakes: list[_Fake] = []
+    service = _provided(fakes)
+
+    assert (await service.sources()).enabled is False
+    with pytest.raises(Error) as caught:
+        await service.search("x", "all")
+    assert caught.value.type == ErrorType.SEARCH_DISABLED
+
+    fakes.append(_Fake("a", [_found("A")]))
+    assert (await service.sources()).model_dump() == {"enabled": True, "indexers": ["a"]}
+
+
+@pytest.mark.asyncio
+async def test_changing_a_source_changes_the_browse_cache_key() -> None:
+    first = _Fake("a", [_found("Old")], address="https://one.test")
+    fakes = [first]
+    service = _provided(fakes, clock=_Clock())
+
+    assert [r.title for r in (await service.search("", "all")).results] == ["Old"]
+    assert [r.title for r in (await service.search("", "all")).results] == ["Old"]
+    assert first.asked == 1  # the second browse was answered from the cache
+
+    fakes[:] = [_Fake("a", [_found("New")], address="https://two.test")]  # same name, another address
+
+    assert [r.title for r in (await service.search("", "all")).results] == ["New"]
+
+
+@pytest.mark.asyncio
+async def test_a_source_turned_off_and_on_again_finds_its_cached_answer_still_there() -> None:
+    fake = _Fake("a", [_found("A")], address="https://one.test")
+    fakes = [fake]
+    service = _provided(fakes, clock=_Clock())
+
+    await service.search("", "all")
+    fakes.clear()
+    with pytest.raises(Error):
+        await service.search("", "all")  # nothing enabled: search is off, not a cached answer
+    fakes.append(fake)
+    await service.search("", "all")
+
+    assert fake.asked == 1  # back to the first key, still cached
