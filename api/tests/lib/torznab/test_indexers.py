@@ -55,6 +55,13 @@ def test_a_search_url_keeps_the_indexers_own_query_and_adds_the_search() -> None
     }
 
 
+def test_an_empty_query_asks_for_the_latest_and_sends_no_q() -> None:
+    url = build_url(Indexer("p", "http://p:9696/1/api", "abc"), "", "tv")
+    query = parse_qs(urlsplit(url).query, keep_blank_values=True)
+
+    assert query == {"t": ["search"], "cat": ["5000"], "limit": ["100"], "apikey": ["abc"]}
+
+
 def test_all_categories_and_no_key_send_neither() -> None:
     query = parse_qs(urlsplit(build_url(Indexer("p", "http://p/api"), "x", "all")).query)
 

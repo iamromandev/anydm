@@ -1,6 +1,7 @@
 """The same torrent from several indexers becomes one result, and only indexers' own links are fetched."""
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from src.lib.torznab.torznab import Indexer, Result, link_allowed, merge
@@ -39,6 +40,32 @@ def test_most_seeded_first_unknown_last_then_largest_and_the_limit_holds() -> No
 
     assert [r.title for r in merge([rows], limit=10)] == ["d", "c", "b", "a"]
     assert [r.title for r in merge([rows], limit=2)] == ["d", "c"]
+
+
+def _at(day: int) -> datetime:
+    return datetime(2026, 9, day, 10, 0, tzinfo=UTC)
+
+
+def test_newest_first_unknown_dates_last_ties_by_seeders_and_the_limit_keeps_the_newest() -> None:
+    rows = [
+        _result("old", info_hash="o", published=_at(1), seeders=500),
+        _result("undated", info_hash="u", published=None, seeders=900),
+        _result("new-few", info_hash="nf", published=_at(28), seeders=2),
+        _result("new-many", info_hash="nm", published=_at(28), seeders=30),
+        _result("mid", info_hash="m", published=_at(15), seeders=None),
+    ]
+
+    assert [r.title for r in merge([rows], limit=10, order="newest")] == ["new-many", "new-few", "mid", "old", "undated"]
+    assert [r.title for r in merge([rows], limit=2, order="newest")] == ["new-many", "new-few"]
+
+
+def test_a_naive_and_an_aware_date_can_be_ordered_together() -> None:
+    rows = [
+        _result("aware", info_hash="a", published=_at(2)),
+        _result("naive", info_hash="n", published=datetime(2026, 9, 3, 10, 0)),
+    ]
+
+    assert [r.title for r in merge([rows], limit=10, order="newest")] == ["naive", "aware"]
 
 
 INDEXERS = [Indexer("p", "http://prowlarr:9696/1/api"), Indexer("j", "https://jackett.test/api")]

@@ -171,7 +171,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /download/torrent` — enqueue a torrent with a file selection
     - `POST /download/{task_id}/seed/stop` — stop seeding, keep the files
     - `GET /download/{task_id}/file/{file_index}` — serve one file out of a torrent
-  - Search (Torznab indexers from `SEARCH_INDEXERS`)
+  - Search and browse the latest releases (Torznab indexers from `SEARCH_INDEXERS`)
     - `GET /search/sources` — whether search is on, and the indexers' names; never their URLs or keys
     - `GET /search?q=…&category=…` — ask every indexer at once. `q` is 2–200 characters; `category` is `all`, `movies`, `tv`, `music`, `software`, `books` or `other`. Answers `results` (one per torrent, merged across indexers by info hash, most seeded first: `title`, `size`, `seeders`, `leechers`, `published`, `category`, `info_hash`, `magnet`, `link`, `indexers`), `errors` (an indexer that failed, and why), and `took_ms`. 404 `search_disabled` with no indexers; 502 `search_failed` when none answered
     - `POST /search/torrent` — fetch a result's `.torrent` from its indexer: answers `torrent` (base64), or `magnet` when the indexer redirects to one. The link must share a configured indexer's scheme, host and port (400 `link_not_from_indexer`); over 10 MB is 413, and anything but a torrent file is 422 `not_a_torrent`

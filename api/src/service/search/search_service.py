@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from urllib.parse import urljoin
 
 import httpx
@@ -20,6 +20,8 @@ from src.lib.torznab.torznab import Indexer, Result, TorznabError, build_url, li
 from src.service.search import error as search_error
 
 MAX_REDIRECTS = 3
+#: How long a browse answer is served without asking the indexers again.
+BROWSE_TTL_S = 300
 
 
 class SearchService:
@@ -30,30 +32,44 @@ class SearchService:
         timeout_s: float,
         limit: int,
         max_torrent_bytes: int = 10 * 1024 * 1024,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._indexers = list(indexers)
         self._client = client
         self._timeout = timeout_s
         self._limit = limit
         self._max_bytes = max_torrent_bytes
+        self._clock = clock
+        #: category -> (when it was stored, the answer); browse only.
+        self._browsed: dict[str, tuple[float, SearchSchema]] = {}
 
     def sources(self) -> SourcesSchema:
         return SourcesSchema(enabled=bool(self._indexers), indexers=[i.name for i in self._indexers])
 
-    async def search(self, q: str, category: str) -> SearchSchema:
+    async def search(self, q: str, category: str, fresh: bool = False) -> SearchSchema:
+        """Search for ``q``, or, when it is empty, browse the latest releases (cached for BROWSE_TTL_S)."""
         if not self._indexers:
             raise search_error.disabled()
+        browsing = q == ""
+        if browsing and not fresh:
+            stored = self._browsed.get(category)
+            if stored is not None and self._clock() - stored[0] < BROWSE_TTL_S:
+                logger.info(f"SearchService|browse {category}: cached")
+                return stored[1]
         started = time.monotonic()
         answers = await asyncio.gather(*(self._ask(i, q, category) for i in self._indexers))
         found = [a for a in answers if isinstance(a, list)]
         errors = [a for a in answers if isinstance(a, IndexerErrorSchema)]
         if not found:
             raise search_error.failed(errors)
-        return SearchSchema(
-            results=[_schema(r) for r in merge(found, self._limit)],
+        answer = SearchSchema(
+            results=[_schema(r) for r in merge(found, self._limit, "newest" if browsing else "seeders")],
             errors=errors,
             took_ms=round((time.monotonic() - started) * 1000),
         )
+        if browsing and not errors:
+            self._browsed[category] = (self._clock(), answer)
+        return answer
 
     async def _ask(self, indexer: Indexer, q: str, category: str) -> list[Result] | IndexerErrorSchema:
         url = build_url(indexer, q, category)

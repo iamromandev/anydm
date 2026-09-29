@@ -61,9 +61,18 @@ async def test_a_search_answers_results_and_how_long_it_took(http: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("params", [{"q": "a"}, {"q": " "}, {"q": "x" * 201}, {"q": "bunny", "category": "anime"}])
+@pytest.mark.parametrize("params", [{"q": "a"}, {"q": " a "}, {"q": "x" * 201}, {"q": "bunny", "category": "anime"}])
 async def test_a_bad_query_is_422(http: httpx.AsyncClient, indexers: None, params: dict[str, str]) -> None:
     assert (await http.get("/search", params=params)).status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{}, {"q": ""}, {"q": "   "}, {"category": "tv"}, {"q": "", "fresh": "1"}])
+async def test_no_query_is_a_browse(http: httpx.AsyncClient, indexers: None, params: dict[str, str]) -> None:
+    response = await http.get("/search", params=params)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["results"][0]["title"] == "Big Buck Bunny 1080p"
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,24 @@
 import { describe, expect, it } from "bun:test";
 
-import { normalizeFetched, normalizeFound, normalizeSearch } from "./search";
+import {
+    normalizeFetched,
+    normalizeFound,
+    normalizeSearch,
+    searchParams,
+} from "./search";
+
+describe("searchParams", () => {
+    it("leaves q out to browse, and sends fresh only when asked", () => {
+        expect(searchParams("", "tv", false)).toBe("category=tv");
+        expect(searchParams("", "tv", true)).toBe("category=tv&fresh=1");
+    });
+
+    it("sends the trimmed query to search", () => {
+        expect(searchParams("  big buck bunny ", "movies", false)).toBe(
+            "q=big+buck+bunny&category=movies",
+        );
+    });
+});
 
 describe("normalizeFound", () => {
     it("maps snake_case, and a field the API left out is null", () => {

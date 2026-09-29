@@ -3,11 +3,14 @@ import { describe, expect, it } from "bun:test";
 import type { FoundTorrent } from "@/lib/api/search";
 
 import {
-    canSearch,
+    canRun,
+    defaultSort,
+    emptyText,
     errorChip,
     formatAge,
     formatSize,
     indexerLabel,
+    modeFor,
     nextSort,
     seederTone,
     sortFound,
@@ -147,10 +150,18 @@ describe("formatting", () => {
     });
 
     it("says what came back, and why an indexer didn't", () => {
-        expect(statusLine(42, 3, 912)).toBe(
+        expect(statusLine(42, 3, 912, "search")).toBe(
             "42 results from 3 indexers · 0.9 s",
         );
-        expect(statusLine(1, 1, 50)).toBe("1 result from 1 indexer · 0.1 s");
+        expect(statusLine(1, 1, 50, "search")).toBe(
+            "1 result from 1 indexer · 0.1 s",
+        );
+        expect(statusLine(42, 3, 912, "browse")).toBe(
+            "Latest · 42 releases from 3 indexers · 0.9 s",
+        );
+        expect(statusLine(1, 1, 50, "browse")).toBe(
+            "Latest · 1 release from 1 indexer · 0.1 s",
+        );
         expect(
             errorChip({
                 indexer: "jackett-all",
@@ -158,10 +169,40 @@ describe("formatting", () => {
             }),
         ).toBe("jackett-all: timed out after 15 s");
     });
+});
 
-    it("searches only for 2 or more characters, one search at a time", () => {
-        expect(canSearch(" a ", false)).toBe(false);
-        expect(canSearch("ab", false)).toBe(true);
-        expect(canSearch("ab", true)).toBe(false);
+describe("modes", () => {
+    it("browses with nothing typed, searches from 2 characters, and blocks 1", () => {
+        expect(modeFor("")).toBe("browse");
+        expect(modeFor("   ")).toBe("browse");
+        expect(modeFor(" a ")).toBe("blocked");
+        expect(modeFor("ab")).toBe("search");
+        expect(modeFor("  big buck  ")).toBe("search");
+    });
+
+    it("runs one request at a time, and never for one character", () => {
+        expect(canRun("", false)).toBe(true);
+        expect(canRun("ab", false)).toBe(true);
+        expect(canRun("a", false)).toBe(false);
+        expect(canRun("ab", true)).toBe(false);
+        expect(canRun("", true)).toBe(false);
+    });
+
+    it("sorts a browse newest first and a search most seeded first", () => {
+        expect(defaultSort("browse")).toEqual({
+            key: "published",
+            descending: true,
+        });
+        expect(defaultSort("search")).toEqual({
+            key: "seeders",
+            descending: true,
+        });
+    });
+
+    it("says why the list is empty", () => {
+        expect(emptyText("browse", "")).toBe(
+            "Nothing recent from these indexers",
+        );
+        expect(emptyText("search", "bunny")).toBe("No results for “bunny”");
     });
 });

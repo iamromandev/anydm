@@ -1,8 +1,9 @@
-import { component$, $ } from "@qwik.dev/core";
+import { component$, $, useVisibleTask$ } from "@qwik.dev/core";
 import {
     LuCopy,
     LuLoader2,
     LuPlus,
+    LuRefreshCw,
     LuSearch,
     LuAlertTriangle,
 } from "@/component/core/icons";
@@ -15,11 +16,14 @@ import {
 import { errorMessage } from "@/lib/toast";
 import {
     CATEGORY_OPTIONS,
-    canSearch,
+    canRun,
+    defaultSort,
+    emptyText,
     errorChip,
     formatAge,
     formatSize,
     indexerLabel,
+    modeFor,
     nextSort,
     seederTone,
     sortFound,
@@ -48,22 +52,40 @@ const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
 export const SearchView = component$<SearchViewProps>(
     ({ state, indexerCount, onAdd, onNotify }) => {
         // Declared before its callers: a $() captures only what is above it.
-        const runSearch = $(async () => {
-            if (!canSearch(state.q, state.busy)) return;
-            const q = state.q.trim();
+        /** Ask for `text` ("" browses the latest); `fresh` skips the API's browse cache. */
+        const run = $(async (text: string, fresh: boolean) => {
+            if (!canRun(text, state.busy)) return;
+            const mode = modeFor(text) as "browse" | "search";
+            const q = text.trim();
             state.busy = true;
             state.failure = null;
             try {
-                state.answer = await searchIndexers(q, state.category);
+                const answer = await searchIndexers(q, state.category, {
+                    fresh,
+                });
+                state.answer = answer;
                 state.searched = q;
+                if (state.mode !== mode) state.sort = defaultSort(mode);
+                state.mode = mode;
             } catch (error) {
                 state.answer = null;
                 state.searched = q;
+                state.mode = mode;
                 state.failure = failureOf(error);
             } finally {
                 state.busy = false;
             }
         });
+
+        // Opening the view lists the latest releases. Tasks can re-run, so the guard
+        // is the state itself: an answer, a failure or a request in flight means done.
+        useVisibleTask$(
+            () => {
+                if (state.answer || state.failure || state.busy) return;
+                run(state.q, false);
+            },
+            { strategy: "document-ready" },
+        );
 
         const add = $(async (result: FoundTorrent) => {
             if (result.magnet) {
@@ -103,7 +125,7 @@ export const SearchView = component$<SearchViewProps>(
                 <form
                     class="search-view-bar"
                     preventdefault:submit
-                    onSubmit$={runSearch}
+                    onSubmit$={() => run(state.q, false)}
                 >
                     <input
                         class="search-view-query"
@@ -115,28 +137,13 @@ export const SearchView = component$<SearchViewProps>(
                             state.q = el.value;
                         }}
                     />
-                    <select
-                        class="search-view-category"
-                        aria-label="Category"
-                        value={state.category}
-                        onChange$={(_, el) => {
-                            state.category =
-                                el.value as SearchState["category"];
-                        }}
-                    >
-                        {CATEGORY_OPTIONS.map((c) => (
-                            <option key={c.id} value={c.id}>
-                                {c.label}
-                            </option>
-                        ))}
-                    </select>
                     <button
                         class="search-view-go"
                         type="submit"
-                        // Disabled only while a search runs: a browser won't submit on Enter
+                        // Disabled only while a request runs: a browser won't submit on Enter
                         // while the submit button is disabled, and on a first visit the input's
                         // handler is still loading, so the button can lag the typing.
-                        // runSearch ignores a query under 2 characters itself.
+                        // run() ignores exactly one character itself.
                         disabled={state.busy}
                     >
                         {state.busy ? (
@@ -158,6 +165,29 @@ export const SearchView = component$<SearchViewProps>(
                     </button>
                 </form>
 
+                <div
+                    class="search-view-chips"
+                    role="tablist"
+                    aria-label="Category"
+                >
+                    {CATEGORY_OPTIONS.map((c) => (
+                        <button
+                            key={c.id}
+                            type="button"
+                            role="tab"
+                            class="search-view-tab"
+                            aria-selected={state.category === c.id}
+                            disabled={state.busy}
+                            onClick$={() => {
+                                state.category = c.id;
+                                run(state.q, false);
+                            }}
+                        >
+                            {c.label}
+                        </button>
+                    ))}
+                </div>
+
                 {state.answer && (
                     <div class="search-view-status" role="status">
                         <span>
@@ -165,6 +195,7 @@ export const SearchView = component$<SearchViewProps>(
                                 state.answer.results.length,
                                 indexerCount - state.answer.errors.length,
                                 state.answer.tookMs,
+                                state.mode,
                             )}
                         </span>
                         {state.answer.errors.map((e) => (
@@ -181,11 +212,38 @@ export const SearchView = component$<SearchViewProps>(
                                 {errorChip(e)}
                             </span>
                         ))}
+                        {state.mode === "browse" && (
+                            <button
+                                type="button"
+                                class="search-view-refresh"
+                                disabled={state.busy}
+                                onClick$={() => run(state.searched, true)}
+                            >
+                                <LuRefreshCw
+                                    width="12"
+                                    height="12"
+                                    aria-hidden="true"
+                                />
+                                Refresh
+                            </button>
+                        )}
                     </div>
                 )}
 
-                {!state.answer && !state.failure && !state.busy && (
-                    <p class="search-view-empty">Search your indexers</p>
+                {!state.answer && !state.failure && (
+                    <p class="search-view-empty">
+                        {state.busy ? (
+                            <span class="search-view-spin">
+                                <LuLoader2
+                                    width="20"
+                                    height="20"
+                                    aria-hidden="true"
+                                />
+                            </span>
+                        ) : (
+                            "Search your indexers"
+                        )}
+                    </p>
                 )}
 
                 {state.failure && (
@@ -199,7 +257,7 @@ export const SearchView = component$<SearchViewProps>(
                         <button
                             type="button"
                             class="search-view-retry"
-                            onClick$={runSearch}
+                            onClick$={() => run(state.searched, false)}
                         >
                             Try again
                         </button>
@@ -208,7 +266,7 @@ export const SearchView = component$<SearchViewProps>(
 
                 {state.answer && rows.length === 0 && (
                     <p class="search-view-empty">
-                        No results for “{state.searched}”
+                        {emptyText(state.mode, state.searched)}
                     </p>
                 )}
 
@@ -232,6 +290,12 @@ export const SearchView = component$<SearchViewProps>(
                                     >
                                         <button
                                             type="button"
+                                            title={
+                                                col.key === "seeders" &&
+                                                state.mode === "browse"
+                                                    ? "Seeders among the latest releases"
+                                                    : undefined
+                                            }
                                             onClick$={() => {
                                                 state.sort = nextSort(
                                                     state.sort,
