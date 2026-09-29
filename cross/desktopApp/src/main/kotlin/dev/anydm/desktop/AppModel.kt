@@ -9,6 +9,7 @@ import dev.anydm.api.createAnydmApi
 import dev.anydm.api.normalized
 import dev.anydm.desktop.ui.connectError
 import dev.anydm.settings.SettingsStore
+import dev.anydm.store.SearchStore
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
 import kotlinx.coroutines.CancellationException
@@ -16,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
 /** Which screen shows: Connect (with why, if a connection failed), or the list. */
@@ -26,6 +28,7 @@ sealed interface Screen {
 
     data class Main(
         val store: TaskStore,
+        val search: SearchStore,
         val fileUrl: (String, Int?) -> String,
     ) : Screen
 }
@@ -80,11 +83,13 @@ class AppModel(
         api = candidate
         val store = TaskStore(candidate, scope, System::currentTimeMillis)
         store.start()
-        screen = Screen.Main(store) { id, index -> candidate.fileUrl(id, index) }
+        val search = SearchStore(candidate, scope) { torrent -> store.addTorrent(torrent) }
+        scope.launch { search.checkAvailable() }
+        screen = Screen.Main(store, search) { id, index -> candidate.fileUrl(id, index) }
         // A 401 later, from the stream or an action, returns here with the key's message.
         watcher =
             scope.launch {
-                store.events.filterIsInstance<StoreEvent.SignedOut>().first()
+                merge(store.events, search.events).filterIsInstance<StoreEvent.SignedOut>().first()
                 signOut("The server refused the key. Check it matches API_KEY in api/.env.")
             }
     }

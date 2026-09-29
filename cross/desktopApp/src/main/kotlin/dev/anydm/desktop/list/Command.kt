@@ -11,6 +11,7 @@ enum class Command {
     COPY,
     PASTE,
     FOCUS_LINK,
+    FOCUS_SEARCH,
     OPEN_TORRENT,
     SETTINGS,
     RETRY,
@@ -24,7 +25,7 @@ enum class Command {
 
 /**
  * The command a key press means to the list, or `null` to let it through. The menu bar's accelerators
- * (⌘L, ⌘O, ⌘,, ⌘S, ⌘R) aren't here, so they never fire twice; a focused text field keeps every key here.
+ * (⌘L, ⌘F, ⌘O, ⌘,, ⌘S, ⌘R) aren't here, so they never fire twice; a focused text field keeps every key here.
  */
 fun commandFor(
     key: Key,
