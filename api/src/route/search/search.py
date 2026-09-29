@@ -16,7 +16,7 @@ Category = Literal["all", "movies", "tv", "music", "software", "books", "other"]
 @router.get(path="/search/sources", response_model=Success[SourcesSchema])
 async def search_sources(search_service: Annotated[SearchService, Depends(get_search_service)]) -> Response:
     """Whether search is on, and the indexers' names; never their URLs or keys."""
-    return Success.ok(data=search_service.sources()).to_resp()
+    return Success.ok(data=await search_service.sources()).to_resp()
 
 
 @router.get(path="/search", response_model=Success[SearchSchema])

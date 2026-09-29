@@ -4,7 +4,13 @@ from pathlib import Path
 import httpx
 
 from src.config import get_settings
-from src.data.repo import FileDatabaseRepo, PositionDatabaseRepo, SegmentDatabaseRepo, TaskDatabaseRepo
+from src.data.repo import (
+    FileDatabaseRepo,
+    PositionDatabaseRepo,
+    SearchSourceDatabaseRepo,
+    SegmentDatabaseRepo,
+    TaskDatabaseRepo,
+)
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
@@ -27,6 +33,7 @@ from src.service.extract import ExtractService as ExtractService
 from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService
 from src.service.search import SearchService as SearchService
+from src.service.search.source_settings import SourceSettingsService as SourceSettingsService
 from src.service.settings import SettingsService as SettingsService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
@@ -51,14 +58,25 @@ def get_listing_service() -> ListingService:
 
 
 @lru_cache
+def get_search_client() -> httpx.AsyncClient:
+    # One client for the process: sources are few and asked often, so connections are worth keeping.
+    return httpx.AsyncClient(headers={"User-Agent": "anydm"})
+
+
+@lru_cache
+def get_source_settings_service() -> SourceSettingsService:
+    return SourceSettingsService(SearchSourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
+
+
+@lru_cache
 def get_search_service() -> SearchService:
     settings = get_settings()
-    # One client for the process: indexers are few and asked often, so connections are worth keeping.
     return SearchService(
-        [TorznabSource(i) for i in settings.indexers] + settings.builtin_sources,
-        httpx.AsyncClient(headers={"User-Agent": "anydm"}),
+        [TorznabSource(i) for i in settings.indexers],
+        get_search_client(),
         timeout_s=settings.search_timeout_s,
         limit=settings.search_limit,
+        builtins=get_source_settings_service().enabled_sources,
     )
 
 

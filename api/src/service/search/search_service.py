@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from urllib.parse import urljoin
 
 import httpx
@@ -36,32 +36,43 @@ class SearchService:
         limit: int,
         max_torrent_bytes: int = 10 * 1024 * 1024,
         clock: Callable[[], float] = time.monotonic,
+        builtins: Callable[[], Awaitable[Sequence[Source]]] | None = None,
     ) -> None:
-        self._sources = list(sources)
-        #: The Torznab indexers among them: the only origins a result's link may come from.
-        self._indexers: list[Indexer] = [s.indexer for s in self._sources if isinstance(s, TorznabSource)]
+        self._static = list(sources)
+        #: Where the built-in sources come from, asked on every request so a change is seen at once.
+        self._builtins = builtins
+        #: The Torznab indexers among the static sources: the only origins a result's link may come from.
+        self._indexers: list[Indexer] = [s.indexer for s in self._static if isinstance(s, TorznabSource)]
         self._client = client
         self._timeout = timeout_s
         self._limit = limit
         self._max_bytes = max_torrent_bytes
         self._clock = clock
-        #: category -> (when it was stored, the answer); browse only.
-        self._browsed: dict[str, tuple[float, SearchSchema]] = {}
+        #: (category, the sources' state) -> (when it was stored, the answer); browse only.
+        self._browsed: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[float, SearchSchema]] = {}
 
-    def sources(self) -> SourcesSchema:
-        return SourcesSchema(enabled=bool(self._sources), indexers=[s.name for s in self._sources])
+    async def _all(self) -> list[Source]:
+        """The Torznab indexers, then the built-ins as they are right now."""
+        return self._static + (list(await self._builtins()) if self._builtins else [])
+
+    async def sources(self) -> SourcesSchema:
+        everything = await self._all()
+        return SourcesSchema(enabled=bool(everything), indexers=[s.name for s in everything])
 
     async def search(self, q: str, category: str, fresh: bool = False) -> SearchSchema:
         """Search for ``q``, or, when it is empty, browse the latest releases (cached for BROWSE_TTL_S)."""
-        if not self._sources:
+        everything = await self._all()
+        if not everything:
             raise search_error.disabled()
         browsing = q == ""
+        # The sources' names and addresses are part of the key, so editing, enabling or disabling one can't serve a stale answer.
+        key = (category, tuple((s.name, str(getattr(s, "base", ""))) for s in everything))
         if browsing and not fresh:
-            stored = self._browsed.get(category)
+            stored = self._browsed.get(key)
             if stored is not None and self._clock() - stored[0] < BROWSE_TTL_S:
                 logger.info(f"SearchService|browse {category}: cached")
                 return stored[1]
-        asked = [s for s in self._sources if s.supports(q, category)]
+        asked = [s for s in everything if s.supports(q, category)]
         if not asked:
             return SearchSchema(results=[], errors=[], asked=[], took_ms=0)
         started = time.monotonic()
@@ -77,7 +88,7 @@ class SearchService:
             took_ms=round((time.monotonic() - started) * 1000),
         )
         if browsing and not errors:
-            self._browsed[category] = (self._clock(), answer)
+            self._browsed[key] = (self._clock(), answer)
         return answer
 
     async def _ask(self, source: Source, q: str, category: str) -> list[Result] | IndexerErrorSchema:
@@ -95,8 +106,6 @@ class SearchService:
 
     async def fetch_torrent(self, link: str) -> SearchTorrentSchema:
         """A result's .torrent, from its indexer only; a redirect to a magnet answers the magnet."""
-        if not self._sources:
-            raise search_error.disabled()
         if not link_allowed(link, self._indexers):
             raise search_error.link_not_from_indexer()
         current = link
