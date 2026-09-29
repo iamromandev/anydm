@@ -1,9 +1,14 @@
 package dev.anydm.desktop.list
 
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.v2.runComposeUiTest
 import dev.anydm.desktop.theme.DesktopTheme
 import dev.anydm.model.TaskDto
@@ -61,4 +66,37 @@ class DownloadListUiTest {
         onCollapse = {},
         onAction = { _, _ -> },
     )
+
+    @Test
+    fun `the list marks what's selected and passes presses up with the row's id`() =
+        runComposeUiTest {
+            val pressed = mutableListOf<Pair<String, Gesture>>()
+            val file = TaskDto(id = "f", kind = "file", status = "complete", title = "debian.iso").toTask()
+            setContent {
+                DesktopTheme(dark = false) {
+                    DownloadList(
+                        tasks = listOf(group, file),
+                        entries = emptyMap(),
+                        now = 0,
+                        saving = emptyMap(),
+                        filter = ListFilter.ALL,
+                        page = 1,
+                        totalPages = 1,
+                        loadingMore = false,
+                        onLoadMore = {},
+                        onExpand = {},
+                        onCollapse = {},
+                        selection = setOf("f"),
+                        lead = "f",
+                        onPress = { id, gesture -> pressed += id to gesture },
+                        onAction = { _, _ -> },
+                    )
+                }
+            }
+            onNodeWithText("debian.iso").assertExists()
+            onAllNodesWithTag("row")[1].assertIsSelected()
+            onAllNodesWithTag("row")[0].assertIsNotSelected()
+            onAllNodesWithTag("row")[0].performMouseInput { click(center) }
+            assertEquals(listOf("g" to Gesture.CLICK), pressed)
+        }
 }
