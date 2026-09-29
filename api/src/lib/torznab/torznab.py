@@ -4,7 +4,8 @@ Nothing here touches the network, so every rule is tested with plain values.
 """
 
 import re
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -188,3 +189,47 @@ def parse(body: bytes | str, indexer: str) -> list[Result]:
             )
         )
     return results
+
+
+def _key(result: Result) -> tuple[str, ...]:
+    return (result.info_hash,) if result.info_hash else (result.title.lower(), str(result.size))
+
+
+def _most(a: int | None, b: int | None) -> int | None:
+    return b if a is None else a if b is None else max(a, b)
+
+
+def merge(per_indexer: list[list[Result]], limit: int) -> list[Result]:
+    """One result per torrent, most seeded first (unknown last), then largest; at most ``limit``."""
+    merged: dict[tuple[str, ...], Result] = {}
+    for results in per_indexer:
+        for result in results:
+            key = _key(result)
+            seen = merged.get(key)
+            if seen is None:
+                merged[key] = result
+                continue
+            merged[key] = replace(
+                seen,
+                seeders=_most(seen.seeders, result.seeders),
+                leechers=_most(seen.leechers, result.leechers),
+                size=seen.size or result.size,
+                published=seen.published or result.published,
+                magnet=seen.magnet or result.magnet,
+                link=seen.link or result.link,
+                indexers=seen.indexers + tuple(n for n in result.indexers if n not in seen.indexers),
+            )
+    ordered = sorted(merged.values(), key=lambda r: (r.seeders is None, -(r.seeders or 0), -(r.size or 0)))
+    return ordered[:limit]
+
+
+def link_allowed(link: str, indexers: Sequence[Indexer]) -> bool:
+    """Whether ``link`` shares a configured indexer's scheme, host and port: the only links fetched."""
+    parts = urlsplit(link)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
+        return False
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return False
+    return any((parts.scheme, parts.hostname.lower(), port) == indexer.origin for indexer in indexers)
