@@ -5,13 +5,15 @@ import type {
     SearchCategory,
 } from "@/lib/api/search";
 
-import type { SortState } from "./present";
+import { defaultSort, type SearchMode, type SortState } from "./present";
 
 export type SearchState = {
     q: string;
     category: SearchCategory;
     busy: boolean;
-    /** The query the answer is for; the box may have changed since. */
+    /** What the answer is: the latest releases, or a search. */
+    mode: SearchMode;
+    /** The query the answer is for ("" when browsing); the box may have changed since. */
     searched: string;
     answer: SearchAnswer | null;
     failure: { message: string; causes: IndexerError[] } | null;
@@ -25,10 +27,11 @@ export function emptySearch(): SearchState {
         q: "",
         category: "all",
         busy: false,
+        mode: "browse",
         searched: "",
         answer: null,
         failure: null,
-        sort: { key: "seeders", descending: true },
+        sort: defaultSort("browse"),
         fetching: "",
     };
 }

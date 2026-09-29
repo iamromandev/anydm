@@ -93,12 +93,31 @@ export async function searchSources(): Promise<SearchSources> {
     };
 }
 
+/** The query string: `q` only to search, `fresh` only when asked. */
+export function searchParams(
+    q: string,
+    category: SearchCategory,
+    fresh: boolean,
+): string {
+    const params = new URLSearchParams();
+    const text = q.trim();
+    if (text) params.set("q", text);
+    params.set("category", category);
+    if (fresh) params.set("fresh", "1");
+    return params.toString();
+}
+
+/** Search the indexers for `q`; an empty `q` browses their latest releases. */
 export async function searchIndexers(
     q: string,
     category: SearchCategory,
+    options: { fresh?: boolean } = {},
 ): Promise<SearchAnswer> {
-    const query = new URLSearchParams({ q, category });
-    return normalizeSearch(await getApi<any>(`/search?${query.toString()}`));
+    return normalizeSearch(
+        await getApi<any>(
+            `/search?${searchParams(q, category, options.fresh === true)}`,
+        ),
+    );
 }
 
 /** A result that has only a .torrent link: the API fetches it from the indexer. */

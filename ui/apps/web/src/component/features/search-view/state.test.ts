@@ -5,12 +5,13 @@ import { ApiError } from "@/lib/api/envelope";
 import { emptySearch, failureOf } from "./state";
 
 describe("the Search view's state", () => {
-    it("starts empty, sorted by seeders", () => {
+    it("starts empty, browsing, newest first", () => {
         const state = emptySearch();
         expect(state.q).toBe("");
         expect(state.category).toBe("all");
+        expect(state.mode).toBe("browse");
         expect(state.answer).toBeNull();
-        expect(state.sort).toEqual({ key: "seeders", descending: true });
+        expect(state.sort).toEqual({ key: "published", descending: true });
     });
 
     it("lists each indexer's reason when every one failed", () => {

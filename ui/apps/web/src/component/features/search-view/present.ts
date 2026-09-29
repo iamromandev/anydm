@@ -18,6 +18,8 @@ export const CATEGORY_OPTIONS: Array<{ id: SearchCategory; label: string }> = [
     { id: "other", label: "Other" },
 ];
 
+export type SearchMode = "browse" | "search";
+
 export type SortKey =
     "title" | "size" | "seeders" | "leechers" | "published" | "indexer";
 export type SortState = { key: SortKey; descending: boolean };
@@ -151,16 +153,38 @@ export function statusLine(
     count: number,
     indexerCount: number,
     tookMs: number,
+    mode: SearchMode,
 ): string {
-    const results = `${count} result${count === 1 ? "" : "s"}`;
+    const noun = mode === "browse" ? "release" : "result";
+    const results = `${count} ${noun}${count === 1 ? "" : "s"}`;
     const indexers = `${indexerCount} indexer${indexerCount === 1 ? "" : "s"}`;
-    return `${results} from ${indexers} · ${(tookMs / 1000).toFixed(1)} s`;
+    const line = `${results} from ${indexers} · ${(tookMs / 1000).toFixed(1)} s`;
+    return mode === "browse" ? `Latest · ${line}` : line;
 }
 
 export function errorChip(error: IndexerError): string {
     return `${error.indexer}: ${error.message}`;
 }
 
-export function canSearch(q: string, busy: boolean): boolean {
-    return !busy && q.trim().length >= 2;
+/** Nothing typed browses the latest; 2 or more characters search; 1 does neither. */
+export function modeFor(q: string): SearchMode | "blocked" {
+    const length = q.trim().length;
+    if (length === 0) return "browse";
+    return length >= 2 ? "search" : "blocked";
+}
+
+export function canRun(q: string, busy: boolean): boolean {
+    return !busy && modeFor(q) !== "blocked";
+}
+
+export function defaultSort(mode: SearchMode): SortState {
+    return mode === "browse"
+        ? { key: "published", descending: true }
+        : { key: "seeders", descending: true };
+}
+
+export function emptyText(mode: SearchMode, searched: string): string {
+    return mode === "browse"
+        ? "Nothing recent from these indexers"
+        : `No results for “${searched}”`;
 }
