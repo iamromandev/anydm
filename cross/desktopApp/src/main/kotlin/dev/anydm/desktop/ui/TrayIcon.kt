@@ -21,3 +21,18 @@ object TrayIcon : Painter() {
         drawLine(colour, Offset(cx + size.width * 0.18f, size.height * 0.5f), Offset(cx, size.height * 0.68f), stroke)
     }
 }
+
+/** macOS's menu-bar icon: black on clear, marked as a template so the OS tints it for light or dark. */
+object TrayTemplateIcon : Painter() {
+    override val intrinsicSize = Size(64f, 64f)
+
+    override fun DrawScope.onDraw() {
+        val stroke = size.minDimension / 9
+        val ink = Color.Black
+        drawCircle(ink, radius = size.minDimension / 2 - stroke, style = Stroke(stroke))
+        val cx = size.width / 2
+        drawLine(ink, Offset(cx, size.height * 0.25f), Offset(cx, size.height * 0.68f), stroke)
+        drawLine(ink, Offset(cx - size.width * 0.18f, size.height * 0.5f), Offset(cx, size.height * 0.68f), stroke)
+        drawLine(ink, Offset(cx + size.width * 0.18f, size.height * 0.5f), Offset(cx, size.height * 0.68f), stroke)
+    }
+}

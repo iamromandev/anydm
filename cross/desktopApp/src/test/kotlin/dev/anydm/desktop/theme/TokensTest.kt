@@ -20,6 +20,7 @@ class TokensTest {
                 assertTrue(contrast(t.secondaryText, surface) >= 4.5, "secondary on $surface in ${t.name}")
             }
             assertTrue(contrast(t.onSelection, t.selection) >= 4.5, "selection in ${t.name}")
+            assertTrue(contrast(Color.White, t.destructive) >= 4.5, "destructive in ${t.name}")
         }
     }
 }

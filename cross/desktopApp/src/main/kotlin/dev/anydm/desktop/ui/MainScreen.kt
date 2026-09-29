@@ -132,6 +132,7 @@ fun MainScreen(
     val order = order()
     LaunchedEffect(order) { selection = selection.prune(order) }
     LaunchedEffect(Unit) { keys.requestFocus() }
+    LaunchedEffect(removing, clearing) { if (removing.isEmpty() && !clearing) keys.requestFocus() }
 
     fun remove(tasks: List<Task>) {
         if (tasks.isEmpty()) return
@@ -320,92 +321,98 @@ fun MainScreen(
 
     LaunchedEffect(commands) { commands.collect { run(it) } }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(LocalTokens.current.content)
-            .focusRequester(keys)
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val command = commandFor(event.key, event.isMetaPressed, event.isCtrlPressed, event.isShiftPressed, isMac(), linkFocused)
-                command?.let(::run)
-                command != null
-            },
-    ) {
-        Column(Modifier.fillMaxSize()) {
-            Toolbar(
-                inset = toolbarInset(),
-                link = link,
-                onLink = { link = it },
-                onSubmit = ::submitLink,
-                adding = adding,
-                preset = prefs.defaultPreset,
-                presets = PRESET_OPTIONS,
-                onPreset = { preset -> settings.update { it.copy(defaultPreset = preset) } },
-                focus = linkFocus,
-                onPauseAll = { scope.launch { store.bulk(BulkAction.PAUSE_ALL) } },
-                onResumeAll = { scope.launch { store.bulk(BulkAction.RESUME_ALL) } },
-                onTorrent = ::chooseTorrent,
-                onSettings = { showSettings = true },
-                onLinkFocus = { linkFocused = it },
-            )
-            Row(Modifier.weight(1f).torrentDrop(::addTorrentFile)) {
-                SourceList(
-                    items = sourceItems(state.summary),
-                    selected = state.filter,
-                    onSelect = store::setFilter,
-                    host = hostOf(prefs.serverUrl),
-                    connection = state.connection,
-                    onChangeServer = onSignOut,
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(LocalTokens.current.content)
+                .focusRequester(keys)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val command =
+                        commandFor(event.key, event.isMetaPressed, event.isCtrlPressed, event.isShiftPressed, isMac(), linkFocused)
+                    command?.let(::run)
+                    command != null
+                },
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Toolbar(
+                    inset = toolbarInset(),
+                    link = link,
+                    onLink = { link = it },
+                    onSubmit = ::submitLink,
+                    adding = adding,
+                    preset = prefs.defaultPreset,
+                    presets = PRESET_OPTIONS,
+                    onPreset = { preset -> settings.update { it.copy(defaultPreset = preset) } },
+                    focus = linkFocus,
+                    onPauseAll = { scope.launch { store.bulk(BulkAction.PAUSE_ALL) } },
+                    onResumeAll = { scope.launch { store.bulk(BulkAction.RESUME_ALL) } },
+                    onTorrent = ::chooseTorrent,
                     onSettings = { showSettings = true },
-                    onClearFinished = { clearing = true },
-                    width = sidebarWidth,
-                    onWidth = { sidebarWidth = it },
+                    onLinkFocus = { linkFocused = it },
                 )
-                Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SortMenu(state.sort, store::setSort)
-                    DownloadList(
-                        tasks = state.tasks,
-                        entries = state.entries,
-                        now = now,
-                        saving = saving,
-                        filter = state.filter,
-                        page = state.page,
-                        totalPages = state.totalPages,
-                        loadingMore = state.loadingMore,
-                        onLoadMore = store::loadMore,
-                        onExpand = store::expand,
-                        onCollapse = store::collapse,
-                        selection = selection.ids,
-                        lead = selection.lead,
-                        onPress = { id, gesture ->
-                            selection = selection.apply(gesture, id, order())
-                            keys.requestFocus()
-                        },
-                        onAction = ::actOn,
+                Row(Modifier.weight(1f).torrentDrop(::addTorrentFile)) {
+                    SourceList(
+                        items = sourceItems(state.summary),
+                        selected = state.filter,
+                        onSelect = store::setFilter,
+                        host = hostOf(prefs.serverUrl),
+                        connection = state.connection,
+                        onChangeServer = onSignOut,
+                        onSettings = { showSettings = true },
+                        onClearFinished = { clearing = true },
+                        width = sidebarWidth,
+                        onWidth = { sidebarWidth = it },
                     )
+                    Column(
+                        Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SortMenu(state.sort, store::setSort)
+                        DownloadList(
+                            tasks = state.tasks,
+                            entries = state.entries,
+                            now = now,
+                            saving = saving,
+                            filter = state.filter,
+                            page = state.page,
+                            totalPages = state.totalPages,
+                            loadingMore = state.loadingMore,
+                            onLoadMore = store::loadMore,
+                            onExpand = store::expand,
+                            onCollapse = store::collapse,
+                            selection = selection.ids,
+                            lead = selection.lead,
+                            onPress = { id, gesture ->
+                                selection = selection.apply(gesture, id, order())
+                                keys.requestFocus()
+                            },
+                            onAction = ::actOn,
+                        )
+                    }
                 }
+                StatusBar(state.tasks, state.connection, state.disk, saving.values.lastOrNull())
             }
-            StatusBar(state.tasks, state.connection, state.disk, saving.values.lastOrNull())
+            BannerHost(banners, Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 32.dp))
         }
-        BannerHost(banners, Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 32.dp))
-    }
 
-    if (removing.isNotEmpty()) {
-        val prompt = removeManyPrompt(removing.map { removePrompt(it.status, videosOf(it)) })
-        RemoveDialog(removeTitle(removing.map { it.title }), prompt, onCancel = { removing = emptyList() }) { deleteFiles ->
-            val gone = removing
-            removing = emptyList()
-            selection = Selection()
-            scope.launch { gone.forEach { store.remove(it.id, deleteFiles) } }
+        if (removing.isNotEmpty()) {
+            val prompt = removeManyPrompt(removing.map { removePrompt(it.status, videosOf(it)) })
+            RemoveDialog(removeTitle(removing.map { it.title }), prompt, onCancel = { removing = emptyList() }) { deleteFiles ->
+                val gone = removing
+                removing = emptyList()
+                selection = Selection()
+                scope.launch { gone.forEach { store.remove(it.id, deleteFiles) } }
+            }
         }
-    }
-    if (showSettings) SettingsDialog(settings) { showSettings = false }
-    if (clearing) {
-        ClearFinishedDialog(onCancel = { clearing = false }) {
-            clearing = false
-            scope.launch { store.bulk(BulkAction.CLEAR_FINISHED) }
+        if (showSettings) SettingsWindow(settings, onChangeServer = onSignOut) { showSettings = false }
+        if (clearing) {
+            ClearFinishedDialog(onCancel = { clearing = false }) {
+                clearing = false
+                scope.launch { store.bulk(BulkAction.CLEAR_FINISHED) }
+            }
         }
     }
 }
