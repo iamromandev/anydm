@@ -3,8 +3,11 @@ package dev.anydm.api
 import dev.anydm.model.AnydmJson
 import dev.anydm.model.BulkResultDto
 import dev.anydm.model.ExtractMediaDto
+import dev.anydm.model.FetchedDto
 import dev.anydm.model.PageMetaDto
 import dev.anydm.model.PlaylistDto
+import dev.anydm.model.SearchAnswer
+import dev.anydm.model.SearchSources
 import dev.anydm.model.SummaryDto
 import dev.anydm.model.TaskDto
 import io.ktor.client.HttpClient
@@ -62,7 +65,8 @@ fun choosePreset(
 class AnydmApi(
     config: ServerConfig,
     engine: HttpClientEngine,
-) : TaskApi {
+) : TaskApi,
+    SearchApi {
     private val config = config.normalized()
     private val client =
         HttpClient(engine) {
@@ -187,6 +191,29 @@ class AnydmApi(
 
     /** The live stream (see [openEvents]). A member, so it can stand in for [TaskApi.events]. */
     override fun events(): Flow<ServerEvent> = openEvents()
+
+    override suspend fun searchSources(): SearchSources = decode(call(HttpMethod.Get, listOf("search", "sources")).data)
+
+    override suspend fun search(
+        q: String,
+        category: String,
+        fresh: Boolean,
+    ): SearchAnswer {
+        val query =
+            buildMap<String, Any> {
+                if (q.isNotEmpty()) put("q", q)
+                put("category", category)
+                if (fresh) put("fresh", 1)
+            }
+        return decode(call(HttpMethod.Get, listOf("search"), query = query).data)
+    }
+
+    override suspend fun fetchTorrent(link: String): FetchedTorrent {
+        val fetched = decode<FetchedDto>(call(HttpMethod.Post, listOf("search", "torrent"), body = obj("link" to link)).data)
+        return fetched.magnet?.let { FetchedTorrent.Magnet(it) }
+            ?: fetched.torrent?.let { FetchedTorrent.File(it) }
+            ?: throw ApiException("The indexer sent nothing to add", null, null)
+    }
 
     fun close() = client.close()
 
