@@ -1,6 +1,8 @@
 package dev.anydm.desktop.list
 
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -65,5 +67,16 @@ class DownloadRowUiTest {
             onNodeWithContentDescription("Show videos").performClick()
             assertEquals(1, opened)
             onNodeWithText("Big Buck Bunny").assertExists()
+        }
+
+    @Test
+    fun `a click and a right-click report their gestures, and a selected row says so`() =
+        runComposeUiTest {
+            val pressed = mutableListOf<Gesture>()
+            setContent { DesktopTheme(dark = false) { DownloadRow(view, selected = true, onPress = { pressed += it }) {} } }
+            onNodeWithTag("row").assertIsSelected()
+            onNodeWithTag("row").performMouseInput { click(center) }
+            onNodeWithTag("row").performMouseInput { rightClick(center) }
+            assertEquals(listOf(Gesture.CLICK, Gesture.CONTEXT), pressed)
         }
 }

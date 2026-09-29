@@ -51,6 +51,9 @@ fun DownloadList(
     onLoadMore: () -> Unit,
     onExpand: (String) -> Unit,
     onCollapse: (String) -> Unit,
+    selection: Set<String> = emptySet(),
+    lead: String? = null,
+    onPress: (String, Gesture) -> Unit = { _, _ -> },
     onAction: (Task, CardAction) -> Unit,
 ) {
     val t = LocalTokens.current
@@ -60,6 +63,12 @@ fun DownloadList(
         return
     }
     val state = rememberLazyListState()
+    val order = visibleOrder(tasks, entries, filter)
+    LaunchedEffect(lead) {
+        val index = lead?.let(order::indexOf)?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        val visible = state.layoutInfo.visibleItemsInfo.map { it.index }
+        if (index !in visible) state.scrollToItem(index)
+    }
     LaunchedEffect(state, page, totalPages, loadingMore, shown.size) {
         snapshotFlow {
             state.layoutInfo.visibleItemsInfo
@@ -76,14 +85,22 @@ fun DownloadList(
                 val view = rowView(task, now)
                 DownloadRow(
                     view,
+                    selected = task.id in selection,
                     saving = saving[task.id],
                     expanded = open != null,
                     onExpand = if (view.expandable) ({ if (open != null) onCollapse(task.id) else onExpand(task.id) }) else null,
+                    onPress = { onPress(task.id, it) },
                 ) { action -> onAction(task, action) }
             }
             if (open != null) {
                 items(open, key = { "${task.id}/${it.id}" }) { video ->
-                    DownloadRow(rowView(video, now), saving = saving[video.id], indent = 28.dp) { action -> onAction(video, action) }
+                    DownloadRow(
+                        rowView(video, now),
+                        selected = video.id in selection,
+                        saving = saving[video.id],
+                        indent = 28.dp,
+                        onPress = { onPress(video.id, it) },
+                    ) { action -> onAction(video, action) }
                 }
             }
         }

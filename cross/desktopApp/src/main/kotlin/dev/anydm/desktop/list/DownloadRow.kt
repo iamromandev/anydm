@@ -24,13 +24,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import dev.anydm.desktop.chrome.Glyphs
 import dev.anydm.desktop.chrome.ToolButton
 import dev.anydm.desktop.theme.LocalTokens
+import dev.anydm.desktop.theme.isMac
 import dev.anydm.desktop.ui.CardAction
 import dev.anydm.desktop.ui.DetailTone
 import dev.anydm.desktop.ui.Glyph
@@ -78,6 +87,7 @@ fun glyphOf(action: CardAction): ImageVector =
  * One download (spec: "Rows"): the icon marked with its status, the title, one detail line and a thin
  * bar. Hovering shows [RowView.hover] as icon buttons; a right-click offers [RowView.menu].
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun DownloadRow(
     view: RowView,
@@ -86,6 +96,7 @@ fun DownloadRow(
     indent: Dp = 0.dp,
     expanded: Boolean = false,
     onExpand: (() -> Unit)? = null,
+    onPress: (Gesture) -> Unit = {},
     onAction: (CardAction) -> Unit,
 ) {
     val t = LocalTokens.current
@@ -106,7 +117,13 @@ fun DownloadRow(
             Modifier
                 .fillMaxWidth()
                 .testTag("row")
-                .padding(start = indent)
+                .semantics { this.selected = selected }
+                .onPointerEvent(PointerEventType.Press) { event ->
+                    val keys = event.keyboardModifiers
+                    onPress(
+                        gestureOf(keys.isMetaPressed, keys.isCtrlPressed, keys.isShiftPressed, event.buttons.isSecondaryPressed, isMac()),
+                    )
+                }.padding(start = indent)
                 .clip(RoundedCornerShape(6.dp))
                 .background(
                     when {
