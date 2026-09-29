@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>Prowlarr</title>
+    <item>
+      <title>Big Buck Bunny 1080p</title>
+      <guid>https://idx.test/t/1</guid>
+      <link>http://prowlarr:9696/1/download?apikey=abc&amp;link=xyz</link>
+      <pubDate>Mon, 28 Sep 2026 10:00:00 +0000</pubDate>
+      <size>725614592</size>
+      <enclosure url="http://prowlarr:9696/1/download?apikey=abc&amp;link=xyz" length="725614592" type="application/x-bittorrent" />
+      <torznab:attr name="category" value="2040" />
+      <torznab:attr name="seeders" value="120" />
+      <torznab:attr name="peers" value="135" />
+      <torznab:attr name="infohash" value="DD8255ECDC7CA55FB0BBF81323D87062DB1F6D1C" />
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&amp;dn=Big+Buck+Bunny" />
+    </item>
+    <item>
+      <title>Sintel Soundtrack FLAC</title>
+      <link>http://prowlarr:9696/1/download?apikey=abc&amp;link=abc</link>
+      <pubDate>not a date</pubDate>
+      <enclosure url="http://prowlarr:9696/1/download?apikey=abc&amp;link=abc" length="31457280" type="application/x-bittorrent" />
+      <torznab:attr name="category" value="3040" />
+    </item>
+    <item>
+      <title></title>
+      <link>http://prowlarr:9696/1/download?link=empty</link>
+    </item>
+  </channel>
+</rss>

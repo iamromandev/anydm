@@ -5,7 +5,10 @@ Nothing here touches the network, so every rule is tested with plain values.
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from xml.etree import ElementTree
 
 _NAME = re.compile(r"^[a-z0-9-]+$")
 
@@ -87,3 +90,101 @@ def redact(url: str) -> str:
         return url
     query = [(k, "***" if k == "apikey" else v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+_ATTR = "{http://torznab.com/schemas/2015/feed}attr"
+_BTIH = re.compile(r"xt=urn:btih:([A-Za-z0-9]+)")
+#: Torznab's top-level category numbers by their first digit; anything else is "other".
+_GROUPS = {"2": "movies", "5": "tv", "3": "music", "4": "software", "7": "books"}
+
+
+@dataclass(frozen=True)
+class Result:
+    title: str
+    size: int | None
+    seeders: int | None
+    leechers: int | None
+    published: datetime | None
+    category: str
+    info_hash: str | None
+    magnet: str | None
+    link: str | None
+    indexers: tuple[str, ...]
+
+
+class TorznabError(Exception):
+    """An indexer's answer that holds no results, in words fit to show."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _count(value: str | None) -> int | None:
+    try:
+        n = int(float(value)) if value not in (None, "") else None
+    except ValueError:
+        return None
+    return n if n is not None and n >= 0 else None
+
+
+def _date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _category(value: str | None) -> str:
+    return _GROUPS.get(value[0], "other") if value and value[0].isdigit() else "other"
+
+
+def parse(body: bytes | str, indexer: str) -> list[Result]:
+    """One indexer's Torznab answer; items with no title, or nothing to download, are dropped."""
+    try:
+        root = ElementTree.fromstring(body)
+    except ElementTree.ParseError as error:
+        raise TorznabError("unreadable answer") from error
+    if root.tag == "error":
+        raise TorznabError(root.get("description") or f"error {root.get('code', '')}".strip())
+    results: list[Result] = []
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        attrs = {a.get("name"): a.get("value") for a in item.findall(_ATTR)}
+        enclosure = item.find("enclosure")
+        enclosed = enclosure.get("url") if enclosure is not None else None
+        linked = (item.findtext("link") or "").strip() or None
+        candidates = [u for u in (enclosed, linked) if u]
+        magnet = attrs.get("magneturl") or next((u for u in candidates if u.startswith("magnet:")), None)
+        link = next((u for u in candidates if not u.startswith("magnet:")), None)
+        if not title or not (magnet or link):
+            continue
+        size = _count(item.findtext("size")) or _count(attrs.get("size"))
+        if size is None and enclosure is not None:
+            size = _count(enclosure.get("length"))
+        seeders = _count(attrs.get("seeders"))
+        peers = _count(attrs.get("peers"))
+        leechers = _count(attrs.get("leechers"))
+        if leechers is None and peers is not None and seeders is not None:
+            leechers = max(peers - seeders, 0)
+        info_hash = attrs.get("infohash")
+        if not info_hash and magnet:
+            found = _BTIH.search(magnet)
+            info_hash = found.group(1) if found else None
+        results.append(
+            Result(
+                title=title,
+                size=size,
+                seeders=seeders,
+                leechers=leechers,
+                published=_date(item.findtext("pubDate")),
+                category=_category(attrs.get("category") or item.findtext("category")),
+                info_hash=info_hash.lower() if info_hash else None,
+                magnet=magnet,
+                link=link,
+                indexers=(indexer,),
+            )
+        )
+    return results
