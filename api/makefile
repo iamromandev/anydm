@@ -79,8 +79,9 @@ add: # Stage all changes
 	git add .
 
 # database scripts
-migrate: # Run database migrations
+migrate: # Run database migrations, then seed the built-in search sources
 	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
+	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
 
 # help
 help:
