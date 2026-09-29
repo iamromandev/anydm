@@ -84,6 +84,8 @@ class ErrorType(StrEnum):
     LINK_NOT_FROM_INDEXER = "link_not_from_indexer"
     #: What an indexer handed back isn't a .torrent file.
     NOT_A_TORRENT = "not_a_torrent"
+    #: A built-in search source name the registry doesn't know.
+    SOURCE_NOT_FOUND = "source_not_found"
 
     # External/3rd-party issues
     EXTERNAL_API_ERROR = "external_api_error"

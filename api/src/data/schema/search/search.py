@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from src.core.base import BaseSchema
 
@@ -46,3 +46,38 @@ class SearchTorrentSchema(BaseSchema):
 
     torrent: str | None = None
     magnet: str | None = None
+
+
+class BuiltinSourceSchema(BaseSchema):
+    name: str
+    label: str
+    enabled: bool
+    base_url: str
+    default_url: str
+
+
+class BuiltinSourcesSchema(BaseSchema):
+    sources: list[BuiltinSourceSchema]
+
+
+class BuiltinSourcePatch(BaseSchema):
+    enabled: bool | None = None
+    base_url: str | None = None
+
+    @model_validator(mode="after")
+    def _something_to_change(self) -> BuiltinSourcePatch:
+        if self.enabled is None and self.base_url is None:
+            raise ValueError("Give enabled, base_url, or both")
+        return self
+
+
+class BuiltinTestRequest(BaseSchema):
+    base_url: str | None = None
+
+
+class BuiltinTestSchema(BaseSchema):
+    ok: bool
+    #: How many results it found; absent when the test failed.
+    count: int | None = None
+    took_ms: int
+    message: str

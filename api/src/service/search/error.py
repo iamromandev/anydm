@@ -52,3 +52,19 @@ def not_a_torrent() -> Error:
         message="The indexer didn't answer with a torrent file",
         error_type=ErrorType.NOT_A_TORRENT,
     )
+
+
+def source_not_found(name: str) -> Error:
+    return Error.create(
+        code=Code.NOT_FOUND,
+        message=f"There is no built-in source named {name}",
+        error_type=ErrorType.SOURCE_NOT_FOUND,
+    )
+
+
+def invalid_address(message: str) -> Error:
+    return Error.create(
+        code=Code.UNPROCESSABLE_ENTITY,
+        message=message,
+        error_type=ErrorType.UNPROCESSABLE_ENTITY,
+    )

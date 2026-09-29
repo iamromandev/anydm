@@ -1,3 +1,8 @@
+from .search import BuiltinSourcePatch as BuiltinSourcePatch
+from .search import BuiltinSourceSchema as BuiltinSourceSchema
+from .search import BuiltinSourcesSchema as BuiltinSourcesSchema
+from .search import BuiltinTestRequest as BuiltinTestRequest
+from .search import BuiltinTestSchema as BuiltinTestSchema
 from .search import IndexerErrorSchema as IndexerErrorSchema
 from .search import SearchResultSchema as SearchResultSchema
 from .search import SearchSchema as SearchSchema

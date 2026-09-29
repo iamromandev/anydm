@@ -16,10 +16,11 @@ from src.data.schema.search import (
     SearchTorrentSchema,
     SourcesSchema,
 )
-from src.lib.sources.source import Result, Source, SourceError
+from src.lib.sources.source import Result, Source
 from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torznab.torznab import Indexer, link_allowed, merge, redact
 from src.service.search import error as search_error
+from src.service.search.failure import failure_message
 
 MAX_REDIRECTS = 3
 #: How long a browse answer is served without asking the indexers again.
@@ -86,12 +87,11 @@ class SearchService:
 
         try:
             return await source.fetch(self._client, q, category, self._timeout)
-        except httpx.TimeoutException:
-            return failed(f"timed out after {self._timeout:g} s")
-        except httpx.HTTPError:
-            return failed("couldn't reach it")
-        except SourceError as error:
-            return failed(error.message)
+        except Exception as error:
+            message = failure_message(error, self._timeout)
+            if message is None:
+                raise
+            return failed(message)
 
     async def fetch_torrent(self, link: str) -> SearchTorrentSchema:
         """A result's .torrent, from its indexer only; a redirect to a magnet answers the magnet."""
