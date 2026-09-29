@@ -62,11 +62,13 @@ import dev.anydm.desktop.list.commandFor
 import dev.anydm.desktop.list.visibleOrder
 import dev.anydm.desktop.theme.LocalTokens
 import dev.anydm.desktop.theme.isMac
+import dev.anydm.model.FoundTorrent
 import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
 import dev.anydm.settings.SettingsStore
 import dev.anydm.store.BulkAction
+import dev.anydm.store.SearchStore
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
 import dev.anydm.store.Tone
@@ -83,10 +85,18 @@ import java.util.Base64
 
 private fun videosOf(task: Task): Int? = if (task.kind == TaskKind.PLAYLIST) task.entryCounts?.total ?: 0 else null
 
+/** What the main area shows: the download list, or Search and Browse. */
+enum class MainView { LIST, SEARCH }
+
+/** With Search open these still mean something; the rest act on a list that isn't on screen. */
+private val ALWAYS =
+    setOf(Command.FOCUS_LINK, Command.FOCUS_SEARCH, Command.OPEN_TORRENT, Command.SETTINGS, Command.PASTE)
+
 /** The list: add, filter, act, remove, and see how the connection and the disk stand. */
 @Composable
 fun MainScreen(
     store: TaskStore,
+    search: SearchStore,
     settings: SettingsStore,
     fileUrl: (String, Int?) -> String,
     commands: Flow<Command> = emptyFlow(),
@@ -103,6 +113,11 @@ fun MainScreen(
     var removing by remember { mutableStateOf<List<Task>>(emptyList()) }
     var selection by remember { mutableStateOf(Selection()) }
     var linkFocused by remember { mutableStateOf(false) }
+    val searchState by search.state.collectAsState()
+    val searchAvailable by search.available.collectAsState()
+    var view by remember { mutableStateOf(MainView.LIST) }
+    val searchFocus = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
     val keys = remember { FocusRequester() }
     var clearing by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
@@ -119,6 +134,9 @@ fun MainScreen(
     }
     LaunchedEffect(store) {
         store.events.collect { event -> if (event is StoreEvent.Said) banners.push(Banner(event.notice.tone, event.notice.message)) }
+    }
+    LaunchedEffect(search) {
+        search.events.collect { event -> if (event is StoreEvent.Said) banners.push(Banner(event.notice.tone, event.notice.message)) }
     }
 
     // Read fresh each time: commands arrive from a flow collected once.
@@ -185,6 +203,20 @@ fun MainScreen(
         }
     }
 
+    fun openSearch() {
+        if (!searchAvailable) return
+        if (view == MainView.SEARCH) {
+            searchFocus.requestFocus()
+        } else {
+            view = MainView.SEARCH
+            search.open()
+        }
+    }
+
+    fun addFound(result: FoundTorrent) {
+        scope.launch { if (search.add(result)) banners.push(Banner(Tone.SUCCESS, "Added: ${result.title}")) }
+    }
+
     fun chooseTorrent() {
         val dialog =
             FileDialog(null as Frame?, "Add a .torrent", FileDialog.LOAD).apply {
@@ -247,6 +279,7 @@ fun MainScreen(
     }
 
     fun run(command: Command) {
+        if (view == MainView.SEARCH && command !in ALWAYS) return
         val picked = chosen()
         val order = order()
         when (command) {
@@ -279,6 +312,10 @@ fun MainScreen(
 
             Command.FOCUS_LINK -> {
                 linkFocus.requestFocus()
+            }
+
+            Command.FOCUS_SEARCH -> {
+                openSearch()
             }
 
             Command.OPEN_TORRENT -> {
@@ -331,7 +368,14 @@ fun MainScreen(
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val command =
-                        commandFor(event.key, event.isMetaPressed, event.isCtrlPressed, event.isShiftPressed, isMac(), linkFocused)
+                        commandFor(
+                            event.key,
+                            event.isMetaPressed,
+                            event.isCtrlPressed,
+                            event.isShiftPressed,
+                            isMac(),
+                            linkFocused || searchFocused,
+                        )
                     command?.let(::run)
                     command != null
                 },
@@ -357,7 +401,10 @@ fun MainScreen(
                     SourceList(
                         items = sourceItems(state.summary),
                         selected = state.filter,
-                        onSelect = store::setFilter,
+                        onSelect = { filter ->
+                            view = MainView.LIST
+                            store.setFilter(filter)
+                        },
                         host = hostOf(prefs.serverUrl),
                         connection = state.connection,
                         onChangeServer = onSignOut,
@@ -365,32 +412,56 @@ fun MainScreen(
                         onClearFinished = { clearing = true },
                         width = sidebarWidth,
                         onWidth = { sidebarWidth = it },
+                        showSearch = searchAvailable,
+                        searchSelected = view == MainView.SEARCH,
+                        onSearch = ::openSearch,
                     )
-                    Column(
-                        Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        SortMenu(state.sort, store::setSort)
-                        DownloadList(
-                            tasks = state.tasks,
-                            entries = state.entries,
-                            now = now,
-                            saving = saving,
-                            filter = state.filter,
-                            page = state.page,
-                            totalPages = state.totalPages,
-                            loadingMore = state.loadingMore,
-                            onLoadMore = store::loadMore,
-                            onExpand = store::expand,
-                            onCollapse = store::collapse,
-                            selection = selection.ids,
-                            lead = selection.lead,
-                            onPress = { id, gesture ->
-                                selection = selection.apply(gesture, id, order())
-                                keys.requestFocus()
-                            },
-                            onAction = ::actOn,
-                        )
+                    if (view == MainView.SEARCH) {
+                        Box(Modifier.weight(1f)) {
+                            // Opening Search puts the cursor in its box.
+                            LaunchedEffect(Unit) { searchFocus.requestFocus() }
+                            SearchScreen(
+                                state = searchState,
+                                now = now,
+                                focus = searchFocus,
+                                onQuery = search::setQuery,
+                                onSubmit = search::run,
+                                onCategory = search::setCategory,
+                                onRefresh = search::refresh,
+                                onRetry = search::retry,
+                                onSort = search::setSort,
+                                onAdd = ::addFound,
+                                onCopy = { magnet -> copyText(magnet) },
+                                onFocusChange = { searchFocused = it },
+                            )
+                        }
+                    } else {
+                        Column(
+                            Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            SortMenu(state.sort, store::setSort)
+                            DownloadList(
+                                tasks = state.tasks,
+                                entries = state.entries,
+                                now = now,
+                                saving = saving,
+                                filter = state.filter,
+                                page = state.page,
+                                totalPages = state.totalPages,
+                                loadingMore = state.loadingMore,
+                                onLoadMore = store::loadMore,
+                                onExpand = store::expand,
+                                onCollapse = store::collapse,
+                                selection = selection.ids,
+                                lead = selection.lead,
+                                onPress = { id, gesture ->
+                                    selection = selection.apply(gesture, id, order())
+                                    keys.requestFocus()
+                                },
+                                onAction = ::actOn,
+                            )
+                        }
                     }
                 }
                 StatusBar(state.tasks, state.connection, state.disk, saving.values.lastOrNull())

@@ -102,6 +102,7 @@ fun main() {
             MenuBar {
                 Menu("File") {
                     Item("Add link", enabled = onList, shortcut = key(Key.L)) { commands.tryEmit(Command.FOCUS_LINK) }
+                    Item("Search", enabled = onList, shortcut = key(Key.F)) { commands.tryEmit(Command.FOCUS_SEARCH) }
                     Item("Open .torrent…", enabled = onList, shortcut = key(Key.O)) { commands.tryEmit(Command.OPEN_TORRENT) }
                     Item("Settings…", enabled = onList, shortcut = key(Key.Comma)) { commands.tryEmit(Command.SETTINGS) }
                     if (!mac) {
@@ -135,6 +136,7 @@ fun main() {
                         is Screen.Main -> {
                             MainScreen(
                                 screen.store,
+                                screen.search,
                                 model.settings,
                                 screen.fileUrl,
                                 commands = commands,

@@ -47,6 +47,16 @@ object Glyphs {
             close()
         }
 
+    /** A magnifying glass: search. */
+    val Search =
+        glyph("search") {
+            moveTo(7f, 3f)
+            arcTo(4f, 4f, 0f, false, true, 7f, 11f)
+            arcTo(4f, 4f, 0f, false, true, 7f, 3f)
+            moveTo(10f, 10f)
+            lineTo(13.5f, 13.5f)
+        }
+
     /** A page with a downward arrow: open a `.torrent`. */
     val Torrent =
         glyph("torrent") {

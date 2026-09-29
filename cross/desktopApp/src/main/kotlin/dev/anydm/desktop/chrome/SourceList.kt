@@ -85,6 +85,9 @@ fun SourceList(
     onClearFinished: () -> Unit,
     width: Dp,
     onWidth: (Dp) -> Unit,
+    showSearch: Boolean = false,
+    searchSelected: Boolean = false,
+    onSearch: () -> Unit = {},
 ) {
     val t = LocalTokens.current
     val density = LocalDensity.current
@@ -99,12 +102,24 @@ fun SourceList(
         ) {
             Heading("Downloads")
             items.forEach { item ->
-                val row = @Composable { SourceRow(item.label, item.count?.let(::count), item.filter == selected) { onSelect(item.filter) } }
+                val row =
+                    @Composable {
+                        SourceRow(
+                            item.label,
+                            item.count?.let(::count),
+                            item.filter == selected && !searchSelected,
+                        ) { onSelect(item.filter) }
+                    }
                 if (item.filter == ListFilter.COMPLETED) {
                     ContextMenuArea(items = { listOf(ContextMenuItem("Clear finished…", onClearFinished)) }) { row() }
                 } else {
                     row()
                 }
+            }
+            if (showSearch) {
+                Spacer(Modifier.size(10.dp))
+                Heading("Discover")
+                SourceRow("Search", null, searchSelected, onSearch)
             }
             Spacer(Modifier.size(10.dp))
             Heading("Server")
