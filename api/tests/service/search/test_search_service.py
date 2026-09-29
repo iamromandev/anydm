@@ -22,9 +22,10 @@ TORRENT = b"d8:announce3:urle"
 def _service(
     handler: Callable[[httpx.Request], Any],
     indexers: list[Indexer] | None = None,
+    clock: Callable[[], float] = lambda: 0.0,
 ) -> SearchService:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return SearchService(indexers if indexers is not None else [PROWLARR, JACKETT], client, timeout_s=1, limit=100)
+    return SearchService(indexers if indexers is not None else [PROWLARR, JACKETT], client, timeout_s=1, limit=100, clock=clock)
 
 
 def _fixture(name: str) -> httpx.Response:
@@ -171,3 +172,135 @@ async def test_a_fetch_that_goes_wrong_says_how(link: str, respond: Callable[[ht
     with pytest.raises(Error) as caught:
         await service.fetch_torrent(link)
     assert caught.value.type == kind
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _feed(*items: tuple[str, str]) -> httpx.Response:
+    """A Torznab answer of (title, pubDate) items, each with a magnet."""
+    body = "".join(
+        f"<item><title>{t}</title><pubDate>{d}</pubDate>"
+        f'<torznab:attr name="magneturl" value="magnet:?xt=urn:btih:{i:040x}"/></item>'
+        for i, (t, d) in enumerate(items, start=1)
+    )
+    xml = f'<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel>{body}</channel></rss>'
+    return httpx.Response(200, content=xml.encode())
+
+
+@pytest.mark.asyncio
+async def test_browse_asks_without_q_and_lists_the_newest_first() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "q" not in request.url.params
+        assert request.url.params["cat"] == "5000"
+        return _feed(("Older", "Mon, 21 Sep 2026 10:00:00 +0000"), ("Newer", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    answer = await _service(handler, [PROWLARR]).search("", "tv")
+
+    assert [r.title for r in answer.results] == ["Newer", "Older"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_browse_within_five_minutes_does_not_reach_the_indexers() -> None:
+    clock, asked = _Clock(), []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    service = _service(handler, [PROWLARR], clock)
+    first = await service.search("", "tv")
+    clock.now = 299
+    second = await service.search("", "tv")
+
+    assert len(asked) == 1
+    assert second == first
+
+
+@pytest.mark.asyncio
+async def test_after_five_minutes_browse_asks_again() -> None:
+    clock, asked = _Clock(), []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    service = _service(handler, [PROWLARR], clock)
+    await service.search("", "tv")
+    clock.now = 300
+    await service.search("", "tv")
+
+    assert len(asked) == 2
+
+
+@pytest.mark.asyncio
+async def test_categories_are_cached_apart() -> None:
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["cat"])
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    service = _service(handler, [PROWLARR])
+    await service.search("", "tv")
+    await service.search("", "movies")
+    await service.search("", "tv")
+
+    assert asked == ["5000", "2000"]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_with_an_indexer_error_is_not_cached() -> None:
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.host)
+        if request.url.host == "jackett":
+            return httpx.Response(503)
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    service = _service(handler)
+    first = await service.search("", "tv")
+    await service.search("", "tv")
+
+    assert [e.indexer for e in first.errors] == ["jackett-all"]
+    assert asked.count("prowlarr") == 2
+
+
+@pytest.mark.asyncio
+async def test_fresh_skips_the_cache_and_replaces_the_entry() -> None:
+    feeds = iter([_feed(("First", "Mon, 28 Sep 2026 10:00:00 +0000")), _feed(("Second", "Mon, 28 Sep 2026 11:00:00 +0000"))])
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(1)
+        return next(feeds)
+
+    service = _service(handler, [PROWLARR])
+    await service.search("", "tv")
+    refreshed = await service.search("", "tv", fresh=True)
+    again = await service.search("", "tv")
+
+    assert len(asked) == 2
+    assert [r.title for r in refreshed.results] == ["Second"]
+    assert again == refreshed
+
+
+@pytest.mark.asyncio
+async def test_a_search_with_a_query_is_never_cached() -> None:
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["q"])
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    service = _service(handler, [PROWLARR])
+    await service.search("bunny", "all")
+    await service.search("bunny", "all")
+
+    assert asked == ["bunny", "bunny"]
