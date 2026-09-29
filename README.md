@@ -112,7 +112,7 @@ cp api/.env.example api/.env
 | `TORRENT_UPLOAD_LIMIT_BPS` | `0` | rqbit's total upload cap, seeding included. Same rules |
 | `SEARCH_INDEXERS` | empty | Torznab indexers to search, as `name=url` pairs separated by commas (Prowlarr: `http://prowlarr:9696/<id>/api`; Jackett: `…/api/v2.0/indexers/<id>/results/torznab`). Empty means no indexers; the built-in sources still run |
 | `SEARCH_INDEXER_KEYS` | empty | Their API keys, as `name=key` pairs by the same names. Never logged |
-| `SEARCH_SOURCES` | `apibay` | Built-in public sources to search, comma separated. Empty turns them off; Torznab indexers keep working either way |
+| `SEARCH_SOURCES` | `apibay,nyaa,eztv` | Built-in public sources to search, comma separated. Empty turns them off; Torznab indexers keep working either way |
 | `SEARCH_SOURCE_URLS` | empty | `name=url` pairs overriding a built-in's base URL, for when a site moves |
 | `SEARCH_TIMEOUT_S` | `15` | How long each indexer has to answer a search |
 | `SEARCH_LIMIT` | `100` | Results a search answers with, after merging duplicates |

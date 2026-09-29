@@ -29,6 +29,12 @@ def test_dates_are_rfc_2822_or_nothing() -> None:
     assert to_date(None) is None
 
 
+def test_a_date_with_no_zone_is_utc_not_the_servers_local_time() -> None:
+    # "-0000" is RFC 2822 for UTC with no local offset; Python parses it as a naive datetime,
+    # which would sort as local time and push Nyaa's posts hours down a newest-first list.
+    assert to_date("Sat, 12 Sep 2026 15:45:00 -0000") == datetime(2026, 9, 12, 15, 45, tzinfo=UTC)
+
+
 def _client(status: int) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(status, content=b"ok")))
 
