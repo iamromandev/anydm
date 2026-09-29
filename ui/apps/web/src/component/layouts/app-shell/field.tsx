@@ -1,5 +1,5 @@
 import type { AddType } from "@/lib/api/site";
-import { component$, $, useSignal } from "@qwik.dev/core";
+import { component$, $, useSignal, useStore } from "@qwik.dev/core";
 import {
     aggregateStats,
     canPause,
@@ -16,6 +16,12 @@ import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
 import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
+import {
+    SearchView,
+    emptySearch,
+    type SearchState,
+} from "@/component/features/search-view";
+import type { AddInitial } from "@/lib/api/search";
 import type { PlayableFile } from "@/lib/media";
 import type { PositionView } from "@/lib/api";
 import { HeroInput } from "@/component/features/hero-input";
@@ -140,6 +146,13 @@ export interface AppShellProps {
     playerNextItemTitle: string;
     onNextItem: () => void;
     onPreviousItem: () => void;
+    /** Search (the magnet hub): shown when the API has indexers. */
+    searchEnabled: boolean;
+    searchIndexerCount: number;
+    /** What the add dialog opens on; a new id remounts it. */
+    addInitial: (AddInitial & { id: number }) | null;
+    onAddFound: (initial: AddInitial) => void;
+    onNotify: (tone: "error" | "info", message: string) => void;
 }
 
 export const AppShell = component$<AppShellProps>(
@@ -217,6 +230,11 @@ export const AppShell = component$<AppShellProps>(
         playerNextItemTitle,
         onNextItem,
         onPreviousItem,
+        searchEnabled,
+        searchIndexerCount,
+        addInitial,
+        onAddFound,
+        onNotify,
     }) => {
         const stats = aggregateStats(tasks);
 
@@ -224,6 +242,11 @@ export const AppShell = component$<AppShellProps>(
             add box: `.app-shell-content` has `contain: layout`, which would
             pin a fixed overlay to the content column. */
         const picker = useSignal<PickerTarget | null>(null);
+
+        /** The list, or Search. Held here with Search's own state, so the
+            query and results survive switching away and back. */
+        const view = useSignal<"list" | "search">("list");
+        const search = useStore<SearchState>(emptySearch());
 
         // Counted by the API when it can be. Falling back to the loaded rows
         // keeps the numbers plausible before the first summary arrives, but
@@ -264,7 +287,17 @@ export const AppShell = component$<AppShellProps>(
                 <div class="app-shell-main">
                     <Sidebar
                         filter={filter as SidebarFilter}
-                        onFilterChange={onFilterChange}
+                        onFilterChange={$((f: SidebarFilter) => {
+                            view.value = "list";
+                            onFilterChange(f);
+                        })}
+                        search={{
+                            enabled: searchEnabled,
+                            active: view.value === "search",
+                            onOpen: $(() => {
+                                view.value = "search";
+                            }),
+                        }}
                         counts={counts}
                         bulk={bulk}
                         onPauseAll={$(() => onBulk("pause_all"))}
@@ -276,64 +309,80 @@ export const AppShell = component$<AppShellProps>(
                     />
 
                     <div class="app-shell-content">
-                        <HeroInput
-                            defaultPreset={prefs.defaultPreset}
-                            onSubmit={$(
-                                async (input: {
-                                    type: AddType;
-                                    value: string;
-                                    preset?: string;
-                                }) => {
-                                    await onAdd(input);
-                                },
-                            )}
-                            onPlay={$((value: string, kind: string) =>
-                                onPlayClick(value, kind),
-                            )}
-                            onChoose={$((target: PickerTarget) => {
-                                picker.value = target;
-                            })}
-                        />
-
-                        <section class="app-shell-list" aria-label="Downloads">
-                            <div class="app-shell-list-header">
-                                <h2 class="app-shell-list-title">
-                                    {filter === "all" && "Recent downloads"}
-                                    {filter === "downloading" &&
-                                        "Active downloads"}
-                                    {filter === "seeding" && "Seeding"}
-                                    {filter === "completed" && "Completed"}
-                                </h2>
-                                {searchQuery && (
-                                    <span class="app-shell-search-hint">
-                                        Searching for “{searchQuery}”
-                                    </span>
-                                )}
-                            </div>
-
-                            <TorrentList
-                                tasks={tasks}
-                                now={now}
-                                hasMore={page < totalPages}
-                                loadingMore={loadingMore}
-                                onLoadMore={onLoadMore}
-                                filter={filter}
-                                searchQuery={searchQuery}
-                                onPause={onPause}
-                                onResume={onResume}
-                                onDownloadFile={onDownloadFile}
-                                onPlay={onPlay}
-                                onRemove={onRemove}
-                                onStopSeeding={onStopSeeding}
-                                entries={entries}
-                                onToggleEntries={onToggleEntries}
-                                onLoadMoreEntries={onLoadMoreEntries}
-                                onPauseVideo={onPauseVideo}
-                                onResumeVideo={onResumeVideo}
-                                onRemoveVideo={onRemoveVideo}
-                                onPlayGroup={onPlayGroup}
+                        {view.value === "search" && searchEnabled ? (
+                            <SearchView
+                                state={search}
+                                indexerCount={searchIndexerCount}
+                                onAdd={onAddFound}
+                                onNotify={onNotify}
                             />
-                        </section>
+                        ) : (
+                            <>
+                                <HeroInput
+                                    defaultPreset={prefs.defaultPreset}
+                                    onSubmit={$(
+                                        async (input: {
+                                            type: AddType;
+                                            value: string;
+                                            preset?: string;
+                                        }) => {
+                                            await onAdd(input);
+                                        },
+                                    )}
+                                    onPlay={$((value: string, kind: string) =>
+                                        onPlayClick(value, kind),
+                                    )}
+                                    onChoose={$((target: PickerTarget) => {
+                                        picker.value = target;
+                                    })}
+                                />
+
+                                <section
+                                    class="app-shell-list"
+                                    aria-label="Downloads"
+                                >
+                                    <div class="app-shell-list-header">
+                                        <h2 class="app-shell-list-title">
+                                            {filter === "all" &&
+                                                "Recent downloads"}
+                                            {filter === "downloading" &&
+                                                "Active downloads"}
+                                            {filter === "seeding" && "Seeding"}
+                                            {filter === "completed" &&
+                                                "Completed"}
+                                        </h2>
+                                        {searchQuery && (
+                                            <span class="app-shell-search-hint">
+                                                Searching for “{searchQuery}”
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <TorrentList
+                                        tasks={tasks}
+                                        now={now}
+                                        hasMore={page < totalPages}
+                                        loadingMore={loadingMore}
+                                        onLoadMore={onLoadMore}
+                                        filter={filter}
+                                        searchQuery={searchQuery}
+                                        onPause={onPause}
+                                        onResume={onResume}
+                                        onDownloadFile={onDownloadFile}
+                                        onPlay={onPlay}
+                                        onRemove={onRemove}
+                                        onStopSeeding={onStopSeeding}
+                                        entries={entries}
+                                        onToggleEntries={onToggleEntries}
+                                        onLoadMoreEntries={onLoadMoreEntries}
+                                        onPauseVideo={onPauseVideo}
+                                        onResumeVideo={onResumeVideo}
+                                        onRemoveVideo={onRemoveVideo}
+                                        onPlayGroup={onPlayGroup}
+                                    />
+                                </section>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -373,21 +422,6 @@ export const AppShell = component$<AppShellProps>(
                     onConfirm={onRemoveConfirm}
                 />
 
-                <AddTorrentModal
-                    open={addModalOpen}
-                    onClose={onAddModalClose}
-                    onAdd={onAdd}
-                    onResolve={onResolve}
-                    onPlay={$(
-                        (
-                            value: string,
-                            kind: string,
-                            fileIndex?: number | null,
-                            files?: PlayableFile[],
-                        ) => onPlayClick(value, kind, fileIndex, files),
-                    )}
-                />
-
                 <PlayerModal
                     open={playerModalOpen}
                     url={playerUrl}
@@ -406,6 +440,26 @@ export const AppShell = component$<AppShellProps>(
                     onNextItem={onNextItem}
                     onPreviousItem={onPreviousItem}
                     onClose={onPlayerModalClose}
+                />
+
+                {/* After the player: remounted by key for each search result,
+                    and a remounted component placed before the player broke
+                    it (Qwik 2 beta.43, see the picker below). */}
+                <AddTorrentModal
+                    key={addInitial ? `found-${addInitial.id}` : "blank"}
+                    initial={addInitial}
+                    open={addModalOpen}
+                    onClose={onAddModalClose}
+                    onAdd={onAdd}
+                    onResolve={onResolve}
+                    onPlay={$(
+                        (
+                            value: string,
+                            kind: string,
+                            fileIndex?: number | null,
+                            files?: PlayableFile[],
+                        ) => onPlayClick(value, kind, fileIndex, files),
+                    )}
                 />
 
                 {/* Last, after the player. Mounted before it while the player

@@ -12,17 +12,41 @@
  * Carries the service's own code so a caller can tell a rejected action from
  * an unreachable service without matching on message text.
  */
+export type ApiErrorDetail = { subject?: string; description?: string };
+
 export class ApiError extends Error {
     readonly code?: number | string;
     /** The service's error type, such as `unsupported_url`, when it sent one. */
     readonly type?: string;
+    /** Each cause the service listed, such as every indexer a search failed on. */
+    readonly details?: ApiErrorDetail[];
 
-    constructor(message: string, code?: number | string, type?: string) {
+    constructor(
+        message: string,
+        code?: number | string,
+        type?: string,
+        details?: ApiErrorDetail[],
+    ) {
         super(message);
         this.name = "ApiError";
         this.code = code;
         this.type = type;
+        this.details = details;
     }
+}
+
+function readDetails(raw: unknown): ApiErrorDetail[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    return raw
+        .filter(
+            (d): d is Record<string, unknown> =>
+                d !== null && typeof d === "object",
+        )
+        .map((d) => ({
+            subject: typeof d.subject === "string" ? d.subject : undefined,
+            description:
+                typeof d.description === "string" ? d.description : undefined,
+        }));
 }
 
 export function unwrap<T>(payload: unknown): T {
@@ -40,6 +64,7 @@ export function unwrap<T>(payload: unknown): T {
             (body.message as string) || "Request failed",
             body.code as number | string | undefined,
             typeof body.type === "string" ? body.type : undefined,
+            readDetails(body.details),
         );
     }
 

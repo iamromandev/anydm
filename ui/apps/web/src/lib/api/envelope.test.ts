@@ -77,4 +77,36 @@ describe("the error unwrap throws", () => {
             expect((error as ApiError).code).toBeUndefined();
         }
     });
+
+    it("keeps the envelope's details, so a caller can list each cause", () => {
+        try {
+            unwrap({
+                status: "error",
+                code: 502,
+                type: "search_failed",
+                message: "No indexer answered the search",
+                details: [
+                    {
+                        subject: "prowlarr-1",
+                        description: "timed out after 15 s",
+                    },
+                    {
+                        subject: "jackett-all",
+                        description: "the indexer refused the key",
+                    },
+                ],
+            });
+            throw new Error("unwrap should have thrown");
+        } catch (error) {
+            expect(error).toBeInstanceOf(ApiError);
+            expect((error as ApiError).type).toBe("search_failed");
+            expect((error as ApiError).details).toEqual([
+                { subject: "prowlarr-1", description: "timed out after 15 s" },
+                {
+                    subject: "jackett-all",
+                    description: "the indexer refused the key",
+                },
+            ]);
+        }
+    });
 });

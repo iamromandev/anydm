@@ -1,5 +1,5 @@
 import type { AddType } from "@/lib/api/site";
-import { component$, $, useStore } from "@qwik.dev/core";
+import { component$, $, useStore, useVisibleTask$ } from "@qwik.dev/core";
 import {
     LuMagnet,
     LuX,
@@ -8,11 +8,14 @@ import {
     LuPlay,
 } from "@/component/core/icons";
 import type { ResolvedTorrent } from "@/lib/api";
+import type { AddInitial } from "@/lib/api/search";
 import { hasMediaExtension, mediaFiles, type PlayableFile } from "@/lib/media";
 import "./field.css";
 
 export interface AddTorrentModalProps {
     open: boolean;
+    /** A search result to start from: filled in, and resolved on opening. */
+    initial?: AddInitial | null;
     onClose: () => void;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
     /**
@@ -52,10 +55,11 @@ function formatBytes(bytes: number): string {
 }
 
 export const AddTorrentModal = component$<AddTorrentModalProps>(
-    ({ open, onClose, onResolve, onPlay, onAdd }) => {
+    ({ open, initial, onClose, onResolve, onPlay, onAdd }) => {
         const store = useStore({
-            inputType: "magnet" as "magnet" | "file" | "url",
-            inputValue: "" as string,
+            inputType: (initial?.type ?? "magnet") as "magnet" | "file" | "url",
+            inputValue: (initial?.value ?? "") as string,
+            autoResolved: false,
             inputPreset: "best" as
                 "best" | "2160" | "1440" | "1080" | "720" | "480" | "mp3",
             isAdding: false,
@@ -87,6 +91,18 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                 store.isResolving = false;
             }
         });
+
+        // A search result opens the dialog already filled in. The shell remounts
+        // it with a new key for each result, so this reads `initial` once, on
+        // mount; the guard stops a spurious re-run from resolving twice.
+        useVisibleTask$(
+            () => {
+                if (!open || !initial || store.autoResolved) return;
+                store.autoResolved = true;
+                void handleResolve();
+            },
+            { strategy: "document-ready" },
+        );
 
         const toggleFile = $((index: number) => {
             store.selected = store.selected.includes(index)
