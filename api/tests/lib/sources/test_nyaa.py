@@ -1,6 +1,6 @@
 """Nyaa's RSS: the nyaa: namespace, sizes in KiB to TiB, magnets built from the info hash."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -18,7 +18,7 @@ def test_items_become_results_with_a_magnet_and_no_link() -> None:
     assert (first.seeders, first.leechers, first.category) == (32, 4, "tv")
     assert first.size == 13314398617
     assert first.info_hash == "ef3e7ad1b12bdd9fc341691d8866cd1fa8374a4b"
-    assert first.published == datetime(2026, 9, 12, 15, 45)
+    assert first.published == datetime(2026, 9, 12, 15, 45, tzinfo=UTC)
     assert first.link is None and first.indexers == ("nyaa",)
     assert first.magnet is not None and first.magnet.startswith("magnet:?xt=urn:btih:ef3e7ad1b12bdd9fc341691d8866cd1fa8374a4b&dn=%5BErai-raws%5D")
 

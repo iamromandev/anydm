@@ -1,7 +1,7 @@
 """What a source is, and what every source shares: one result type, one error, magnets, and asking over HTTP."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Protocol
 from urllib.parse import quote
@@ -73,12 +73,14 @@ def to_count(value: str | int | float | None) -> int | None:
 
 
 def to_date(value: str | None) -> datetime | None:
+    """An RFC 2822 date, always zone-aware: one with no zone ("-0000") is UTC."""
     if not value:
         return None
     try:
-        return parsedate_to_datetime(value)
+        parsed = parsedate_to_datetime(value)
     except (TypeError, ValueError):
         return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 async def get(client: httpx.AsyncClient, url: str, timeout_s: float, refused: str = "the indexer refused the key") -> httpx.Response:
