@@ -3,11 +3,13 @@
 import httpx
 import pytest
 from src.lib.sources.apibay import Apibay
+from src.lib.sources.eztv import Eztv
+from src.lib.sources.nyaa import Nyaa
 
 pytestmark = [pytest.mark.network, pytest.mark.asyncio]
 
 
-async def _fetch(source: Apibay, q: str) -> None:
+async def _fetch(source: Apibay | Nyaa | Eztv, q: str) -> None:
     async with httpx.AsyncClient(headers={"User-Agent": "anydm"}, follow_redirects=True) as client:
         results = await source.fetch(client, q, "all", 20)
     assert results, f"{source.name} answered nothing for {q!r}"
@@ -20,3 +22,15 @@ async def test_apibay_search_answers_and_parses() -> None:
 
 async def test_apibay_latest_answers_and_parses() -> None:
     await _fetch(Apibay(), "")
+
+
+async def test_nyaa_search_answers_and_parses() -> None:
+    await _fetch(Nyaa(), "frieren")
+
+
+async def test_nyaa_latest_answers_and_parses() -> None:
+    await _fetch(Nyaa(), "")
+
+
+async def test_eztv_latest_answers_and_parses() -> None:
+    await _fetch(Eztv(), "")

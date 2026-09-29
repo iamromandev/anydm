@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from src.lib.sources.apibay import DEFAULT_URL as APIBAY_URL
 from src.lib.sources.apibay import Apibay
+from src.lib.sources.eztv import DEFAULT_URL as EZTV_URL
+from src.lib.sources.eztv import Eztv
 from src.lib.sources.nyaa import DEFAULT_URL as NYAA_URL
 from src.lib.sources.nyaa import Nyaa
 from src.lib.sources.source import Source
@@ -14,9 +16,10 @@ from src.lib.torznab.torznab import parse_pairs
 BUILTINS: dict[str, tuple[str, Callable[[str], Source]]] = {
     "apibay": (APIBAY_URL, lambda url: Apibay(base=url)),
     "nyaa": (NYAA_URL, lambda url: Nyaa(base=url)),
+    "eztv": (EZTV_URL, lambda url: Eztv(base=url)),
 }
 
-DEFAULT_SOURCES = "apibay,nyaa"
+DEFAULT_SOURCES = "apibay,nyaa,eztv"
 
 
 def parse_sources(names: str, urls: str, taken: Collection[str] = ()) -> list[Source]:

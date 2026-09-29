@@ -2,6 +2,7 @@
 
 import pytest
 from src.lib.sources.apibay import Apibay
+from src.lib.sources.eztv import Eztv
 from src.lib.sources.nyaa import Nyaa
 from src.lib.sources.registry import DEFAULT_SOURCES, parse_sources
 
@@ -9,7 +10,7 @@ from src.lib.sources.registry import DEFAULT_SOURCES, parse_sources
 def test_the_default_runs_the_shipped_sources_at_their_own_urls() -> None:
     sources = parse_sources(DEFAULT_SOURCES, "")
 
-    assert sources == [Apibay(base="https://apibay.org"), Nyaa(base="https://nyaa.si")]
+    assert sources == [Apibay(base="https://apibay.org"), Nyaa(base="https://nyaa.si"), Eztv(base="https://eztvx.to")]
 
 
 def test_empty_turns_the_built_ins_off() -> None:

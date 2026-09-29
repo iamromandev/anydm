@@ -124,7 +124,7 @@ def test_search_indexers_come_from_env_and_a_bad_one_stops_startup() -> None:
 
 
 def test_built_in_sources_default_on_and_a_mistake_stops_startup() -> None:
-    assert [s.name for s in _settings().builtin_sources] == ["apibay", "nyaa"]
+    assert [s.name for s in _settings().builtin_sources] == ["apibay", "nyaa", "eztv"]
     assert _settings(search_sources="").builtin_sources == []
     with pytest.raises(ValidationError, match="SEARCH_SOURCES"):
         _settings(search_sources="nope")
