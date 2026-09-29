@@ -76,6 +76,14 @@ class ErrorType(StrEnum):
     UNSUPPORTED_URL = "unsupported_url"
     #: A live stream: anydm downloads and plays recordings only.
     LIVE_NOT_SUPPORTED = "live_not_supported"
+    #: No SEARCH_INDEXERS configured: the web hides Search.
+    SEARCH_DISABLED = "search_disabled"
+    #: Every indexer failed a search; details name each and why.
+    SEARCH_FAILED = "search_failed"
+    #: A link to fetch that isn't on a configured indexer's scheme, host and port.
+    LINK_NOT_FROM_INDEXER = "link_not_from_indexer"
+    #: What an indexer handed back isn't a .torrent file.
+    NOT_A_TORRENT = "not_a_torrent"
 
     # External/3rd-party issues
     EXTERNAL_API_ERROR = "external_api_error"
