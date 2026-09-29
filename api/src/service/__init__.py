@@ -55,7 +55,7 @@ def get_search_service() -> SearchService:
     settings = get_settings()
     # One client for the process: indexers are few and asked often, so connections are worth keeping.
     return SearchService(
-        [TorznabSource(i) for i in settings.indexers],
+        [TorznabSource(i) for i in settings.indexers] + settings.builtin_sources,
         httpx.AsyncClient(headers={"User-Agent": "anydm"}),
         timeout_s=settings.search_timeout_s,
         limit=settings.search_limit,
