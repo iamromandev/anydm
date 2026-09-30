@@ -5,10 +5,11 @@
     width: 100%;
 }
 
+/* Rows touch: each brings its own divider, and this is the one above the first. */
 .torrent-list-items {
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
+    border-top: 1px solid var(--color-border);
 }
 
 .torrent-list-item {
