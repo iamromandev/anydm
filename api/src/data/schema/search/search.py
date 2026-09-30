@@ -35,6 +35,8 @@ class SearchSchema(BaseSchema):
 class SourcesSchema(BaseSchema):
     enabled: bool
     indexers: list[str]
+    #: Always on: the site client is always there.
+    youtube: bool = True
 
 
 class SearchTorrentRequest(BaseSchema):

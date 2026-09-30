@@ -543,6 +543,9 @@ def _ytdlp_search(query: str, limit: int) -> list[dict[str, Any]]:
         "socket_timeout": 20,
         "logger": _Log(),
         "extract_flat": True,
+        # A results page carries no upload date. This reads one from the
+        # "3 weeks ago" beside each video, which costs no extra request.
+        "extractor_args": {"youtubetab": {"approximate_date": [""]}},
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         result = ydl.extract_info(f"ytsearch{limit}:{query}", download=False, process=False)

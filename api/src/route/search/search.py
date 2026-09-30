@@ -14,9 +14,17 @@ from src.data.schema.search import (
     SearchSchema,
     SearchTorrentRequest,
     SearchTorrentSchema,
+    SearchVideosSchema,
     SourcesSchema,
 )
-from src.service import SearchService, SourceSettingsService, get_search_service, get_source_settings_service
+from src.service import (
+    SearchService,
+    SourceSettingsService,
+    VideoSearchService,
+    get_search_service,
+    get_source_settings_service,
+    get_video_search_service,
+)
 
 router = APIRouter()
 
@@ -43,6 +51,19 @@ async def search(
         # FastAPI's own 422, for a query only trimming shows to be too short or too long.
         raise RequestValidationError([{"loc": ("query", "q"), "msg": "q must be 2 to 200 characters", "type": "value_error"}])
     return Success.ok(data=await search_service.search(query, category, fresh)).to_resp()
+
+
+@router.get(path="/search/youtube", response_model=Success[SearchVideosSchema])
+async def search_youtube(
+    video_search_service: Annotated[VideoSearchService, Depends(get_video_search_service)],
+    q: Annotated[str, Query(max_length=400, description="What to look for, 2 to 200 characters once trimmed")],
+    limit: Annotated[int, Query(ge=1, le=30, description="How many videos to ask for")] = 20,
+) -> Response:
+    """YouTube's videos for some words; Add sends a result's ``url`` to the normal download flow."""
+    query = q.strip()
+    if not 2 <= len(query) <= 200:
+        raise RequestValidationError([{"loc": ("query", "q"), "msg": "q must be 2 to 200 characters", "type": "value_error"}])
+    return Success.ok(data=await video_search_service.search(query, limit)).to_resp()
 
 
 @router.post(path="/search/torrent", response_model=Success[SearchTorrentSchema])
