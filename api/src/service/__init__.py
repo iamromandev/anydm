@@ -34,6 +34,7 @@ from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService
 from src.service.search import SearchService as SearchService
 from src.service.search.source_settings import SourceSettingsService as SourceSettingsService
+from src.service.search.video_service import VideoSearchService as VideoSearchService
 from src.service.settings import SettingsService as SettingsService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
@@ -78,6 +79,11 @@ def get_search_service() -> SearchService:
         limit=settings.search_limit,
         builtins=get_source_settings_service().enabled_sources,
     )
+
+
+@lru_cache
+def get_video_search_service() -> VideoSearchService:
+    return VideoSearchService(get_site_client())
 
 
 @lru_cache

@@ -81,3 +81,19 @@ class BuiltinTestSchema(BaseSchema):
     count: int | None = None
     took_ms: int
     message: str
+
+
+class VideoSchema(BaseSchema):
+    title: str
+    #: The watch page; what Add sends to the download flow.
+    url: str
+    channel: str | None = None
+    duration: int | None = None
+    thumbnail: str | None = None
+    views: int | None = None
+    published: str | None = None
+
+
+class SearchVideosSchema(BaseSchema):
+    results: list[VideoSchema]
+    took_ms: int
