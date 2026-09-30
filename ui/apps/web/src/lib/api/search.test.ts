@@ -4,7 +4,9 @@ import {
     normalizeFetched,
     normalizeFound,
     normalizeSearch,
+    normalizeVideos,
     searchParams,
+    videoParams,
 } from "./search";
 
 describe("searchParams", () => {
@@ -124,5 +126,47 @@ describe("normalizeFetched", () => {
         expect(() => normalizeFetched({})).toThrow(
             "The indexer sent nothing to add",
         );
+    });
+});
+
+describe("videoParams", () => {
+    it("sends the trimmed query", () => {
+        expect(videoParams("  big buck bunny ")).toBe("q=big+buck+bunny");
+    });
+});
+
+describe("normalizeVideos", () => {
+    it("maps snake_case, and a field the API left out is null", () => {
+        const answer = normalizeVideos({
+            results: [
+                {
+                    title: "Big Buck Bunny",
+                    url: "https://www.youtube.com/watch?v=a",
+                    channel: "Blender",
+                    duration: 596,
+                    views: 62000000,
+                },
+            ],
+            took_ms: 3200,
+        });
+
+        expect(answer).toEqual({
+            results: [
+                {
+                    title: "Big Buck Bunny",
+                    url: "https://www.youtube.com/watch?v=a",
+                    channel: "Blender",
+                    durationS: 596,
+                    thumbnail: null,
+                    views: 62000000,
+                    published: null,
+                },
+            ],
+            tookMs: 3200,
+        });
+    });
+
+    it("survives an answer with nothing in it", () => {
+        expect(normalizeVideos({})).toEqual({ results: [], tookMs: 0 });
     });
 });

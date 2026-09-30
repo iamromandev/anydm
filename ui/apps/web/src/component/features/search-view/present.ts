@@ -6,6 +6,7 @@ import type {
     FoundTorrent,
     IndexerError,
     SearchCategory,
+    VideoResult,
 } from "@/lib/api/search";
 
 export const CATEGORY_OPTIONS: Array<{ id: SearchCategory; label: string }> = [
@@ -219,4 +220,55 @@ export function emptyText(mode: SearchMode, searched: string): string {
     return mode === "browse"
         ? "Nothing recent from these indexers. Check that a source is turned on in Settings."
         : `Nothing for “${searched}”. Try fewer words, or turn on more sources in Settings.`;
+}
+
+/** `m:ss`, or `h:mm:ss` from an hour; "" when the site gave none (a live stream). */
+export function formatDuration(seconds: number | null): string {
+    if (seconds === null) return "";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+export function formatViews(views: number | null): string {
+    if (views === null) return "";
+    if (views === 1) return "1 view";
+    if (views < 1000) return `${views} views`;
+    const [
+        value,
+        unit,
+    ] =
+        views >= 1_000_000
+            ? [
+                  views / 1_000_000,
+                  "M",
+              ]
+            : [
+                  views / 1000,
+                  "K",
+              ];
+    const text = value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+    return `${text.replace(/\.0$/, "")}${unit} views`;
+}
+
+/** What follows the channel in a video row; unknown values are left out. */
+export function videoFacts(video: VideoResult, now: number): string[] {
+    const facts: string[] = [];
+    const views = formatViews(video.views);
+    if (views) facts.push(views);
+    if (video.published) facts.push(formatAge(video.published, now));
+    return facts;
+}
+
+/** Two or more characters, and nothing already running. */
+export function canSearchVideos(q: string, busy: boolean): boolean {
+    return !busy && q.trim().length >= 2;
+}
+
+export const VIDEO_EMPTY_IDLE = "Search YouTube for a video.";
+
+export function videoEmptyText(searched: string): string {
+    return `Nothing for “${searched}”. Try fewer words.`;
 }

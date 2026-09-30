@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { ApiError } from "@/lib/api/envelope";
 
-import { emptySearch, failureOf } from "./state";
+import { emptySearch, failureOf, videoFailureOf } from "./state";
 
 describe("the Search view's state", () => {
     it("starts empty, browsing, newest first", () => {
@@ -40,5 +40,31 @@ describe("the Search view's state", () => {
             message: "Search failed",
             causes: [],
         });
+    });
+});
+
+describe("the YouTube part of the state", () => {
+    it("starts on torrents, with nothing asked of YouTube", () => {
+        const state = emptySearch();
+        expect(state.source).toBe("torrents");
+        expect(state.video).toEqual({
+            q: "",
+            busy: false,
+            searched: "",
+            answer: null,
+            failure: null,
+            adding: "",
+        });
+    });
+
+    it("gives an API error's own message, and a plain one for anything else", () => {
+        expect(
+            videoFailureOf(
+                new ApiError("Extraction failed: HTTP Error 429", 502),
+            ),
+        ).toBe("Extraction failed: HTTP Error 429");
+        expect(videoFailureOf(new Error("boom"))).toBe(
+            "Couldn't search YouTube",
+        );
     });
 });
