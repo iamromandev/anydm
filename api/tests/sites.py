@@ -15,7 +15,7 @@ from typing import Any
 from src.core.error import Error
 from src.data.type import TaskStatus
 from src.lib.site import error as site_error
-from src.lib.site.client import FormatProgress, PlaylistEntry, PlaylistInfo, Resolved, SiteInfo
+from src.lib.site.client import FormatProgress, PlaylistEntry, PlaylistInfo, Resolved, SiteInfo, VideoHit
 from src.lib.site.format import Format
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ytdlp"
@@ -59,6 +59,8 @@ class FakeSiteClient:
         playlist: PlaylistInfo | None = None,
         listing: Sequence[PlaylistEntry] = (),
         list_fail: Error | None = None,
+        hits: Sequence[VideoHit] = (),
+        search_fail: Error | None = None,
     ) -> None:
         self.info = info
         self.fail = fail
@@ -67,6 +69,10 @@ class FakeSiteClient:
         #: What ``list_entries`` yields, and what it raises after.
         self.listing = list(listing)
         self.list_fail = list_fail
+        #: What ``search`` answers, and what it raises instead.
+        self.hits = list(hits)
+        self.search_fail = search_fail
+        self.searched: list[tuple[str, int]] = []
         self.listed: list[str] = []
         self.extracted: list[str] = []
         self.resolved: list[tuple[str, list[str]]] = []
@@ -94,6 +100,12 @@ class FakeSiteClient:
             yield entry
         if self.list_fail is not None:
             raise self.list_fail
+
+    def search(self, query: str, *, limit: int) -> list[VideoHit]:
+        self.searched.append((query, limit))
+        if self.search_fail is not None:
+            raise self.search_fail
+        return self.hits[:limit]
 
     async def open(self, url: str) -> tuple[SiteInfo, dict[str, Resolved]]:
         self.opened.append(url)

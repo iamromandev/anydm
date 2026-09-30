@@ -44,6 +44,9 @@ Download = Callable[[dict[str, Any], str], None]
 #: A blocking ``url -> entries`` call; yt-dlp's lazy generator in production, a list in tests.
 Entries = Callable[[str], Iterable[dict[str, Any]]]
 
+#: A blocking ``(query, limit) -> results`` call for YouTube's search; yt-dlp's in production, a list in tests.
+Search = Callable[[str, int], Iterable[dict[str, Any]]]
+
 _UNSUPPORTED_MARKERS = ("unsupported url", "is not a valid url")
 _MISSING_MARKERS = ("private", "unavailable", "removed", "deleted", "does not exist", "http error 404")
 _FORBIDDEN_MARKERS = (
@@ -122,6 +125,21 @@ class PlaylistEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class VideoHit:
+    """One video of a YouTube search, as far as the results page says."""
+
+    id: str
+    url: str
+    title: str
+    channel: str | None = None
+    duration: int | None = None
+    thumbnail: str | None = None
+    views: int | None = None
+    #: Seconds since the epoch. Often missing on a results page.
+    timestamp: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Resolved:
     """A fetchable URL for one format, and the headers its server expects."""
 
@@ -166,6 +184,10 @@ class SiteClient(Protocol):
         Numbered from 1 in the site's order, a repeated video dropped. Stops
         after ``limit``, or at the next entry once ``should_stop`` says so.
         """
+        ...
+
+    def search(self, query: str, *, limit: int) -> list[VideoHit]:
+        """YouTube's videos for ``query``, at most ``limit``. Blocking: run it in a thread."""
         ...
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
@@ -315,6 +337,35 @@ def _to_entry(raw: dict[str, Any], index: int) -> PlaylistEntry | None:
         thumbnail=_smallest_thumbnail(raw),
         timestamp=int(timestamp) if timestamp else None,
         available=raw.get("availability") not in _UNAVAILABLE and title not in _UNAVAILABLE_TITLES,
+    )
+
+
+def _thumbnail_near(raw: dict[str, Any], width: int = 320) -> str | None:
+    """The thumbnail nearest ``width``: a search row draws it about 150 px wide, at 2x."""
+    thumbnails = [t for t in raw.get("thumbnails") or [] if t.get("url")]
+    if not thumbnails:
+        return raw.get("thumbnail") or None
+    return str(min(thumbnails, key=lambda t: abs((t.get("width") or 0) - width))["url"])
+
+
+def _to_hit(raw: dict[str, Any]) -> VideoHit | None:
+    """A search result's raw entry, or None for one that can't be shown or added."""
+    video_id = raw.get("id")
+    title = raw.get("title")
+    if not video_id or not title:
+        return None
+    duration = raw.get("duration")
+    views = raw.get("view_count")
+    timestamp = raw.get("timestamp") or raw.get("release_timestamp")
+    return VideoHit(
+        id=str(video_id),
+        url=str(raw.get("url") or raw.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"),
+        title=str(title),
+        channel=raw.get("channel") or raw.get("uploader") or None,
+        duration=int(duration) if duration else None,
+        thumbnail=_thumbnail_near(raw),
+        views=int(views) if views is not None else None,
+        timestamp=int(timestamp) if timestamp else None,
     )
 
 
@@ -482,6 +533,22 @@ def _ytdlp_entries(url: str) -> Iterator[dict[str, Any]]:
         yield from result.get("entries") or []
 
 
+def _ytdlp_search(query: str, limit: int) -> list[dict[str, Any]]:
+    """YouTube's results for ``query``, flat: nothing is downloaded and no formats are read."""
+    import yt_dlp
+
+    options = {
+        "quiet": True,
+        "skip_download": True,
+        "socket_timeout": 20,
+        "logger": _Log(),
+        "extract_flat": True,
+    }
+    with yt_dlp.YoutubeDL(options) as ydl:
+        result = ydl.extract_info(f"ytsearch{limit}:{query}", download=False, process=False)
+        return list(result.get("entries") or [])
+
+
 def _ytdlp_download(params: dict[str, Any], url: str) -> None:
     import yt_dlp
 
@@ -496,11 +563,13 @@ class YtDlpClient(SiteClient):
         *,
         download: Download = _ytdlp_download,
         entries: Entries = _ytdlp_entries,
+        search: Search = _ytdlp_search,
         timeout_s: float = 60.0,
     ) -> None:
         self._extract = extract
         self._download = download
         self._entries = entries
+        self._search = search
         self._timeout_s = timeout_s
 
     async def extract(self, url: str) -> SiteInfo:
@@ -532,6 +601,25 @@ class YtDlpClient(SiteClient):
         except Exception as exc:
             logger.error("YtDlpClient|listing {}: {}", url, exc)
             raise classify(exc) from exc
+
+    def search(self, query: str, *, limit: int) -> list[VideoHit]:
+        hits: list[VideoHit] = []
+        seen: set[str] = set()
+        try:
+            for raw in self._search(query, limit):
+                hit = _to_hit(raw)
+                if hit is None or hit.id in seen:
+                    continue
+                seen.add(hit.id)
+                hits.append(hit)
+                if len(hits) >= limit:
+                    break
+        except Error:
+            raise
+        except Exception as exc:
+            logger.error("YtDlpClient|searching {!r}: {}", query, exc)
+            raise classify(exc) from exc
+        return hits
 
     async def resolve(self, url: str, format_ids: Sequence[str]) -> dict[str, Resolved]:
         offered = _resolved(await self._info(url))
