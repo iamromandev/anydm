@@ -120,17 +120,15 @@ export type VideoAnswer = { results: VideoResult[]; tookMs: number };
 export function normalizeVideos(raw: any): VideoAnswer {
     return {
         results: Array.isArray(raw?.results)
-            ? raw.results.map(
-                  (r: any): VideoResult => ({
-                      title: r?.title ?? "",
-                      url: r?.url ?? "",
-                      channel: textOrNull(r?.channel),
-                      durationS: numberOrNull(r?.duration),
-                      thumbnail: textOrNull(r?.thumbnail),
-                      views: numberOrNull(r?.views),
-                      published: textOrNull(r?.published),
-                  }),
-              )
+            ? raw.results.map((r: any): VideoResult => ({
+                  title: r?.title ?? "",
+                  url: r?.url ?? "",
+                  channel: textOrNull(r?.channel),
+                  durationS: numberOrNull(r?.duration),
+                  thumbnail: textOrNull(r?.thumbnail),
+                  views: numberOrNull(r?.views),
+                  published: textOrNull(r?.published),
+              }))
             : [],
         tookMs: numberOrNull(raw?.took_ms) ?? 0,
     };

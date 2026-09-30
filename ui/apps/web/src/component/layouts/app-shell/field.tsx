@@ -146,8 +146,11 @@ export interface AppShellProps {
     playerNextItemTitle: string;
     onNextItem: () => void;
     onPreviousItem: () => void;
-    /** Search (the magnet hub): shown when the API has indexers. */
+    /** Search: shown when the API has torrent sources or can search YouTube. */
     searchEnabled: boolean;
+    /** Which of the two the Search view has; it shows a tab for each that is on. */
+    searchTorrents: boolean;
+    searchYoutube: boolean;
     /** What the add dialog opens on; a new id remounts it. */
     addInitial: (AddInitial & { id: number }) | null;
     onAddFound: (initial: AddInitial) => void;
@@ -230,6 +233,8 @@ export const AppShell = component$<AppShellProps>(
         onNextItem,
         onPreviousItem,
         searchEnabled,
+        searchTorrents,
+        searchYoutube,
         addInitial,
         onAddFound,
         onNotify,
@@ -310,7 +315,12 @@ export const AppShell = component$<AppShellProps>(
                         {view.value === "search" && searchEnabled ? (
                             <SearchView
                                 state={search}
+                                torrents={searchTorrents}
+                                youtube={searchYoutube}
                                 onAdd={onAddFound}
+                                onAddVideo={$((url: string) =>
+                                    onAdd({ type: "link", value: url }),
+                                )}
                                 onNotify={onNotify}
                             />
                         ) : (

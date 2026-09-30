@@ -135,6 +135,8 @@ export default component$(() => {
         // Null until the API answers, and after it refuses.
         serverSettings: null as ServerSettings | null,
         searchEnabled: false as boolean,
+        searchTorrents: false as boolean,
+        searchYoutube: false as boolean,
         addInitial: null as (AddInitial & { id: number }) | null,
         addInitialSeq: 0,
         apiKey: "" as string,
@@ -401,12 +403,16 @@ export default component$(() => {
                 store.settingsOpen = true;
             });
             syncTask();
-            // Search shows only when the API has indexers; a failure here just hides it.
+            // Search shows when the API has torrent sources or can search YouTube; a failure here just hides it.
             searchSources()
                 .then((sources) => {
-                    store.searchEnabled = sources.enabled;
+                    store.searchTorrents = sources.enabled;
+                    store.searchYoutube = sources.youtube;
+                    store.searchEnabled = sources.enabled || sources.youtube;
                 })
                 .catch(() => {
+                    store.searchTorrents = false;
+                    store.searchYoutube = false;
                     store.searchEnabled = false;
                 });
             // One clock for every toast, rather than a timer per toast: an
@@ -1143,6 +1149,8 @@ export default component$(() => {
             onAdd={handleAdd}
             onResolve={handleResolveTorrent}
             searchEnabled={store.searchEnabled}
+            searchTorrents={store.searchTorrents}
+            searchYoutube={store.searchYoutube}
             addInitial={store.addInitial}
             onAddFound={handleAddFound}
             onNotify={notify}

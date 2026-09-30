@@ -82,6 +82,26 @@ export const Sidebar = component$<SidebarProps>(
                 role="navigation"
                 aria-label="Download filters"
             >
+                {search?.enabled && (
+                    <nav
+                        class="sidebar-nav sidebar-nav--search"
+                        aria-label="Search"
+                    >
+                        <button
+                            type="button"
+                            class={`sidebar-filter ${search.active ? "sidebar-filter--active" : ""}`}
+                            onClick$={search.onOpen}
+                        >
+                            <LuSearch
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                            <span class="sidebar-filter-label">Search</span>
+                        </button>
+                    </nav>
+                )}
+
                 <div class="sidebar-header">
                     <span class="sidebar-title">Downloads</span>
                     {onToggleCollapse && (
@@ -128,26 +148,6 @@ export const Sidebar = component$<SidebarProps>(
                         </button>
                     ))}
                 </nav>
-
-                {search?.enabled && (
-                    <nav
-                        class="sidebar-nav sidebar-nav--search"
-                        aria-label="Search"
-                    >
-                        <button
-                            type="button"
-                            class={`sidebar-filter ${search.active ? "sidebar-filter--active" : ""}`}
-                            onClick$={search.onOpen}
-                        >
-                            <LuSearch
-                                width="16"
-                                height="16"
-                                aria-hidden="true"
-                            />
-                            <span class="sidebar-filter-label">Search</span>
-                        </button>
-                    </nav>
-                )}
 
                 {(bulk.pausable > 0 ||
                     bulk.resumable > 0 ||
