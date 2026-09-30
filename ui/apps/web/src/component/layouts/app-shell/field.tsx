@@ -25,6 +25,7 @@ import type { AddInitial } from "@/lib/api/search";
 import type { PlayableFile } from "@/lib/media";
 import type { PositionView } from "@/lib/api";
 import { HeroInput } from "@/component/features/hero-input";
+import { StatusLine } from "@/component/features/status-line";
 import { PlayerModal } from "@/component/features/player-modal";
 import { PlaylistPicker } from "@/component/features/playlist-picker";
 import { RemoveDialog } from "@/component/features/remove-dialog";
@@ -326,6 +327,7 @@ export const AppShell = component$<AppShellProps>(
                         ) : (
                             <>
                                 <HeroInput
+                                    compact={counts.all > 0}
                                     defaultPreset={prefs.defaultPreset}
                                     onSubmit={$(
                                         async (input: {
@@ -349,15 +351,20 @@ export const AppShell = component$<AppShellProps>(
                                     aria-label="Downloads"
                                 >
                                     <div class="app-shell-list-header">
-                                        <h2 class="app-shell-list-title">
-                                            {filter === "all" &&
-                                                "Recent downloads"}
-                                            {filter === "downloading" &&
-                                                "Active downloads"}
-                                            {filter === "seeding" && "Seeding"}
-                                            {filter === "completed" &&
-                                                "Completed"}
-                                        </h2>
+                                        {counts.all > 0 && (
+                                            <StatusLine
+                                                counts={counts}
+                                                filter={filter as SidebarFilter}
+                                                onFilterChange={$(
+                                                    (f: SidebarFilter) =>
+                                                        onFilterChange(f),
+                                                )}
+                                                downloadSpeed={
+                                                    stats.downloadSpeed
+                                                }
+                                                uploadSpeed={stats.uploadSpeed}
+                                            />
+                                        )}
                                         {searchQuery && (
                                             <span class="app-shell-search-hint">
                                                 Searching for “{searchQuery}”
@@ -386,6 +393,12 @@ export const AppShell = component$<AppShellProps>(
                                         onResumeVideo={onResumeVideo}
                                         onRemoveVideo={onRemoveVideo}
                                         onPlayGroup={onPlayGroup}
+                                        torrentSearch={searchTorrents}
+                                        onOpenSearch={$(() => {
+                                            // Browse latest is the torrent list, even if YouTube was the last tab.
+                                            search.source = "torrents";
+                                            view.value = "search";
+                                        })}
                                     />
                                 </section>
                             </>

@@ -1,0 +1,48 @@
+.start-doors {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.75rem;
+    padding: 1rem 0;
+}
+
+.start-door {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0;
+    padding: 0.9rem 1rem;
+    text-align: left;
+    font: inherit;
+    color: var(--color-foreground);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-card);
+}
+
+button.start-door {
+    cursor: pointer;
+}
+
+button.start-door:hover {
+    border-color: var(--color-primary);
+}
+
+.start-door:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+}
+
+.start-door strong {
+    font-weight: 600;
+}
+
+.start-door span {
+    font-size: 0.85rem;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+/* The drop door only says where a file can go, so it does not look pressable. */
+.start-door--hint {
+    border-style: dashed;
+    background: transparent;
+}

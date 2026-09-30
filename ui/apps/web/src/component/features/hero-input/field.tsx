@@ -51,6 +51,8 @@ export interface HeroInputProps {
     onPlay?: (value: string, kind: string) => void | Promise<void>;
     /** Open the picker on a playlist, or on one of a channel's tabs. */
     onChoose?: (target: PickerTarget) => void;
+    /** Leave out the welcome title and subtitle: for a person who has downloads already. */
+    compact?: boolean;
 }
 
 type LookupStatus =
@@ -62,7 +64,7 @@ function magnetName(value: string): string {
 }
 
 export const HeroInput = component$<HeroInputProps>(
-    ({ defaultPreset, onSubmit, onPlay, onChoose }) => {
+    ({ defaultPreset, onSubmit, onPlay, onChoose, compact = false }) => {
         const inputRef = useSignal<HTMLInputElement>();
         /**
          * The quality picked in this session, or null to follow the
@@ -287,16 +289,23 @@ export const HeroInput = component$<HeroInputProps>(
 
         return (
             <section
-                class={`hero-input ${store.isDragging ? "hero-input--drag" : ""}`}
+                class={`hero-input ${compact ? "hero-input--compact" : ""} ${store.isDragging ? "hero-input--drag" : ""}`}
                 aria-label="Start a download"
             >
-                <div class="hero-input-header">
-                    <h1 class="hero-input-title">Download anything</h1>
-                    <p class="hero-input-subtitle">
-                        Paste a video page, a file link, a magnet URI, or drop a
-                        .torrent file.
-                    </p>
-                </div>
+                {compact ? (
+                    // The page still needs its heading; the welcome text is what goes.
+                    <h1 class="hero-input-title hero-input-title--hidden">
+                        Download anything
+                    </h1>
+                ) : (
+                    <div class="hero-input-header">
+                        <h1 class="hero-input-title">Download anything</h1>
+                        <p class="hero-input-subtitle">
+                            Paste a video page, a file link, a magnet URI, or
+                            drop a .torrent file.
+                        </p>
+                    </div>
+                )}
 
                 <div class="hero-input-bar">
                     <div class="hero-input-icon">

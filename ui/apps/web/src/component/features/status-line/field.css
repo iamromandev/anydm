@@ -1,0 +1,53 @@
+.status-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 1.1rem;
+    font-size: 0.875rem;
+}
+
+/* The list's name for a screen reader; the line itself is what is read on screen. */
+.status-line-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.status-line-part {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    padding: 0.15rem 0;
+    font: inherit;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    cursor: pointer;
+}
+
+.status-line-part[aria-pressed="true"] {
+    color: var(--color-foreground);
+    font-weight: 600;
+    border-bottom-color: var(--color-primary);
+}
+
+.status-line-part:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+}
+
+.status-line-speed {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+}
+
+@media (max-width: 640px) {
+    .status-line-speed {
+        margin-left: 0;
+        flex-basis: 100%;
+    }
+}

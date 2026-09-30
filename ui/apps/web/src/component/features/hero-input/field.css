@@ -7,6 +7,21 @@
     padding: 2.5rem 1rem 1.5rem;
 }
 
+/* With downloads on the page, the box is one bar: less room above and below it. */
+.hero-input--compact {
+    padding-top: 1.25rem;
+    padding-bottom: 0.75rem;
+}
+
+.hero-input-title--hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
 .hero-input-header {
     text-align: center;
 }
