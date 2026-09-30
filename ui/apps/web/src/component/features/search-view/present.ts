@@ -144,6 +144,38 @@ export function seederTone(seeders: number | null): "good" | "some" | "none" {
     return "none";
 }
 
+export const SWARM_TICKS = 5;
+
+/** How many of the swarm's 5 ticks light up: log-scaled seeders, and a dead or unknown swarm still shows 1. */
+export function swarmTicks(seeders: number | null): number {
+    if (seeders === null || seeders < 1) return 1;
+    return Math.min(SWARM_TICKS, 1 + Math.floor(Math.log10(seeders + 1) * 1.4));
+}
+
+export const SORT_OPTIONS: Array<{
+    id: string;
+    label: string;
+    sort: SortState;
+}> = [
+    {
+        id: "seeders",
+        label: "Most seeded",
+        sort: { key: "seeders", descending: true },
+    },
+    {
+        id: "published",
+        label: "Newest",
+        sort: { key: "published", descending: true },
+    },
+    { id: "size", label: "Biggest", sort: { key: "size", descending: true } },
+    { id: "title", label: "Name", sort: { key: "title", descending: false } },
+];
+
+/** The menu entry for a sort state; a state outside the menu shows as its nearest key. */
+export function sortOptionId(sort: SortState): string {
+    return SORT_OPTIONS.find((o) => o.sort.key === sort.key)?.id ?? "seeders";
+}
+
 export function indexerLabel(indexers: string[]): string {
     if (indexers.length <= 1) return indexers[0] ?? "";
     return `${indexers[0]} +${indexers.length - 1}`;
@@ -185,6 +217,6 @@ export function defaultSort(mode: SearchMode): SortState {
 
 export function emptyText(mode: SearchMode, searched: string): string {
     return mode === "browse"
-        ? "Nothing recent from these indexers"
-        : `No results for “${searched}”`;
+        ? "Nothing recent from these indexers. Check that a source is turned on in Settings."
+        : `Nothing for “${searched}”. Try fewer words, or turn on more sources in Settings.`;
 }

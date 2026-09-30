@@ -13,8 +13,11 @@ import {
     modeFor,
     nextSort,
     seederTone,
+    SORT_OPTIONS,
     sortFound,
+    sortOptionId,
     statusLine,
+    swarmTicks,
 } from "./present";
 
 const found = (
@@ -201,8 +204,64 @@ describe("modes", () => {
 
     it("says why the list is empty", () => {
         expect(emptyText("browse", "")).toBe(
-            "Nothing recent from these indexers",
+            "Nothing recent from these indexers. Check that a source is turned on in Settings.",
         );
-        expect(emptyText("search", "bunny")).toBe("No results for “bunny”");
+        expect(emptyText("search", "bunny")).toBe(
+            "Nothing for “bunny”. Try fewer words, or turn on more sources in Settings.",
+        );
+    });
+});
+
+describe("swarmTicks", () => {
+    it("shows one tick for a dead or unknown swarm", () => {
+        expect(swarmTicks(0)).toBe(1);
+        expect(swarmTicks(null)).toBe(1);
+    });
+
+    it("lights more ticks as seeders grow, up to five", () => {
+        expect(swarmTicks(1)).toBe(1);
+        expect(swarmTicks(9)).toBe(2);
+        expect(swarmTicks(100)).toBe(3);
+        expect(swarmTicks(1000)).toBe(5);
+        expect(swarmTicks(1_000_000)).toBe(5);
+    });
+
+    it("never goes down as seeders go up", () => {
+        let last = 0;
+        for (const n of [
+            0,
+            1,
+            3,
+            10,
+            40,
+            200,
+            900,
+            5000,
+            90000,
+        ]) {
+            const ticks = swarmTicks(n);
+            expect(ticks).toBeGreaterThanOrEqual(last);
+            last = ticks;
+        }
+    });
+});
+
+describe("sort menu", () => {
+    it("offers each sort once, most seeded first", () => {
+        expect(SORT_OPTIONS.map((o) => o.id)).toEqual([
+            "seeders",
+            "published",
+            "size",
+            "title",
+        ]);
+    });
+
+    it("names the entry for a sort state", () => {
+        expect(sortOptionId({ key: "published", descending: true })).toBe(
+            "published",
+        );
+        expect(sortOptionId({ key: "leechers", descending: true })).toBe(
+            "seeders",
+        );
     });
 });
