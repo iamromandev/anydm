@@ -3,10 +3,10 @@
 DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm
 UV := uv
 UVX := $(UV)x
-SERVER_CONTAINER := server-anydm-fastapi
+SERVER_CONTAINER := server-anydm-api
 
 # phony targets
-.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate help
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate seed help
 
 ## operation
 # system cleanup
@@ -81,6 +81,9 @@ add: # Stage all changes
 # database scripts
 migrate: # Run database migrations, then seed the built-in search sources
 	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
+	$(MAKE) seed
+
+seed: # Seed the built-in search sources: adds any that are missing, never overwrites (needs migrate first)
 	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
 
 # help
