@@ -4,6 +4,8 @@ import {
     type TorrentTask,
 } from "@/component/features/torrent-card";
 import { GroupCard } from "@/component/features/group-card";
+import { StartDoors } from "@/component/features/start-doors";
+import { showDoors } from "@/component/features/start-doors/present";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
 import { isActive, isSeeding, type EntriesView } from "@/lib/api";
 import { matchesSearch } from "@/lib/search";
@@ -35,6 +37,9 @@ export interface TorrentListProps {
     onRemoveVideo: (groupId: string, id: string) => void;
     /** Play all from a group's card (part 4). */
     onPlayGroup: (id: string) => void;
+    /** For the empty list's Browse door: shown when there are torrent sources, and opens Search on Torrents. */
+    torrentSearch: boolean;
+    onOpenSearch: () => void;
 }
 
 export type TorrentFilter =
@@ -67,6 +72,8 @@ export const TorrentList = component$<TorrentListProps>(
         onResumeVideo,
         onRemoveVideo,
         onPlayGroup,
+        torrentSearch,
+        onOpenSearch,
     }) => {
         // One card at a time: two open at once turns a list into a wall.
         const store = useStore({ expandedId: "" as string });
@@ -91,6 +98,15 @@ export const TorrentList = component$<TorrentListProps>(
         });
 
         const getEmptyState = () => {
+            if (showDoors(tasks.length, searchQuery)) {
+                return (
+                    <StartDoors
+                        torrentSearch={torrentSearch}
+                        onBrowse={onOpenSearch}
+                    />
+                );
+            }
+
             if (tasks.length === 0) {
                 return (
                     <div class="torrent-list-empty">
