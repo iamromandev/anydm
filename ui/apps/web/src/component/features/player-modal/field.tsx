@@ -1388,24 +1388,31 @@ export const PlayerModal = component$<PlayerModalProps>(
             }
         });
 
-        useVisibleTask$(({ track, cleanup }) => {
-            // Its own task, separate from the one that starts the stream: the
-            // keys should work while a torrent is still finding peers, which
-            // is exactly when that other task has not finished.
-            if (!track(() => open)) return;
+        useVisibleTask$(
+            ({ track, cleanup }) => {
+                // Its own task, separate from the one that starts the stream: the
+                // keys should work while a torrent is still finding peers, which
+                // is exactly when that other task has not finished.
+                if (!track(() => open)) return;
 
-            const onKeyDown = (event: KeyboardEvent) => {
-                const action = resolveShortcut(event);
-                if (!action) return;
-                // Space scrolls and arrows scroll; neither should, with a
-                // player in front of everything.
-                event.preventDefault();
-                applyShortcut(action);
-            };
+                const onKeyDown = (event: KeyboardEvent) => {
+                    const action = resolveShortcut(event);
+                    if (!action) return;
+                    // Space scrolls and arrows scroll; neither should, with a
+                    // player in front of everything.
+                    event.preventDefault();
+                    applyShortcut(action);
+                };
 
-            document.addEventListener("keydown", onKeyDown);
-            cleanup(() => document.removeEventListener("keydown", onKeyDown));
-        });
+                document.addEventListener("keydown", onKeyDown);
+                cleanup(() =>
+                    document.removeEventListener("keydown", onKeyDown),
+                );
+                // Named, like the tasks above: the modal renders nothing while
+                // closed, so the default strategy has no element to watch.
+            },
+            { strategy: "document-ready" },
+        );
 
         if (!open) {
             return null;
