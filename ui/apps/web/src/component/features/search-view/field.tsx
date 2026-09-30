@@ -24,11 +24,13 @@ import {
     formatSize,
     indexerLabel,
     modeFor,
-    nextSort,
-    seederTone,
+    SORT_OPTIONS,
     sortFound,
+    sortOptionId,
     statusLine,
-    type SortKey,
+    SWARM_TICKS,
+    swarmTicks,
+    seederTone,
 } from "./present";
 import { failureOf, type SearchState } from "./state";
 import "./field.css";
@@ -38,15 +40,6 @@ export interface SearchViewProps {
     onAdd: (initial: AddInitial) => void;
     onNotify: (tone: "error" | "info", message: string) => void;
 }
-
-const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
-    { key: "title", label: "Name", numeric: false },
-    { key: "size", label: "Size", numeric: true },
-    { key: "seeders", label: "Seeders", numeric: true },
-    { key: "leechers", label: "Leechers", numeric: true },
-    { key: "published", label: "Age", numeric: true },
-    { key: "indexer", label: "Indexer", numeric: false },
-];
 
 export const SearchView = component$<SearchViewProps>(
     ({ state, onAdd, onNotify }) => {
@@ -212,6 +205,33 @@ export const SearchView = component$<SearchViewProps>(
                                 {errorChip(e)}
                             </span>
                         ))}
+                        {rows.length > 1 && (
+                            <label class="search-view-sort">
+                                Sort by
+                                <select
+                                    value={sortOptionId(state.sort)}
+                                    onChange$={(_, el) => {
+                                        const pick = SORT_OPTIONS.find(
+                                            (o) => o.id === el.value,
+                                        );
+                                        if (pick) state.sort = pick.sort;
+                                    }}
+                                >
+                                    {SORT_OPTIONS.map((o) => (
+                                        <option
+                                            key={o.id}
+                                            value={o.id}
+                                            selected={
+                                                sortOptionId(state.sort) ===
+                                                o.id
+                                            }
+                                        >
+                                            {o.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
                         {state.mode === "browse" && (
                             <button
                                 type="button"
@@ -271,105 +291,108 @@ export const SearchView = component$<SearchViewProps>(
                 )}
 
                 {rows.length > 0 && (
-                    <table class="search-view-table">
-                        <thead>
-                            <tr>
-                                {COLUMNS.map((col) => (
-                                    <th
-                                        key={col.key}
-                                        class={
-                                            col.numeric ? "search-view-num" : ""
-                                        }
-                                        aria-sort={
-                                            state.sort.key === col.key
-                                                ? state.sort.descending
-                                                    ? "descending"
-                                                    : "ascending"
-                                                : "none"
-                                        }
-                                    >
-                                        <button
-                                            type="button"
-                                            title={
-                                                col.key === "seeders" &&
-                                                state.mode === "browse"
-                                                    ? "Seeders among the latest releases"
-                                                    : undefined
-                                            }
-                                            onClick$={() => {
-                                                state.sort = nextSort(
-                                                    state.sort,
-                                                    col.key,
-                                                );
-                                            }}
-                                        >
-                                            {col.label}
-                                            {state.sort.key === col.key &&
-                                                (state.sort.descending
-                                                    ? " ↓"
-                                                    : " ↑")}
-                                        </button>
-                                    </th>
-                                ))}
-                                <th>
-                                    <span class="sr-only">Actions</span>
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows.map((r) => (
-                                <tr
+                    <ul class="search-view-list">
+                        {rows.map((r, i) => {
+                            const ticks = swarmTicks(r.seeders);
+                            const fetching =
+                                state.fetching !== "" &&
+                                state.fetching === r.link;
+                            return (
+                                <li
                                     key={`${r.infoHash ?? r.title}|${r.sizeBytes ?? ""}`}
+                                    class="search-view-row"
                                 >
-                                    <td
-                                        class="search-view-title"
-                                        data-label="Name"
+                                    <span
+                                        class={`search-view-swarm search-view-swarm--${seederTone(r.seeders)}`}
+                                        role="img"
+                                        aria-label={`${r.seeders ?? "Unknown"} seeders`}
+                                        style={{
+                                            "--i": String(Math.min(i, 12)),
+                                        }}
                                     >
-                                        {r.title}
-                                    </td>
-                                    <td
-                                        class="search-view-num"
-                                        data-label="Size"
-                                    >
-                                        {formatSize(r.sizeBytes)}
-                                    </td>
-                                    <td
-                                        class={`search-view-num search-view-seeders--${seederTone(r.seeders)}`}
-                                        data-label="Seeders"
-                                    >
-                                        {r.seeders ?? "—"}
-                                    </td>
-                                    <td
-                                        class="search-view-num"
-                                        data-label="Leechers"
-                                    >
-                                        {r.leechers ?? "—"}
-                                    </td>
-                                    <td
-                                        class="search-view-num"
-                                        data-label="Age"
-                                    >
-                                        {formatAge(r.published, now)}
-                                    </td>
-                                    <td
-                                        data-label="Indexer"
-                                        title={r.indexers.join(", ")}
-                                    >
-                                        {indexerLabel(r.indexers)}
-                                    </td>
-                                    <td class="search-view-actions">
+                                        {Array.from(
+                                            { length: SWARM_TICKS },
+                                            (_, t) => (
+                                                <i
+                                                    key={t}
+                                                    class={
+                                                        t < ticks
+                                                            ? "on"
+                                                            : undefined
+                                                    }
+                                                    style={{
+                                                        "--t": String(t),
+                                                    }}
+                                                />
+                                            ),
+                                        )}
+                                    </span>
+                                    <div class="search-view-body">
+                                        <p class="search-view-title">
+                                            {r.title}
+                                        </p>
+                                        <p class="search-view-facts">
+                                            {r.sizeBytes !== null && (
+                                                <span>
+                                                    {formatSize(r.sizeBytes)}
+                                                </span>
+                                            )}
+                                            {r.seeders !== null && (
+                                                <span
+                                                    class={`search-view-seeders--${seederTone(r.seeders)}`}
+                                                >
+                                                    {r.seeders} seeders
+                                                </span>
+                                            )}
+                                            {r.leechers !== null && (
+                                                <span>
+                                                    {r.leechers} leechers
+                                                </span>
+                                            )}
+                                            {r.published !== null && (
+                                                <span>
+                                                    {formatAge(
+                                                        r.published,
+                                                        now,
+                                                    )}
+                                                </span>
+                                            )}
+                                            <span
+                                                class="search-view-source"
+                                                title={r.indexers.join(", ")}
+                                            >
+                                                {indexerLabel(r.indexers)}
+                                            </span>
+                                        </p>
+                                    </div>
+                                    <div class="search-view-actions">
+                                        {r.magnet && (
+                                            <button
+                                                type="button"
+                                                class="search-view-copy"
+                                                aria-label={`Copy magnet for ${r.title}`}
+                                                title="Copy magnet"
+                                                onClick$={() =>
+                                                    copyMagnet(
+                                                        r.magnet as string,
+                                                    )
+                                                }
+                                            >
+                                                <LuCopy
+                                                    width="14"
+                                                    height="14"
+                                                    aria-hidden="true"
+                                                />
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             class="search-view-add"
                                             aria-label={`Add ${r.title}`}
-                                            disabled={
-                                                state.fetching !== "" &&
-                                                state.fetching === r.link
-                                            }
+                                            disabled={fetching}
                                             onClick$={() => add(r)}
                                         >
-                                            {state.fetching !== "" &&
-                                            state.fetching === r.link ? (
+                                            {fetching ? (
                                                 <>
                                                     <span class="search-view-spin">
                                                         <LuLoader2
@@ -391,30 +414,11 @@ export const SearchView = component$<SearchViewProps>(
                                                 </>
                                             )}
                                         </button>
-                                        {r.magnet && (
-                                            <button
-                                                type="button"
-                                                class="search-view-copy"
-                                                aria-label={`Copy magnet for ${r.title}`}
-                                                title="Copy magnet"
-                                                onClick$={() =>
-                                                    copyMagnet(
-                                                        r.magnet as string,
-                                                    )
-                                                }
-                                            >
-                                                <LuCopy
-                                                    width="14"
-                                                    height="14"
-                                                    aria-hidden="true"
-                                                />
-                                            </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
                 )}
             </section>
         );
