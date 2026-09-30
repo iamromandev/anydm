@@ -1,37 +1,17 @@
+/* A download is a row, not a box: a divider under it, and its progress is the
+   thin line along that divider (see .progress-track-wrapper). */
 .torrent-card {
+    position: relative;
     display: flex;
     align-items: flex-start;
     gap: 1rem;
-    background: var(--color-card);
-    border: 1px solid var(--color-border);
-    border-radius: var(--card-radius);
-    padding: 1rem;
-    transition: all var(--transition-fast) ease;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.8rem 0.5rem 1rem;
+    transition: background var(--transition-fast) ease;
 }
 
 .torrent-card:hover {
-    border-color: color-mix(in srgb, var(--color-foreground) 18%, transparent);
-    box-shadow: var(--shadow-sm);
-}
-
-.torrent-card--downloading {
-    border-left: 3px solid var(--color-info);
-}
-
-.torrent-card--seeding {
-    border-left: 3px solid var(--color-success);
-}
-
-.torrent-card--paused {
-    border-left: 3px solid var(--color-warning);
-}
-
-.torrent-card--failed {
-    border-left: 3px solid var(--color-error);
-}
-
-.torrent-card--complete {
-    border-left: 3px solid var(--color-success);
+    background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
 }
 
 .torrent-card-main {
@@ -97,24 +77,23 @@
     opacity: 0.7;
 }
 
+/* The state is coloured text, not a pill. The colours are the app's own:
+   downloading blue, done and seeding green, paused and queued amber, failed red. */
 .torrent-status-badge {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.25rem 0.625rem;
-    border-radius: var(--radius-full);
-    font-size: 0.6875rem;
+    padding: 0.125rem 0;
+    font-size: 0.8125rem;
     font-weight: 600;
     text-transform: capitalize;
-    letter-spacing: 0.01em;
     white-space: nowrap;
 }
 
 .torrent-status-badge[data-status="downloading"],
 .torrent-status-badge[data-status="verifying"],
 .torrent-status-badge[data-status="checking"] {
-    background: var(--color-primary-soft);
     color: var(--color-primary);
 }
 
@@ -126,22 +105,15 @@
 
 .torrent-status-badge[data-status="seeding"],
 .torrent-status-badge[data-status="complete"] {
-    background: rgba(22, 163, 74, 0.1);
     color: var(--color-success);
 }
 
-.torrent-status-badge[data-status="paused"] {
-    background: rgba(217, 119, 6, 0.1);
-    color: var(--color-warning);
-}
-
+.torrent-status-badge[data-status="paused"],
 .torrent-status-badge[data-status="pending"] {
-    background: rgba(217, 119, 6, 0.1);
     color: var(--color-warning);
 }
 
 .torrent-status-badge[data-status="failed"] {
-    background: rgba(220, 38, 38, 0.1);
     color: var(--color-error);
 }
 
@@ -170,24 +142,33 @@
     color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
 }
 
+/* The progress line runs along the row's bottom edge, over its divider, so
+   the divider is the track and the fill is how far along it is. */
 .progress-track-wrapper {
-    width: 100%;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
 }
 
 .progress-track {
     position: relative;
-    height: 4px;
-    border-radius: var(--radius-full);
-    background: var(--color-muted);
+    height: 2px;
     overflow: hidden;
 }
 
 .progress-fill {
     position: absolute;
     inset: 0;
-    border-radius: var(--radius-full);
     background: var(--color-primary);
     transition: width 0.3s ease;
+}
+
+/* A playlist with its Entries open has a panel under it; the line stays with
+   the playlist's own row, above the panel, instead of dropping below it. */
+.torrent-card:has(.group-entries) .progress-track-wrapper {
+    position: static;
+    margin-top: 0.125rem;
 }
 
 .torrent-card--paused .progress-fill {
@@ -453,5 +434,19 @@
     .torrent-detail-copy {
         min-height: 44px;
         padding: 0 0.75rem;
+    }
+}
+
+/* On a wide screen the actions appear over the row, on hover or focus, instead
+   of holding a column of their own: a stack of six buttons would keep every
+   row 200px tall for something that is invisible until then. They sit on the
+   line under the state, which is free of anything but short text. On a phone
+   they are a row of their own under the details (see above). */
+@media (min-width: 641px) {
+    .torrent-actions {
+        position: absolute;
+        top: 2.6rem;
+        right: 0.5rem;
+        flex-direction: row;
     }
 }
