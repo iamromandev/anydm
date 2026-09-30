@@ -36,7 +36,12 @@ export type SearchAnswer = {
     tookMs: number;
 };
 
-export type SearchSources = { enabled: boolean; indexers: string[] };
+export type SearchSources = {
+    enabled: boolean;
+    indexers: string[];
+    /** Whether the API can search YouTube. */
+    youtube: boolean;
+};
 
 /** What the add-torrent dialog starts from: a magnet, or a .torrent in base64. */
 export type AddInitial = { type: "magnet" | "file"; value: string };
@@ -95,7 +100,52 @@ export async function searchSources(): Promise<SearchSources> {
     return {
         enabled: raw?.enabled === true,
         indexers: Array.isArray(raw?.indexers) ? raw.indexers : [],
+        youtube: raw?.youtube === true,
     };
+}
+
+export type VideoResult = {
+    title: string;
+    /** The watch page; what Add sends to the download flow. */
+    url: string;
+    channel: string | null;
+    durationS: number | null;
+    thumbnail: string | null;
+    views: number | null;
+    published: string | null;
+};
+
+export type VideoAnswer = { results: VideoResult[]; tookMs: number };
+
+export function normalizeVideos(raw: any): VideoAnswer {
+    return {
+        results: Array.isArray(raw?.results)
+            ? raw.results.map(
+                  (r: any): VideoResult => ({
+                      title: r?.title ?? "",
+                      url: r?.url ?? "",
+                      channel: textOrNull(r?.channel),
+                      durationS: numberOrNull(r?.duration),
+                      thumbnail: textOrNull(r?.thumbnail),
+                      views: numberOrNull(r?.views),
+                      published: textOrNull(r?.published),
+                  }),
+              )
+            : [],
+        tookMs: numberOrNull(raw?.took_ms) ?? 0,
+    };
+}
+
+/** The query string for a YouTube search: the trimmed words. */
+export function videoParams(q: string): string {
+    return new URLSearchParams({ q: q.trim() }).toString();
+}
+
+/** YouTube's videos for `q`. */
+export async function searchVideos(q: string): Promise<VideoAnswer> {
+    return normalizeVideos(
+        await getApi<any>(`/search/youtube?${videoParams(q)}`),
+    );
 }
 
 /** The query string: `q` only to search, `fresh` only when asked. */
