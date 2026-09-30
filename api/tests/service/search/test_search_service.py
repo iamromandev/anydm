@@ -127,7 +127,7 @@ async def test_no_indexers_is_search_disabled() -> None:
 async def test_sources_name_the_indexers_and_nothing_else() -> None:
     sources = await _service(lambda r: httpx.Response(200)).sources()
 
-    assert sources.model_dump() == {"enabled": True, "indexers": ["prowlarr-1", "jackett-all"]}
+    assert sources.model_dump() == {"enabled": True, "indexers": ["prowlarr-1", "jackett-all"], "youtube": True}
 
 
 @pytest.mark.asyncio
@@ -441,7 +441,7 @@ async def test_with_no_indexer_and_no_enabled_builtin_search_is_off_then_on_agai
     assert caught.value.type == ErrorType.SEARCH_DISABLED
 
     fakes.append(_Fake("a", [_found("A")]))
-    assert (await service.sources()).model_dump() == {"enabled": True, "indexers": ["a"]}
+    assert (await service.sources()).model_dump() == {"enabled": True, "indexers": ["a"], "youtube": True}
 
 
 @pytest.mark.asyncio

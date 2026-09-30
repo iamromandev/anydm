@@ -31,6 +31,9 @@ class FakeSite:
     def list_entries(self, url: str, **kwargs: Any) -> Any:
         raise AssertionError("only the picker lists a playlist")
 
+    def search(self, query: str, **kwargs: Any) -> Any:
+        raise AssertionError("only the search view searches YouTube")
+
     async def resolve(self, url: str, format_ids: Any) -> dict[str, Resolved]:
         return {format_id: Resolved(f"https://cdn.test/x/{format_id}") for format_id in format_ids}
 

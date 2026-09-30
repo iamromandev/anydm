@@ -46,7 +46,7 @@ async def http() -> AsyncIterator[httpx.AsyncClient]:
 async def test_sources_say_search_is_on(http: httpx.AsyncClient, indexers: None) -> None:
     body = (await http.get("/search/sources")).json()
 
-    assert body["data"] == {"enabled": True, "indexers": ["prowlarr-1"]}
+    assert body["data"] == {"enabled": True, "indexers": ["prowlarr-1"], "youtube": True}
 
 
 @pytest.mark.asyncio
@@ -97,6 +97,6 @@ async def test_with_no_indexers_search_is_off(http: httpx.AsyncClient) -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert sources == {"enabled": False, "indexers": []}
+    assert sources == {"enabled": False, "indexers": [], "youtube": True}
     assert search.status_code == 404
     assert search.json()["type"] == "search_disabled"

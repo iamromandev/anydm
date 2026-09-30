@@ -22,6 +22,7 @@ from src.lib.site.client import (
     Resolved,
     SiteInfo,
     Tab,
+    VideoHit,
     YtDlpClient,
     _playlist_header,
     classify,
@@ -767,3 +768,79 @@ def test_a_recorded_channel_tab_carries_approximate_dates() -> None:
 
 def test_a_recorded_soundcloud_set_has_no_titles() -> None:
     assert all(e.title is None and e.extractor == "Soundcloud" for e in _list_recorded("soundcloud_set"))
+
+
+def _raw_hit(**over: Any) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "id": "abc123",
+        "url": "https://www.youtube.com/watch?v=abc123",
+        "title": "Big Buck Bunny",
+        "channel": "Blender",
+        "duration": 596,
+        "view_count": 62_000_000,
+        "timestamp": 1_700_000_000,
+        "thumbnails": [
+            {"url": "https://i.ytimg.com/small.jpg", "width": 168},
+            {"url": "https://i.ytimg.com/mid.jpg", "width": 336},
+            {"url": "https://i.ytimg.com/big.jpg", "width": 1280},
+        ],
+    }
+    raw.update(over)
+    return raw
+
+
+def test_search_maps_a_raw_result() -> None:
+    client = YtDlpClient(search=lambda query, limit: [_raw_hit()])
+
+    assert client.search("bunny", limit=5) == [
+        VideoHit(
+            id="abc123",
+            url="https://www.youtube.com/watch?v=abc123",
+            title="Big Buck Bunny",
+            channel="Blender",
+            duration=596,
+            thumbnail="https://i.ytimg.com/mid.jpg",
+            views=62_000_000,
+            timestamp=1_700_000_000,
+        )
+    ]
+
+
+def test_search_leaves_out_what_the_site_did_not_say() -> None:
+    raw = _raw_hit(channel=None, uploader=None, duration=None, view_count=None, timestamp=None, thumbnails=[])
+    hit = YtDlpClient(search=lambda query, limit: [raw]).search("x", limit=5)[0]
+
+    assert (hit.channel, hit.duration, hit.views, hit.timestamp, hit.thumbnail) == (None, None, None, None, None)
+
+
+def test_search_builds_the_watch_url_when_the_entry_has_only_an_id() -> None:
+    raw = _raw_hit(url=None)
+    hit = YtDlpClient(search=lambda query, limit: [raw]).search("x", limit=5)[0]
+
+    assert hit.url == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_search_skips_entries_with_no_id_or_title_and_repeats() -> None:
+    raws = [_raw_hit(), _raw_hit(), _raw_hit(id=None), _raw_hit(id="z", title=None)]
+
+    assert [h.id for h in YtDlpClient(search=lambda query, limit: raws).search("x", limit=10)] == ["abc123"]
+
+
+def test_search_asks_yt_dlp_for_the_limit_and_stops_at_it() -> None:
+    asked: list[tuple[str, int]] = []
+    raws = [_raw_hit(id=str(n)) for n in range(5)]
+
+    def fake(query: str, limit: int) -> list[dict[str, Any]]:
+        asked.append((query, limit))
+        return raws
+
+    assert len(YtDlpClient(search=fake).search("frieren", limit=3)) == 3
+    assert asked == [("frieren", 3)]
+
+
+def test_search_reports_a_failure_as_the_sites_error() -> None:
+    def boom(query: str, limit: int) -> list[dict[str, Any]]:
+        raise RuntimeError("HTTP Error 429")
+
+    with pytest.raises(Error):
+        YtDlpClient(search=boom).search("x", limit=5)
