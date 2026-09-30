@@ -1,14 +1,17 @@
 import { describe, expect, it } from "bun:test";
 
-import type { FoundTorrent } from "@/lib/api/search";
+import type { FoundTorrent, VideoResult } from "@/lib/api/search";
 
 import {
     canRun,
+    canSearchVideos,
     defaultSort,
     emptyText,
     errorChip,
     formatAge,
+    formatDuration,
     formatSize,
+    formatViews,
     indexerLabel,
     modeFor,
     nextSort,
@@ -18,6 +21,9 @@ import {
     sortOptionId,
     statusLine,
     swarmTicks,
+    VIDEO_EMPTY_IDLE,
+    videoEmptyText,
+    videoFacts,
 } from "./present";
 
 const found = (
@@ -262,6 +268,73 @@ describe("sort menu", () => {
         );
         expect(sortOptionId({ key: "leechers", descending: true })).toBe(
             "seeders",
+        );
+    });
+});
+
+describe("formatDuration", () => {
+    it("reads minutes and seconds, and hours when there are some", () => {
+        expect(formatDuration(596)).toBe("9:56");
+        expect(formatDuration(59)).toBe("0:59");
+        expect(formatDuration(3725)).toBe("1:02:05");
+    });
+
+    it("is empty when the duration is unknown (a live stream)", () => {
+        expect(formatDuration(null)).toBe("");
+    });
+});
+
+describe("formatViews", () => {
+    it("shortens big counts", () => {
+        expect(formatViews(1)).toBe("1 view");
+        expect(formatViews(950)).toBe("950 views");
+        expect(formatViews(1234)).toBe("1.2K views");
+        expect(formatViews(62_000_000)).toBe("62M views");
+    });
+
+    it("is empty when unknown", () => {
+        expect(formatViews(null)).toBe("");
+    });
+});
+
+describe("videoFacts", () => {
+    const video = (over: Partial<VideoResult>): VideoResult => ({
+        title: "t",
+        url: "u",
+        channel: null,
+        durationS: null,
+        thumbnail: null,
+        views: null,
+        published: null,
+        ...over,
+    });
+
+    it("lists views then age, leaving out what is unknown", () => {
+        const now = Date.parse("2026-09-30T00:00:00Z");
+        expect(
+            videoFacts(
+                video({ views: 1234, published: "2026-09-28T00:00:00Z" }),
+                now,
+            ),
+        ).toEqual([
+            "1.2K views",
+            "2 days",
+        ]);
+        expect(videoFacts(video({}), now)).toEqual([]);
+    });
+});
+
+describe("the YouTube tab's rules", () => {
+    it("searches from two characters, and not while busy", () => {
+        expect(canSearchVideos("a", false)).toBe(false);
+        expect(canSearchVideos(" ab ", false)).toBe(true);
+        expect(canSearchVideos("ab", true)).toBe(false);
+    });
+
+    it("says what to do when there is nothing to show", () => {
+        expect(VIDEO_EMPTY_IDLE).toBe("Search YouTube for a video.");
+        expect(videoEmptyText("zzxk")).toBe(
+            "Nothing for “zzxk”. Try fewer words.",
         );
     });
 });
