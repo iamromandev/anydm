@@ -24,6 +24,7 @@ from src.lib.media.hls import MediaPlaylist
 from src.lib.media.sidecar import Sidecar, SidecarSource
 from src.lib.media.source import MediaInput
 from src.lib.media.subtitle import SubtitleTrack
+from src.lib.torrent.protocol import FileInfo
 from src.service.stream.quality import QualityState
 
 
@@ -71,6 +72,8 @@ class StreamSession:
     #: Set only for torrent-backed sessions. ``stop_session()`` uses this to
     #: decide whether it's safe to delete the underlying rqbit torrent.
     info_hash: str | None = None
+    #: A torrent's media files, for the player's file menu; empty for anything else.
+    files: list[FileInfo] = field(default_factory=list)
     #: "connecting" while a torrent-backed session is waiting for real data
     #: and ffprobe; "ready" once playback can start; "error" if it never did.
     #: Direct-URL sessions are "ready" the moment they're created, since

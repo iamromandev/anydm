@@ -11,6 +11,7 @@ from src.core.auth import query_key, with_segment_key
 from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
+from src.data.schema.download import FileSchema
 from src.data.schema.stream import (
     AudioSwitchRequest,
     AudioTrackSchema,
@@ -107,6 +108,7 @@ def _session_schema(session: StreamSession) -> StreamSessionSchema:
         playing_height=menu.playing if menu else None,
         quality_default=menu.default if menu else None,
         default_height=menu.default_height if menu else None,
+        files=[FileSchema(index=f.index, path=f.path, size_bytes=f.size_bytes) for f in session.files],
     )
 
 

@@ -6,6 +6,7 @@ from typing import Annotated
 from pydantic import Field, computed_field, model_validator
 
 from src.core.base import BaseSchema
+from src.data.schema.download import FileSchema
 from src.lib.media.subtitle import TEXT_CODECS
 
 
@@ -156,3 +157,6 @@ class StreamSessionSchema(BaseSchema):
     playing_height: int | None = None
     quality_default: str | None = None
     default_height: int | None = None
+    #: A torrent's media files, so a client can offer them without resolving the
+    #: torrent again. Empty for a site, a media URL, or a download read from disk.
+    files: list[FileSchema] = Field(default_factory=list)

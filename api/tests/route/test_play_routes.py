@@ -15,6 +15,7 @@ from src.config import get_settings
 from src.data.schema.download import PositionSchema
 from src.lib.media.audio import AudioTrack
 from src.lib.media.subtitle import SubtitleTrack
+from src.lib.torrent.protocol import FileInfo
 from src.main import app
 from src.service import get_download_service, get_stream_service
 from src.service.stream.quality import QualityState
@@ -31,12 +32,12 @@ SUBTITLES = [
 VTT = "WEBVTT\n\n00:00:05.000 --> 00:00:07.000\nHello\n"
 
 
-def _session(session_id: str, status: str, duration: float, track: int | None = None) -> Any:
+def _session(session_id: str, status: str, duration: float, track: int | None = None, files: list[Any] | None = None) -> Any:
     return type("S", (), {
         "id": session_id, "status": status, "duration_seconds": duration, "has_video": True,
         "audio_tracks": TRACKS if track is not None else [], "audio_track": track,
         "subtitle_tracks": SUBTITLES if track is not None else [], "segment_seconds": 6,
-        "quality": QualityState(),
+        "quality": QualityState(), "files": files or [],
     })()
 
 
@@ -45,6 +46,8 @@ class _FakeStream:
         self.calls: list[tuple[str, Any]] = []
         #: What the subtitle routes serve; the fixture writes it.
         self.vtt = Path()
+        #: What a torrent-backed session answers with; a test sets it.
+        self.torrent_files: list[Any] = []
 
     async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
         self.calls.append(("media_info", (task_id, file_index)))
@@ -65,7 +68,7 @@ class _FakeStream:
     async def start_torrent_session(self, raw: str, file_index: int | None = None, **audio: Any) -> Any:
         self.calls.append(("start_torrent_session", (raw, file_index)))
         self.audio = audio
-        return _session("s3", "connecting", 0.0)
+        return _session("s3", "connecting", 0.0, files=self.torrent_files)
 
     async def start_session(self, url: str, **audio: Any) -> Any:
         self.calls.append(("start_session", url))
@@ -201,6 +204,29 @@ async def test_a_torrent_stream_can_name_its_file(client: httpx.AsyncClient, str
 
     assert response.status_code == 201
     assert stream.calls == [("start_torrent_session", ("magnet:?xt=urn:btih:abc", 1))]
+
+
+@pytest.mark.asyncio
+async def test_a_torrents_files_are_on_the_answer(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    """The route maps what it is given one-to-one; the service already filtered it."""
+    stream.torrent_files = [
+        FileInfo(index=0, path="Show.S01E2.mkv", size_bytes=800),
+        FileInfo(index=1, path="readme.txt", size_bytes=10),
+    ]
+
+    response = await client.post("/stream/start", json={"torrent": "magnet:?xt=urn:btih:abc"})
+
+    assert response.json()["data"]["files"] == [
+        {"index": 0, "path": "Show.S01E2.mkv", "size_bytes": 800, "selected": True, "downloaded_bytes": 0},
+        {"index": 1, "path": "readme.txt", "size_bytes": 10, "selected": True, "downloaded_bytes": 0},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_session_with_no_torrent_answers_with_no_files(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post("/stream/start", json={"torrent": "magnet:?xt=urn:btih:abc"})
+
+    assert response.json()["data"]["files"] == []
 
 
 @pytest.mark.asyncio

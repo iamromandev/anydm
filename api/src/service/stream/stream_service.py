@@ -43,7 +43,7 @@ from src.lib.site.client import SiteClient
 from src.lib.site.format import audio_choices, playback_plan, video_choices
 from src.lib.site.subtitles import SiteSubtitle, fetch_subtitle, same_subtitle
 from src.lib.torrent.folder import torrent_folder
-from src.lib.torrent.protocol import TorrentClient, TorrentProgress
+from src.lib.torrent.protocol import FileInfo, TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.stream.quality import QualityState, file_quality
 from src.service.stream.session import SegmentState, SiteOrigin, StreamSession, StreamSessionStore
@@ -404,6 +404,7 @@ class StreamService(BaseService):
         audio_track: int | None = None,
         site_audio: list[tuple[str, MediaInput]] | None = None,
         info_hash: str | None = None,
+        files: list[FileInfo] | None = None,
         subtitle_tracks: list[SubtitleTrack] | None = None,
         subtitle_files: dict[int, tuple[Sidecar, SidecarSource]] | None = None,
         quality: QualityState | None = None,
@@ -425,6 +426,7 @@ class StreamService(BaseService):
             audio_track=audio_track,
             site_audio=site_audio or [],
             info_hash=info_hash,
+            files=files or [],
             subtitle_tracks=subtitle_tracks or [],
             subtitle_files=subtitle_files or {},
             quality=quality or QualityState(),
@@ -618,6 +620,8 @@ class StreamService(BaseService):
             audio_track=audio_track,
             sidecars=[(sidecar, TorrentFile(details.info_hash, by_path[sidecar.path])) for sidecar in sidecars],
             quality=quality,
+            # Only media: a `file_index` naming anything else is answered 422.
+            files=[f for f in details.files if f.path.lower().endswith(MEDIA_EXTENSIONS)],
         )
 
     def _torrent_stream_session(
@@ -629,6 +633,7 @@ class StreamService(BaseService):
         audio_track: int | None = None,
         sidecars: list[tuple[Sidecar, SidecarSource]] | None = None,
         quality: int | None = None,
+        files: list[FileInfo] | None = None,
     ) -> StreamSession:
         """A session reading one file of a torrent rqbit has, through its stream endpoint.
 
@@ -649,6 +654,7 @@ class StreamService(BaseService):
             session_dir=session_dir,
             encode_semaphore=asyncio.Semaphore(self._max_concurrent_encodes),
             info_hash=info_hash,
+            files=files or [],
             status="connecting",
             audio_track=audio_track,
             audio_language=audio_language,
@@ -1080,6 +1086,7 @@ class StreamService(BaseService):
             audio_track=audio_track if audio_track is not None else session.audio_track,
             site_audio=list(session.site_audio),
             info_hash=session.info_hash,
+            files=list(session.files),
             quality=quality or session.quality,
         )
         if switched.info_hash is not None and self._torrent_client is not None:
