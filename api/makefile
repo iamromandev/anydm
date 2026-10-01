@@ -83,7 +83,7 @@ migrate: # Run database migrations, then seed the built-in search sources
 	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
 	$(MAKE) seed
 
-seed: # Seed the search sources and import .env indexers once: adds what is missing, never overwrites (needs migrate first)
+seed: # Seed the built-in search sources: adds any that are missing, never overwrites (needs migrate first)
 	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
 
 # help

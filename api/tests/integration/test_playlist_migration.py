@@ -34,4 +34,6 @@ async def test_a_video_belongs_to_its_group(db: None) -> None:
         position=1,
     )
     fetched = await Task.get(id=video.id)
-    assert (fetched.parent_id, fetched.position) == (group.id, 1)
+    parent = await fetched.parent
+    assert parent is not None
+    assert (parent.id, fetched.position) == (group.id, 1)

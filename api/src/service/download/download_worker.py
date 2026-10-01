@@ -119,8 +119,9 @@ class DownloadWorker:
         # every byte count the download has since recorded.
         await task.save(update_fields=["attempts"])
         # Claimed: the group now has one more video downloading.
-        if self._groups is not None and task.parent_id is not None:
-            await self._groups.refresh(task.parent_id)
+        parent = await task.parent
+        if self._groups is not None and parent is not None:
+            await self._groups.refresh(parent.id)
 
         try:
             batch = None
@@ -137,8 +138,8 @@ class DownloadWorker:
                 parts, fragmented = await self._download_parts(task, await self._plan(task))
             destination = final_path(self._root, task.id, task.filename)
             await self._post_processor.run(task, parts, destination, fragmented=fragmented)
-            if task.parent_id is not None:
-                destination = await self._into_group_folder(task, destination)
+            if parent is not None:
+                destination = await self._into_group_folder(task, parent, destination)
             await self._mark_complete(task, destination)
             await self._save_subtitles(task, destination)
         except Stopped:
@@ -176,18 +177,21 @@ class DownloadWorker:
     async def _changed(self, task: Task) -> None:
         """Publish a status change, and bring a group video's group up to date with it (v0.5)."""
         self._emit(task)
-        if self._groups is not None and task.parent_id is not None:
-            await self._groups.refresh(task.parent_id)
+        if self._groups is not None:
+            parent = await task.parent
+            if parent is not None:
+                await self._groups.refresh(parent.id)
 
-    async def _into_group_folder(self, task: Task, destination: Path) -> Path:
+    async def _into_group_folder(self, task: Task, parent: Task, destination: Path) -> Path:
         """Move a group's finished video into the group's folder (v0.5).
 
         Before COMPLETE: a crash here requeues the task, and the move runs again,
         replacing a file of the same name.
+
+        ``parent`` is the row ``task.parent`` already fetched; the lookup here is
+        for the soft-delete filter, which a bare ``task.parent`` does not apply.
         """
-        if task.parent_id is None:
-            return destination
-        group = await self._repo.get_active_by_id(task.parent_id)
+        group = await self._repo.get_active_by_id(parent.id)
         if group is None or not group.file_path:
             return destination
         moved = group_destination(self._root, group.file_path, task.filename, task.video_id or str(task.id))
@@ -295,7 +299,10 @@ class DownloadWorker:
     ) -> None:
         task_id = task.id
         expected_total = task.total_bytes
-        parent_id = getattr(task, "parent_id", None)
+        # Once per part, not once per tick: the frame needs the group id to tell
+        # the client which card moved, and the task row carries it as a relation.
+        parent = await task.parent
+        parent_id = parent.id if parent is not None else None
 
         async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
             result = await self._segment_repo.reconcile(
@@ -336,7 +343,8 @@ class DownloadWorker:
             raise Error.internal(message="This worker has no fragment downloader")
         task_id = task.id
         expected_total = task.total_bytes
-        parent_id = getattr(task, "parent_id", None)
+        parent = await task.parent
+        parent_id = parent.id if parent is not None else None
         await self._fragments.fetch(
             page_url,
             format_id,

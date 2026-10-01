@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class SearchSourceRow:
+class SourceRow:
     """A stored source, as plain values: the data layer imports nothing from ``src.lib`` or ``src.service``."""
 
     name: str
@@ -19,20 +19,20 @@ class SearchSourceRow:
     id: uuid.UUID | None = None
 
 
-class SearchSourceRepo(ABC):
+class SourceRepo(ABC):
     @abstractmethod
-    async def list_all(self) -> list[SearchSourceRow]:
+    async def list_all(self) -> list[SourceRow]:
         """Every stored row, oldest first."""
         ...
 
     @abstractmethod
-    async def get(self, id: uuid.UUID) -> SearchSourceRow | None: ...
+    async def get(self, id: uuid.UUID) -> SourceRow | None: ...
 
     @abstractmethod
-    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SearchSourceRow: ...
+    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SourceRow: ...
 
     @abstractmethod
-    async def insert_missing(self, rows: Sequence[SearchSourceRow]) -> int:
+    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
         """Insert the rows whose name isn't stored; never touch one that is. Returns how many were added."""
         ...
 
@@ -49,7 +49,7 @@ class SearchSourceRepo(ABC):
         base_url: str | None,
         api_key: str | None = None,
         clear_api_key: bool = False,
-    ) -> SearchSourceRow | None:
+    ) -> SourceRow | None:
         """Change what is given; ``None`` when there is no such row.
 
         The key is only touched when asked: ``api_key`` alone keeps it, ``clear_api_key`` empties it.

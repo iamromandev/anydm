@@ -7,8 +7,8 @@ from src.config import get_settings
 from src.data.repo import (
     FileDatabaseRepo,
     PositionDatabaseRepo,
-    SearchSourceDatabaseRepo,
     SegmentDatabaseRepo,
+    SourceDatabaseRepo,
     TaskDatabaseRepo,
 )
 from src.lib.event import get_event_hub
@@ -65,7 +65,7 @@ def get_search_client() -> httpx.AsyncClient:
 
 @lru_cache
 def get_source_service() -> SourceService:
-    return SourceService(SearchSourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
+    return SourceService(SourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
 
 
 @lru_cache

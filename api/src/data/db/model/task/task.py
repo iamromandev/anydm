@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, ClassVar
-from uuid import UUID
+from typing import ClassVar
 
 from tortoise import fields
 from tortoise.indexes import Index
@@ -14,29 +13,19 @@ from src.data.type import Kind, Platform, Preset, TaskStatus
 class Task(Base):
     """One download, from the request that created it to the file it produced."""
 
-    # source
-    source_url: str = fields.TextField()
-    platform: Platform = fields.CharEnumField(Platform, max_length=16, db_index=True)
-    #: yt-dlp's name for the site a ``site`` task came from: "Youtube", "Vimeo", ...
-    extractor: str | None = fields.CharField(max_length=64, null=True)
-    #: The site's own id for the media. Named for YouTube, which came first.
-    video_id: str | None = fields.CharField(max_length=64, null=True, db_index=True)
-    #: The torrent's info hash, and the only torrent identifier stored. rqbit
-    #: accepts it anywhere it accepts its own numeric id, and that numeric id
-    #: does not survive a restart of the engine.
-    info_hash: str | None = fields.CharField(max_length=40, null=True, db_index=True)
-
     # group (v0.5)
-    #: The playlist this video was added from; ``None`` for a standalone task.
-    #: Not named ``entries`` or ``files``: ``TaskSchema`` has fields of those names.
     parent = fields.ForeignKeyField(
         "model.Task", related_name="playlist_entries", null=True, on_delete=fields.CASCADE
     )
-    #: The video's number in the listing it was added from.
+
     position: int | None = fields.IntField(null=True)
-    if TYPE_CHECKING:
-        #: The column Tortoise creates for ``parent``.
-        parent_id: UUID | None
+
+    # source
+    source_url: str = fields.TextField()
+    platform: Platform = fields.CharEnumField(Platform, max_length=16, db_index=True)
+    extractor: str | None = fields.CharField(max_length=64, null=True)
+    video_id: str | None = fields.CharField(max_length=64, null=True, db_index=True)
+    info_hash: str | None = fields.CharField(max_length=40, null=True, db_index=True)
 
     # request
     preset: Preset = fields.CharEnumField(Preset, max_length=8)
@@ -59,15 +48,8 @@ class Task(Base):
     total_bytes: int | None = fields.BigIntField(null=True)
     speed_bps: int = fields.BigIntField(default=0)
     eta_seconds: int | None = fields.IntField(null=True)
-    #: Torrent-only. Stored rather than computed so the share ratio the card
-    #: draws needs no second source.
     uploaded_bytes: int = fields.BigIntField(default=0)
-    #: Torrent-only. Spelled out rather than mirroring ``speed_bps``, which
-    #: predates it and means download: a bare ``speed_bps`` beside an
-    #: ``upload_bps`` would leave the older column's direction to guesswork.
     upload_speed_bps: int = fields.BigIntField(default=0)
-    #: Torrent-only. Stored so a reconnecting browser sees a peer count at once
-    #: instead of waiting for the next monitor tick.
     peers_connected: int = fields.IntField(default=0)
 
     # result
@@ -81,9 +63,6 @@ class Task(Base):
     next_attempt_at: datetime | None = fields.DatetimeField(null=True)
     started_at: datetime | None = fields.DatetimeField(null=True)
     completed_at: datetime | None = fields.DatetimeField(null=True)
-    #: Written by the progress flush. Startup recovery does not consult it —
-    #: with one process every in-flight row at boot is an orphan. It is here for
-    #: observability, and so a second process needs no migration.
     heartbeat_at: datetime | None = fields.DatetimeField(null=True)
 
     def __str__(self) -> str:
@@ -97,12 +76,7 @@ class Task(Base):
         table_description: ClassVar[str] = "Task"
         ordering: ClassVar[list[str]] = ["-created_at"]
         indexes: ClassVar[tuple[Index, ...]] = (
-            # The queue scan and the newest-first listing read the same two
-            # columns in the same order.
             Index(fields=["status", "created_at"], name="idx_task_status_created"),
-            # A group's videos: Tortoise gives a foreign key no index of its
-            # own, and claim_next and paging /entries read by parent, then
-            # position (v0.5).
             Index(fields=["parent_id"], name="idx_task_parent"),
             Index(fields=["parent_id", "position"], name="idx_task_parent_position"),
         )

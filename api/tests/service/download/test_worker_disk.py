@@ -24,6 +24,16 @@ def _disk(free: int, min_free: int = GIB) -> DiskGuard:
     return DiskGuard("/data", min_free, usage=lambda _path: _Usage(100 * GIB, 0, free))
 
 
+class FakeParent:
+    """``await task.parent`` on a standalone download: no group."""
+
+    def __await__(self) -> Any:
+        async def resolve() -> None:
+            return None
+
+        return resolve().__await__()
+
+
 class FakeRow:
     """A claimed direct download, as ``claim_next`` hands it over."""
 
@@ -37,6 +47,7 @@ class FakeRow:
         self.total_bytes: int | None = None
         self.attempts = 0
         self.status = TaskStatus.DOWNLOADING
+        self.parent: Any = FakeParent()
         self.error: str | None = None
         self.error_code: str | None = None
         self.next_attempt_at: Any = None

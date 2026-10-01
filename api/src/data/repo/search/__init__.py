@@ -1,1 +1,1 @@
-from .source_db import SearchSourceDatabaseRepo as SearchSourceDatabaseRepo
+from .source_db import SourceDatabaseRepo as SourceDatabaseRepo

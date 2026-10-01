@@ -3,33 +3,33 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from src.data.db.model import SearchSource
-from src.data.repo.search.interface.source import SearchSourceRepo, SearchSourceRow
+from src.data.db.model import Source
+from src.data.repo.search.interface.source import SourceRepo, SourceRow
 
 
-def _row(source: SearchSource) -> SearchSourceRow:
-    return SearchSourceRow(source.name, source.kind, source.enabled, source.base_url, source.api_key, source.id)
+def _row(source: Source) -> SourceRow:
+    return SourceRow(source.name, source.kind, source.enabled, source.base_url, source.api_key, source.id)
 
 
-class SearchSourceDatabaseRepo(SearchSourceRepo):
-    async def list_all(self) -> list[SearchSourceRow]:
-        return [_row(source) for source in await SearchSource.all().order_by("created_at")]
+class SourceDatabaseRepo(SourceRepo):
+    async def list_all(self) -> list[SourceRow]:
+        return [_row(source) for source in await Source.all().order_by("created_at")]
 
-    async def get(self, id: uuid.UUID) -> SearchSourceRow | None:
-        source = await SearchSource.get_or_none(id=id)
+    async def get(self, id: uuid.UUID) -> SourceRow | None:
+        source = await Source.get_or_none(id=id)
         return _row(source) if source else None
 
-    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SearchSourceRow:
-        return _row(await SearchSource.create(name=name, kind=kind, base_url=base_url, api_key=api_key, enabled=enabled))
+    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SourceRow:
+        return _row(await Source.create(name=name, kind=kind, base_url=base_url, api_key=api_key, enabled=enabled))
 
-    async def insert_missing(self, rows: Sequence[SearchSourceRow]) -> int:
-        stored = {source.name for source in await SearchSource.all()}
+    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
+        stored = {source.name for source in await Source.all()}
         fresh = [row for row in rows if row.name not in stored]
         if fresh:
             # ignore_conflicts: two processes seeding at once must not fail on the unique name.
-            await SearchSource.bulk_create(
+            await Source.bulk_create(
                 [
-                    SearchSource(name=row.name, kind=row.kind, enabled=row.enabled, base_url=row.base_url, api_key=row.api_key)
+                    Source(name=row.name, kind=row.kind, enabled=row.enabled, base_url=row.base_url, api_key=row.api_key)
                     for row in fresh
                 ],
                 ignore_conflicts=True,
@@ -43,8 +43,8 @@ class SearchSourceDatabaseRepo(SearchSourceRepo):
         base_url: str | None,
         api_key: str | None = None,
         clear_api_key: bool = False,
-    ) -> SearchSourceRow | None:
-        source = await SearchSource.get_or_none(id=id)
+    ) -> SourceRow | None:
+        source = await Source.get_or_none(id=id)
         if source is None:
             return None
         if enabled is not None:
@@ -59,7 +59,7 @@ class SearchSourceDatabaseRepo(SearchSourceRepo):
         return _row(source)
 
     async def delete(self, id: uuid.UUID) -> bool:
-        source = await SearchSource.get_or_none(id=id)
+        source = await Source.get_or_none(id=id)
         if source is None:
             return False
         await source.delete()

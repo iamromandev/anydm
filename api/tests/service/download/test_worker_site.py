@@ -20,6 +20,19 @@ from src.service.download.progress import AggregateSample
 from tests.sites import HEADERS, FakeSiteClient, media_url, site_info
 
 
+class FakeParent:
+    """What ``await task.parent`` yields: the group row, or ``None`` for a standalone task."""
+
+    def __init__(self, group: FakeRow | None = None) -> None:
+        self._group = group
+
+    def __await__(self) -> Any:
+        async def resolve() -> FakeRow | None:
+            return self._group
+
+        return resolve().__await__()
+
+
 class FakeRow:
     """A claimed YouTube task at 1080p: two parts, video and audio."""
 
@@ -38,7 +51,7 @@ class FakeRow:
         self.total_bytes: int | None = None
         self.attempts = 0
         self.status = TaskStatus.DOWNLOADING
-        self.parent_id: uuid.UUID | None = None
+        self.parent: Any = FakeParent()
         self.position: int | None = None
         self.mime_type: str | None = None
         self.file_path: str | None = None
@@ -215,7 +228,7 @@ def _group(tmp_path: Path) -> FakeRow:
 @pytest.mark.asyncio
 async def test_a_group_video_finishes_into_the_group_folder(tmp_path: Path) -> None:
     group = _group(tmp_path)
-    row = FakeRow(parent_id=group.id, filename="02_Rick_1080p.mp4")
+    row = FakeRow(parent=FakeParent(group), filename="02_Rick_1080p.mp4")
 
     await _worker(
         tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
@@ -238,7 +251,7 @@ class RecordingGroups:
 async def test_each_change_to_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
     group = _group(tmp_path)
     groups = RecordingGroups()
-    row = FakeRow(parent_id=group.id)
+    row = FakeRow(parent=FakeParent(group))
     worker = _worker(
         tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
     )
@@ -265,7 +278,7 @@ async def test_a_standalone_task_refreshes_no_group(tmp_path: Path) -> None:
 async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
     group = _group(tmp_path)
     (tmp_path / "List" / "Rick_1080p.mp4").write_bytes(b"other")
-    row = FakeRow(parent_id=group.id)
+    row = FakeRow(parent=FakeParent(group))
 
     await _worker(
         tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)

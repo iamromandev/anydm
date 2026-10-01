@@ -2,5 +2,4 @@ from .download import FileDatabaseRepo as FileDatabaseRepo
 from .download import PositionDatabaseRepo as PositionDatabaseRepo
 from .download import SegmentDatabaseRepo as SegmentDatabaseRepo
 from .download import TaskDatabaseRepo as TaskDatabaseRepo
-from .flag import AppFlagDatabaseRepo as AppFlagDatabaseRepo
-from .search import SearchSourceDatabaseRepo as SearchSourceDatabaseRepo
+from .search import SourceDatabaseRepo as SourceDatabaseRepo

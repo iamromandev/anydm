@@ -52,6 +52,13 @@ markers = [
 include = ["src/data/db/model/**"]
 rules = { invalid-assignment = "ignore", unresolved-attribute = "ignore" }
 
+# ``await task.parent`` awaits the FK relation, which Tortoise types as
+# ``Unknown | None``. It is awaitable at runtime (unless the row was loaded with
+# ``prefetch_related``, which makes it the row itself); the stub does not say so.
+[[tool.ty.overrides]]
+include = ["src/service/download/download_worker.py", "tests/integration/test_playlist_migration.py"]
+rules = { invalid-await = "ignore" }
+
 # Tortoise writes these migrations; both complaints come from its own stubs.
 [[tool.ty.overrides]]
 include = ["src/data/db/migration/**"]
