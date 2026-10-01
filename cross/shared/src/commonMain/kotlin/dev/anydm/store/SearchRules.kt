@@ -59,7 +59,7 @@ private fun numberOf(
 private fun textOf(
     result: FoundTorrent,
     key: SortKey,
-): String = if (key == SortKey.TITLE) result.title.lowercase() else (result.indexers.firstOrNull() ?: "").lowercase()
+): String = if (key == SortKey.TITLE) result.title.lowercase() else result.copyFrom.lowercase()
 
 /** A sorted copy; an unknown value sorts last whichever way the column runs, and ties keep their order. */
 fun sortFound(
@@ -125,12 +125,11 @@ fun seederTone(seeders: Int?): SeederTone =
         else -> SeederTone.NONE
     }
 
-fun indexerLabel(indexers: List<String>): String =
-    when (indexers.size) {
-        0 -> ""
-        1 -> indexers[0]
-        else -> "${indexers[0]} +${indexers.size - 1}"
-    }
+/** The source whose copy this result carries, and how many others have it too. */
+fun sourceLabel(result: FoundTorrent): String {
+    val name = result.copyFrom.ifEmpty { result.indexers.firstOrNull() ?: "" }
+    return if (result.indexers.size > 1) "$name +${result.indexers.size - 1}" else name
+}
 
 /** "N results from M indexers · 0.9 s", or "Latest · N releases …" when browsing. [askedOk] is those asked minus those that failed. */
 fun statusLine(

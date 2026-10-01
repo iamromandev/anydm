@@ -24,6 +24,8 @@ data class FoundTorrent(
     val magnet: String? = null,
     /** A `.torrent` on the indexer, fetched through `POST /search/torrent`. */
     val link: String? = null,
+    /** The source that copy came from; the server picked it. */
+    @SerialName("copy_from") val copyFrom: String = "",
     val indexers: List<String> = emptyList(),
 )
 
