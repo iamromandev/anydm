@@ -26,6 +26,10 @@ import {
     emptySourceView,
     type SourceViewState,
 } from "@/component/features/source-view";
+import {
+    SourceModal,
+    type SourceModalMode,
+} from "@/component/features/source-modal";
 import type { AddInitial } from "@/lib/api/search";
 import {
     deleteSource,
@@ -271,9 +275,7 @@ export const AppShell = component$<AppShellProps>(
         const sourceView = useStore<SourceViewState>(emptySourceView());
         const sourcesLoaded = useSignal(false);
         /** The add/edit dialog Task 9 renders; set here so the row buttons work. */
-        const sourceDialog = useSignal<
-            { mode: "add" } | { mode: "edit"; source: SourceItem } | null
-        >(null);
+        const sourceDialog = useSignal<SourceModalMode | null>(null);
 
         const clearBusy = $((id: string) => {
             const busy = { ...sourceView.busy };
@@ -362,6 +364,18 @@ export const AppShell = component$<AppShellProps>(
             }
         });
 
+        const handleSourceSaved = $(async (saved: SourceItem) => {
+            sourceDialog.value = null;
+            const known = sourceView.items.some((s) => s.id === saved.id);
+            sourceView.items = known
+                ? sourceView.items.map((s) => (s.id === saved.id ? saved : s))
+                : [
+                      ...sourceView.items,
+                      saved,
+                  ];
+            await onSourcesChanged();
+        });
+
         // Counted by the API when it can be. Falling back to the loaded rows
         // keeps the numbers plausible before the first summary arrives, but
         // they are only ever a floor: the list is one page of many.
@@ -437,13 +451,13 @@ export const AppShell = component$<AppShellProps>(
                                 onTest={handleSourceTest}
                                 onEdit={$((source: SourceItem) => {
                                     sourceDialog.value = {
-                                        mode: "edit",
+                                        type: "edit",
                                         source,
                                     };
                                 })}
                                 onDelete={handleSourceDelete}
                                 onAdd={$(() => {
-                                    sourceDialog.value = { mode: "add" };
+                                    sourceDialog.value = { type: "add" };
                                 })}
                                 onReset={handleSourceReset}
                             />
@@ -571,6 +585,17 @@ export const AppShell = component$<AppShellProps>(
                     onCancel={handleSourceDeleteCancel}
                     onConfirm={handleSourceDeleteConfirm}
                 />
+
+                {sourceDialog.value && (
+                    <SourceModal
+                        mode={sourceDialog.value}
+                        onClose={$(() => {
+                            sourceDialog.value = null;
+                        })}
+                        onSaved={handleSourceSaved}
+                        onNotify={onNotify}
+                    />
+                )}
 
                 <SettingsModal
                     open={settingsOpen}

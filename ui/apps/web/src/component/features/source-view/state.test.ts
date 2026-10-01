@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    dialogTestFailed,
+    dialogTestResult,
+    emptyDialogTest,
     emptySourceView,
     rememberTest,
     testLine,
@@ -105,5 +108,44 @@ describe("rememberTest", () => {
         });
 
         expect(next.lastTest["apibay"]?.message).toBe("Answered");
+    });
+});
+
+describe("emptyDialogTest", () => {
+    it("starts idle with nothing to show", () => {
+        expect(emptyDialogTest()).toEqual({
+            testing: false,
+            result: null,
+            failure: null,
+        });
+    });
+});
+
+describe("dialogTestResult", () => {
+    it("shows the answer, and a second Test replaces the first", () => {
+        const first = dialogTestResult({
+            ok: false,
+            count: null,
+            tookMs: 20,
+            message: "timed out after 1 s",
+        });
+        const second = dialogTestResult({
+            ok: true,
+            count: 5,
+            tookMs: 300,
+            message: "Answered",
+        });
+
+        expect(first.result?.message).toBe("timed out after 1 s");
+        expect(second.result?.message).toBe("Answered");
+        expect(second.failure).toBeNull();
+    });
+
+    it("a failure keeps its words and no result", () => {
+        expect(dialogTestFailed("refused the request")).toEqual({
+            testing: false,
+            result: null,
+            failure: "refused the request",
+        });
     });
 });

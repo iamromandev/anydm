@@ -46,3 +46,24 @@ export function rememberTest(
         lastTest: { ...state.lastTest, [id]: result },
     };
 }
+
+export type DialogTestState = {
+    testing: boolean;
+    result: SourceTest | null;
+    failure: string | null;
+};
+
+/** The dialog's try-before-save: idle, with nothing to show. Closing the dialog returns to this. */
+export function emptyDialogTest(): DialogTestState {
+    return { testing: false, result: null, failure: null };
+}
+
+/** A finished try: the answer replaces whatever the last Test showed. */
+export function dialogTestResult(result: SourceTest): DialogTestState {
+    return { testing: false, result, failure: null };
+}
+
+/** A failed try: the words stay, with no result beside them. */
+export function dialogTestFailed(message: string): DialogTestState {
+    return { testing: false, result: null, failure: message };
+}
