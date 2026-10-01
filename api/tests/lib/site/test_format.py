@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.type import Kind, Preset
+from src.data.type import MediaKind, Preset
 from src.lib.site.format import (
     Format,
     audio_choices,
@@ -121,13 +121,13 @@ def test_a_plan_says_whether_it_needs_the_fragment_path() -> None:
 def test_a_combined_plan_is_a_video_with_its_container() -> None:
     plan = select_plan(_formats("vimeo"), Preset.BEST)
 
-    assert (plan.kind, plan.mime_type, plan.extension, plan.quality) == (Kind.VIDEO, "video/mp4", "mp4", "1080p")
+    assert (plan.kind, plan.mime_type, plan.extension, plan.quality) == (MediaKind.VIDEO, "video/mp4", "mp4", "1080p")
 
 
 def test_an_mp3_plan_is_audio() -> None:
     plan = select_plan(_formats("soundcloud"), Preset.MP3)
 
-    assert (plan.kind, plan.mime_type, plan.extension) == (Kind.AUDIO, "audio/mpeg", "mp3")
+    assert (plan.kind, plan.mime_type, plan.extension) == (MediaKind.AUDIO, "audio/mpeg", "mp3")
 
 
 def test_video_presets_on_an_audio_only_site_are_refused() -> None:

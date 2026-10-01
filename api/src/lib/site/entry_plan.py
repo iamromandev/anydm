@@ -9,17 +9,32 @@ only taller heights takes its smallest.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from src.core.error import Error
-from src.data.type import Preset
+from src.data.type import MediaKind, Preset
 from src.lib.site.client import SiteInfo
 from src.lib.site.filename import safe_filename
 from src.lib.site.format import Format, Plan, select_plan
 
 
-def is_unplanned(task: Any) -> bool:
-    return not task.video_format and not task.audio_format
+@dataclass(frozen=True, slots=True)
+class Planned:
+    """What planning decides, for the worker to write onto the download, its site detail and its file."""
+
+    media_kind: MediaKind
+    title: str
+    filename: str
+    mime_type: str
+    video_format: str | None
+    audio_format: str | None
+    total_bytes: int | None
+
+
+def is_unplanned(site: Any) -> bool:
+    """No format chosen yet: a collection's video, planned when it starts."""
+    return not site.video_format and not site.audio_format
 
 
 def plan_for(formats: list[Format], preset: Preset) -> Plan:
@@ -47,14 +62,17 @@ def number_of(filename: str, position: int | None) -> str:
     return found.group(0) if found else ""
 
 
-def apply_plan(task: Any, info: SiteInfo, plan: Plan) -> list[str]:
-    """Write ``plan`` onto ``task``, keeping its number. Returns the fields to save."""
-    suffix = "" if task.preset == Preset.MP3 else plan.quality
-    task.kind = plan.kind
-    task.title = info.title or task.title
-    task.filename = f"{task.filename}{safe_filename(task.title, suffix, plan.extension)}"
-    task.mime_type = plan.mime_type
-    task.video_format = plan.video.id if plan.video else None
-    task.audio_format = plan.audio.id if plan.audio else None
-    task.total_bytes = None if plan.size_is_estimate else plan.expected_bytes
-    return ["kind", "title", "filename", "mime_type", "video_format", "audio_format", "total_bytes"]
+def plan_fields(info: SiteInfo, plan: Plan, *, preset: Preset, title: str, number: str) -> Planned:
+    """``plan`` as the fields it sets, keeping the video's number at the front of its name."""
+    suffix = "" if preset == Preset.MP3 else plan.quality
+    final_title = info.title or title
+    return Planned(
+        media_kind=plan.kind,
+        title=final_title,
+        filename=f"{number}{safe_filename(final_title, suffix, plan.extension)}",
+        mime_type=plan.mime_type,
+        video_format=plan.video.id if plan.video else None,
+        audio_format=plan.audio.id if plan.audio else None,
+        # Only an exact size: a bar measured against an estimate stalls short of 100.
+        total_bytes=None if plan.size_is_estimate else plan.expected_bytes,
+    )

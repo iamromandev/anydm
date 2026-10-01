@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from src.data.type import Kind, Preset
+from src.data.type import MediaKind, Preset
 from src.lib.media.audio import language_key
 from src.lib.site.error import no_format_for_preset, stream_not_playable
 
@@ -118,7 +118,7 @@ class Format:
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    kind: Kind
+    kind: MediaKind
     #: The video part; a combined format sits here with no ``audio``.
     video: Format | None
     audio: Format | None
@@ -229,7 +229,7 @@ def select_plan(formats: list[Format], preset: Preset) -> Plan:
             raise no_format_for_preset(preset.value)
         audio = audio_only[0]
         size, estimate = _size(audio)
-        return Plan(Kind.AUDIO, None, audio, "audio/mpeg", "mp3", "mp3", size, estimate)
+        return Plan(MediaKind.AUDIO, None, audio, "audio/mpeg", "mp3", "mp3", size, estimate)
 
     target = preset.target_height
     best_combined = _pick(combined, target)
@@ -246,13 +246,13 @@ def select_plan(formats: list[Format], preset: Preset) -> Plan:
         else:
             extension = best_combined.ext or "mp4"
             mime_type = f"video/{_subtype(extension)}"
-        return Plan(Kind.VIDEO, best_combined, None, mime_type, extension, quality, size, estimate)
+        return Plan(MediaKind.VIDEO, best_combined, None, mime_type, extension, quality, size, estimate)
 
     if best_video is not None and best_audio is not None:
         size, estimate = _size(best_video, best_audio)
         quality = f"{best_video.height}p" if best_video.height else preset.value
         extension, mime_type = container_for(best_video.vcodec, best_audio.acodec)
-        return Plan(Kind.VIDEO, best_video, best_audio, mime_type, extension, quality, size, estimate)
+        return Plan(MediaKind.VIDEO, best_video, best_audio, mime_type, extension, quality, size, estimate)
 
     raise no_format_for_preset(preset.value)
 
