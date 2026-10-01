@@ -14,7 +14,6 @@ from src.data.repo import (
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
-from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torrent.client import RqbitClient
 from src.service.download import DownloadService as DownloadService
 from src.service.download import TorrentService as TorrentService
@@ -73,11 +72,10 @@ def get_source_service() -> SourceService:
 def get_search_service() -> SearchService:
     settings = get_settings()
     return SearchService(
-        [TorznabSource(i) for i in settings.indexers],
         get_search_client(),
         timeout_s=settings.search_timeout_s,
         limit=settings.search_limit,
-        builtins=get_source_service().enabled_sources,
+        sources=get_source_service().enabled_sources,
     )
 
 
