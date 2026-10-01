@@ -20,7 +20,7 @@ from src.lib.sources.source import Result, Source
 from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torznab.torznab import Indexer, link_allowed, merge, redact
 from src.service.search import error as search_error
-from src.service.search.failure import failure_message
+from src.service.source.failure import failure_message
 
 MAX_REDIRECTS = 3
 #: How long a browse answer is served without asking the indexers again.
