@@ -34,34 +34,33 @@ class _FakeTorrentClient:
         self.deleted.append(info_hash)
 
 
-class _FakeTaskRepo:
+class _FakeDownloads:
     def __init__(self, owned_hashes: set[str]) -> None:
         self._owned_hashes = owned_hashes
 
-    async def get_one(self, *, info_hash: str, deleted_at__isnull: bool) -> object | None:
-        assert deleted_at__isnull is True
+    async def by_info_hash(self, info_hash: str) -> object | None:
         return object() if info_hash in self._owned_hashes else None
 
 
 @pytest.mark.asyncio
-async def test_sweep_deletes_torrents_with_no_owning_task_and_no_live_session() -> None:
+async def test_sweep_deletes_torrents_with_no_owning_download_and_no_live_session() -> None:
     client = _FakeTorrentClient([_progress("orphan-hash")])
-    task_repo = _FakeTaskRepo(owned_hashes=set())
+    downloads = _FakeDownloads(owned_hashes=set())
     sessions = StreamSessionStore()
 
-    reaper = TorrentReaper(client=client, task_repo=task_repo, sessions=sessions)  # ty: ignore[invalid-argument-type]
+    reaper = TorrentReaper(client=client, downloads=downloads, sessions=sessions)  # ty: ignore[invalid-argument-type]
     await reaper.sweep()
 
     assert client.deleted == ["orphan-hash"]
 
 
 @pytest.mark.asyncio
-async def test_sweep_keeps_torrents_owned_by_a_task() -> None:
+async def test_sweep_keeps_torrents_owned_by_a_download() -> None:
     client = _FakeTorrentClient([_progress("owned-hash")])
-    task_repo = _FakeTaskRepo(owned_hashes={"owned-hash"})
+    downloads = _FakeDownloads(owned_hashes={"owned-hash"})
     sessions = StreamSessionStore()
 
-    reaper = TorrentReaper(client=client, task_repo=task_repo, sessions=sessions)  # ty: ignore[invalid-argument-type]
+    reaper = TorrentReaper(client=client, downloads=downloads, sessions=sessions)  # ty: ignore[invalid-argument-type]
     await reaper.sweep()
 
     assert client.deleted == []
@@ -70,7 +69,7 @@ async def test_sweep_keeps_torrents_owned_by_a_task() -> None:
 @pytest.mark.asyncio
 async def test_sweep_keeps_torrents_backing_a_live_stream_session() -> None:
     client = _FakeTorrentClient([_progress("live-hash")])
-    task_repo = _FakeTaskRepo(owned_hashes=set())
+    downloads = _FakeDownloads(owned_hashes=set())
     sessions = StreamSessionStore()
     sessions.add(
         StreamSession(
@@ -85,7 +84,7 @@ async def test_sweep_keeps_torrents_backing_a_live_stream_session() -> None:
         )
     )
 
-    reaper = TorrentReaper(client=client, task_repo=task_repo, sessions=sessions)  # ty: ignore[invalid-argument-type]
+    reaper = TorrentReaper(client=client, downloads=downloads, sessions=sessions)  # ty: ignore[invalid-argument-type]
     await reaper.sweep()
 
     assert client.deleted == []
@@ -94,9 +93,9 @@ async def test_sweep_keeps_torrents_backing_a_live_stream_session() -> None:
 @pytest.mark.asyncio
 async def test_start_and_stop_the_background_loop() -> None:
     client = _FakeTorrentClient([])
-    task_repo = _FakeTaskRepo(owned_hashes=set())
+    downloads = _FakeDownloads(owned_hashes=set())
     sessions = StreamSessionStore()
-    reaper = TorrentReaper(client=client, task_repo=task_repo, sessions=sessions, poll_s=0.01)  # ty: ignore[invalid-argument-type]
+    reaper = TorrentReaper(client=client, downloads=downloads, sessions=sessions, poll_s=0.01)  # ty: ignore[invalid-argument-type]
 
     await reaper.start()
     await reaper.stop()  # must return cleanly, not hang or raise

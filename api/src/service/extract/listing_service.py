@@ -19,7 +19,7 @@ from loguru import logger
 
 from src.core.base import BaseService
 from src.core.error import Error
-from src.data.type import TaskStatus
+from src.data.type import DownloadStatus
 from src.lib.site import error as site_error
 from src.lib.site.client import PlaylistEntry, SiteClient
 
@@ -30,33 +30,33 @@ BATCH_SIZE = 100
 #: How long the site may go without a new video before the listing gives up.
 STALL_S = 60.0
 
-#: What the picker calls a video some task already holds.
+#: What the picker calls a video some download already holds.
 _HAVE = {
-    TaskStatus.COMPLETE: "complete",
-    TaskStatus.SEEDING: "complete",
-    TaskStatus.FAILED: "failed",
+    DownloadStatus.COMPLETE: "complete",
+    DownloadStatus.SEEDING: "complete",
+    DownloadStatus.FAILED: "failed",
 }
 
 Frame = tuple[str, Any]
 
 
 class HeldLookup(Protocol):
-    """The one thing a listing asks of the task table. ``TaskDatabaseRepo`` answers it."""
+    """The one thing a listing asks of the downloads. ``DownloadDatabaseRepo`` answers it."""
 
-    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, TaskStatus]: ...
+    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, DownloadStatus]: ...
 
 
 class _End:
     """The listing thread is done."""
 
 
-def _have(status: TaskStatus | None) -> str | None:
+def _have(status: DownloadStatus | None) -> str | None:
     if status is None:
         return None
     return _HAVE.get(status, "queued")
 
 
-def _entry_json(entry: PlaylistEntry, status: TaskStatus | None) -> dict[str, Any]:
+def _entry_json(entry: PlaylistEntry, status: DownloadStatus | None) -> dict[str, Any]:
     data = asdict(entry)
     del data["extractor"]
     data["have"] = _have(status)
@@ -128,8 +128,8 @@ class ListingService(BaseService):
             stop.set()
 
     async def _described(self, batch: list[PlaylistEntry]) -> list[dict[str, Any]]:
-        """The batch as JSON, each video marked with what a task already holds."""
-        held: dict[tuple[str, str], TaskStatus] = {}
+        """The batch as JSON, each video marked with what a download already holds."""
+        held: dict[tuple[str, str], DownloadStatus] = {}
         for extractor in {entry.extractor for entry in batch if entry.extractor}:
             ids = [entry.id for entry in batch if entry.extractor == extractor]
             for video_id, status in (await self._repo.statuses_by_video(extractor, ids)).items():

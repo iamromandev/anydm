@@ -19,7 +19,7 @@ from loguru import logger
 from src.core.base import BaseService
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.repo.download.interface import TaskRepo
+from src.data.repo.download.interface import DownloadRepo
 from src.lib.event import EventHub
 from src.lib.media.audio import AudioTrack, pick_audio_track
 from src.lib.media.ffmpeg import run as ffmpeg_run
@@ -65,19 +65,19 @@ Encoder = Callable[[list[str]], Awaitable[None]]
 #: read from in the end, which its relative URIs resolve against, and its text.
 PlaylistFetcher = Callable[[str, Mapping[str, str]], Awaitable[tuple[str, str]]]
 
-#: A finished task's file on disk, by task and torrent file index: its path,
+#: A finished download's file on disk, by download and torrent file index: its path,
 #: its name, and the index it turned out to be. ``DownloadService`` owns the
 #: rules (finished, present, inside its folder), so a path never comes from a
 #: client.
-TaskFiles = Callable[[uuid.UUID, int | None], Awaitable[tuple[Path, str, int | None]]]
+DownloadFiles = Callable[[uuid.UUID, int | None], Awaitable[tuple[Path, str, int | None]]]
 
-#: The torrent to stream for a task still downloading, or ``None`` when it
+#: The torrent to stream for a download still downloading, or ``None`` when it
 #: plays from disk (``DownloadService.torrent_play``, #95).
 TorrentPlays = Callable[[uuid.UUID, int | None], Awaitable["TorrentPlay | None"]]
 
-#: The subtitle files beside a task's file, and where to read each
+#: The subtitle files beside a download's file, and where to read each
 #: (``DownloadService.subtitle_files``, #101).
-TaskSidecars = Callable[[uuid.UUID, int | None], Awaitable[list[tuple[Sidecar, SidecarSource]]]]
+DownloadSidecars = Callable[[uuid.UUID, int | None], Awaitable[list[tuple[Sidecar, SidecarSource]]]]
 
 #: Reads a URL whole: a subtitle file out of rqbit.
 BytesFetcher = Callable[[str], Awaitable[bytes]]
@@ -279,7 +279,7 @@ class StreamService(BaseService):
         prober: Prober = probe,
         encoder: Encoder = ffmpeg_run,
         torrent_client: TorrentClient | None = None,
-        task_repo: TaskRepo | None = None,
+        download_repo: DownloadRepo | None = None,
         torrent_dir: Path | None = None,
         torrent_api_url: str = "",
         torrent_enabled: bool = True,
@@ -287,8 +287,8 @@ class StreamService(BaseService):
         progress_poll_s: float = 1.0,
         site_client: SiteClient | None = None,
         playlist_fetcher: PlaylistFetcher = fetch_playlist,
-        task_files: TaskFiles | None = None,
-        task_sidecars: TaskSidecars | None = None,
+        download_files: DownloadFiles | None = None,
+        download_sidecars: DownloadSidecars | None = None,
         bytes_fetcher: BytesFetcher = fetch_bytes,
         subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
         torrent_play: TorrentPlays | None = None,
@@ -304,7 +304,7 @@ class StreamService(BaseService):
         self._prober = prober
         self._encoder = encoder
         self._torrent_client = torrent_client
-        self._task_repo = task_repo
+        self._download_repo = download_repo
         self._torrent_dir = torrent_dir
         self._torrent_api_url = torrent_api_url
         self._torrent_enabled = torrent_enabled
@@ -312,17 +312,17 @@ class StreamService(BaseService):
         self._progress_poll_s = progress_poll_s
         self._site_client = site_client
         self._playlist_fetcher = playlist_fetcher
-        self._task_files = task_files
-        self._task_sidecars = task_sidecars
+        self._download_files = download_files
+        self._download_sidecars = download_sidecars
         self._fetch_bytes = bytes_fetcher
         self._fetch_subtitle = subtitle_fetcher
         self._torrent_play = torrent_play
 
-    async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
-        """Probe a finished task's file for what the player needs to pick how to play it."""
-        path, filename, index = await self._task_file(task_id, file_index)
+    async def media_info(self, download_id: uuid.UUID, file_index: int | None) -> MediaInfo:
+        """Probe a finished download's file for what the player needs to pick how to play it."""
+        path, filename, index = await self._download_file(download_id, file_index)
         result = await self._prober(self._ffprobe_path, str(path))
-        subtitles, _ = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
+        subtitles, _ = with_sidecars(result.subtitle_tracks, await self._sidecars_of(download_id, index))
         return MediaInfo(
             file_index=index,
             filename=filename,
@@ -334,16 +334,16 @@ class StreamService(BaseService):
             video_height=result.video_height,
         )
 
-    async def start_task_session(
+    async def start_download_session(
         self,
-        task_id: uuid.UUID,
+        download_id: uuid.UUID,
         file_index: int | None,
         *,
         audio_language: str | None = None,
         audio_track: int | None = None,
         quality: int | None = None,
     ) -> StreamSession:
-        """Play a finished task's file through a session, read from disk (#94).
+        """Play a finished download's file through a session, read from disk (#94).
 
         For what the browser can't play itself: the file is probed and cut
         like any other source, but it is never fetched again.
@@ -355,20 +355,20 @@ class StreamService(BaseService):
         picks (#99).
         """
         if self._torrent_play is not None:
-            target = await self._torrent_play(task_id, file_index)
+            target = await self._torrent_play(download_id, file_index)
             if target is not None:
                 return self._torrent_stream_session(
                     target.info_hash,
                     target.file_index,
                     audio_language=audio_language,
                     audio_track=audio_track,
-                    sidecars=await self._sidecars_of(task_id, target.file_index),
+                    sidecars=await self._sidecars_of(download_id, target.file_index),
                     quality=quality,
                 )
-        path, _filename, index = await self._task_file(task_id, file_index)
+        path, _filename, index = await self._download_file(download_id, file_index)
         source = MediaInput(str(path))
         result = await self._prober(self._ffprobe_path, source.url)
-        subtitles, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
+        subtitles, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(download_id, index))
         session = self._new_session(
             [source],
             result.duration_seconds,
@@ -381,16 +381,16 @@ class StreamService(BaseService):
         session.subtitle_files = files
         return session
 
-    async def _sidecars_of(self, task_id: uuid.UUID, file_index: int | None) -> list[tuple[Sidecar, SidecarSource]]:
-        """A task's subtitle files, or none when nothing can say (#101)."""
-        if self._task_sidecars is None:
+    async def _sidecars_of(self, download_id: uuid.UUID, file_index: int | None) -> list[tuple[Sidecar, SidecarSource]]:
+        """A download's subtitle files, or none when nothing can say (#101)."""
+        if self._download_sidecars is None:
             return []
-        return await self._task_sidecars(task_id, file_index)
+        return await self._download_sidecars(download_id, file_index)
 
-    async def _task_file(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
-        if self._task_files is None:
+    async def _download_file(self, download_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
+        if self._download_files is None:
             raise Error.service_unavailable("Playing downloads is not configured")
-        return await self._task_files(task_id, file_index)
+        return await self._download_files(download_id, file_index)
 
     def _new_session(
         self,
@@ -573,7 +573,7 @@ class StreamService(BaseService):
         """Stream a torrent's file: ``file_index``, else its largest media file (#98)."""
         if not self._torrent_enabled:
             raise Error.service_unavailable("Torrent support is disabled")
-        if self._torrent_client is None or self._task_repo is None or self._torrent_dir is None:
+        if self._torrent_client is None or self._download_repo is None or self._torrent_dir is None:
             raise Error.create(
                 code=Code.INTERNAL_SERVER_ERROR,
                 message="Torrent streaming is not configured",
@@ -603,7 +603,7 @@ class StreamService(BaseService):
             )
 
         # A folder of its own, so a streamed file can't overwrite a download's
-        # (#107). A torrent a task already has keeps its own: rqbit ignores a
+        # (#107). A torrent a download already has keeps its own: rqbit ignores a
         # re-add's options (#93).
         # Its subtitle files come too: they're small, and it's what they're for (#101).
         by_path = {file.path: file.index for file in details.files}
@@ -835,20 +835,20 @@ class StreamService(BaseService):
             raise _session_not_found()
         return session.cue_path(index, track)
 
-    async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Path:
-        """A finished task's subtitle track, whole, as WebVTT, for a file played as it is (#100).
+    async def subtitle_file(self, download_id: uuid.UUID, file_index: int | None, track: int) -> Path:
+        """A finished download's subtitle track, whole, as WebVTT, for a file played as it is (#100).
 
         An embedded track is extracted; a subtitle file beside it (#101) is
         converted. Either way once, and kept under the stream folder, keyed
         by the video's size and time, so a file replaced on disk is done again.
         """
-        path, _filename, index = await self._task_file(task_id, file_index)
+        path, _filename, index = await self._download_file(download_id, file_index)
         stat = await asyncio.to_thread(path.stat)
-        cached = self._stream_dir / "subtitles" / f"{task_id}-{index or 0}-{track}-{stat.st_size}-{stat.st_mtime_ns}.vtt"
+        cached = self._stream_dir / "subtitles" / f"{download_id}-{index or 0}-{track}-{stat.st_size}-{stat.st_mtime_ns}.vtt"
         if await asyncio.to_thread(cached.exists):
             return cached
         result = await self._prober(self._ffprobe_path, str(path))
-        tracks, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(task_id, index))
+        tracks, files = with_sidecars(result.subtitle_tracks, await self._sidecars_of(download_id, index))
         if track not in [known.index for known in tracks if known.text]:
             raise Error.not_found(f"This file has no subtitle track {track} to show")
         await asyncio.to_thread(cached.parent.mkdir, parents=True, exist_ok=True)
@@ -1116,10 +1116,8 @@ class StreamService(BaseService):
         # A switch leaves two sessions on one torrent for a moment (#99): the
         # one still playing needs it.
         shared = any(other.info_hash == session.info_hash for other in self._sessions.all())
-        if session.info_hash and not shared and self._torrent_client is not None and self._task_repo is not None:
-            existing = await self._task_repo.get_one(
-                info_hash=session.info_hash, deleted_at__isnull=True
-            )
+        if session.info_hash and not shared and self._torrent_client is not None and self._download_repo is not None:
+            existing = await self._download_repo.by_info_hash(session.info_hash)
             if existing is None:
                 try:
                     await self._torrent_client.delete(session.info_hash)

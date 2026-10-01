@@ -383,13 +383,13 @@ class FakeTorrentClient:
         self.deleted.append(info_hash)
 
 
-class FakeTaskRepo:
+class FakeDownloadRepo:
     def __init__(self, *, existing_info_hash: str | None = None) -> None:
         self._existing_info_hash = existing_info_hash
 
-    async def get_one(self, **kwargs: object) -> object | None:
-        if kwargs.get("info_hash") == self._existing_info_hash and self._existing_info_hash is not None:
-            return object()  # any truthy row stands in for a real Task
+    async def by_info_hash(self, info_hash: str) -> object | None:
+        if info_hash == self._existing_info_hash and self._existing_info_hash is not None:
+            return object()  # any truthy row stands in for a real Download
         return None
 
 
@@ -408,7 +408,7 @@ def _torrent_service(
     tmp_path: Path,
     *,
     torrent_client: object,
-    task_repo: object,
+    download_repo: object,
     prober: Prober | None = None,
 ) -> tuple[StreamService, list[list[str]]]:
     encoded_calls: list[list[str]] = []
@@ -431,7 +431,7 @@ def _torrent_service(
         prober=prober or default_prober,
         encoder=fake_encoder,
         torrent_client=torrent_client,  # ty: ignore[invalid-argument-type]
-        task_repo=task_repo,  # ty: ignore[invalid-argument-type]
+        download_repo=download_repo,  # ty: ignore[invalid-argument-type]
         torrent_dir=tmp_path / "torrent",
         torrent_api_url="http://torrent-anydm-api:3030",
         torrent_enabled=True,
@@ -442,7 +442,7 @@ def _torrent_service(
 @pytest.mark.asyncio
 async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> None:
     torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
     await asyncio.gather(*session.background_tasks)
@@ -473,7 +473,7 @@ SEASON_DETAILS = TorrentDetails(
 async def test_a_torrent_session_carries_its_media_files(tmp_path: Path) -> None:
     """The player's file menu is these; a subtitle file is not one of them."""
     torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5")
     await asyncio.gather(*session.background_tasks)
@@ -489,7 +489,7 @@ async def test_a_torrent_with_one_media_file_carries_only_it(tmp_path: Path) -> 
         output_folder="/workdir/download/torrent/Movie",
         files=[FileInfo(index=0, path="Movie.mkv", size_bytes=900), FileInfo(index=1, path="readme.txt", size_bytes=10)],
     )
-    service, _ = _torrent_service(tmp_path, torrent_client=FakeTorrentClient(details=details), task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=FakeTorrentClient(details=details), download_repo=FakeDownloadRepo())
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:a1a1a1a1")
     await asyncio.gather(*session.background_tasks)
@@ -501,7 +501,7 @@ async def test_a_torrent_with_one_media_file_carries_only_it(tmp_path: Path) -> 
 async def test_start_torrent_session_plays_the_file_asked_for(tmp_path: Path) -> None:
     """Episode 2, not whichever is biggest (#98)."""
     torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5", file_index=1)
     await asyncio.gather(*session.background_tasks)
@@ -515,7 +515,7 @@ async def test_start_torrent_session_plays_the_file_asked_for(tmp_path: Path) ->
 @pytest.mark.parametrize("file_index", [2, 9])
 async def test_start_torrent_session_refuses_a_file_that_is_not_media(tmp_path: Path, file_index: int) -> None:
     torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
 
     with pytest.raises(Error) as caught:
         await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5", file_index=file_index)
@@ -535,7 +535,7 @@ async def test_start_torrent_session_returns_immediately_as_connecting(tmp_path:
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
         prober=hanging_prober,
     )
 
@@ -557,7 +557,7 @@ async def test_start_torrent_session_builds_the_rqbit_stream_url(tmp_path: Path)
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
         prober=recording_prober,
     )
 
@@ -601,7 +601,7 @@ async def test_start_torrent_session_publishes_peer_progress_while_connecting(
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=torrent_client,
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
         prober=slow_prober,
     )
     service._event_hub = hub
@@ -647,7 +647,7 @@ async def test_progress_polling_survives_past_ready_and_stops_when_session_stops
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=torrent_client,
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
     )
     service._event_hub = hub
     service._progress_poll_s = 0.01
@@ -685,7 +685,7 @@ async def test_start_torrent_session_marks_status_error_when_probe_fails(tmp_pat
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
         prober=failing_prober,
     )
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
@@ -707,7 +707,7 @@ async def test_start_torrent_session_rejects_a_torrent_with_no_media_file(tmp_pa
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=FakeTorrentClient(details=no_media),
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
     )
     with pytest.raises(Error):
         await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
@@ -718,7 +718,7 @@ async def test_start_torrent_session_rejects_when_torrent_support_is_disabled(tm
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=FakeTorrentClient(details=TORRENT_DETAILS),
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
     )
     service._torrent_enabled = False
     with pytest.raises(Error):
@@ -728,7 +728,7 @@ async def test_start_torrent_session_rejects_when_torrent_support_is_disabled(tm
 @pytest.mark.asyncio
 async def test_stop_session_deletes_the_torrent_when_no_task_owns_it(tmp_path: Path) -> None:
     torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
 
     await service.stop_session(session.id)
@@ -742,7 +742,7 @@ async def test_stop_session_leaves_the_torrent_when_a_real_task_owns_it(tmp_path
     service, _ = _torrent_service(
         tmp_path,
         torrent_client=torrent_client,
-        task_repo=FakeTaskRepo(existing_info_hash="deadbeef"),
+        download_repo=FakeDownloadRepo(existing_info_hash="deadbeef"),
     )
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
 
@@ -754,7 +754,7 @@ async def test_stop_session_leaves_the_torrent_when_a_real_task_owns_it(tmp_path
 @pytest.mark.asyncio
 async def test_stop_session_does_not_raise_when_the_engine_delete_fails(tmp_path: Path) -> None:
     torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
-    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo())
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef")
 
     torrent_client.fail = Error.service_unavailable("down")
@@ -1275,8 +1275,8 @@ class FakeTaskFiles:
         self.path, self.index, self.fail = path, index, fail
         self.asked: list[tuple[uuid.UUID, int | None]] = []
 
-    async def __call__(self, task_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
-        self.asked.append((task_id, file_index))
+    async def __call__(self, download_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
+        self.asked.append((download_id, file_index))
         if self.fail:
             raise self.fail
         return self.path, self.path.name, self.index if file_index is None else file_index
@@ -1296,12 +1296,12 @@ async def test_media_info_probes_the_tasks_file_and_names_its_type(tmp_path: Pat
     """Whether the browser can play a download itself (#94)."""
     probed: list[str] = []
     files = FakeTaskFiles(tmp_path / "Movie.mp4", index=4)
-    service, _ = _service(tmp_path, prober=_local_prober(probed), task_files=files)
-    task_id = uuid.uuid4()
+    service, _ = _service(tmp_path, prober=_local_prober(probed), download_files=files)
+    download_id = uuid.uuid4()
 
-    info = await service.media_info(task_id, None)
+    info = await service.media_info(download_id, None)
 
-    assert files.asked == [(task_id, None)]
+    assert files.asked == [(download_id, None)]
     assert probed == [str(tmp_path / "Movie.mp4")]
     assert (info.file_index, info.filename, info.duration_seconds, info.has_video) == (4, "Movie.mp4", 30.0, True)
     assert info.media_type == 'video/mp4; codecs="avc1.640028, mp4a.40.2"'
@@ -1311,12 +1311,12 @@ async def test_media_info_probes_the_tasks_file_and_names_its_type(tmp_path: Pat
 async def test_a_session_from_a_task_reads_its_file_from_disk(tmp_path: Path) -> None:
     probed: list[str] = []
     files = FakeTaskFiles(tmp_path / "Movie.mkv")
-    service, _ = _service(tmp_path, prober=_local_prober(probed), task_files=files)
-    task_id = uuid.uuid4()
+    service, _ = _service(tmp_path, prober=_local_prober(probed), download_files=files)
+    download_id = uuid.uuid4()
 
-    session = await service.start_task_session(task_id, 2)
+    session = await service.start_download_session(download_id, 2)
 
-    assert files.asked == [(task_id, 2)]
+    assert files.asked == [(download_id, 2)]
     assert [source.url for source in session.inputs] == [str(tmp_path / "Movie.mkv")]
     assert session.inputs[0].headers == {}
     assert (session.duration_seconds, session.has_video, session.info_hash) == (30.0, True, None)
@@ -1326,10 +1326,10 @@ async def test_a_session_from_a_task_reads_its_file_from_disk(tmp_path: Path) ->
 @pytest.mark.asyncio
 async def test_a_task_the_resolver_refuses_starts_nothing(tmp_path: Path) -> None:
     files = FakeTaskFiles(tmp_path / "x", fail=Error.conflict(message="Task is downloading, not complete"))
-    service, _ = _service(tmp_path, task_files=files)
+    service, _ = _service(tmp_path, download_files=files)
 
     with pytest.raises(Error) as caught:
-        await service.start_task_session(uuid.uuid4(), None)
+        await service.start_download_session(uuid.uuid4(), None)
 
     assert caught.value.code == Code.CONFLICT
     assert list(tmp_path.iterdir()) == []
@@ -1352,25 +1352,25 @@ async def test_a_torrent_still_downloading_plays_from_its_torrent(tmp_path: Path
     disk = FakeTaskFiles(tmp_path / "unused.mkv")
     asked: list[tuple[uuid.UUID, int | None]] = []
 
-    async def torrent_play(task_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
-        asked.append((task_id, file_index))
+    async def torrent_play(download_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
+        asked.append((download_id, file_index))
         return TorrentPlay("deadbeef", 1)
 
     service, _ = _service(
         tmp_path,
         torrent_client=torrent_client,
-        task_repo=FakeTaskRepo(),
+        download_repo=FakeDownloadRepo(),
         torrent_dir=tmp_path / "torrent",
         torrent_api_url="http://torrent-anydm-api:3030",
-        task_files=disk,
+        download_files=disk,
         torrent_play=torrent_play,
     )
-    task_id = uuid.uuid4()
+    download_id = uuid.uuid4()
 
-    session = await service.start_task_session(task_id, None)
+    session = await service.start_download_session(download_id, None)
     await asyncio.gather(*session.background_tasks)
 
-    assert asked == [(task_id, None)]
+    assert asked == [(download_id, None)]
     assert torrent_client.added == []
     assert disk.asked == []
     assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"
@@ -1387,9 +1387,9 @@ async def test_a_finished_torrent_still_plays_from_disk(tmp_path: Path) -> None:
         return None
 
     disk = FakeTaskFiles(tmp_path / "Movie.mkv", index=1)
-    service, _ = _service(tmp_path, task_files=disk, torrent_play=torrent_play)
+    service, _ = _service(tmp_path, download_files=disk, torrent_play=torrent_play)
 
-    session = await service.start_task_session(uuid.uuid4(), None)
+    session = await service.start_download_session(uuid.uuid4(), None)
 
     assert [source.url for source in session.inputs] == [str(tmp_path / "Movie.mkv")]
     assert session.info_hash is None
@@ -1481,7 +1481,7 @@ async def test_a_switch_refuses_a_track_the_source_lacks(tmp_path: Path) -> None
 async def test_a_torrent_picks_its_track_once_probed_and_switches_on_the_same_torrent(tmp_path: Path) -> None:
     torrent_client = FakeTorrentClient(details=TORRENT_DETAILS)
     service, encoded = _torrent_service(
-        tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo(), prober=_two_tracks
+        tmp_path, torrent_client=torrent_client, download_repo=FakeDownloadRepo(), prober=_two_tracks
     )
 
     old = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef", audio_language="eng")
@@ -1650,7 +1650,7 @@ async def test_an_audio_switch_keeps_the_subtitle_tracks(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_a_torrent_s_subtitle_tracks_arrive_when_it_s_probed(tmp_path: Path) -> None:
     service, _ = _torrent_service(
-        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(),
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), download_repo=FakeDownloadRepo(),
         prober=_subtitled,
     )
     from src.lib.event import EventHub
@@ -1681,7 +1681,7 @@ async def test_a_download_s_subtitle_track_is_extracted_whole_once(tmp_path: Pat
     movie = tmp_path / "movie.mkv"
     movie.write_bytes(b"mkv")
     files = FakeTaskFiles(movie)
-    service, encoded = _service(tmp_path / "stream", prober=_subtitled, task_files=files)
+    service, encoded = _service(tmp_path / "stream", prober=_subtitled, download_files=files)
     task = uuid.uuid4()
 
     first = await service.subtitle_file(task, None, 1)
@@ -1700,7 +1700,7 @@ async def test_a_download_s_subtitle_track_is_extracted_whole_once(tmp_path: Pat
 async def test_a_download_s_picture_subtitles_are_not_found(tmp_path: Path) -> None:
     movie = tmp_path / "movie.mkv"
     movie.write_bytes(b"mkv")
-    service, encoded = _service(tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie))
+    service, encoded = _service(tmp_path / "stream", prober=_subtitled, download_files=FakeTaskFiles(movie))
 
     with pytest.raises(Error) as caught:
         await service.subtitle_file(uuid.uuid4(), None, 2)
@@ -1718,8 +1718,8 @@ class FakeSidecars:
         self.found = found
         self.asked: list[tuple[uuid.UUID, int | None]] = []
 
-    async def __call__(self, task_id: uuid.UUID, file_index: int | None) -> list:
-        self.asked.append((task_id, file_index))
+    async def __call__(self, download_id: uuid.UUID, file_index: int | None) -> list:
+        self.asked.append((download_id, file_index))
         return self.found
 
 
@@ -1750,12 +1750,12 @@ async def test_a_download_s_subtitle_files_follow_its_embedded_tracks(tmp_path: 
     sidecars = FakeSidecars([(Sidecar("Movie.fr.srt", "fr", "Movie.fr.srt"), srt)])
     encoder = RecordingEncoder()
     service, _ = _service(
-        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), task_sidecars=sidecars,
+        tmp_path / "stream", prober=_subtitled, download_files=FakeTaskFiles(movie), download_sidecars=sidecars,
         encoder=encoder,
     )
     task = uuid.uuid4()
 
-    session = await service.start_task_session(task, None)
+    session = await service.start_download_session(task, None)
     info = await service.media_info(task, None)
 
     external = SubtitleTrack(3, language="fr", title="Movie.fr.srt", codec="subrip", external=True)
@@ -1778,9 +1778,9 @@ async def test_a_subtitle_file_is_never_cut_by_the_segment(tmp_path: Path) -> No
     movie.write_bytes(b"mkv")
     sidecars = FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), tmp_path / "Movie.en.srt")])
     service, encoded = _service(
-        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), task_sidecars=sidecars
+        tmp_path / "stream", prober=_subtitled, download_files=FakeTaskFiles(movie), download_sidecars=sidecars
     )
-    session = await service.start_task_session(uuid.uuid4(), None)
+    session = await service.start_download_session(uuid.uuid4(), None)
 
     with pytest.raises(Error) as caught:
         await service.get_subtitle_segment(session, 3, 0)
@@ -1805,16 +1805,16 @@ async def test_a_downloading_torrent_s_subtitle_file_is_read_through_rqbit(tmp_p
     sidecars = FakeSidecars([(Sidecar("Subs/2_English.srt", "en", "2_English.srt"), TorrentFile("deadbeef", 4))])
     encoder = RecordingEncoder()
     service, _ = _torrent_service(
-        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(),
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), download_repo=FakeDownloadRepo(),
         prober=_subtitled,
     )
     service._torrent_play = playing
-    service._task_sidecars = sidecars
+    service._download_sidecars = sidecars
     service._fetch_bytes = fetch
     service._encoder = encoder
     task = uuid.uuid4()
 
-    session = await service.start_task_session(task, None)
+    session = await service.start_download_session(task, None)
     await asyncio.gather(*session.background_tasks)
     await service.get_subtitle_file(session, 3)
 
@@ -1837,10 +1837,10 @@ async def test_an_audio_switch_keeps_the_subtitle_files(tmp_path: Path) -> None:
     srt.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
     sidecars = FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), srt)])
     service, _ = _service(
-        tmp_path / "stream", prober=both, task_files=FakeTaskFiles(movie), task_sidecars=sidecars,
+        tmp_path / "stream", prober=both, download_files=FakeTaskFiles(movie), download_sidecars=sidecars,
         encoder=RecordingEncoder(),
     )
-    old = await service.start_task_session(uuid.uuid4(), None)
+    old = await service.start_download_session(uuid.uuid4(), None)
 
     new = await service.switch_audio(old, 1)
 
@@ -1856,8 +1856,8 @@ async def test_a_download_played_as_it_is_gets_its_subtitle_file_converted_once(
     srt.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
     encoder = RecordingEncoder()
     service, _ = _service(
-        tmp_path / "stream", prober=_subtitled, task_files=FakeTaskFiles(movie), encoder=encoder,
-        task_sidecars=FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), srt)]),
+        tmp_path / "stream", prober=_subtitled, download_files=FakeTaskFiles(movie), encoder=encoder,
+        download_sidecars=FakeSidecars([(Sidecar("Movie.en.srt", "en", "Movie.en.srt"), srt)]),
     )
     task = uuid.uuid4()
 
@@ -2024,7 +2024,7 @@ async def test_a_start_can_ask_for_a_height_and_an_audio_switch_keeps_it(tmp_pat
 @pytest.mark.asyncio
 async def test_a_torrent_s_menu_arrives_when_it_s_probed(tmp_path: Path) -> None:
     service, _ = _torrent_service(
-        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), task_repo=FakeTaskRepo(), prober=_four_k
+        tmp_path, torrent_client=FakeTorrentClient(details=TORRENT_DETAILS), download_repo=FakeDownloadRepo(), prober=_four_k
     )
 
     session = await service.start_torrent_session("magnet:?xt=urn:btih:deadbeef", quality=720)

@@ -37,9 +37,9 @@ async def start_stream(
 ) -> Response:
     # The request allows exactly one of the three (``StreamStartRequest``).
     language, track, quality = payload.audio_language, payload.audio_track, payload.quality
-    if payload.task_id is not None:
-        session = await stream_service.start_task_session(
-            payload.task_id, payload.file_index, audio_language=language, audio_track=track, quality=quality
+    if payload.download_id is not None:
+        session = await stream_service.start_download_session(
+            payload.download_id, payload.file_index, audio_language=language, audio_track=track, quality=quality
         )
     elif payload.torrent:
         session = await stream_service.start_torrent_session(
@@ -50,7 +50,7 @@ async def start_stream(
             payload.url.strip(), audio_language=language, audio_track=track, quality=quality
         )
     else:
-        raise Error.bad_request("Provide exactly one of url, torrent or task_id")
+        raise Error.bad_request("Provide exactly one of url, torrent or download_id")
     return Success.created(data=_session_schema(session)).to_resp()
 
 
