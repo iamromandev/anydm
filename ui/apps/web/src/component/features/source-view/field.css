@@ -1,0 +1,186 @@
+.source-view {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.source-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.source-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.source-add {
+    margin-left: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: var(--color-card);
+    color: var(--color-foreground);
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+}
+
+.source-failure {
+    border: 1px solid var(--color-warning);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.source-empty {
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    font-size: 0.875rem;
+}
+
+.source-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.source-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    background: var(--color-card);
+    padding: 0.75rem;
+}
+
+.source-switch {
+    position: relative;
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+}
+
+.source-switch-input {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+}
+
+.source-switch-input:disabled {
+    cursor: default;
+}
+
+.source-switch-track {
+    display: block;
+    width: 2rem;
+    height: 1.125rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-foreground) 20%, transparent);
+    position: relative;
+    transition: background 0.15s;
+}
+
+.source-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 0.125rem;
+    left: 0.125rem;
+    width: 0.875rem;
+    height: 0.875rem;
+    border-radius: 50%;
+    background: var(--color-card);
+    transition: left 0.15s;
+}
+
+.source-switch-input:checked + .source-switch-track {
+    background: var(--color-ring);
+}
+
+.source-switch-input:checked + .source-switch-track::after {
+    left: 1rem;
+}
+
+.source-switch-input:focus-visible + .source-switch-track {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+.source-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+}
+
+.source-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.source-badge {
+    display: inline-block;
+    font-weight: 400;
+    font-size: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 0 0.5rem;
+    margin-left: 0.375rem;
+    color: color-mix(in srgb, var(--color-foreground) 70%, transparent);
+}
+
+.source-address,
+.source-test {
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    overflow-wrap: anywhere;
+}
+
+.source-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    flex-shrink: 0;
+}
+
+.source-btn {
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.35rem 0.65rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+}
+
+.source-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.source-btn:focus-visible,
+.source-add:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+
+.source-btn--danger {
+    border-color: var(--color-warning);
+}
+
+@media (max-width: 640px) {
+    .source-row {
+        flex-wrap: wrap;
+    }
+
+    .source-actions {
+        width: 100%;
+    }
+}
