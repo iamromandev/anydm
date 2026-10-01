@@ -1,8 +1,9 @@
-"""Torrents, as this API's tasks.
+"""Torrents, as this API's downloads.
 
 The engine owns the transfer; this service owns the row. It resolves what a
-magnet contains, creates the task and its file rows, and translates the control
-verbs. Progress is not its job — ``torrent_monitor.py`` does that.
+magnet contains, creates the download with its torrent detail and file rows, and
+translates the control verbs. Progress is not its job — ``torrent_monitor.py``
+does that.
 """
 
 from __future__ import annotations
@@ -19,38 +20,31 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.repo.download.interface import FileRepo, TaskRepo
-from src.data.schema.download import FileSchema, TaskSchema, TorrentResolveResponse
-from src.data.type import Kind, Platform, Preset, TaskStatus
+from src.data.repo.download.interface import DownloadRepo, FileRepo
+from src.data.schema.download import DownloadSchema, FileSchema, TorrentResolveResponse
+from src.data.type import DownloadStatus, MediaKind, Platform
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
-from src.lib.torrent.folder import stored_folder, torrent_folder
+from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
+from src.service.download.folders import inside
+from src.service.download.live import LiveStats
+from src.service.download.views import DownloadViews
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
-
-
-def task_schema(task: Any, files: Sequence[Any] | None = None) -> TaskSchema:
-    """A row's ``TaskSchema``, carrying a torrent's file rows when given (#107).
-
-    The files are attached after validation rather than read off the row: the
-    relation is named ``torrent_files``, not ``files``, on purpose (see
-    ``File``), so ``model_validate`` alone always left ``files`` empty.
-    """
-    schema = TaskSchema.model_validate(task)
-    if files is not None:
-        schema.files = [FileSchema.model_validate(row) for row in files]
-    return schema
 
 
 class TorrentService(BaseService):
     def __init__(
         self,
-        repo: TaskRepo,
+        repo: DownloadRepo,
         file_repo: FileRepo,
         client: TorrentClient,
         hub: EventHub,
+        views: DownloadViews,
+        live: LiveStats,
+        downloads_root: Path,
         torrent_root: Path,
         enabled: bool,
         disk: DiskGuard | None = None,
@@ -60,6 +54,9 @@ class TorrentService(BaseService):
         self._file_repo = file_repo
         self._client = client
         self._hub = hub
+        self._views = views
+        self._live = live
+        self._downloads = downloads_root.resolve()
         self._root = torrent_root
         self._enabled = enabled
         self._disk = disk
@@ -67,7 +64,7 @@ class TorrentService(BaseService):
     async def resolve(self, raw: str) -> TorrentResolveResponse:
         """What this magnet contains, without downloading any of it.
 
-        Nothing is written. An abandoned magnet therefore leaves no task to
+        Nothing is written. An abandoned magnet therefore leaves nothing to
         clean up, which is the whole reason resolving precedes enqueueing.
         """
         self._require_enabled()
@@ -91,8 +88,8 @@ class TorrentService(BaseService):
             ],
         )
 
-    async def enqueue(self, raw: str, files: Sequence[int]) -> TaskSchema:
-        """Start a torrent and record it as a task.
+    async def enqueue(self, raw: str, files: Sequence[int]) -> DownloadSchema:
+        """Start a torrent and record it as a download.
 
         The engine is asked first. Its answer carries the info hash, the real
         file list and the folder it chose, and a row created before that would
@@ -101,9 +98,8 @@ class TorrentService(BaseService):
         self._require_enabled()
         source = parse_source(raw)
 
-        # Resolving before adding costs one extra round trip and buys the
-        # rejection below: a selection naming a file the torrent does not have
-        # would otherwise be a silently empty download.
+        # Resolving before adding buys the rejection below: a selection naming a
+        # file the torrent does not have would otherwise be a silently empty download.
         details = await self._client.resolve(source)
         selected = self._validated_selection(details, files)
         total_bytes = sum(file.size_bytes for file in details.files if file.index in selected)
@@ -121,37 +117,23 @@ class TorrentService(BaseService):
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
             output_folder=str(folder),
         )
-
-        task = await self._repo.create(
-            # A base64 .torrent must never land in this column: it is what
-            # reconciliation re-adds the torrent from, and an info-hash magnet
-            # is both small and re-addable.
-            source_url=raw.strip() if not source.is_blob else f"magnet:?xt=urn:btih:{details.info_hash}",
-            platform=Platform.TORRENT,
-            video_id=None,
-            # No preset applies to a torrent; ``kind`` is what says so.
-            preset=Preset.BEST,
-            kind=Kind.TORRENT,
-            title=details.name,
-            filename=details.name,
-            mime_type=None,
-            video_format=None,
-            audio_format=None,
-            info_hash=details.info_hash,
-            file_path=str(folder),
-            total_bytes=total_bytes,
-            status=TaskStatus.PENDING,
-            progress=0,
+        download = await self._repo.create_torrent(
+            {
+                # A base64 .torrent must never land here: reconciliation re-adds
+                # from it, and an info-hash magnet is both small and re-addable.
+                "source_url": raw.strip() if not source.is_blob else f"magnet:?xt=urn:btih:{details.info_hash}",
+                "platform": Platform.TORRENT,
+                "media_kind": MediaKind.FILE,
+                "title": details.name,
+                "status": DownloadStatus.PENDING,
+                "total_bytes": total_bytes,
+                # Relative to DOWNLOAD_DIR, like every folder (TORRENT_DIR lives under it).
+                "folder": str(folder.resolve().relative_to(self._downloads)),
+            },
+            details.info_hash,
+            [(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
-
-        await self._file_repo.replace(
-            task.id,
-            [
-                (file.index, file.path, file.size_bytes, file.index in selected)
-                for file in details.files
-            ],
-        )
-        return await self._published(task)
+        return await self._published(download)
 
     def _validated_selection(self, details: TorrentDetails, files: Sequence[int]) -> set[int]:
         """The chosen indexes, or every index when nothing was chosen."""
@@ -168,119 +150,106 @@ class TorrentService(BaseService):
             )
         return set(files)
 
-    async def schema(self, task: Any) -> TaskSchema:
-        """``task`` as the API reports it, with its files when it is a torrent."""
-        if task.platform != Platform.TORRENT:
-            return task_schema(task)
-        return task_schema(task, await self._file_repo.list_for(task.id))
-
-    async def schemas(self, tasks: Sequence[Any]) -> list[TaskSchema]:
-        """``schema`` for a page of rows, with every torrent's files in one query."""
-        torrent_ids = [task.id for task in tasks if task.platform == Platform.TORRENT]
-        files = await self._file_repo.list_for_tasks(torrent_ids) if torrent_ids else {}
-        return [task_schema(task, files.get(task.id)) for task in tasks]
-
-    async def _published(self, task: Any) -> TaskSchema:
+    async def _published(self, download: Any) -> DownloadSchema:
         """Serialise, announce, and hand back — as ``DownloadService`` does.
 
         Publishing here is what makes a torrent appear in every open browser
         the moment it is added, rather than on the monitor's next tick.
         """
-        schema = await self.schema(task)
-        self._hub.publish("task", schema.to_json())
+        schema = await self._views.one(download)
+        self._hub.publish("download", schema.to_json())
         return schema
 
-    async def pause(self, task_id: uuid.UUID) -> TaskSchema:
-        task = await self._require(task_id)
-        if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING):
-            raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
+    @staticmethod
+    def _hash(download: Any) -> str:
+        return download.torrent_detail.info_hash if download.torrent_detail else ""
 
-        await self._client.pause(task.info_hash or "")
-        task.status = TaskStatus.PAUSED
-        task.speed_bps = 0
-        task.eta_seconds = None
-        await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return await self._published(task)
+    async def pause(self, download_id: uuid.UUID) -> DownloadSchema:
+        download = await self._require(download_id)
+        if download.status not in (DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.SEEDING):
+            raise Error.conflict(message=f"Cannot pause a download that is {download.status.value}")
 
-    async def resume(self, task_id: uuid.UUID) -> TaskSchema:
-        task = await self._require(task_id)
-        if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
-            raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
+        await self._client.pause(self._hash(download))
+        download.status = DownloadStatus.PAUSED
+        await download.save(update_fields=["status"])
+        self._live.clear(download.id)
+        return await self._published(download)
 
-        await self._client.start(task.info_hash or "")
+    async def resume(self, download_id: uuid.UUID) -> DownloadSchema:
+        download = await self._require(download_id)
+        if download.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED):
+            raise Error.conflict(message=f"Cannot resume a download that is {download.status.value}")
+
+        await self._client.start(self._hash(download))
         # ``downloading`` rather than ``pending``: there is no queue to wait in,
         # the engine is moving bytes the moment it is started. The next monitor
         # tick corrects this to whatever the engine actually reports.
-        task.status = TaskStatus.DOWNLOADING
-        task.error = None
-        task.error_code = None
-        await task.save(update_fields=["status", "error", "error_code"])
-        return await self._published(task)
+        download.status = DownloadStatus.DOWNLOADING
+        download.error = None
+        download.error_code = None
+        await download.save(update_fields=["status", "error", "error_code"])
+        return await self._published(download)
 
-    async def stop_seeding(self, task_id: uuid.UUID) -> TaskSchema:
+    async def stop_seeding(self, download_id: uuid.UUID) -> DownloadSchema:
         """Stop sharing, keep the files.
 
         Paused in the engine rather than forgotten, so seeding can be started
         again later without re-adding the magnet. ``complete`` is the status a
         torrent can only reach this way.
         """
-        task = await self._require(task_id)
-        if task.status != TaskStatus.SEEDING:
-            raise Error.conflict(message=f"Task is {task.status.value}, not seeding")
+        download = await self._require(download_id)
+        if download.status != DownloadStatus.SEEDING:
+            raise Error.conflict(message=f"Download is {download.status.value}, not seeding")
 
-        await self._client.pause(task.info_hash or "")
-        task.status = TaskStatus.COMPLETE
-        task.speed_bps = 0
-        task.eta_seconds = None
-        await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        return await self._published(task)
+        await self._client.pause(self._hash(download))
+        download.status = DownloadStatus.COMPLETE
+        await download.save(update_fields=["status"])
+        self._live.clear(download.id)
+        return await self._published(download)
 
-    async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
+    async def cancel(self, download_id: uuid.UUID, *, delete_files: bool = True) -> None:
         """Remove the torrent and the row, with or without the files.
 
         rqbit draws the distinction for us: ``delete`` takes the data with it,
         ``forget`` drops the torrent and leaves it. An engine that cannot be
-        reached does not block either: the person asked for this to be gone,
-        and a stranded torrent is a smaller problem than a row that refuses to
-        disappear.
+        reached does not block either: the person asked for this to be gone.
         """
-        task = await self._require(task_id)
-        info_hash = task.info_hash or ""
+        download = await self._require(download_id)
+        info_hash = self._hash(download)
         try:
             if delete_files:
                 await self._client.delete(info_hash)
             else:
                 await self._client.forget(info_hash)
         except Error as error:
-            logger.warning("{}|engine delete failed for {}: {}", self._tag, task.id, error.message)
+            logger.warning("{}|engine delete failed for {}: {}", self._tag, download.id, error.message)
 
-        task.status = TaskStatus.CANCELED
-        task.deleted_at = now()
-        task.speed_bps = 0
-        task.eta_seconds = None
-        await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
-        await self._published(task)
+        download.status = DownloadStatus.CANCELED
+        download.deleted_at = now()
+        await download.save(update_fields=["status", "deleted_at"])
+        self._live.clear(download.id)
+        await self._published(download)
 
-    async def resolve_file(self, task_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
+    def _folder(self, download: Any) -> Path:
+        return inside(self._downloads, download.folder or "")
+
+    async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.
 
-        409 rather than 404 while the torrent is still running, for the same
-        reason ``DownloadService.resolve_file`` does it: the resource will
-        exist, just not yet, and a polling client has to tell "wait" from
-        "never".
+        409 rather than 404 while the torrent is still running: the resource
+        will exist, just not yet, and a polling client has to tell "wait" from "never".
         """
-        task = await self._require(task_id)
-        if task.status not in (TaskStatus.SEEDING, TaskStatus.COMPLETE):
-            raise Error.conflict(message=f"Task is {task.status.value}, not complete")
+        download = await self._require(download_id)
+        if download.status not in (DownloadStatus.SEEDING, DownloadStatus.COMPLETE):
+            raise Error.conflict(message=f"Download is {download.status.value}, not complete")
 
-        rows = await self._file_repo.list_for(task_id)
-        row = next((candidate for candidate in rows if candidate.index == index), None)
+        row = await self._file_repo.get(download_id, index)
         if row is None:
             raise Error.not_found(message=f"Torrent has no file at index {index}")
         if not row.selected:
             raise Error.conflict(message=f"File {index} was not selected for download")
 
-        folder = stored_folder(task.file_path, self._root, [row.path]).resolve()
+        folder = self._folder(download)
         path = (folder / row.path).resolve()
         # A torrent's file names are written by a stranger. Containment is
         # checked against the resolved folder, not by inspecting the string.
@@ -292,17 +261,15 @@ class TorrentService(BaseService):
         media_type, _ = mimetypes.guess_type(path.name)
         return path, path.name, media_type or "application/octet-stream"
 
-    async def media_file_index(self, task_id: uuid.UUID, wanted: int | None = None) -> int:
+    async def media_file_index(self, download_id: uuid.UUID, wanted: int | None = None) -> int:
         """The file Play opens on a torrent: ``wanted``, else its largest selected media file (#94).
 
-        The same rule the torrent dialog's Play uses, over what this task is
-        downloading rather than everything in the torrent. A ``wanted`` file
-        it isn't downloading, or that isn't media, is refused (#95).
+        A ``wanted`` file it isn't downloading, or that isn't media, is refused (#95).
         """
-        await self._require(task_id)
+        await self._require(download_id)
         media = [
             row
-            for row in await self._file_repo.list_for(task_id)
+            for row in await self._file_repo.list_for(download_id)
             if row.selected and row.path.lower().endswith(MEDIA_EXTENSIONS)
         ]
         if wanted is not None:
@@ -321,7 +288,9 @@ class TorrentService(BaseService):
             )
         return max(media, key=lambda row: row.size_bytes).index
 
-    async def subtitle_files(self, task_id: uuid.UUID, file_index: int | None) -> list[tuple[Sidecar, SidecarSource]]:
+    async def subtitle_files(
+        self, download_id: uuid.UUID, file_index: int | None
+    ) -> list[tuple[Sidecar, SidecarSource]]:
         """The subtitle files that go with one of this torrent's videos, and where to read each (#101).
 
         Whatever was selected for download: subtitle files are small, and a
@@ -329,18 +298,22 @@ class TorrentService(BaseService):
         read from there; otherwise from rqbit, which streams a file without
         selecting it (#93), for as long as it has the torrent.
         """
-        task = await self._require(task_id)
-        rows = await self._file_repo.list_for(task_id)
+        download = await self._require(download_id)
+        rows = await self._file_repo.list_for(download_id)
         if file_index is None:
-            file_index = await self.media_file_index(task_id)
+            file_index = await self.media_file_index(download_id)
         video = next((row for row in rows if row.index == file_index), None)
         if video is None:
             return []
         by_path = {row.path: row for row in rows}
-        in_rqbit = bool(task.info_hash) and task.status in (
-            TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED, TaskStatus.SEEDING,
+        info_hash = self._hash(download)
+        in_rqbit = bool(info_hash) and download.status in (
+            DownloadStatus.PENDING,
+            DownloadStatus.DOWNLOADING,
+            DownloadStatus.PAUSED,
+            DownloadStatus.SEEDING,
         )
-        folder = stored_folder(task.file_path, self._root, [video.path]).resolve()
+        folder = self._folder(download)
         found: list[tuple[Sidecar, SidecarSource]] = []
         for sidecar in match_sidecars(video.path, list(by_path)):
             row = by_path[sidecar.path]
@@ -354,34 +327,15 @@ class TorrentService(BaseService):
             if on_disk:
                 found.append((sidecar, path))
             elif in_rqbit:
-                found.append((sidecar, TorrentFile(task.info_hash or "", row.index)))
+                found.append((sidecar, TorrentFile(info_hash, row.index)))
         return found
 
-    async def resolve_only_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
-        """The file of a torrent that has one: what the card's "Download file" asks for (#107).
-
-        A torrent with several selected files has no single file to hand over,
-        so 409 says to take them one at a time, through ``resolve_file``.
-        """
-        task = await self._require(task_id)
-        if task.status not in (TaskStatus.SEEDING, TaskStatus.COMPLETE):
-            raise Error.conflict(message=f"Task is {task.status.value}, not complete")
-
-        selected = [row for row in await self._file_repo.list_for(task_id) if row.selected]
-        if not selected:
-            raise Error.not_found(message="Torrent has no selected file")
-        if len(selected) > 1:
-            raise Error.conflict(
-                message=f"This torrent has {len(selected)} files; download them one at a time"
-            )
-        return await self.resolve_file(task_id, selected[0].index)
-
-    async def _require(self, task_id: uuid.UUID) -> Any:
+    async def _require(self, download_id: uuid.UUID) -> Any:
         self._require_enabled()
-        task = await self._repo.get_active_by_id(task_id)
-        if task is None:
-            raise Error.not_found(message="Task not found")
-        return task
+        download = await self._repo.get_active_by_id(download_id)
+        if download is None:
+            raise Error.not_found(message="Download not found")
+        return download
 
     def _require_enabled(self) -> None:
         if not self._enabled:

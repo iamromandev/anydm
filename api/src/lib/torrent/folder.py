@@ -2,13 +2,11 @@
 
 Every torrent gets a folder of its own under the root (#107). Before that each
 one was written flat into the root, so two torrents sharing a file name,
-``poster.jpg`` or ``Subs/English.srt``, overwrote each other, and the folder a
-task recorded was one rqbit never used.
+``poster.jpg`` or ``Subs/English.srt``, overwrote each other.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 
 from src.lib.folder import named_folder
@@ -24,19 +22,3 @@ def torrent_folder(root: Path, name: str, info_hash: str) -> Path:
     The rules are ``named_folder``'s, which a playlist's folder shares (v0.5).
     """
     return named_folder(root, name, info_hash)
-
-
-def stored_folder(file_path: str | None, root: Path, paths: Iterable[str]) -> Path:
-    """The folder a task's torrent really is in, given the one its row records.
-
-    A torrent added before #107 records ``<root>/<name>`` but was written flat
-    into ``root``: when the recorded folder is missing and its files are in
-    the root, the root it is. A newer torrent with nothing on disk yet keeps
-    the folder it recorded, which is where rqbit will write it.
-    """
-    if not file_path:
-        return root
-    folder = Path(file_path)
-    if not folder.is_dir() and any((root / path).exists() for path in paths):
-        return root
-    return folder

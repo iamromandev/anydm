@@ -1,4 +1,4 @@
-"""One background loop that mirrors the torrent engine onto task rows.
+"""One background loop that mirrors the torrent engine onto download rows.
 
 It runs beside the worker pool and deliberately not inside it. rqbit performs
 the transfer, so a torrent must never occupy a ``DOWNLOAD_WORKERS`` slot — a
@@ -20,25 +20,28 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
-from src.data.repo.download.interface import FileRepo, TaskRepo
-from src.data.type import TaskStatus
+from src.data.repo.download.interface import DownloadRepo, FileRepo
+from src.data.type import DownloadStatus
 from src.lib.event import EventHub
-from src.lib.torrent.folder import stored_folder
-from src.lib.torrent.mapping import progress_percent, status_for
+from src.lib.torrent.mapping import status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
-from src.service.download.torrent_service import task_schema
+from src.service.download.folders import inside
+from src.service.download.live import Live, LiveStats
+from src.service.download.views import DownloadViews, progress_frame
 
 
 class TorrentMonitor:
     def __init__(
         self,
-        repo: TaskRepo,
+        repo: DownloadRepo,
         file_repo: FileRepo,
         client: TorrentClient,
         hub: EventHub,
+        live: LiveStats,
+        views: DownloadViews,
         poll_ms: int,
-        torrent_root: str,
+        downloads_root: Path,
         enabled: bool,
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
@@ -47,8 +50,10 @@ class TorrentMonitor:
         self._file_repo = file_repo
         self._client = client
         self._hub = hub
+        self._live = live
+        self._views = views
         self._poll_s = poll_ms / 1000
-        self._root = torrent_root
+        self._downloads = downloads_root.resolve()
         self._enabled = enabled
         self._task: asyncio.Task[None] | None = None
         #: Reconciliation is a startup job, but the engine may not be up yet at
@@ -123,7 +128,7 @@ class TorrentMonitor:
             self._reconciled = True
 
         for row in rows:
-            sample = by_hash.get(row.info_hash or "")
+            sample = by_hash.get(_hash(row))
             if sample is not None:
                 await self._apply(row, sample)
 
@@ -151,25 +156,19 @@ class TorrentMonitor:
         mismatch is not acceptable.
         """
         for row in rows:
-            if (row.info_hash or "") in by_hash:
+            if _hash(row) in by_hash:
                 continue
             try:
-                # Where its files are: its own folder, or the root for a
-                # torrent added before per-torrent folders (#107).
-                paths = [file.path for file in await self._file_repo.list_for(row.id)]
-                folder = stored_folder(row.file_path, Path(self._root), paths)
                 await self._client.add(
                     parse_source(row.source_url),
                     only_files=await self._file_repo.selected_indexes(row.id),
-                    output_folder=str(folder),
+                    output_folder=str(inside(self._downloads, row.folder or "")),
                 )
-                logger.info("{}|re-added lost torrent {}", self._tag, row.info_hash)
+                logger.info("{}|re-added lost torrent {}", self._tag, _hash(row))
             except Error as error:
-                logger.warning(
-                    "{}|could not re-add torrent {}: {}", self._tag, row.info_hash, error.message
-                )
+                logger.warning("{}|could not re-add torrent {}: {}", self._tag, _hash(row), error.message)
 
-        known = {row.info_hash for row in rows}
+        known = {_hash(row) for row in rows}
         for info_hash in by_hash.keys() - known:
             logger.info("{}|engine holds an untracked torrent {}", self._tag, info_hash)
 
@@ -177,30 +176,52 @@ class TorrentMonitor:
         status = status_for(sample, row.status)
         fields: dict[str, Any] = {
             "status": status,
-            "progress": progress_percent(sample.progress_bytes, sample.total_bytes),
             "downloaded_bytes": sample.progress_bytes,
             "total_bytes": sample.total_bytes or None,
-            "speed_bps": sample.download_bps,
-            "uploaded_bytes": sample.uploaded_bytes,
-            "upload_speed_bps": sample.upload_bps,
-            "peers_connected": sample.peers_connected,
-            "eta_seconds": sample.eta_seconds,
         }
-        if status == TaskStatus.FAILED and sample.error:
+        if status == DownloadStatus.FAILED and sample.error:
             fields["error"] = sample.error
-        if status in (TaskStatus.SEEDING, TaskStatus.COMPLETE) and row.completed_at is None:
+        if status in (DownloadStatus.SEEDING, DownloadStatus.COMPLETE) and row.completed_at is None:
             fields["completed_at"] = now()
 
-        # Only what actually moved is written. The publish below happens every
-        # tick regardless, which is what keeps the browser live without the
-        # database absorbing the full poll rate.
+        # Only what moved is written. The frame below goes out every tick
+        # regardless, which keeps the browser live without the database
+        # absorbing the full poll rate.
         changed = {name: value for name, value in fields.items() if getattr(row, name) != value}
         for name, value in changed.items():
             setattr(row, name, value)
         if changed:
             await row.save(update_fields=list(changed))
 
+        detail = row.torrent_detail
+        if detail.uploaded_bytes != sample.uploaded_bytes:
+            detail.uploaded_bytes = sample.uploaded_bytes
+            await detail.save(update_fields=["uploaded_bytes"])
+
+        live = Live(
+            speed_bps=sample.download_bps,
+            eta_seconds=sample.eta_seconds,
+            upload_speed_bps=sample.upload_bps,
+            peers=sample.peers_connected,
+        )
+        self._live.set(row.id, live)
         await self._file_repo.flush_progress(row.id, sample.file_progress)
-        # With the rows just flushed, so each file's progress reaches the card (#107).
-        files = await self._file_repo.list_for(row.id)
-        self._hub.publish("task", task_schema(row, files).to_json())
+
+        # The full snapshot only when the status moved; every tick, the light frame.
+        if "status" in changed:
+            self._hub.publish("download", (await self._views.one(row)).to_json())
+        self._hub.publish(
+            "progress",
+            progress_frame(
+                row.id,
+                collection_id=None,
+                downloaded_bytes=sample.progress_bytes,
+                total_bytes=sample.total_bytes or None,
+                live=live,
+                files=list(enumerate(sample.file_progress)),
+            ),
+        )
+
+
+def _hash(row: Any) -> str:
+    return row.torrent_detail.info_hash if row.torrent_detail else ""

@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.data.type import TaskStatus
+from src.data.type import DownloadStatus
 from src.lib.torrent.protocol import TorrentProgress
 
 MIB = 1024 * 1024
@@ -93,7 +93,7 @@ def progress_percent(downloaded: int, total: int) -> int:
     return max(0, min(100, int(downloaded * 100 // total)))
 
 
-def status_for(progress: TorrentProgress, current: TaskStatus) -> TaskStatus:
+def status_for(progress: TorrentProgress, current: DownloadStatus) -> DownloadStatus:
     """What a task's status becomes, given one engine sample.
 
     Total, and deliberately ordered. The two decisions the engine cannot make
@@ -104,12 +104,12 @@ def status_for(progress: TorrentProgress, current: TaskStatus) -> TaskStatus:
     never produces it, because a finished torrent that is still sharing is
     ``seeding``, which is not terminal.
     """
-    if current in (TaskStatus.COMPLETE, TaskStatus.CANCELED):
+    if current in (DownloadStatus.COMPLETE, DownloadStatus.CANCELED):
         return current
     if progress.state == "error":
-        return TaskStatus.FAILED
+        return DownloadStatus.FAILED
     if progress.state == "paused":
-        return TaskStatus.PAUSED
+        return DownloadStatus.PAUSED
     if progress.finished:
-        return TaskStatus.SEEDING
-    return TaskStatus.DOWNLOADING
+        return DownloadStatus.SEEDING
+    return DownloadStatus.DOWNLOADING
