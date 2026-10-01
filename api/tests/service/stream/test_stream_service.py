@@ -1376,6 +1376,9 @@ async def test_a_torrent_still_downloading_plays_from_its_torrent(tmp_path: Path
     assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"
     assert session.info_hash == "deadbeef"
     assert session.status == "ready"
+    # A task's answer carries no file list, so the client keeps the one it was
+    # handed for the task; only a magnet or .torrent start names its own files.
+    assert session.files == []
 
 
 @pytest.mark.asyncio

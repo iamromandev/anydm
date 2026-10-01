@@ -261,6 +261,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                 store.error = "";
                 store.sessionId = "";
                 store.streamStatus = "";
+                // Cleared with the rest: a start that fails must not leave the
+                // previous source's files in the menu.
+                store.sessionFiles = [];
                 // Known synchronously from the picked kind, not from the
                 // server response — for a magnet link, even the initial
                 // POST /stream/start can take a while (metadata resolve),

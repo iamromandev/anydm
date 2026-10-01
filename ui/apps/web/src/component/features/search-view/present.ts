@@ -177,11 +177,6 @@ export function sortOptionId(sort: SortState): string {
     return SORT_OPTIONS.find((o) => o.sort.key === sort.key)?.id ?? "seeders";
 }
 
-export function indexerLabel(indexers: string[]): string {
-    if (indexers.length <= 1) return indexers[0] ?? "";
-    return `${indexers[0]} +${indexers.length - 1}`;
-}
-
 /** The source whose copy this result carries, and how many others have it too. */
 export function sourceLabel(result: FoundTorrent): string {
     const name = result.copyFrom || result.indexers[0] || "";
