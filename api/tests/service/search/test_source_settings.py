@@ -30,7 +30,7 @@ def _service(
 
 @pytest.mark.asyncio
 async def test_the_list_shows_every_builtin_in_order_with_defaults_where_there_is_no_row() -> None:
-    repo = FakeSourceRepo([SearchSourceRow("nyaa", False, "https://mirror.test")])
+    repo = FakeSourceRepo([SearchSourceRow("nyaa", "nyaa", False, "https://mirror.test", None)])
 
     listed = (await _service(repo).list_sources()).sources
 
@@ -49,7 +49,8 @@ async def test_update_turns_a_source_off_and_changes_its_address_trimmed() -> No
 
     assert off.enabled is False
     assert (moved.enabled, moved.base_url) == (False, "https://mirror.test")
-    assert await repo.get("apibay") == SearchSourceRow("apibay", False, "https://mirror.test")
+    stored = {r.name: r for r in await repo.list_all()}
+    assert stored["apibay"] == SearchSourceRow("apibay", "apibay", False, "https://mirror.test", None, stored["apibay"].id)
 
 
 @pytest.mark.asyncio
@@ -82,17 +83,18 @@ async def test_an_unknown_source_is_404(call: Callable[[SourceSettingsService], 
 
 @pytest.mark.asyncio
 async def test_reset_restores_the_constants() -> None:
-    repo = FakeSourceRepo([SearchSourceRow("apibay", False, "https://mirror.test")])
+    repo = FakeSourceRepo([SearchSourceRow("apibay", "apibay", False, "https://mirror.test", None)])
 
     reset = await _service(repo).reset("apibay")
 
     assert (reset.enabled, reset.base_url) == (True, APIBAY.default_url)
-    assert await repo.get("apibay") == SearchSourceRow("apibay", True, APIBAY.default_url)
+    stored = {r.name: r for r in await repo.list_all()}
+    assert stored["apibay"] == SearchSourceRow("apibay", "apibay", True, APIBAY.default_url, None, stored["apibay"].id)
 
 
 @pytest.mark.asyncio
 async def test_only_enabled_sources_are_built_and_at_their_stored_address() -> None:
-    repo = FakeSourceRepo([SearchSourceRow("nyaa", False, "https://n.test"), SearchSourceRow("eztv", True, "https://mirror.test")])
+    repo = FakeSourceRepo([SearchSourceRow("nyaa", "nyaa", False, "https://n.test", None), SearchSourceRow("eztv", "eztv", True, "https://mirror.test", None)])
 
     sources = await _service(repo).enabled_sources()
 
@@ -121,7 +123,7 @@ async def test_testing_an_unsaved_address_asks_that_address_even_for_a_disabled_
         seen.append(request.url.host)
         return httpx.Response(200, content=APIBAY_ANSWER)
 
-    repo = FakeSourceRepo([SearchSourceRow("apibay", False, APIBAY.default_url)])
+    repo = FakeSourceRepo([SearchSourceRow("apibay", "apibay", False, APIBAY.default_url, None)])
 
     result = await _service(repo, handler).test("apibay", "https://mirror.test")
 

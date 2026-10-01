@@ -1,6 +1,7 @@
 """Managing the built-in sources: list them, change one, put one back, and ask one whether it answers."""
 
 import time
+import uuid
 
 import httpx
 
@@ -38,7 +39,7 @@ def _view(builtin: Builtin, row: SearchSourceRow | None) -> BuiltinSourceSchema:
 
 
 def _default(builtin: Builtin) -> SearchSourceRow:
-    return SearchSourceRow(builtin.name, builtin.default_enabled, builtin.default_url)
+    return SearchSourceRow(builtin.name, builtin.name, builtin.default_enabled, builtin.default_url, None)
 
 
 def _ms(started: float) -> int:
@@ -55,23 +56,35 @@ class SourceSettingsService:
         rows = {row.name: row for row in await self._repo.list_all()}
         return BuiltinSourcesSchema(sources=[_view(b, rows.get(b.name)) for b in BUILTINS.values()])
 
+    async def _id(self, name: str) -> uuid.UUID | None:
+        # Task 2 replaces this whole service with an id-keyed one; until then the name is resolved here.
+        rows = await self._repo.list_all()
+        return next((row.id for row in rows if row.name == name and row.id is not None), None)
+
     async def update(self, name: str, enabled: bool | None, base_url: str | None) -> BuiltinSourceSchema:
         builtin = _known(name)
         address = _checked(base_url) if base_url is not None else None
         await self._repo.insert_missing([_default(builtin)])
-        return _view(builtin, await self._repo.update(name, enabled, address))
+        row_id = await self._id(name)
+        if row_id is None:  # insert_missing just ensured the row; unreachable
+            raise search_error.source_not_found(name)
+        return _view(builtin, await self._repo.update(row_id, enabled, address))
 
     async def reset(self, name: str) -> BuiltinSourceSchema:
         builtin = _known(name)
         await self._repo.insert_missing([_default(builtin)])
-        return _view(builtin, await self._repo.update(name, builtin.default_enabled, builtin.default_url))
+        row_id = await self._id(name)
+        if row_id is None:  # insert_missing just ensured the row; unreachable
+            raise search_error.source_not_found(name)
+        return _view(builtin, await self._repo.update(row_id, builtin.default_enabled, builtin.default_url))
 
     async def test(self, name: str, base_url: str | None) -> BuiltinTestSchema:
         builtin = _known(name)
         if base_url:
             address = _checked(base_url)
         else:
-            row = await self._repo.get(name)
+            row_id = await self._id(name)
+            row = await self._repo.get(row_id) if row_id else None
             address = row.base_url if row else builtin.default_url
         started = time.monotonic()
         try:

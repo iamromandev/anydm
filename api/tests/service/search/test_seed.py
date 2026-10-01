@@ -19,9 +19,10 @@ async def test_an_empty_table_gets_every_builtin_at_its_default() -> None:
 
 @pytest.mark.asyncio
 async def test_seeding_twice_changes_nothing_and_an_edited_row_survives() -> None:
-    repo = FakeSourceRepo([SearchSourceRow("nyaa", False, "https://mirror.test")])
+    repo = FakeSourceRepo([SearchSourceRow("nyaa", "nyaa", False, "https://mirror.test", None)])
 
     assert await seed_missing_sources(repo) == 2
     assert await seed_missing_sources(repo) == 0
 
-    assert await repo.get("nyaa") == SearchSourceRow("nyaa", False, "https://mirror.test")
+    stored = {r.name: r for r in await repo.list_all()}
+    assert stored["nyaa"] == SearchSourceRow("nyaa", "nyaa", False, "https://mirror.test", None, stored["nyaa"].id)
