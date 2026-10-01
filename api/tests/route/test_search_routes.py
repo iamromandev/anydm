@@ -57,6 +57,11 @@ async def test_a_search_answers_results_and_how_long_it_took(http: httpx.AsyncCl
     assert response.status_code == 200
     assert data["results"][0]["title"] == "Big Buck Bunny 1080p"
     assert data["results"][0]["indexers"] == ["prowlarr-1"]
+    # The fixture's indexer offers both a magnet and a link; the link wins.
+    # A null field is left out of the answer entirely, not sent as null.
+    assert data["results"][0]["copy_from"] == "prowlarr-1"
+    assert "magnet" not in data["results"][0]
+    assert data["results"][0]["link"] is not None
     assert data["errors"] == []
     assert data["asked"] == ["prowlarr-1"]
     assert isinstance(data["took_ms"], int)
