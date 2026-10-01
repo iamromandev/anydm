@@ -16,6 +16,7 @@ from src.core.success import Meta
 from src.data.db.model import Download, DownloadFile, Queue, SiteDetail, TorrentDetail
 from src.data.repo.download.interface.download import RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
+from src.data.repo.download.transitions import next_queue_position
 from src.data.schema.download import DownloadSummarySchema
 from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, MAIN_QUEUE, DownloadStatus, Platform
 
@@ -51,16 +52,9 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         """``download`` in a queue (Main unless named) and at that queue's end."""
         row = dict(download)
         if "queue_id" not in row:
-            row["queue_id"] = (await Queue.get(name=MAIN_QUEUE).using_db(conn)).id
+            row["queue_id"] = (await Queue.get(name=MAIN_QUEUE, using_db=conn)).id
         if "queue_position" not in row:
-            last = await (
-                Download.filter(queue_id=row["queue_id"])
-                .using_db(conn)
-                .order_by("-queue_position")
-                .limit(1)
-                .values_list("queue_position", flat=True)
-            )
-            row["queue_position"] = (last[0] + 1) if last else 0
+            row["queue_position"] = await next_queue_position(row["queue_id"], conn)
         return row
 
     @staticmethod

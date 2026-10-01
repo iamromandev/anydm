@@ -54,11 +54,11 @@ async def test_a_site_download_with_its_detail_file_and_position(sqlite: None) -
     await Segment.create(download=row, part=SegmentPart.VIDEO, index=0, start_byte=0, end_byte=9)
 
     loaded = await Download.get(id=row.id).prefetch_related("site_detail", "category", "queue")
-    assert loaded.site_detail.video_id == "x"
-    assert loaded.category.extensions == ["mp4"]
+    assert loaded.site_detail is not None and loaded.site_detail.video_id == "x"
+    assert loaded.category is not None and loaded.category.extensions == ["mp4"]
     assert loaded.queue.name == "Main"
     played = await DownloadFile.get(id=file.id).prefetch_related("playback")
-    assert played.playback.position_seconds == 12.5
+    assert played.playback is not None and played.playback.position_seconds == 12.5
 
 
 @pytest.mark.asyncio
@@ -92,5 +92,5 @@ async def test_a_torrent_and_a_collection(sqlite: None) -> None:
     )
     assert member.collection_id == collection.id
     loaded = await Download.get(id=torrent.id).prefetch_related("torrent_detail")
-    assert loaded.torrent_detail.info_hash == "aa" * 20
+    assert loaded.torrent_detail is not None and loaded.torrent_detail.info_hash == "aa" * 20
     assert await collection.downloads.all().count() == 1

@@ -47,9 +47,7 @@ class FakeCollections:
     """The one collection a collection video's worker looks up."""
 
     def __init__(self, folder: str | None = None) -> None:
-        self.collection = (
-            SimpleNamespace(id=uuid.uuid4(), folder=folder) if folder is not None else None
-        )
+        self.collection: Any = SimpleNamespace(id=uuid.uuid4(), folder=folder) if folder is not None else None
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
         if self.collection is not None and collection_id == self.collection.id:
@@ -129,9 +127,9 @@ def worker(
         segment_repo=cast(Any, segment_repo or FakeSegmentRepo()),
         files=cast(Any, files),
         collections=cast(Any, collections or FakeCollections()),
-        client=cast(Any, client or stub),
-        engine=cast(Any, engine or stub),
-        post_processor=cast(Any, post or stub),
+        client=client or stub,
+        engine=engine or stub,
+        post_processor=post or stub,
         control=DownloadControl(),
         hub=hub or EventHub(),
         downloads_root=root,
@@ -139,7 +137,7 @@ def worker(
         segments=segments,
         live=live,
         views=memory_views(files=files, live=live),
-        totals=cast(Any, totals),
+        totals=totals,
         disk=disk,
-        fragments=cast(Any, fragments),
+        fragments=fragments,
     )

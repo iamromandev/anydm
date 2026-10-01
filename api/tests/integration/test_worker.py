@@ -271,7 +271,7 @@ async def test_an_interrupted_download_finishes_from_the_database_alone(db: None
             super().__init__()
             self._left = after
 
-        def is_stopping(self, task_id: Any) -> bool:
+        def is_stopping(self, download_id: Any) -> bool:
             self._left -= 1
             return self._left <= 0
 

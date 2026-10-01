@@ -120,17 +120,3 @@ DOWNLOAD_GROUPS: dict[str, frozenset[DownloadStatus]] = {
     "seeding": frozenset({DownloadStatus.SEEDING}),
     "completed": frozenset({DownloadStatus.COMPLETE}),
 }
-
-# --- Transitional: removed in Task 17, once nothing imports them. ---
-TaskStatus = DownloadStatus
-TaskSort = DownloadSort
-TaskGroup = DownloadGroup
-TASK_GROUPS = DOWNLOAD_GROUPS
-
-
-class Kind(StrEnum):
-    VIDEO = "video"
-    AUDIO = "audio"
-    FILE = "file"
-    TORRENT = "torrent"
-    PLAYLIST = "playlist"

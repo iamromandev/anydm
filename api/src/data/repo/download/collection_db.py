@@ -45,15 +45,8 @@ class CollectionDatabaseRepo(CollectionRepo):
         """Three bulk inserts however long the listing: 5,000 videos must not be 15,000 statements."""
         if not entries:
             return
-        main = await Queue.get(name=MAIN_QUEUE).using_db(conn)
-        last = await (
-            Download.filter(queue_id=main.id)
-            .using_db(conn)
-            .order_by("-queue_position")
-            .limit(1)
-            .values_list("queue_position", flat=True)
-        )
-        start = (last[0] + 1) if last else 0
+        main = await Queue.get(name=MAIN_QUEUE, using_db=conn)
+        start = await transitions.next_queue_position(main.id, conn)
         downloads = [
             Download(
                 **{"queue_id": main.id, **entry.download},

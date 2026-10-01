@@ -1383,7 +1383,7 @@ async def test_a_torrent_still_downloading_plays_from_its_torrent(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_a_finished_torrent_still_plays_from_disk(tmp_path: Path) -> None:
-    async def torrent_play(_task_id: uuid.UUID, _file_index: int | None) -> TorrentPlay | None:
+    async def torrent_play(_download_id: uuid.UUID, _file_index: int | None) -> TorrentPlay | None:
         return None
 
     disk = FakeTaskFiles(tmp_path / "Movie.mkv", index=1)

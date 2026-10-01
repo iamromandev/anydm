@@ -12,7 +12,7 @@ from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
-from src.data.repo import SourceDatabaseRepo, TaskDatabaseRepo
+from src.data.repo import CategoryDatabaseRepo, DownloadDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
 from src.route import router as _router
 from src.service import (
     build_worker_pool,
@@ -23,6 +23,7 @@ from src.service import (
     get_torrent_monitor,
     get_torrent_reaper,
 )
+from src.service.download.seed import seed_organization
 from src.service.source.seed import seed_missing_sources
 
 
@@ -36,7 +37,7 @@ async def lifespan(_app: FastAPI):
     Recovery is unconditional because this process is the only one that runs
     workers: every row still marked in-flight at boot belonged to a process that
     is gone. ``downloaded_bytes`` survives and the ``.part`` files stay on disk,
-    so each requeued task resumes from where it stopped rather than starting
+    so each requeued download resumes from where it stopped rather than starting
     over — which is what makes ``uvicorn --reload`` survivable.
 
     The torrent monitor runs beside the worker pool, never inside it: rqbit
@@ -56,9 +57,19 @@ async def lifespan(_app: FastAPI):
         # A missing table (migrations not run yet) must not stop the API; search then uses the constants.
         logger.exception("lifespan|couldn't seed the search sources")
 
-    recovered = await TaskDatabaseRepo().recover_orphans()
+    try:
+        categories, queues = await seed_organization(
+            CategoryDatabaseRepo(), QueueDatabaseRepo(), workers=settings.download_workers
+        )
+        if categories or queues:
+            logger.info("lifespan|seeded {} categor(ies) and {} queue(s)", categories, queues)
+    except Exception:
+        # Without Main nothing can be queued; say so loudly, but keep search and play up.
+        logger.exception("lifespan|couldn't seed the categories and queues")
+
+    recovered = await DownloadDatabaseRepo().recover_orphans()
     if recovered:
-        logger.warning("lifespan|requeued {} orphaned task(s)", recovered)
+        logger.warning("lifespan|requeued {} orphaned download(s)", recovered)
 
     pool = build_worker_pool()
     await pool.start()

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+from src.config import get_settings
 from src.data.db import DB_CONFIG
 from src.data.repo import CategoryDatabaseRepo, QueueDatabaseRepo
 from src.service.download.seed import seed_organization
@@ -21,7 +22,7 @@ _TABLES = (
 
 
 def _require_test_database() -> None:
-    name = str(DB_CONFIG["connections"]["default"]["credentials"]["database"])
+    name = get_settings().db_name
     if not name.endswith("_test"):
         pytest.exit(
             f"Integration tests empty every download table; refusing database {name!r}. Run `make test-all`.",

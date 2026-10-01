@@ -32,11 +32,11 @@ class DownloadControl:
             await asyncio.wait_for(self._work.wait(), timeout=timeout)
         self._work.clear()
 
-    def request_stop(self, task_id: uuid.UUID) -> None:
-        self._stopping.add(task_id)
+    def request_stop(self, download_id: uuid.UUID) -> None:
+        self._stopping.add(download_id)
 
-    def clear_stop(self, task_id: uuid.UUID) -> None:
-        self._stopping.discard(task_id)
+    def clear_stop(self, download_id: uuid.UUID) -> None:
+        self._stopping.discard(download_id)
 
-    def is_stopping(self, task_id: uuid.UUID) -> bool:
-        return task_id in self._stopping
+    def is_stopping(self, download_id: uuid.UUID) -> bool:
+        return download_id in self._stopping

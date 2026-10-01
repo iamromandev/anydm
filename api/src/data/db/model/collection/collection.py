@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from tortoise import fields
 
 from src.core.base import Base
 from src.data.type import CollectionKind, Preset
+
+if TYPE_CHECKING:
+    from src.data.db.model.download.download import Download
 
 
 class Collection(Base):
@@ -25,6 +28,9 @@ class Collection(Base):
     folder: str = fields.CharField(max_length=1024)
     #: A ceiling for each video.
     preset: Preset = fields.CharEnumField(Preset, max_length=8)
+
+    if TYPE_CHECKING:
+        downloads: fields.ReverseRelation[Download]
 
     def __str__(self) -> str:
         return f"[Collection: {self.kind} {self.extractor}:{self.external_id}]"

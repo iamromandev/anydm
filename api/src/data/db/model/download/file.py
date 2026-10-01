@@ -7,6 +7,9 @@ from tortoise import fields
 
 from src.core.base import LinkBase
 
+if TYPE_CHECKING:
+    from src.data.db.model.download.position import PlaybackPosition
+
 
 class DownloadFile(LinkBase):
     """One file of a download. A site or direct download has exactly one, at index 0.
@@ -30,6 +33,7 @@ class DownloadFile(LinkBase):
 
     if TYPE_CHECKING:
         download_id: UUID
+        playback: PlaybackPosition | None
 
     def __str__(self) -> str:
         return f"[DownloadFile: download {self.download_id}, index {self.index}, path {self.path}]"

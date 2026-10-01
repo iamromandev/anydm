@@ -41,7 +41,7 @@ async def test_create_find_page_and_hold() -> None:
     assert found is not None and found.id == collection.id
     await repo.add_entries(collection, [entry("c", 3)])
     page, meta = await repo.downloads_page(collection.id, 1, 2)
-    assert [row.site_detail.video_id for row in page] == ["a", "b"]
+    assert [row.site_detail and row.site_detail.video_id for row in page] == ["a", "b"]
     assert meta.total == 3
     held = await repo.held(collection.id)
     assert {video_id: position for video_id, (_, _, position) in held.items()} == {"a": 1, "b": 2, "c": 3}

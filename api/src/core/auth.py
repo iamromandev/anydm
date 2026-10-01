@@ -23,14 +23,13 @@ from src.core.redact import QUERY_PARAM, redact
 
 HEADER = "X-API-Key"
 
-#: Route templates, not concrete paths, so a task id never needs matching.
+#: Route templates, not concrete paths, so a download id never needs matching.
 QUERY_ROUTES = frozenset(
     {
         "/download/events",
         "/extract/entries",
         "/stream/events",
-        "/download/{task_id}/file",
-        "/download/{task_id}/file/{file_index}",
+        "/download/{download_id}/file/{file_index}",
         "/stream/{session_id}/playlist.m3u8",
         "/stream/{session_id}/segment_{index}.ts",
     }

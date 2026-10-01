@@ -10,6 +10,13 @@ from tortoise.indexes import Index
 from src.core.base import Base
 from src.data.type import ChecksumAlgo, DownloadStatus, MediaKind, Platform
 
+if TYPE_CHECKING:
+    from src.data.db.model.download.file import DownloadFile
+    from src.data.db.model.download.mirror import Mirror
+    from src.data.db.model.download.segment import Segment
+    from src.data.db.model.download.site_detail import SiteDetail
+    from src.data.db.model.download.torrent_detail import TorrentDetail
+
 
 class Download(Base):
     """One download, from the request that created it to the files it produced.
@@ -71,6 +78,12 @@ class Download(Base):
         category_id: UUID | None
         collection_id: UUID | None
         queue_id: UUID
+        #: The one-to-one details; prefetched by every repo read (``RELATED``).
+        site_detail: SiteDetail | None
+        torrent_detail: TorrentDetail | None
+        download_files: fields.ReverseRelation[DownloadFile]
+        segments: fields.ReverseRelation[Segment]
+        mirrors: fields.ReverseRelation[Mirror]
 
     def __str__(self) -> str:
         return f"[Download: id {self.id}, platform {self.platform}, status {self.status}]"

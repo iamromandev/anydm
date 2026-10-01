@@ -5,6 +5,7 @@ Resolved on first use rather than at import: importing one service module (say,
 every repository and engine in with it.
 """
 
+from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,8 +13,9 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
-    from src.service import wiring
-
+    # ``import_module``, not ``from src.service import wiring``: the latter looks
+    # ``wiring`` up on this package first, which lands back here.
+    wiring = import_module("src.service.wiring")
     try:
         return getattr(wiring, name)
     except AttributeError:

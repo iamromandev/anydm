@@ -62,8 +62,8 @@ async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
         [(0, "x.mkv", 10, True)],
     )
     assert site.queue.name == "Main"
-    assert site.site_detail.video_id == "abc"
-    assert torrent.torrent_detail.info_hash == "a" * 40
+    assert site.site_detail is not None and site.site_detail.video_id == "abc"
+    assert torrent.torrent_detail is not None and torrent.torrent_detail.info_hash == "a" * 40
     assert [site.queue_position, direct.queue_position, torrent.queue_position] == [0, 1, 2]
     found = await repo.by_info_hash("a" * 40)
     assert found is not None and found.id == torrent.id
