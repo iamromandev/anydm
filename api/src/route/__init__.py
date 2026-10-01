@@ -7,6 +7,7 @@ from .extract import router as _extract_router
 from .health import router as _health_router
 from .search import router as _search_router
 from .settings import router as _settings_router
+from .source import router as _source_router
 from .stream import router as _stream_router
 from .system import router as _system_router
 
@@ -16,6 +17,7 @@ _subrouters = [
     _extract_router,
     _download_router,
     _search_router,
+    _source_router,
     _stream_router,
     _settings_router,
     _system_router,
