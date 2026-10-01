@@ -1,6 +1,10 @@
+from .category import CategoryRepo as CategoryRepo
+from .category import CategoryRow as CategoryRow
 from .file import FileRepo as FileRepo
 from .file import FileRow as FileRow
+from .mirror import MirrorRepo as MirrorRepo
 from .position import PositionRepo as PositionRepo
+from .queue import QueueRepo as QueueRepo
+from .queue import QueueRow as QueueRow
 from .segment import Reconciled as Reconciled
 from .segment import SegmentRepo as SegmentRepo
-from .task import TaskRepo as TaskRepo
