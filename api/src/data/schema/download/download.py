@@ -98,8 +98,8 @@ class BulkResultSchema(BaseSchema):
     affected: int = 0
 
 
-class TaskSummarySchema(BaseSchema):
-    """How many tasks each sidebar filter would show.
+class DownloadSummarySchema(BaseSchema):
+    """How many list items each sidebar filter would show.
 
     Counted in the database rather than from the rows the browser happens to
     hold, so the numbers stay right no matter how little of the list has been
