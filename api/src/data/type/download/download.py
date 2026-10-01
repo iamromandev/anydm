@@ -1,7 +1,7 @@
 """Download domain enums.
 
 These subclass Tortoise's ``StrEnum`` rather than the standard library's so they
-can be used directly in ``CharEnumField``, exactly as auth's ``Env`` is.
+can be used directly in ``CharEnumField``.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from tortoise.fields.base import StrEnum
 
 
 class Platform(StrEnum):
-    #: Any page yt-dlp extracts, YouTube included; ``Task.extractor`` says which.
+    #: Any page yt-dlp extracts, YouTube included; ``SiteDetail.extractor`` says which.
     SITE = "site"
     DIRECT = "direct"
     TORRENT = "torrent"
@@ -35,21 +35,15 @@ class Preset(StrEnum):
         return int(self.value)
 
 
-class Kind(StrEnum):
+class MediaKind(StrEnum):
+    """What the bytes are. How they arrive is ``Platform``; a playlist is a ``Collection``."""
+
     VIDEO = "video"
     AUDIO = "audio"
-    #: An arbitrary fetched file — what ``Platform.DIRECT`` produces. It has no
-    #: notion of stream quality, so no preset applies to it.
     FILE = "file"
-    #: A whole torrent, which may hold many files. The selected ones live in
-    #: ``torrent_file``; this row is the torrent itself.
-    TORRENT = "torrent"
-    #: A playlist or a channel's tab, added as one group (v0.5). Its videos are
-    #: ordinary site tasks whose ``parent`` is this row; it downloads nothing itself.
-    PLAYLIST = "playlist"
 
 
-class TaskStatus(StrEnum):
+class DownloadStatus(StrEnum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
     MUXING = "muxing"
@@ -63,22 +57,42 @@ class TaskStatus(StrEnum):
 
     @property
     def is_terminal(self) -> bool:
-        return self in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELED)
+        return self in (DownloadStatus.COMPLETE, DownloadStatus.FAILED, DownloadStatus.CANCELED)
 
+
+class SegmentPart(StrEnum):
+    """Which stream a segment belongs to. The values are the worker's own part names."""
+
+    FILE = "file"
+    VIDEO = "video"
+    AUDIO = "audio"
+
+
+class ChecksumAlgo(StrEnum):
+    SHA256 = "sha256"
+    SHA1 = "sha1"
+    MD5 = "md5"
+
+
+class CollectionKind(StrEnum):
+    PLAYLIST = "playlist"
+    #: A channel's own uploads: its files aren't numbered.
+    CHANNEL = "channel"
+
+
+#: The queue every download starts in, and the category nothing else claims.
+MAIN_QUEUE = "Main"
+OTHER_CATEGORY = "Other"
 
 #: Statuses that mean "a worker was mid-flight". Every row in one of these at
 #: startup is an orphan by definition — this process is the only one that runs
 #: workers, and it has just started.
-ACTIVE_STATUSES = frozenset({TaskStatus.DOWNLOADING, TaskStatus.MUXING})
+ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
 
-#: What each of the sidebar's filters means, keyed by the name the UI already
-#: uses for it. Deliberately not ``ACTIVE_STATUSES``: that answers "was a
-#: worker mid-flight", which excludes ``PENDING`` because a queued row is not
-#: an orphan. To someone reading the list, a queued row is very much active.
 #: How the list may be ordered. Spelled out both ways rather than as a field
 #: plus a direction, so an unknown value is a 422 from the route rather than
-#: something this service has to think about.
-TaskSort = Literal[
+#: something the service has to think about.
+DownloadSort = Literal[
     "created_at",
     "-created_at",
     "title",
@@ -96,12 +110,27 @@ TaskSort = Literal[
 BulkAction = Literal["pause_all", "resume_all", "clear_finished"]
 
 #: The filter names the API accepts, which are the sidebar's own.
-TaskGroup = Literal["all", "downloading", "seeding", "completed"]
+DownloadGroup = Literal["all", "downloading", "seeding", "completed"]
 
-TASK_GROUPS: dict[str, frozenset[TaskStatus]] = {
-    "downloading": frozenset(
-        {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING}
-    ),
-    "seeding": frozenset({TaskStatus.SEEDING}),
-    "completed": frozenset({TaskStatus.COMPLETE}),
+#: What each of the sidebar's filters means. Deliberately not ``ACTIVE_STATUSES``:
+#: that answers "was a worker mid-flight", which excludes ``PENDING`` because a
+#: queued row is not an orphan. To someone reading the list, a queued row is active.
+DOWNLOAD_GROUPS: dict[str, frozenset[DownloadStatus]] = {
+    "downloading": frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING}),
+    "seeding": frozenset({DownloadStatus.SEEDING}),
+    "completed": frozenset({DownloadStatus.COMPLETE}),
 }
+
+# --- Transitional: removed in Task 17, once nothing imports them. ---
+TaskStatus = DownloadStatus
+TaskSort = DownloadSort
+TaskGroup = DownloadGroup
+TASK_GROUPS = DOWNLOAD_GROUPS
+
+
+class Kind(StrEnum):
+    VIDEO = "video"
+    AUDIO = "audio"
+    FILE = "file"
+    TORRENT = "torrent"
+    PLAYLIST = "playlist"

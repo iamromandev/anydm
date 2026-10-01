@@ -15,11 +15,10 @@ from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
 from src.lib.torrent.client import RqbitClient
-from src.service.download import DownloadService as DownloadService
-from src.service.download import TorrentService as TorrentService
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard as DiskGuard
 from src.service.download.disk_monitor import DiskMonitor
+from src.service.download.download_service import DownloadService as DownloadService
 from src.service.download.download_worker import DownloadWorker, WorkerPool
 from src.service.download.downloader import Downloader
 from src.service.download.fragment import FragmentDownloader, fragment_limits
@@ -28,6 +27,7 @@ from src.service.download.post_process import FfmpegPostProcessor
 from src.service.download.rate_limit import rate_limiter
 from src.service.download.segmented import SegmentedDownloader
 from src.service.download.torrent_monitor import TorrentMonitor
+from src.service.download.torrent_service import TorrentService as TorrentService
 from src.service.extract import ExtractService as ExtractService
 from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService

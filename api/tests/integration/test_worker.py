@@ -353,7 +353,7 @@ async def test_an_interrupted_download_finishes_from_the_database_alone(
 
 
 async def test_cancel_removes_the_segment_rows(db: None, tmp_path: Path) -> None:
-    from src.service.download import DownloadService
+    from src.service.download.download_service import DownloadService
 
     task = await _direct_task()
     await SegmentDatabaseRepo().reconcile(task.id, "file", [(0, 0, 99), (1, 100, 199)])
