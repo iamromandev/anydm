@@ -1,13 +1,15 @@
 """One copy per search result, and the source it came from."""
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 from src.data.schema.search import SearchResultSchema
 
 
-def _result(**fields: object) -> SearchResultSchema:
-    base: dict[str, object] = {"title": "Bunny", "indexers": ["p"], "copy_from": "p"}
-    return SearchResultSchema(**{**base, **fields})  # type: ignore[arg-type]
+def _result(**fields: Any) -> SearchResultSchema:
+    base: dict[str, Any] = {"title": "Bunny", "indexers": ["p"], "copy_from": "p"}
+    return SearchResultSchema(**{**base, **fields})
 
 
 def test_a_result_carries_its_source_and_one_copy() -> None:
@@ -31,5 +33,6 @@ def test_a_result_with_no_copy_is_refused() -> None:
 
 
 def test_a_result_without_its_source_is_refused() -> None:
+    """Untrusted data, so it arrives as a dict: a source may leave the field out."""
     with pytest.raises(ValidationError):
-        SearchResultSchema(title="Bunny", indexers=["p"], magnet="magnet:?xt=urn:btih:aa")
+        SearchResultSchema.model_validate({"title": "Bunny", "indexers": ["p"], "magnet": "magnet:?xt=urn:btih:aa"})
