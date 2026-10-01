@@ -1,4 +1,5 @@
 from .category_db import CategoryDatabaseRepo as CategoryDatabaseRepo
+from .collection_db import CollectionDatabaseRepo as CollectionDatabaseRepo
 from .download_db import DownloadDatabaseRepo as DownloadDatabaseRepo
 from .file_db import FileDatabaseRepo as FileDatabaseRepo
 from .mirror_db import MirrorDatabaseRepo as MirrorDatabaseRepo

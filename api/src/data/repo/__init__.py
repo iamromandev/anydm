@@ -1,4 +1,5 @@
 from .download import CategoryDatabaseRepo as CategoryDatabaseRepo
+from .download import CollectionDatabaseRepo as CollectionDatabaseRepo
 from .download import DownloadDatabaseRepo as DownloadDatabaseRepo
 from .download import FileDatabaseRepo as FileDatabaseRepo
 from .download import MirrorDatabaseRepo as MirrorDatabaseRepo

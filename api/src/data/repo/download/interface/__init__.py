@@ -1,5 +1,8 @@
 from .category import CategoryRepo as CategoryRepo
 from .category import CategoryRow as CategoryRow
+from .collection import CollectionRepo as CollectionRepo
+from .collection import EntryRow as EntryRow
+from .collection import MemberRow as MemberRow
 from .download import RELATED as RELATED
 from .download import DownloadRepo as DownloadRepo
 from .file import FileRepo as FileRepo
