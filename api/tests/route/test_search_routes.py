@@ -30,7 +30,12 @@ def _indexers(request: httpx.Request) -> httpx.Response:
 @pytest.fixture
 def indexers() -> Iterator[None]:
     client = httpx.AsyncClient(transport=httpx.MockTransport(_indexers))
-    service = SearchService([TorznabSource(Indexer("prowlarr-1", "http://prowlarr:9696/1/api", "abc"))], client, timeout_s=1, limit=100)
+    wanted = [TorznabSource(Indexer("prowlarr-1", "http://prowlarr:9696/1/api", "abc"))]
+
+    async def provider() -> list[TorznabSource]:
+        return wanted
+
+    service = SearchService(client, timeout_s=1, limit=100, sources=provider)
     app.dependency_overrides[get_search_service] = lambda: service
     yield
     app.dependency_overrides.clear()
@@ -95,7 +100,10 @@ async def test_a_torrent_is_fetched_from_its_indexer(http: httpx.AsyncClient, in
 
 @pytest.mark.asyncio
 async def test_with_no_indexers_search_is_off(http: httpx.AsyncClient) -> None:
-    app.dependency_overrides[get_search_service] = lambda: SearchService([], httpx.AsyncClient(), timeout_s=1, limit=100)
+    async def provider() -> list[TorznabSource]:
+        return []
+
+    app.dependency_overrides[get_search_service] = lambda: SearchService(httpx.AsyncClient(), timeout_s=1, limit=100, sources=provider)
     try:
         sources = (await http.get("/search/sources")).json()["data"]
         search = await http.get("/search", params={"q": "bunny"})

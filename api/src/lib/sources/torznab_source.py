@@ -16,6 +16,11 @@ class TorznabSource:
     def name(self) -> str:
         return self.indexer.name
 
+    @property
+    def base(self) -> str:
+        """The indexer's address; the browse cache key reads it, so re-addressing re-asks."""
+        return self.indexer.url
+
     def supports(self, q: str, category: str) -> bool:
         return True
 

@@ -12,7 +12,7 @@ from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
-from src.data.repo import SearchSourceDatabaseRepo, TaskDatabaseRepo
+from src.data.repo import AppFlagDatabaseRepo, SearchSourceDatabaseRepo, TaskDatabaseRepo
 from src.route import router as _router
 from src.service import (
     build_worker_pool,
@@ -23,7 +23,7 @@ from src.service import (
     get_torrent_monitor,
     get_torrent_reaper,
 )
-from src.service.search.seed import seed_missing_sources
+from src.service.source.seed import import_env_indexers, seed_missing_sources
 
 
 @asynccontextmanager
@@ -52,9 +52,12 @@ async def lifespan(_app: FastAPI):
         added = await seed_missing_sources(SearchSourceDatabaseRepo())
         if added:
             logger.info("lifespan|seeded {} built-in search source(s)", added)
+        imported = await import_env_indexers(SearchSourceDatabaseRepo(), AppFlagDatabaseRepo())
+        if imported:
+            logger.info("lifespan|imported {} indexer(s) from SEARCH_INDEXERS", imported)
     except Exception:
         # A missing table (migrations not run yet) must not stop the API; search then uses the constants.
-        logger.exception("lifespan|couldn't seed the built-in search sources")
+        logger.exception("lifespan|couldn't seed the search sources")
 
     recovered = await TaskDatabaseRepo().recover_orphans()
     if recovered:

@@ -18,9 +18,9 @@ from src.data.schema.search import (
 )
 from src.lib.sources.source import Result, Source
 from src.lib.sources.torznab_source import TorznabSource
-from src.lib.torznab.torznab import Indexer, link_allowed, merge, redact
+from src.lib.torznab.torznab import link_allowed, merge, redact
 from src.service.search import error as search_error
-from src.service.search.failure import failure_message
+from src.service.source.failure import failure_message
 
 MAX_REDIRECTS = 3
 #: How long a browse answer is served without asking the indexers again.
@@ -30,19 +30,15 @@ BROWSE_TTL_S = 300
 class SearchService:
     def __init__(
         self,
-        sources: Sequence[Source],
         client: httpx.AsyncClient,
         timeout_s: float,
         limit: int,
+        sources: Callable[[], Awaitable[Sequence[Source]]],
         max_torrent_bytes: int = 10 * 1024 * 1024,
         clock: Callable[[], float] = time.monotonic,
-        builtins: Callable[[], Awaitable[Sequence[Source]]] | None = None,
     ) -> None:
-        self._static = list(sources)
-        #: Where the built-in sources come from, asked on every request so a change is seen at once.
-        self._builtins = builtins
-        #: The Torznab indexers among the static sources: the only origins a result's link may come from.
-        self._indexers: list[Indexer] = [s.indexer for s in self._static if isinstance(s, TorznabSource)]
+        #: Every source, read on every request so a change is seen at once.
+        self._sources = sources
         self._client = client
         self._timeout = timeout_s
         self._limit = limit
@@ -52,8 +48,8 @@ class SearchService:
         self._browsed: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[float, SearchSchema]] = {}
 
     async def _all(self) -> list[Source]:
-        """The Torznab indexers, then the built-ins as they are right now."""
-        return self._static + (list(await self._builtins()) if self._builtins else [])
+        """Every enabled source, as it is right now."""
+        return list(await self._sources())
 
     async def sources(self) -> SourcesSchema:
         everything = await self._all()
@@ -106,7 +102,8 @@ class SearchService:
 
     async def fetch_torrent(self, link: str) -> SearchTorrentSchema:
         """A result's .torrent, from its indexer only; a redirect to a magnet answers the magnet."""
-        if not link_allowed(link, self._indexers):
+        indexers = [s.indexer for s in await self._all() if isinstance(s, TorznabSource)]
+        if not link_allowed(link, indexers):
             raise search_error.link_not_from_indexer()
         current = link
         for _ in range(MAX_REDIRECTS + 1):
@@ -116,7 +113,7 @@ class SearchService:
                         target = urljoin(current, response.headers.get("location", ""))
                         if target.startswith("magnet:"):
                             return SearchTorrentSchema(magnet=target)
-                        if not link_allowed(target, self._indexers):
+                        if not link_allowed(target, indexers):
                             raise search_error.link_not_from_indexer()
                         current = target
                         continue

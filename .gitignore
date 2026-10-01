@@ -4,6 +4,7 @@
 .claude
 .remember
 .superpowers
+.worktrees/
 
 # docs
 docs/superpowers

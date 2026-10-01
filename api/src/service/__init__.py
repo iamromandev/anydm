@@ -14,7 +14,6 @@ from src.data.repo import (
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
-from src.lib.sources.torznab_source import TorznabSource
 from src.lib.torrent.client import RqbitClient
 from src.service.download import DownloadService as DownloadService
 from src.service.download import TorrentService as TorrentService
@@ -33,9 +32,9 @@ from src.service.extract import ExtractService as ExtractService
 from src.service.extract import ListingService as ListingService
 from src.service.health import HealthService as HealthService
 from src.service.search import SearchService as SearchService
-from src.service.search.source_settings import SourceSettingsService as SourceSettingsService
 from src.service.search.video_service import VideoSearchService as VideoSearchService
 from src.service.settings import SettingsService as SettingsService
+from src.service.source import SourceService as SourceService
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
 from src.service.stream import StreamSessionStore as StreamSessionStore
@@ -65,19 +64,18 @@ def get_search_client() -> httpx.AsyncClient:
 
 
 @lru_cache
-def get_source_settings_service() -> SourceSettingsService:
-    return SourceSettingsService(SearchSourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
+def get_source_service() -> SourceService:
+    return SourceService(SearchSourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
 
 
 @lru_cache
 def get_search_service() -> SearchService:
     settings = get_settings()
     return SearchService(
-        [TorznabSource(i) for i in settings.indexers],
         get_search_client(),
         timeout_s=settings.search_timeout_s,
         limit=settings.search_limit,
-        builtins=get_source_settings_service().enabled_sources,
+        sources=get_source_service().enabled_sources,
     )
 
 

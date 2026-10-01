@@ -6,7 +6,7 @@ from src.data.schema.search import IndexerErrorSchema
 def disabled() -> Error:
     return Error.create(
         code=Code.NOT_FOUND,
-        message="Search is off: no sources are configured (SEARCH_SOURCES, SEARCH_INDEXERS)",
+        message="Search is off: no sources are configured",
         error_type=ErrorType.SEARCH_DISABLED,
     )
 

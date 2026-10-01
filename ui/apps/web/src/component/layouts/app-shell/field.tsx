@@ -21,7 +21,25 @@ import {
     emptySearch,
     type SearchState,
 } from "@/component/features/search-view";
+import {
+    SourceView,
+    emptySourceView,
+    type SourceViewState,
+} from "@/component/features/source-view";
+import {
+    SourceModal,
+    type SourceModalMode,
+} from "@/component/features/source-modal";
 import type { AddInitial } from "@/lib/api/search";
+import {
+    deleteSource,
+    listSources,
+    resetSource,
+    testSource,
+    updateSource,
+    type SourceItem,
+} from "@/lib/api/source";
+import { errorMessage } from "@/lib/toast";
 import type { PlayableFile } from "@/lib/media";
 import type { PositionView } from "@/lib/api";
 import { HeroInput } from "@/component/features/hero-input";
@@ -152,6 +170,8 @@ export interface AppShellProps {
     /** Which of the two the Search view has; it shows a tab for each that is on. */
     searchTorrents: boolean;
     searchYoutube: boolean;
+    /** Re-read search availability; run after every source mutation. */
+    onSourcesChanged: () => void;
     /** What the add dialog opens on; a new id remounts it. */
     addInitial: (AddInitial & { id: number }) | null;
     onAddFound: (initial: AddInitial) => void;
@@ -236,6 +256,7 @@ export const AppShell = component$<AppShellProps>(
         searchEnabled,
         searchTorrents,
         searchYoutube,
+        onSourcesChanged,
         addInitial,
         onAddFound,
         onNotify,
@@ -247,10 +268,113 @@ export const AppShell = component$<AppShellProps>(
             pin a fixed overlay to the content column. */
         const picker = useSignal<PickerTarget | null>(null);
 
-        /** The list, or Search. Held here with Search's own state, so the
+        /** The list, Search, or Sources. Held here with Search's own state, so the
             query and results survive switching away and back. */
-        const view = useSignal<"list" | "search">("list");
+        const view = useSignal<"list" | "search" | "source">("list");
         const search = useStore<SearchState>(emptySearch());
+        const sourceView = useStore<SourceViewState>(emptySourceView());
+        const sourcesLoaded = useSignal(false);
+        /** The add/edit dialog Task 9 renders; set here so the row buttons work. */
+        const sourceDialog = useSignal<SourceModalMode | null>(null);
+
+        const clearBusy = $((id: string) => {
+            const busy = { ...sourceView.busy };
+            delete busy[id];
+            sourceView.busy = busy;
+        });
+
+        const loadSources = $(async () => {
+            sourceView.loading = true;
+            sourceView.failure = null;
+            try {
+                sourceView.items = await listSources();
+                sourcesLoaded.value = true;
+            } catch (err) {
+                sourceView.failure = errorMessage(err);
+            } finally {
+                sourceView.loading = false;
+            }
+        });
+
+        const handleSourceToggle = $(async (id: string, enabled: boolean) => {
+            sourceView.busy = { ...sourceView.busy, [id]: "Saving…" };
+            try {
+                const updated = await updateSource(id, { enabled });
+                sourceView.items = sourceView.items.map((s) =>
+                    s.id === id ? updated : s,
+                );
+                await onSourcesChanged();
+            } catch (err) {
+                onNotify("error", errorMessage(err));
+            } finally {
+                await clearBusy(id);
+            }
+        });
+
+        const handleSourceTest = $(async (id: string) => {
+            sourceView.busy = { ...sourceView.busy, [id]: "Testing…" };
+            try {
+                const result = await testSource(id);
+                sourceView.lastTest = { ...sourceView.lastTest, [id]: result };
+            } catch (err) {
+                onNotify("error", errorMessage(err));
+            } finally {
+                await clearBusy(id);
+            }
+        });
+
+        const handleSourceReset = $(async (id: string) => {
+            sourceView.busy = { ...sourceView.busy, [id]: "Resetting…" };
+            try {
+                const updated = await resetSource(id);
+                sourceView.items = sourceView.items.map((s) =>
+                    s.id === id ? updated : s,
+                );
+                await onSourcesChanged();
+            } catch (err) {
+                onNotify("error", errorMessage(err));
+            } finally {
+                await clearBusy(id);
+            }
+        });
+
+        const handleSourceDelete = $((source: SourceItem) => {
+            sourceView.confirmingDelete = source;
+        });
+
+        const handleSourceDeleteCancel = $(() => {
+            sourceView.confirmingDelete = null;
+        });
+
+        const handleSourceDeleteConfirm = $(async () => {
+            const target = sourceView.confirmingDelete;
+            if (!target) return;
+            sourceView.confirmingDelete = null;
+            sourceView.busy = { ...sourceView.busy, [target.id]: "Deleting…" };
+            try {
+                await deleteSource(target.id);
+                sourceView.items = sourceView.items.filter(
+                    (s) => s.id !== target.id,
+                );
+                await onSourcesChanged();
+            } catch (err) {
+                onNotify("error", errorMessage(err));
+            } finally {
+                await clearBusy(target.id);
+            }
+        });
+
+        const handleSourceSaved = $(async (saved: SourceItem) => {
+            sourceDialog.value = null;
+            const known = sourceView.items.some((s) => s.id === saved.id);
+            sourceView.items = known
+                ? sourceView.items.map((s) => (s.id === saved.id ? saved : s))
+                : [
+                      ...sourceView.items,
+                      saved,
+                  ];
+            await onSourcesChanged();
+        });
 
         // Counted by the API when it can be. Falling back to the loaded rows
         // keeps the numbers plausible before the first summary arrives, but
@@ -302,6 +426,13 @@ export const AppShell = component$<AppShellProps>(
                                 view.value = "search";
                             }),
                         }}
+                        sources={{
+                            active: view.value === "source",
+                            onOpen: $(async () => {
+                                view.value = "source";
+                                if (!sourcesLoaded.value) await loadSources();
+                            }),
+                        }}
                         counts={counts}
                         bulk={bulk}
                         onPauseAll={$(() => onBulk("pause_all"))}
@@ -313,7 +444,24 @@ export const AppShell = component$<AppShellProps>(
                     />
 
                     <div class="app-shell-content">
-                        {view.value === "search" && searchEnabled ? (
+                        {view.value === "source" ? (
+                            <SourceView
+                                state={sourceView}
+                                onToggle={handleSourceToggle}
+                                onTest={handleSourceTest}
+                                onEdit={$((source: SourceItem) => {
+                                    sourceDialog.value = {
+                                        type: "edit",
+                                        source,
+                                    };
+                                })}
+                                onDelete={handleSourceDelete}
+                                onAdd={$(() => {
+                                    sourceDialog.value = { type: "add" };
+                                })}
+                                onReset={handleSourceReset}
+                            />
+                        ) : view.value === "search" && searchEnabled ? (
                             <SearchView
                                 state={search}
                                 torrents={searchTorrents}
@@ -423,6 +571,31 @@ export const AppShell = component$<AppShellProps>(
                     onCancel={onBulkCancel}
                     onConfirm={onBulkConfirm}
                 />
+
+                <ConfirmDialog
+                    prompt={
+                        sourceView.confirmingDelete
+                            ? {
+                                  heading: `Delete ${sourceView.confirmingDelete.name}?`,
+                                  body: "It will stop being searched.",
+                                  confirmLabel: "Delete",
+                              }
+                            : null
+                    }
+                    onCancel={handleSourceDeleteCancel}
+                    onConfirm={handleSourceDeleteConfirm}
+                />
+
+                {sourceDialog.value && (
+                    <SourceModal
+                        mode={sourceDialog.value}
+                        onClose={$(() => {
+                            sourceDialog.value = null;
+                        })}
+                        onSaved={handleSourceSaved}
+                        onNotify={onNotify}
+                    />
+                )}
 
                 <SettingsModal
                     open={settingsOpen}

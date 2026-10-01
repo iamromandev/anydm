@@ -86,6 +86,10 @@ class ErrorType(StrEnum):
     NOT_A_TORRENT = "not_a_torrent"
     #: A built-in search source name the registry doesn't know.
     SOURCE_NOT_FOUND = "source_not_found"
+    #: A registry source someone tried to delete; only created sources go.
+    SOURCE_NOT_DELETABLE = "source_not_deletable"
+    #: Reset on a source with no registry default to go back to.
+    SOURCE_NO_DEFAULT = "source_no_default"
 
     # External/3rd-party issues
     EXTERNAL_API_ERROR = "external_api_error"

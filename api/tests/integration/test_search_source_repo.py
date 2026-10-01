@@ -1,5 +1,6 @@
 """The search_source repository against a real Postgres. Point DB_NAME at a scratch database, never the dev one."""
 
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -13,51 +14,98 @@ from tortoise import Tortoise
 pytestmark = pytest.mark.integration
 
 
+def _saved_row(source: SearchSource) -> SearchSourceRow:
+    return SearchSourceRow(
+        name=source.name,
+        kind=source.kind,
+        enabled=source.enabled,
+        base_url=source.base_url,
+        api_key=source.api_key,
+        id=source.id,
+    )
+
+
 @pytest_asyncio.fixture
 async def sources() -> AsyncIterator[SearchSourceDatabaseRepo]:
     """This file's own fixture: it snapshots the table, empties it, and puts every row back."""
     await Tortoise.init(config=DB_CONFIG)
-    saved = [SearchSourceRow(s.name, s.enabled, s.base_url) for s in await SearchSource.all()]
+    saved = [_saved_row(s) for s in await SearchSource.all()]
     await SearchSource.all().delete()
     yield SearchSourceDatabaseRepo()
     await SearchSource.all().delete()
     if saved:
-        await SearchSource.bulk_create([SearchSource(name=r.name, enabled=r.enabled, base_url=r.base_url) for r in saved])
+        await SearchSource.bulk_create(
+            [
+                SearchSource(name=r.name, kind=r.kind, enabled=r.enabled, base_url=r.base_url, api_key=r.api_key)
+                for r in saved
+            ]
+        )
     await Tortoise.close_connections()
 
 
 @pytest.mark.asyncio
-async def test_insert_missing_adds_only_what_is_missing(sources: SearchSourceDatabaseRepo) -> None:
-    assert await sources.insert_missing([SearchSourceRow("apibay", True, "https://a.test"), SearchSourceRow("nyaa", True, "https://n.test")]) == 2
-    assert await sources.insert_missing([SearchSourceRow("nyaa", False, "https://other.test"), SearchSourceRow("eztv", True, "https://e.test")]) == 1
+async def test_create_then_get_round_trips_every_field(sources: SearchSourceDatabaseRepo) -> None:
+    created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
+    source_id = created.id
 
-    rows = {r.name: r for r in await sources.list_all()}
-    assert set(rows) == {"apibay", "nyaa", "eztv"}
-    assert rows["nyaa"] == SearchSourceRow("nyaa", True, "https://n.test")
-
-
-@pytest.mark.asyncio
-async def test_insert_missing_never_overwrites_an_edited_row(sources: SearchSourceDatabaseRepo) -> None:
-    await sources.insert_missing([SearchSourceRow("apibay", True, "https://a.test")])
-    await sources.update("apibay", enabled=False, base_url="https://mirror.test")
-
-    assert await sources.insert_missing([SearchSourceRow("apibay", True, "https://a.test")]) == 0
-    assert await sources.get("apibay") == SearchSourceRow("apibay", False, "https://mirror.test")
+    assert source_id is not None
+    assert await sources.get(source_id) == created
 
 
 @pytest.mark.asyncio
 async def test_update_changes_what_is_given_and_reports_a_missing_row(sources: SearchSourceDatabaseRepo) -> None:
-    await sources.insert_missing([SearchSourceRow("apibay", True, "https://a.test")])
+    created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
+    source_id = created.id
+    assert source_id is not None
 
-    assert await sources.update("apibay", enabled=False, base_url=None) == SearchSourceRow("apibay", False, "https://a.test")
-    assert await sources.update("apibay", enabled=None, base_url="https://b.test") == SearchSourceRow("apibay", False, "https://b.test")
-    assert await sources.update("nope", enabled=True, base_url=None) is None
-    assert await sources.get("nope") is None
+    assert await sources.update(source_id, enabled=False, base_url=None) == SearchSourceRow(
+        "prowlarr", "torznab", False, "http://p.test/1/api", "key-1", source_id
+    )
+    assert await sources.update(source_id, enabled=None, base_url="http://q.test/1/api") == SearchSourceRow(
+        "prowlarr", "torznab", False, "http://q.test/1/api", "key-1", source_id
+    )
 
 
 @pytest.mark.asyncio
-async def test_the_list_is_oldest_first(sources: SearchSourceDatabaseRepo) -> None:
-    await sources.insert_missing([SearchSourceRow("apibay", True, "a")])
-    await sources.insert_missing([SearchSourceRow("nyaa", True, "n")])
+async def test_clearing_the_key_needs_saying_so(sources: SearchSourceDatabaseRepo) -> None:
+    created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
+    source_id = created.id
+    assert source_id is not None
 
-    assert [r.name for r in await sources.list_all()] == ["apibay", "nyaa"]
+    kept = await sources.update(source_id, enabled=None, base_url=None, api_key=None)
+    assert kept is not None and kept.api_key == "key-1"
+
+    cleared = await sources.update(source_id, enabled=None, base_url=None, api_key=None, clear_api_key=True)
+    assert cleared is not None and cleared.api_key is None
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_and_a_second_delete_is_false(sources: SearchSourceDatabaseRepo) -> None:
+    created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key=None, enabled=True)
+    source_id = created.id
+    assert source_id is not None
+
+    assert await sources.delete(source_id) is True
+    assert await sources.get(source_id) is None
+    assert await sources.delete(source_id) is False
+
+
+@pytest.mark.asyncio
+async def test_get_on_a_random_id_is_none(sources: SearchSourceDatabaseRepo) -> None:
+    assert await sources.get(uuid.uuid4()) is None
+    assert await sources.update(uuid.uuid4(), enabled=False, base_url=None) is None
+
+
+@pytest.mark.asyncio
+async def test_insert_missing_never_overwrites_an_edited_row(sources: SearchSourceDatabaseRepo) -> None:
+    await sources.insert_missing([SearchSourceRow("nyaa", "nyaa", True, "https://n.test", None)])
+    listed = await sources.list_all()
+    assert len(listed) == 1
+    source_id = listed[0].id
+    assert source_id is not None
+    await sources.update(source_id, enabled=False, base_url="https://mirror.test")
+
+    assert await sources.insert_missing([SearchSourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
+    assert await sources.get(source_id) == SearchSourceRow(
+        "nyaa", "nyaa", False, "https://mirror.test", None, source_id
+    )
