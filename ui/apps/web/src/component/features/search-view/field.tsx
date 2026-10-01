@@ -2,6 +2,7 @@ import { component$, $, useVisibleTask$ } from "@qwik.dev/core";
 import {
     LuCopy,
     LuLoader2,
+    LuPlay,
     LuPlus,
     LuRefreshCw,
     LuSearch,
@@ -22,11 +23,14 @@ import {
     errorChip,
     formatAge,
     formatSize,
-    indexerLabel,
     modeFor,
+    playKind,
+    playSource,
+    rowKey,
     SORT_OPTIONS,
     sortFound,
     sortOptionId,
+    sourceLabel,
     statusLine,
     SWARM_TICKS,
     swarmTicks,
@@ -44,11 +48,13 @@ export interface SearchViewProps {
     onAdd: (initial: AddInitial) => void;
     /** Add on a video: the same path as pasting its link into the add box. */
     onAddVideo: (url: string) => Promise<void> | void;
+    /** Open the player on a result's copy; the player starts the stream itself. */
+    onPlay: (value: string, kind: string) => void;
     onNotify: (tone: "error" | "info", message: string) => void;
 }
 
 export const SearchView = component$<SearchViewProps>(
-    ({ state, torrents, youtube, onAdd, onAddVideo, onNotify }) => {
+    ({ state, torrents, youtube, onAdd, onAddVideo, onPlay, onNotify }) => {
         // A view can't show a tab that isn't there.
         const source = !youtube
             ? "torrents"
@@ -57,6 +63,37 @@ export const SearchView = component$<SearchViewProps>(
               : state.source;
 
         // Declared before its callers: a $() captures only what is above it.
+        /**
+         * Play a result: a magnet is already the copy, so the player opens on it
+         * at once. A link has to be fetched from its indexer first, which is the
+         * one wait this row has; the player's own connecting state then covers
+         * the metadata wait.
+         */
+        const play = $(async (result: FoundTorrent) => {
+            const source = playSource(result);
+            if (!source) return;
+            let value = source.value;
+            let kind: string = source.kind;
+            if (source.kind === "link") {
+                if (state.fetching) return;
+                state.fetching = rowKey(result);
+                try {
+                    const fetched = await fetchFoundTorrent(value);
+                    value = fetched.value;
+                    kind = playKind(fetched);
+                } catch (error) {
+                    onNotify(
+                        "error",
+                        `Couldn't fetch the torrent from ${result.copyFrom || "the source"}: ${errorMessage(error)}`,
+                    );
+                    return;
+                } finally {
+                    state.fetching = "";
+                }
+            }
+            onPlay(value, kind);
+        });
+
         /** Ask for `text` ("" browses the latest); `fresh` skips the API's browse cache. */
         const run = $(async (text: string, fresh: boolean) => {
             if (!canRun(text, state.busy)) return;
@@ -347,10 +384,10 @@ export const SearchView = component$<SearchViewProps>(
                                     const ticks = swarmTicks(r.seeders);
                                     const fetching =
                                         state.fetching !== "" &&
-                                        state.fetching === r.link;
+                                        state.fetching === rowKey(r);
                                     return (
                                         <li
-                                            key={`${r.infoHash ?? r.title}|${r.sizeBytes ?? ""}`}
+                                            key={rowKey(r)}
                                             class="search-view-row"
                                         >
                                             <span
@@ -421,9 +458,7 @@ export const SearchView = component$<SearchViewProps>(
                                                             ", ",
                                                         )}
                                                     >
-                                                        {indexerLabel(
-                                                            r.indexers,
-                                                        )}
+                                                        {sourceLabel(r)}
                                                     </span>
                                                 </p>
                                             </div>
@@ -447,6 +482,22 @@ export const SearchView = component$<SearchViewProps>(
                                                         />
                                                     </button>
                                                 )}
+                                                <button
+                                                    type="button"
+                                                    class="search-view-play"
+                                                    aria-label={`Play ${r.title}`}
+                                                    disabled={fetching}
+                                                    onClick$={() => play(r)}
+                                                >
+                                                    <LuPlay
+                                                        width="14"
+                                                        height="14"
+                                                        aria-hidden="true"
+                                                    />
+                                                    {fetching
+                                                        ? "Fetching…"
+                                                        : "Play"}
+                                                </button>
                                                 <button
                                                     type="button"
                                                     class="search-view-add"

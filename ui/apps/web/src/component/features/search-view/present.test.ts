@@ -14,6 +14,7 @@ import {
     formatViews,
     modeFor,
     nextSort,
+    playKind,
     playSource,
     rowKey,
     seederTone,
@@ -251,6 +252,13 @@ describe("modes", () => {
         expect(emptyText("search", "bunny")).toBe(
             "Nothing for “bunny”. Try fewer words, or turn on more sources in Settings.",
         );
+    });
+});
+
+describe("playKind", () => {
+    it("keeps a fetched magnet a magnet, and a fetched file a torrent", () => {
+        expect(playKind({ type: "magnet" })).toBe("magnet");
+        expect(playKind({ type: "file" })).toBe("torrent");
     });
 });
 

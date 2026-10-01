@@ -204,6 +204,13 @@ export function playSource(result: FoundTorrent): PlaySource | null {
     return null;
 }
 
+/** The kind the player starts a fetched copy with: `AddInitial`'s "file" is a torrent. */
+export function playKind(fetched: {
+    type: "magnet" | "file";
+}): "magnet" | "torrent" {
+    return fetched.type === "magnet" ? "magnet" : "torrent";
+}
+
 export function statusLine(
     count: number,
     indexerCount: number,
