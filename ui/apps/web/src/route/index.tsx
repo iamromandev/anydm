@@ -403,18 +403,7 @@ export default component$(() => {
                 store.settingsOpen = true;
             });
             syncTask();
-            // Search shows when the API has torrent sources or can search YouTube; a failure here just hides it.
-            searchSources()
-                .then((sources) => {
-                    store.searchTorrents = sources.enabled;
-                    store.searchYoutube = sources.youtube;
-                    store.searchEnabled = sources.enabled || sources.youtube;
-                })
-                .catch(() => {
-                    store.searchTorrents = false;
-                    store.searchYoutube = false;
-                    store.searchEnabled = false;
-                });
+            refreshSearchAvailability();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
             const sweeper = setInterval(() => {
@@ -616,6 +605,20 @@ export default component$(() => {
 
     const handleSearchChange = $((query: string) => {
         store.searchQuery = query;
+    });
+
+    /** Search shows when the API has torrent sources or can search YouTube; a failure here just hides it. */
+    const refreshSearchAvailability = $(async () => {
+        try {
+            const sources = await searchSources();
+            store.searchTorrents = sources.enabled;
+            store.searchYoutube = sources.youtube;
+            store.searchEnabled = sources.enabled || sources.youtube;
+        } catch {
+            store.searchTorrents = false;
+            store.searchYoutube = false;
+            store.searchEnabled = false;
+        }
     });
 
     const handleAddClick = $(() => {
@@ -1154,6 +1157,7 @@ export default component$(() => {
             addInitial={store.addInitial}
             onAddFound={handleAddFound}
             onNotify={notify}
+            onSourcesChanged={refreshSearchAvailability}
             onStopSeeding={handleStopSeeding}
             onAddPlaylist={handleAddPlaylist}
             entries={store.entries}

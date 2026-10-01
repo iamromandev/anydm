@@ -8,6 +8,8 @@ dependencies = [
     "toml==0.10.2",
     "loguru==0.7.3",
     "fastapi[all]==0.136.1",
+    # Read by the one-time SEARCH_INDEXERS import; pinned direct so it never depends on arriving transitively.
+    "python-dotenv==1.2.3",
     ### db ###
     "tortoise-orm[asyncpg, accel]==1.1.8",
     ### media ###

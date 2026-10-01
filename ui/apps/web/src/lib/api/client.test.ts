@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { apiUrl, getApi, getPageApi, onUnauthorized } from "./client";
+import { apiUrl, getApi, getPageApi, onUnauthorized, patchApi } from "./client";
 import { ApiError } from "./envelope";
 
 const realFetch = globalThis.fetch;
@@ -67,6 +67,37 @@ describe("getApi", () => {
         const error = (await getApi("/download").catch((e) => e)) as ApiError;
         expect(error).toBeInstanceOf(ApiError);
         expect(error.message).toContain("Could not reach");
+    });
+});
+
+describe("patchApi", () => {
+    it("sends a PATCH with a JSON body and returns the envelope's data", async () => {
+        const seen: { url: unknown; method: unknown; body: unknown } = {
+            url: null,
+            method: null,
+            body: null,
+        };
+        stubFetch((async (url: string, init?: RequestInit) => {
+            seen.url = url;
+            seen.method = init?.method;
+            seen.body = init?.body;
+            return new Response(
+                JSON.stringify({
+                    status: "success",
+                    code: 200,
+                    data: { enabled: false },
+                }),
+            );
+        }) as unknown as () => Promise<Response>);
+
+        const answer = await patchApi<{ enabled: boolean }>("/source/x", {
+            enabled: false,
+        });
+
+        expect(String(seen.url)).toEndWith("/source/x");
+        expect(seen.method).toBe("PATCH");
+        expect(JSON.parse(String(seen.body))).toEqual({ enabled: false });
+        expect(answer).toEqual({ enabled: false });
     });
 });
 

@@ -115,18 +115,11 @@ def test_a_rate_limit_cannot_be_negative(name: str) -> None:
         _settings(**{name: -1})
 
 
-def test_search_indexers_come_from_env_and_a_bad_one_stops_startup() -> None:
-    settings = _settings(search_indexers="p=http://p/api", search_indexer_keys="p=k")
-    assert [(i.name, i.key) for i in settings.indexers] == [("p", "k")]
-    assert _settings().indexers == []
-    with pytest.raises(ValidationError, match="SEARCH_INDEXERS"):
-        _settings(search_indexers="nope")
-
-
 def test_the_old_source_variables_are_ignored_now() -> None:
-    # The built-in sources live in the database; a .env that still sets these is harmless.
-    settings = _settings(search_sources="nope", search_source_urls="also=nope")
+    # The sources live in the database; a .env that still sets these is harmless.
+    settings = _settings(search_sources="nope", search_source_urls="also=nope", search_indexers="x", search_indexer_keys="y")
 
     assert not hasattr(settings, "search_sources")
+    assert not hasattr(settings, "search_indexers")
     assert not hasattr(settings, "search_source_urls")
     assert not hasattr(settings, "builtin_sources")

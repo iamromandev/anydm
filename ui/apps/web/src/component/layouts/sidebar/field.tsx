@@ -7,6 +7,7 @@ import {
     LuChevronRight,
     LuX,
     LuSearch,
+    LuGlobe,
 } from "@/component/core/icons";
 import "./field.css";
 
@@ -24,6 +25,8 @@ export interface SidebarProps {
     onClearFinished: () => void;
     /** The Search item: shown when the API has indexers. */
     search?: { enabled: boolean; active: boolean; onOpen: () => void };
+    /** The Sources item: always shown, so a switched-off last source can be switched back on. */
+    sources: { active: boolean; onOpen: () => void };
 }
 
 export interface BulkAvailability {
@@ -71,6 +74,7 @@ export const Sidebar = component$<SidebarProps>(
         onResumeAll,
         onClearFinished,
         search,
+        sources,
     }) => {
         const store = useStore({
             downloadsExpanded: true,
@@ -101,6 +105,19 @@ export const Sidebar = component$<SidebarProps>(
                         </button>
                     </nav>
                 )}
+                <nav
+                    class="sidebar-nav sidebar-nav--sources"
+                    aria-label="Sources"
+                >
+                    <button
+                        type="button"
+                        class={`sidebar-filter ${sources.active ? "sidebar-filter--active" : ""}`}
+                        onClick$={sources.onOpen}
+                    >
+                        <LuGlobe width="16" height="16" aria-hidden="true" />
+                        <span class="sidebar-filter-label">Sources</span>
+                    </button>
+                </nav>
 
                 <div class="sidebar-header">
                     <span class="sidebar-title">Downloads</span>

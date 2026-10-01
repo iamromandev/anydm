@@ -146,6 +146,14 @@ export function putApi<T>(path: string, body: unknown): Promise<T> {
     });
 }
 
+export function patchApi<T>(path: string, body: unknown): Promise<T> {
+    return request<T>(apiUrl(path), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
 export function deleteApi(path: string): Promise<void> {
     return request<void>(apiUrl(path), { method: "DELETE" });
 }

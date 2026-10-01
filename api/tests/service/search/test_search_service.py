@@ -28,8 +28,12 @@ def _service(
     clock: Callable[[], float] = lambda: 0.0,
 ) -> SearchService:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    sources = [TorznabSource(i) for i in (indexers if indexers is not None else [PROWLARR, JACKETT])]
-    return SearchService(sources, client, timeout_s=1, limit=100, clock=clock)
+    wanted = indexers if indexers is not None else [PROWLARR, JACKETT]
+
+    async def provider() -> list[TorznabSource]:
+        return [TorznabSource(i) for i in wanted]
+
+    return SearchService(client, timeout_s=1, limit=100, sources=provider, clock=clock)
 
 
 def _fixture(name: str) -> httpx.Response:
@@ -172,7 +176,12 @@ async def test_a_redirect_elsewhere_is_refused() -> None:
 )
 async def test_a_fetch_that_goes_wrong_says_how(link: str, respond: Callable[[httpx.Request], httpx.Response], kind: ErrorType) -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-    service = SearchService([TorznabSource(PROWLARR), TorznabSource(JACKETT)], client, timeout_s=1, limit=100, max_torrent_bytes=32)
+    wanted = [TorznabSource(PROWLARR), TorznabSource(JACKETT)]
+
+    async def provider() -> list[TorznabSource]:
+        return wanted
+
+    service = SearchService(client, timeout_s=1, limit=100, sources=provider, max_torrent_bytes=32)
 
     with pytest.raises(Error) as caught:
         await service.fetch_torrent(link)
@@ -348,7 +357,11 @@ def _fake_bunny(name: str = "fake", seeders: int = 500) -> Result:
 
 def _with(sources: list[Any], handler: Callable[[httpx.Request], Any] | None = None) -> SearchService:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler or (lambda r: _fixture("prowlarr.xml"))))
-    return SearchService(sources, client, timeout_s=1, limit=100)
+
+    async def provider() -> list[Any]:
+        return sources
+
+    return SearchService(client, timeout_s=1, limit=100, sources=provider)
 
 
 @pytest.mark.asyncio
@@ -416,7 +429,7 @@ def _provided(fakes: list[_Fake], clock: Callable[[], float] | None = None) -> S
         return fakes
 
     kwargs: dict[str, Any] = {"clock": clock} if clock else {}
-    return SearchService([], client, timeout_s=1, limit=100, builtins=provider, **kwargs)
+    return SearchService(client, timeout_s=1, limit=100, sources=provider, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -475,3 +488,40 @@ async def test_a_source_turned_off_and_on_again_finds_its_cached_answer_still_th
     await service.search("", "all")
 
     assert fake.asked == 1  # back to the first key, still cached
+
+
+@pytest.mark.asyncio
+async def test_changing_an_indexers_url_changes_the_browse_cache_key() -> None:
+    indexers = [Indexer("prowlarr-1", "http://prowlarr:9696/1/api", "abc")]
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.host)
+        return _feed(("A", "Mon, 28 Sep 2026 10:00:00 +0000"))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    async def provider() -> list[TorznabSource]:
+        return [TorznabSource(i) for i in indexers]
+
+    service = SearchService(client, timeout_s=1, limit=100, sources=provider, clock=_Clock())
+    await service.search("", "all")
+    await service.search("", "all")
+
+    assert len(asked) == 1  # the second browse was cached
+
+    indexers[:] = [Indexer("prowlarr-1", "http://mirror.test/1/api", "abc")]  # same name, another address
+
+    await service.search("", "all")
+
+    assert len(asked) == 2  # the address is part of the key, so the edit re-asks
+
+
+@pytest.mark.asyncio
+async def test_a_provider_only_indexers_links_pass_the_origin_check() -> None:
+    service = _service(lambda r: httpx.Response(200, content=TORRENT), [PROWLARR])
+
+    answer = await service.fetch_torrent("http://prowlarr:9696/1/download?link=x")
+
+    assert base64.b64decode(answer.torrent or "") == TORRENT
+    assert answer.magnet is None
