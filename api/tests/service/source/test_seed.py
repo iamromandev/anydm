@@ -3,9 +3,9 @@
 import pytest
 from src.data.repo.search.interface.source import SearchSourceRow
 from src.lib.sources.registry import BUILTINS
-from src.service.search.seed import seed_missing_sources
+from src.service.source.seed import seed_missing_sources
 
-from .fake_source_repo import FakeSourceRepo
+from ..search.fake_source_repo import FakeSourceRepo
 
 
 @pytest.mark.asyncio
@@ -14,7 +14,9 @@ async def test_an_empty_table_gets_every_builtin_at_its_default() -> None:
 
     assert await seed_missing_sources(repo) == 3
 
-    assert {r.name: (r.enabled, r.base_url) for r in await repo.list_all()} == {b.name: (True, b.default_url) for b in BUILTINS.values()}
+    assert {r.name: (r.kind, r.enabled, r.base_url) for r in await repo.list_all()} == {
+        b.name: (b.name, True, b.default_url) for b in BUILTINS.values()
+    }
 
 
 @pytest.mark.asyncio
