@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,146 +12,89 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
-from src.data.repo.download.interface import PositionRepo, SegmentRepo, TaskRepo
-from src.data.schema.download import (
-    PlaylistDownloadRequest,
-    PlaylistEntryRequest,
-    PositionSchema,
-    TaskSchema,
-    TaskSummarySchema,
-)
-from src.data.type import TASK_GROUPS, Kind, Platform, Preset, TaskSort, TaskStatus
+from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
+from src.data.schema.download import CollectionSchema, DownloadSchema, DownloadSummarySchema, PlaybackSchema
+from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, MediaKind, Platform, Preset
 from src.lib.event import EventHub
-from src.lib.folder import named_folder
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
-from src.lib.site.filename import number_prefix, safe_filename
+from src.lib.site.entry_plan import plan_fields
 from src.lib.site.format import select_plan
+from src.service.download.collection_service import CollectionService, remove_collection_video_files
+from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
-from src.service.download.download_worker import remove_task_files
-from src.service.download.group_totals import GroupTotals
+from src.service.download.folders import inside
+from src.service.download.live import LiveStats
+from src.service.download.paths import remove_work_files
 from src.service.download.torrent_service import TorrentService
+from src.service.download.views import DownloadViews
 
-
-#: Which rows each bulk action applies to. Seeding is in the pause set
-#: because only a torrent can be seeding and the engine accepts pausing one;
-#: failed is in both the resume set and the clear set, because a failure is
-#: equally "try again" and "give up on this".
-def remove_group_video_files(video: Path) -> None:
-    """A group video's file and the subtitle files beside it, never its folder (v0.5).
-
-    Its subtitles share its stem: ``02_Talk_720p.en.vtt`` beside ``02_Talk_720p.mp4``.
-    """
-    if not video.parent.is_dir():
-        return
-    prefix = f"{video.stem}."
-    for path in video.parent.iterdir():
-        if path == video or (path.name.startswith(prefix) and path.suffix in (".vtt", ".srt")):
-            path.unlink(missing_ok=True)
-
-
-#: The most videos one playlist add takes; the picker stops there too.
-PLAYLIST_LIMIT = 10_000
-
-BULK_SCOPES: dict[str, frozenset[TaskStatus]] = {
-    "pause_all": frozenset(
-        {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING}
-    ),
-    "resume_all": frozenset({TaskStatus.PAUSED, TaskStatus.FAILED}),
-    "clear_finished": frozenset({TaskStatus.COMPLETE, TaskStatus.FAILED}),
+#: Which rows each bulk action applies to. Seeding is in the pause set because
+#: only a torrent can be seeding and the engine accepts pausing one; failed is in
+#: both the resume set and the clear set, because a failure is equally "try
+#: again" and "give up on this".
+BULK_SCOPES: dict[str, frozenset[DownloadStatus]] = {
+    "pause_all": frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.SEEDING}),
+    "resume_all": frozenset({DownloadStatus.PAUSED, DownloadStatus.FAILED}),
+    "clear_finished": frozenset({DownloadStatus.COMPLETE, DownloadStatus.FAILED}),
 }
 
 
 @dataclass(frozen=True, slots=True)
 class TorrentPlay:
-    """A torrent task still downloading, to play through rqbit's stream (#95)."""
+    """A torrent still downloading, to play through rqbit's stream (#95)."""
 
     info_hash: str
     file_index: int
 
 
 class DownloadService(BaseService):
+    #: Stopping this close to the end counts as having watched it (#96).
+    WATCHED_WITHIN_S = 30.0
+
     def __init__(
         self,
-        repo: TaskRepo,
+        repo: DownloadRepo,
+        collections: CollectionService,
+        collection_repo: CollectionRepo,
         segment_repo: SegmentRepo,
+        files: FileRepo,
+        positions: PositionRepo,
         client: SiteClient,
         control: DownloadControl,
         hub: EventHub,
         downloads_root: Path,
         torrents: TorrentService,
+        views: DownloadViews,
+        totals: CollectionTotals,
+        live: LiveStats,
         disk: DiskGuard | None = None,
-        positions: PositionRepo | None = None,
-        groups: GroupTotals | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
+        self._collections = collections
+        self._collection_repo = collection_repo
         self._segment_repo = segment_repo
+        self._files = files
+        self._positions = positions
         self._client = client
         self._control = control
         self._hub = hub
         self._root = downloads_root
         self._torrents = torrents
+        self._views = views
+        self._totals = totals
+        self._live = live
         self._disk = disk
-        self._positions = positions
-        self._groups = groups
-
-    async def _refresh_group(self, task: Any) -> None:
-        """Bring a group video's group up to date after a change to it (v0.5)."""
-        parent_id = getattr(task, "parent_id", None)
-        if self._groups is not None and parent_id is not None:
-            await self._groups.refresh(parent_id)
-
-    async def _group_changed(self, group: Any) -> TaskSchema:
-        """The group row after its videos changed: its totals, else the row as it is."""
-        if self._groups is not None:
-            refreshed = await self._groups.refresh(group.id)
-            if refreshed is not None:
-                return refreshed
-        return self._published(group)
-
-    async def _cancel_group(self, group: Any, *, delete_files: bool) -> None:
-        """Remove a group and all of its videos (v0.5).
-
-        Keeping the files is accepted in any state: what finished is whole, and
-        the unfinished videos' working folders go either way.
-        """
-        for video in await self._repo.remove_entries(group.id):
-            self._control.request_stop(video)
-            remove_task_files(self._root, video)
-        if delete_files and group.file_path:
-            # A folder of 5,000 files shouldn't hold up the API.
-            await asyncio.to_thread(shutil.rmtree, self._root / group.file_path, ignore_errors=True)
-        group.status = TaskStatus.CANCELED
-        group.deleted_at = now()
-        group.speed_bps = 0
-        await group.save(update_fields=["status", "deleted_at", "speed_bps"])
-        self._published(group)
-
-    async def _with_counts(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
-        """Each group row with how its videos stand, and how many were watched."""
-        if self._groups is None:
-            return schemas
-        groups = [s for s in schemas if isinstance(s, TaskSchema) and s.kind == Kind.PLAYLIST]
-        watched = (
-            await self._positions.watched_in_groups([g.id for g in groups])
-            if self._positions is not None and groups
-            else {}
-        )
-        for schema in groups:
-            counts = await self._groups.counts(schema.id)
-            counts.watched = watched.get(schema.id, 0)
-            schema.entry_counts = counts
-        return schemas
 
     def _require_space(self, extra_bytes: int | None = None) -> None:
         if self._disk is not None:
             self._disk.require(extra_bytes or 0)
 
-    async def enqueue_media(self, url: str, preset: Preset) -> TaskSchema:
+    async def enqueue_media(self, url: str, preset: Preset) -> DownloadSchema:
         """Resolve the plan now, move the bytes later, for any site.
 
         Everything that can fail on the caller's behalf (an unsupported link, a
@@ -168,233 +110,107 @@ class DownloadService(BaseService):
         # estimated size counts here; an unknown one is checked against the
         # minimum alone, and the worker checks again once the probe knows.
         self._require_space(plan.expected_bytes)
-        suffix = "" if preset == Preset.MP3 else plan.quality
-
-        task = await self._repo.create(
-            source_url=url,
-            platform=Platform.SITE,
-            extractor=info.extractor,
-            video_id=info.id,
-            preset=preset,
-            kind=plan.kind,
-            title=info.title,
-            filename=safe_filename(info.title, suffix, plan.extension),
-            mime_type=plan.mime_type,
-            video_format=plan.video.id if plan.video else None,
-            audio_format=plan.audio.id if plan.audio else None,
-            # Only an exact size: a progress bar measured against an estimate
-            # stalls short of 100 or runs past it. The probe learns the rest.
-            total_bytes=None if plan.size_is_estimate else plan.expected_bytes,
-            status=TaskStatus.PENDING,
-            progress=0,
+        planned = plan_fields(info, plan, preset=preset, title=info.title, number="")
+        download = await self._repo.create_site(
+            {
+                "source_url": url,
+                "platform": Platform.SITE,
+                "media_kind": planned.media_kind,
+                "title": planned.title,
+                "status": DownloadStatus.PENDING,
+                "total_bytes": planned.total_bytes,
+            },
+            {
+                "extractor": info.extractor,
+                "video_id": info.id,
+                "preset": preset,
+                "video_format": planned.video_format,
+                "audio_format": planned.audio_format,
+            },
+            planned.filename,
+            planned.mime_type,
         )
-        # Workers share this process, so a queued task starts in milliseconds
-        # rather than on the next poll tick.
+        # Workers share this process, so a queued download starts in
+        # milliseconds rather than on the next poll tick.
         self._control.wake()
-        return self._published(task)
+        return await self._published(download)
 
-    async def enqueue_url(self, url: str) -> TaskSchema:
-        """Queue a plain HTTP download — anything that is not a media platform.
-
-        ``preset`` is BEST only because the column is not nullable and no preset
-        applies to an arbitrary file; ``kind=FILE`` is what actually says this
-        has no quality dimension.
-        """
+    async def enqueue_url(self, url: str) -> DownloadSchema:
+        """Queue a plain HTTP download — anything that is not a media platform."""
         ensure_fetchable(url)
         # The size is not known until a worker probes the source, so only the
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
-        task = await self._repo.create(
-            source_url=url,
-            platform=Platform.DIRECT,
-            video_id=None,
-            preset=Preset.BEST,
-            kind=Kind.FILE,
-            title=name,
-            filename=name,
-            mime_type=None,
-            video_format=None,
-            audio_format=None,
-            total_bytes=None,
-            status=TaskStatus.PENDING,
-            progress=0,
-        )
-        self._control.wake()
-        return self._published(task)
-
-    async def enqueue_playlist(self, request: PlaylistDownloadRequest) -> TaskSchema:
-        """A playlist's chosen videos, as one group of videos planned when each starts.
-
-        Nothing is extracted here: 5,000 videos cannot be planned inside one
-        request. A video that turns out private, or without a format for the
-        preset, fails inside the group rather than at add time.
-        """
-        if len(request.entries) > PLAYLIST_LIMIT:
-            raise site_error.playlist_too_large(len(request.entries))
-        self._require_space()
-        group = await self._repo.find_group(request.extractor, request.playlist_id)
-        if group is not None:
-            return await self._join_group(group, request)
-        folder = named_folder(self._root, request.title, request.playlist_id)
-        folder.mkdir(parents=True, exist_ok=True)
-        largest = max(entry.index for entry in request.entries)
-        group = await self._repo.create_group(
+        download = await self._repo.create_direct(
             {
-                "source_url": request.url,
-                "platform": Platform.SITE,
-                "extractor": request.extractor,
-                "video_id": request.playlist_id,
-                "preset": request.preset,
-                "kind": Kind.PLAYLIST,
-                "title": request.title,
-                "status": TaskStatus.PENDING,
-                "progress": 0,
-                "file_path": str(folder.relative_to(self._root)),
+                "source_url": url,
+                "platform": Platform.DIRECT,
+                "media_kind": MediaKind.FILE,
+                "title": name,
+                "status": DownloadStatus.PENDING,
             },
-            [self._entry_row(entry, request, position=entry.index, largest=largest) for entry in request.entries],
+            name,
         )
         self._control.wake()
-        return self._published(group)
+        return await self._published(download)
 
-    @staticmethod
-    def _entry_row(
-        entry: PlaylistEntryRequest, request: PlaylistDownloadRequest, *, position: int, largest: int
-    ) -> dict[str, Any]:
-        """One video's row, unplanned: its formats and name are chosen when it starts."""
-        return {
-            "source_url": entry.url,
-            "platform": Platform.SITE,
-            # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
-            # name single downloads and the picker's "already have it" use.
-            "extractor": request.extractor.removesuffix("Tab"),
-            "video_id": entry.id,
-            "preset": request.preset,
-            "kind": Kind.AUDIO if request.preset == Preset.MP3 else Kind.VIDEO,
-            "title": entry.title or "",
-            "position": position,
-            "status": TaskStatus.PENDING,
-            "progress": 0,
-            "video_format": None,
-            "audio_format": None,
-            # The number now; choosing the formats appends the name.
-            "filename": "" if request.channel_tab else number_prefix(position, largest),
-        }
+    async def list_items(
+        self, page: int, page_size: int, group: str = "all", sort: str = "-created_at"
+    ) -> tuple[list[DownloadSchema | CollectionSchema], Meta]:
+        """One page of the tagged list, narrowed to a sidebar filter, in the view's order.
 
-    async def _join_group(self, group: Any, request: PlaylistDownloadRequest) -> TaskSchema:
-        """The same list added again: its new videos join the group, in its folder (part 3).
-
-        New videos go after the group's highest position, in this listing's
-        order: a channel's tab lists newest first, so its numbers shift with
-        every upload. A video already held isn't added twice; ticked while
-        paused or failed, it goes back in the queue.
+        The filter is named rather than spelled out as statuses so that it and
+        the counts beside it can't drift: both read ``DOWNLOAD_GROUPS``.
         """
-        held = await self._repo.held_entries(group.id)
-        fresh = [entry for entry in request.entries if entry.id not in held]
-        if len(held) + len(fresh) > PLAYLIST_LIMIT:
-            raise site_error.playlist_too_large(len(held) + len(fresh))
-        again = [
-            held[entry.id][0]
-            for entry in request.entries
-            if entry.id in held and held[entry.id][1] in (TaskStatus.PAUSED, TaskStatus.FAILED)
-        ]
-        top = max((position or 0 for _, _, position in held.values()), default=0)
-        largest = top + len(fresh)
-        if group.file_path:
-            # Removed by hand since the first add: the videos still finish into it.
-            (self._root / group.file_path).mkdir(parents=True, exist_ok=True)
-        if fresh:
-            await self._repo.add_entries(
-                group,
-                [
-                    self._entry_row(entry, request, position=top + offset, largest=largest)
-                    for offset, entry in enumerate(fresh, start=1)
-                ],
-            )
-        await self._repo.requeue_videos(again)
-        self._control.wake()
-        # Recounted: back to downloading, with one frame for the group.
-        return await self._group_changed(group)
-
-    async def list_entries(self, group_id: uuid.UUID, page: int, page_size: int) -> tuple[list[TaskSchema], Meta]:
-        """One page of a group's videos, in playlist order."""
-        group = await self._require(group_id)
-        if group.kind != Kind.PLAYLIST:
-            raise Error.not_found(message="Task is not a playlist")
-        rows, meta = await self._repo.entries_page(group_id, page=page, page_size=page_size)
-        return await self._with_positions([TaskSchema.model_validate(row) for row in rows]), meta
-
-    async def list_tasks(
-        self,
-        page: int,
-        page_size: int,
-        group: str = "all",
-        sort: str = "-created_at",
-    ) -> tuple[list[TaskSchema], Meta]:
-        """One page of the list, narrowed to one of the sidebar's groups.
-
-        The group is named rather than spelled out as a list of statuses so
-        that the filter and the counts beside it cannot drift: both read
-        ``TASK_GROUPS``.
-        """
-        if group != "all" and group not in TASK_GROUPS:
+        if group != "all" and group not in DOWNLOAD_GROUPS:
             raise Error.bad_request(message=f"Unknown group: {group}")
-
-        # Checked here as well as at the route, because this value reaches
-        # the database's ORDER BY and a caller inside the process has no
-        # FastAPI between it and that.
-        if sort not in get_args(TaskSort):
+        # Checked here as well as at the route: this value reaches ORDER BY, and
+        # a caller inside the process has no FastAPI in front of it.
+        if sort not in get_args(DownloadSort):
             raise Error.bad_request(message=f"Cannot sort by: {sort}")
-
-        statuses = None if group == "all" else sorted(TASK_GROUPS[group])
-        tasks, meta = await self._repo.list_page(
-            page=page, page_size=page_size, statuses=statuses, sort=sort
-        )
-        # Through the torrent service, which adds a torrent's files: one query
-        # for the whole page (#107).
-        schemas = await self._with_positions(await self._torrents.schemas(tasks))
-        return await self._with_counts(schemas), meta
+        statuses = None if group == "all" else sorted(DOWNLOAD_GROUPS[group])
+        items, meta = await self._repo.list_items(page, page_size, statuses, sort, self._live.speeds())
+        download_ids = [item_id for kind, item_id in items if kind == "download"]
+        collection_ids = [item_id for kind, item_id in items if kind == "collection"]
+        downloads = {s.id: s for s in await self._views.many(await self._repo.by_ids(download_ids))}
+        collections = {
+            s.id: s for s in await self._totals.schemas(await self._collection_repo.by_ids(collection_ids))
+        }
+        ordered: list[DownloadSchema | CollectionSchema] = []
+        for kind, item_id in items:
+            found = downloads.get(item_id) if kind == "download" else collections.get(item_id)
+            if found is not None:
+                ordered.append(found)
+        return ordered, meta
 
     async def bulk(self, action: str, *, delete_files: bool = False) -> int:
         """Apply one action to every row it makes sense for.
 
-        Which rows those are is decided here rather than by the caller. The
+        Which rows those are is decided here rather than by the caller: the
         preconditions already live on ``pause``, ``resume`` and ``cancel``, and
-        letting a client name its own set of statuses only invites it to name
-        one they refuse — a bulk request that half fails is worse than one that
-        cannot be expressed.
-
-        Every row goes through those same three methods, so a torrent is paused
-        by the engine and a direct download by the worker, exactly as a single
-        action would do it. One row refusing does not end the sweep: a stale
-        status is the most likely reason, and the rest of the list should not
-        pay for it.
+        every row goes through those same methods, so a torrent is paused by the
+        engine and a direct download by the worker, exactly as a single action
+        would do it. One row refusing does not end the sweep.
         """
         scope = BULK_SCOPES.get(action)
         if scope is None:
             raise Error.bad_request(message=f"Unknown bulk action: {action}")
 
         affected = 0
-        # A group's videos move in one update rather than a row at a time (v0.5),
-        # and each group they belong to is brought up to date once.
+        # A collection's videos move in one update rather than a row at a time,
+        # and each collection they belong to is brought up to date once.
         touched: set[uuid.UUID] = set()
         if action == "pause_all":
-            running, touched = await self._repo.pause_all_entries()
+            running, touched = await self._collection_repo.pause_all()
             for video in running:
                 self._control.request_stop(video)
         elif action == "resume_all":
-            touched = await self._repo.resume_all_entries()
+            touched = await self._collection_repo.resume_all()
             self._control.wake()
 
-        # The rest one at a time, as before: standalone tasks and torrents, and
-        # for clear_finished whole groups. Never a video out of its group.
-        rows = [
-            row
-            for row in await self._repo.by_statuses(sorted(scope))
-            if getattr(row, "parent_id", None) is None
-            and (action == "clear_finished" or getattr(row, "kind", None) != Kind.PLAYLIST)
-        ]
-        for row in rows:
+        # Standalone downloads one at a time, as before.
+        for row in await self._repo.by_statuses(sorted(scope)):
             try:
                 if action == "pause_all":
                     await self.pause(row.id)
@@ -403,249 +219,235 @@ class DownloadService(BaseService):
                 else:
                     # Only a finished row has anything worth keeping; asking to
                     # keep the remains of a failure is refused by ``cancel``.
-                    keepable = row.status in (TaskStatus.COMPLETE, TaskStatus.SEEDING)
-                    await self.cancel(
-                        row.id, delete_files=delete_files or not keepable
-                    )
+                    keepable = row.status in (DownloadStatus.COMPLETE, DownloadStatus.SEEDING)
+                    await self.cancel(row.id, delete_files=delete_files or not keepable)
                 affected += 1
             except Error as error:
-                logger.warning(
-                    "{}|bulk {} skipped {}: {}", self._tag, action, row.id, error.message
-                )
+                logger.warning("{}|bulk {} skipped {}: {}", self._tag, action, row.id, error.message)
 
-        for group_id in touched:
-            if self._groups is not None:
-                await self._groups.refresh(group_id)
+        # Whole collections whose computed status is finished.
+        if action == "clear_finished":
+            finished, _ = await self._repo.list_items(1, 10_000, sorted(scope), "created_at", {})
+            for kind, item_id in finished:
+                if kind != "collection":
+                    continue
+                try:
+                    await self._collections.cancel(item_id, delete_files=delete_files)
+                    affected += 1
+                except Error as error:
+                    logger.warning("{}|bulk {} skipped {}: {}", self._tag, action, item_id, error.message)
+
+        for collection_id in touched:
+            await self._totals.refresh(collection_id)
             affected += 1
         return affected
 
-    async def summary(self) -> TaskSummarySchema:
+    async def summary(self) -> DownloadSummarySchema:
         return await self._repo.summary()
 
-    async def get_task(self, task_id: uuid.UUID) -> TaskSchema:
-        (schema,) = await self._with_positions([await self._torrents.schema(await self._require(task_id))])
-        (schema,) = await self._with_counts([schema])
-        return schema
+    async def get(self, download_id: uuid.UUID) -> DownloadSchema:
+        return await self._views.one(await self._require(download_id))
 
-    #: Stopping this close to the end counts as having watched it (#96).
-    WATCHED_WITHIN_S = 30.0
-
-    async def save_position(
+    async def save_playback(
         self,
-        task_id: uuid.UUID,
+        download_id: uuid.UUID,
         file_index: int | None,
         *,
         position_seconds: float,
         duration_seconds: float,
-    ) -> PositionSchema:
-        """Record where a download was left in the player, so it resumes on any device (#96).
+    ) -> PlaybackSchema:
+        """Record where a file was left in the player, so it resumes on any device (#96).
 
         Stopping within ``WATCHED_WITHIN_S`` of the end marks the file watched
         and clears where to resume, so it opens from the start next time. A
         file once watched stays watched when played again.
         """
-        if self._positions is None:
-            raise Error.service_unavailable("Saving positions is not configured")
-        await self._require(task_id)
+        await self._require(download_id)
         index = file_index or 0
-        previous = next(
-            (row for row in (await self._positions.list_for_tasks([task_id]))[task_id] if row.file_index == index),
-            None,
-        )
+        file = await self._files.get(download_id, index)
+        if file is None:
+            raise Error.not_found(message=f"Download has no file at index {index}")
+        previous = (await self._positions.by_files([file.id])).get(file.id)
         near_end = duration_seconds > 0 and duration_seconds - position_seconds <= self.WATCHED_WITHIN_S
         row = await self._positions.save(
-            task_id,
-            index,
+            file.id,
             position_seconds=0.0 if near_end else position_seconds,
             duration_seconds=duration_seconds,
             watched=near_end or bool(previous and previous.watched),
         )
-        return PositionSchema.model_validate(row)
+        return PlaybackSchema(
+            position_seconds=row.position_seconds, duration_seconds=row.duration_seconds, watched=row.watched
+        )
 
-    async def _with_positions(self, schemas: list[TaskSchema]) -> list[TaskSchema]:
-        """Each task with where its files were left in the player, in one query (#96)."""
-        if self._positions is None or not schemas:
-            return schemas
-        by_task = await self._positions.list_for_tasks([schema.id for schema in schemas])
-        for schema in schemas:
-            schema.positions = [PositionSchema.model_validate(row) for row in by_task.get(schema.id, [])]
-        return schemas
+    async def resolve_file(self, download_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, str]:
+        """A finished file.
 
-    async def resolve_file(self, task_id: uuid.UUID) -> tuple[Path, str, str]:
-        """The finished file for ``task_id``.
-
-        409 rather than 404 while a task is still running: the resource will
-        exist, just not yet — which is what the Bun API said for a verifying
-        torrent, and what a polling client needs to tell "wait" from "never".
-
-        A torrent goes to the torrent service: its ``file_path`` is a folder,
-        and it is done while seeding too (#107).
+        409 rather than 404 while a download is still running: the resource will
+        exist, just not yet, and a polling client has to tell "wait" from "never".
         """
-        task = await self._require(task_id)
-        if task.platform == Platform.TORRENT:
-            return await self._torrents.resolve_only_file(task_id)
-
-        if task.status != TaskStatus.COMPLETE or not task.file_path:
-            raise Error.conflict(message=f"Task is {task.status.value}, not complete")
-
-        path = self._root / task.file_path
+        download = await self._require(download_id)
+        if download.platform == Platform.TORRENT:
+            if file_index is None:
+                raise Error.not_found(message="A torrent's files are fetched by index")
+            return await self._torrents.resolve_file(download_id, file_index)
+        if file_index not in (None, 0):
+            raise Error.not_found(message="Only a torrent has files by index")
+        if download.status != DownloadStatus.COMPLETE or not download.folder:
+            raise Error.conflict(message=f"Download is {download.status.value}, not complete")
+        file = await self._files.single(download_id)
+        if file is None:
+            raise Error.not_found(message="Download has no file")
+        path = inside(self._root, download.folder) / Path(file.path).name
         if not path.is_file():
             raise Error.not_found(message="File is no longer on disk")
-
-        return path, task.filename, task.mime_type or "application/octet-stream"
+        return path, file.path, file.mime_type or "application/octet-stream"
 
     async def resolve_media_file(
-        self, task_id: uuid.UUID, file_index: int | None
+        self, download_id: uuid.UUID, file_index: int | None
     ) -> tuple[Path, str, int | None]:
         """The file Play reads from disk, and its index in a torrent (#94).
 
         A download's own file, or one of a torrent's: the one asked for, else
-        its largest selected media file. The same checks as ``resolve_file``
-        apply, so nothing unfinished, missing or outside its folder is played.
+        its largest selected media file.
         """
-        task = await self._require(task_id)
-        if task.platform == Platform.TORRENT:
+        download = await self._require(download_id)
+        if download.platform == Platform.TORRENT:
             if file_index is None:
-                file_index = await self._torrents.media_file_index(task_id)
-            path, filename, _ = await self._torrents.resolve_file(task_id, file_index)
+                file_index = await self._torrents.media_file_index(download_id)
+            path, filename, _ = await self._torrents.resolve_file(download_id, file_index)
             return path, filename, file_index
         if file_index is not None:
             raise Error.not_found(message="Only a torrent has files by index")
-        path, filename, _ = await self.resolve_file(task_id)
+        path, filename, _ = await self.resolve_file(download_id, None)
         return path, filename, None
 
     async def subtitle_files(
-        self, task_id: uuid.UUID, file_index: int | None
+        self, download_id: uuid.UUID, file_index: int | None
     ) -> list[tuple[Sidecar, SidecarSource]]:
         """The subtitle files that go with the file Play opens, and where to read each (#101).
 
-        A torrent's come from its file list. A download's are its neighbours
-        on disk, beside it or in a subtitles folder there, once it's finished.
+        A torrent's come from its file list. A download's are its neighbours on
+        disk, beside it or in a subtitles folder there, once it's finished.
         """
-        task = await self._require(task_id)
-        if task.platform == Platform.TORRENT:
-            return await self._torrents.subtitle_files(task_id, file_index)
-        if task.status != TaskStatus.COMPLETE:
+        download = await self._require(download_id)
+        if download.platform == Platform.TORRENT:
+            return await self._torrents.subtitle_files(download_id, file_index)
+        if download.status != DownloadStatus.COMPLETE:
             return []
-        path, _, _ = await self.resolve_file(task_id)
+        path, _, _ = await self.resolve_file(download_id, None)
         listing = await asyncio.to_thread(folder_listing, path.parent)
         return [(sidecar, path.parent / sidecar.path) for sidecar in match_sidecars(path.name, listing)]
 
-    async def torrent_play(self, task_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
+    async def torrent_play(self, download_id: uuid.UUID, file_index: int | None) -> TorrentPlay | None:
         """The torrent to stream when Play is pressed on a torrent still downloading (#95).
 
-        ``None`` when the task plays from disk instead: it isn't a torrent, or
-        it has finished. A paused torrent is resumed first, since a stream
-        from it would stall; it keeps downloading after the player closes.
+        ``None`` when it plays from disk instead: it isn't a torrent, or it has
+        finished. A paused torrent is resumed first, since a stream from it
+        would stall; it keeps downloading after the player closes.
         """
-        task = await self._require(task_id)
-        if task.platform != Platform.TORRENT or task.status in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
+        download = await self._require(download_id)
+        if download.platform != Platform.TORRENT or download.status in (
+            DownloadStatus.COMPLETE,
+            DownloadStatus.SEEDING,
+        ):
             return None
-        if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED):
-            raise Error.conflict(message=f"Task is {task.status.value}; there's nothing to play")
-        index = await self._torrents.media_file_index(task_id, file_index)
-        if task.status == TaskStatus.PAUSED:
-            await self._torrents.resume(task_id)
-        return TorrentPlay(info_hash=task.info_hash or "", file_index=index)
+        if download.status not in (DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED):
+            raise Error.conflict(message=f"Download is {download.status.value}; there's nothing to play")
+        index = await self._torrents.media_file_index(download_id, file_index)
+        if download.status == DownloadStatus.PAUSED:
+            await self._torrents.resume(download_id)
+        info_hash = download.torrent_detail.info_hash if download.torrent_detail else ""
+        return TorrentPlay(info_hash=info_hash, file_index=index)
 
-    async def pause(self, task_id: uuid.UUID) -> TaskSchema:
+    async def pause(self, download_id: uuid.UUID) -> Any:
         """Signal a running transfer to stop between chunks, keeping the ``.part``.
 
         The status is written here rather than by the worker so the caller's
-        next read reflects the pause immediately, even if the worker is
-        mid-chunk.
+        next read reflects the pause immediately, even mid-chunk.
         """
-        task = await self._require(task_id)
-        if task.platform == Platform.TORRENT:
-            return await self._torrents.pause(task_id)
-        if task.kind == Kind.PLAYLIST:
-            for running in await self._repo.pause_entries(task_id):
-                self._control.request_stop(running)
-            return await self._group_changed(task)
-        if task.status not in (TaskStatus.PENDING, TaskStatus.DOWNLOADING):
-            raise Error.conflict(message=f"Cannot pause a task that is {task.status.value}")
+        download = await self._require(download_id)
+        if download.platform == Platform.TORRENT:
+            return await self._torrents.pause(download_id)
+        if download.status not in (DownloadStatus.PENDING, DownloadStatus.DOWNLOADING):
+            raise Error.conflict(message=f"Cannot pause a download that is {download.status.value}")
 
-        self._control.request_stop(task_id)
-        task.status = TaskStatus.PAUSED
-        task.speed_bps = 0
-        task.eta_seconds = None
-        await task.save(update_fields=["status", "speed_bps", "eta_seconds"])
-        schema = self._published(task)
-        await self._refresh_group(task)
+        self._control.request_stop(download_id)
+        download.status = DownloadStatus.PAUSED
+        await download.save(update_fields=["status"])
+        self._live.clear(download.id)
+        schema = await self._published(download)
+        await self._refresh_collection(download)
         return schema
 
-    async def resume(self, task_id: uuid.UUID) -> TaskSchema:
-        """Put a paused or failed task back in the queue, from where its bytes stopped.
+    async def resume(self, download_id: uuid.UUID) -> Any:
+        """Put a paused or failed download back in the queue, from where its bytes stopped.
 
         ``attempts`` resets because this is a fresh decision by a person, not a
         continuation of the automatic retry budget that gave up.
         """
-        task = await self._require(task_id)
-        if task.platform == Platform.TORRENT:
-            return await self._torrents.resume(task_id)
-        if task.kind == Kind.PLAYLIST:
-            await self._repo.resume_entries(task_id)
-            self._control.wake()
-            return await self._group_changed(task)
-        if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
-            raise Error.conflict(message=f"Cannot resume a task that is {task.status.value}")
+        download = await self._require(download_id)
+        if download.platform == Platform.TORRENT:
+            return await self._torrents.resume(download_id)
+        if download.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED):
+            raise Error.conflict(message=f"Cannot resume a download that is {download.status.value}")
 
-        self._control.clear_stop(task_id)
-        task.status = TaskStatus.PENDING
-        task.error = None
-        task.error_code = None
-        task.attempts = 0
-        task.next_attempt_at = None
-        await task.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
+        self._control.clear_stop(download_id)
+        download.status = DownloadStatus.PENDING
+        download.error = None
+        download.error_code = None
+        download.attempts = 0
+        download.next_attempt_at = None
+        await download.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
         self._control.wake()
-        schema = self._published(task)
-        await self._refresh_group(task)
+        schema = await self._published(download)
+        await self._refresh_collection(download)
         return schema
 
-    async def cancel(self, task_id: uuid.UUID, *, delete_files: bool = True) -> None:
-        """Stop the task, soft-delete the row, and take the files or leave them.
+    async def cancel(self, download_id: uuid.UUID, *, delete_files: bool = True) -> None:
+        """Stop the download, soft-delete the row, and take the files or leave them.
 
-        Keeping the files is only offered for a task that finished. A ``.part``
-        outlives its row as so many bytes nothing can describe: the watermarks
-        that say which ranges are sound live in ``segment``, and cancelling
-        clears those.
+        Keeping the files is only offered for a download that finished. A
+        ``.part`` outlives its row as so many bytes nothing can describe: the
+        watermarks that say which ranges are sound live in ``segment``, and
+        cancelling clears those.
         """
-        task = await self._require(task_id)
-        if task.kind == Kind.PLAYLIST:
-            return await self._cancel_group(task, delete_files=delete_files)
-        if not delete_files and task.status not in (TaskStatus.COMPLETE, TaskStatus.SEEDING):
-            raise Error.conflict(
-                message=f"Cannot keep the files of a task that is {task.status.value}"
-            )
-        if task.platform == Platform.TORRENT:
-            return await self._torrents.cancel(task_id, delete_files=delete_files)
-        self._control.request_stop(task_id)
+        download = await self._require(download_id)
+        if not delete_files and download.status not in (DownloadStatus.COMPLETE, DownloadStatus.SEEDING):
+            raise Error.conflict(message=f"Cannot keep the files of a download that is {download.status.value}")
+        if download.platform == Platform.TORRENT:
+            return await self._torrents.cancel(download_id, delete_files=delete_files)
+        self._control.request_stop(download_id)
         if delete_files:
-            remove_task_files(self._root, task_id)
-            if getattr(task, "parent_id", None) is not None and task.file_path:
-                remove_group_video_files(self._root / task.file_path)
-        await self._segment_repo.clear(task_id)
-        task.status = TaskStatus.CANCELED
-        task.deleted_at = now()
-        task.speed_bps = 0
-        task.eta_seconds = None
-        await task.save(update_fields=["status", "deleted_at", "speed_bps", "eta_seconds"])
-        self._published(task)
-        await self._refresh_group(task)
+            remove_work_files(self._root, download_id)
+            file = await self._files.single(download_id)
+            if download.folder and file is not None:
+                # Its file and the subtitles beside it, never the folder it shares.
+                remove_collection_video_files(inside(self._root, download.folder) / Path(file.path).name)
+        await self._segment_repo.clear(download_id)
+        download.status = DownloadStatus.CANCELED
+        download.deleted_at = now()
+        await download.save(update_fields=["status", "deleted_at"])
+        self._live.clear(download.id)
+        await self._published(download)
+        await self._refresh_collection(download)
 
-    def _published(self, task: Any) -> TaskSchema:
-        """Serialise the task, announce it, and hand it back to the caller.
+    async def _refresh_collection(self, download: Any) -> None:
+        """Bring a collection video's collection up to date after a change to it."""
+        if download.collection_id is not None:
+            await self._totals.refresh(download.collection_id)
+
+    async def _published(self, download: Any) -> DownloadSchema:
+        """Serialise, announce and hand back.
 
         Publishing here rather than only in the worker is what makes a change
-        made through the API reach every open browser immediately, instead of
-        waiting for the next worker tick.
+        made through the API reach every open browser immediately.
         """
-        schema = TaskSchema.model_validate(task)
-        self._hub.publish("task", schema.to_json())
+        schema = await self._views.one(download)
+        self._hub.publish("download", schema.to_json())
         return schema
 
-    async def _require(self, task_id: uuid.UUID) -> Any:
-        task = await self._repo.get_active_by_id(task_id)
-        if task is None:
-            raise Error.not_found(message="Task not found")
-        return task
+    async def _require(self, download_id: uuid.UUID) -> Any:
+        download = await self._repo.get_active_by_id(download_id)
+        if download is None:
+            raise Error.not_found(message="Download not found")
+        return download
