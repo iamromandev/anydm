@@ -39,6 +39,7 @@ const found = (
     infoHash: null,
     magnet: null,
     link: "http://p/dl",
+    copyFrom: "p",
     indexers: [
         "p",
     ],

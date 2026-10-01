@@ -245,6 +245,53 @@ describe("normalizeStreamSession", () => {
         expect(session.status).toBe("ready");
         expect(session.durationSeconds).toBe(0);
         expect(session.hasVideo).toBe(false);
+        expect(session.files).toEqual([]);
+    });
+
+    it("reads a torrent's files as playable ones, media only, in natural order", () => {
+        const session = normalizeStreamSession({
+            session_id: "s1",
+            files: [
+                {
+                    index: 1,
+                    path: "Show.S01E10.mkv",
+                    size_bytes: 900,
+                    selected: true,
+                    downloaded_bytes: 0,
+                },
+                {
+                    index: 0,
+                    path: "Show.S01E2.mkv",
+                    size_bytes: 800,
+                    selected: true,
+                    downloaded_bytes: 0,
+                },
+                {
+                    index: 2,
+                    path: "Show.S01E2.en.srt",
+                    size_bytes: 10,
+                    selected: true,
+                    downloaded_bytes: 0,
+                },
+            ],
+        });
+
+        expect(session.files).toEqual([
+            { index: 0, path: "Show.S01E2.mkv", sizeBytes: 800 },
+            { index: 1, path: "Show.S01E10.mkv", sizeBytes: 900 },
+        ]);
+    });
+
+    it("leaves out a file whose fields are unusable", () => {
+        // A blank path names no media file, so it must not become a menu row.
+        const session = normalizeStreamSession({
+            session_id: "s1",
+            files: [
+                { index: "0", path: 7, size_bytes: "big" },
+            ],
+        });
+
+        expect(session.files).toEqual([]);
     });
 
     it("carries a connecting status with null duration and video", () => {

@@ -44,6 +44,7 @@ describe("normalizeFound", () => {
             infoHash: null,
             magnet: null,
             link: "http://prowlarr:9696/1/download?link=abc",
+            copyFrom: "",
             indexers: [
                 "prowlarr-1",
             ],
@@ -54,6 +55,22 @@ describe("normalizeFound", () => {
         expect(
             normalizeFound({ title: "x", seeders: 0, indexers: [] }).seeders,
         ).toBe(0);
+    });
+
+    it("names the source the copy came from", () => {
+        expect(
+            normalizeFound({
+                title: "x",
+                link: "http://p/dl",
+                copy_from: "nyaa",
+            }).copyFrom,
+        ).toBe("nyaa");
+    });
+
+    it("leaves the source empty when the API sends none", () => {
+        expect(
+            normalizeFound({ title: "x", link: "http://p/dl" }).copyFrom,
+        ).toBe("");
     });
 });
 

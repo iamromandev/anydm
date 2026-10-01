@@ -1,6 +1,7 @@
 /** Start, and stop, an ephemeral on-demand HLS session for a site page, media URL or torrent. */
 
 import { type AudioTrack, normalizeAudioTracks } from "../audio";
+import { type PlayableFile, mediaFiles } from "../media";
 import { normalizeQualityMenu, type QualityMenu } from "../quality";
 import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles";
 import { deleteApi, getApi, postApi } from "./client";
@@ -20,6 +21,8 @@ export type StreamSession = {
     segmentSeconds: number;
     /** Its quality menu (#103); a torrent's comes with `ready`. */
     quality: QualityMenu;
+    /** A torrent's media files, as the file menu lists them; empty otherwise. */
+    files: PlayableFile[];
 };
 
 /** The audio a session should open with (#99): a named track, else the preferred language's. */
@@ -87,6 +90,21 @@ export function normalizeStreamStatusEvent(raw: any): StreamStatusEvent {
     };
 }
 
+/**
+ * The answer's files, as the player lists them: media only, in natural path
+ * order. The API already sends media only; this keeps a hand-written or older
+ * answer from putting a subtitle file in the episode menu.
+ */
+function playableFiles(raw: unknown): PlayableFile[] {
+    return mediaFiles(
+        (Array.isArray(raw) ? raw : []).map((f: any) => ({
+            index: typeof f?.index === "number" ? f.index : 0,
+            path: typeof f?.path === "string" ? f.path : "",
+            sizeBytes: typeof f?.size_bytes === "number" ? f.size_bytes : 0,
+        })),
+    );
+}
+
 export function normalizeStreamSession(raw: any): StreamSession {
     return {
         sessionId: raw?.session_id ?? "",
@@ -101,6 +119,7 @@ export function normalizeStreamSession(raw: any): StreamSession {
         subtitleTracks: normalizeSubtitleTracks(raw?.subtitle_tracks),
         segmentSeconds: raw?.segment_seconds ?? 6,
         quality: normalizeQualityMenu(raw),
+        files: playableFiles(raw?.files),
     };
 }
 
