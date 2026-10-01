@@ -255,3 +255,4 @@ so the UI needs no polling to recover.
 | Torrent streaming | [2026-09-16](superpowers/specs/2026-09-16-torrent-streaming-design.md) |
 | Player controls | [2026-09-17](superpowers/specs/2026-09-17-custom-player-controls-design.md) |
 | Swarm status in the player | [2026-09-17](superpowers/specs/2026-09-17-torrent-stream-swarm-status-design.md) |
+| Search result actions | [2026-09-30](superpowers/specs/2026-09-30-search-result-actions-design.md) |
