@@ -7,6 +7,7 @@ layout, so the torrent port can reuse it.
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 
@@ -36,3 +37,8 @@ def collection_destination(root: Path, folder: str, filename: str, video_id: str
     if target.exists():
         target = target.with_name(f"{target.stem}_{video_id}{target.suffix}")
     return target
+
+
+def remove_work_files(root: Path, download_id: uuid.UUID) -> None:
+    """Delete a download's whole work directory. Used by cancel."""
+    shutil.rmtree(work_dir(root, download_id), ignore_errors=True)

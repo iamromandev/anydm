@@ -1,0 +1,317 @@
+"""Playlists and channel tabs, added and run as collections (v0.5)."""
+
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from src.core.error import Error
+from src.core.success import Meta
+from src.core.type import Code
+from src.data.schema.download import CollectionEntryRequest, CollectionRequest
+from src.data.type import CollectionKind, DownloadStatus, MediaKind, Preset
+from src.service.download.collection_service import CollectionService
+from src.service.download.collection_totals import CollectionTotals
+from src.service.download.control import DownloadControl
+from src.service.download.live import LiveStats
+
+from tests.service.download.memory import RecordingHub, download_row, memory_views
+
+
+class FakeCollections:
+    def __init__(self) -> None:
+        self.collection: Any = None
+        self.created: dict[str, Any] | None = None
+        self.entries: list[Any] = []
+        self.added: list[Any] = []
+        #: What ``held`` answers: video id -> (download id, status, position).
+        self.held_rows: dict[str, tuple[uuid.UUID, DownloadStatus, int | None]] = {}
+        self.requeued: list[uuid.UUID] = []
+        self.calls: list[tuple[str, uuid.UUID]] = []
+        #: What ``pause`` and ``remove`` answer: the downloads that were running.
+        self.running: list[uuid.UUID] = []
+        self.page: list[Any] = []
+        self.deleted = False
+
+    async def find(self, extractor: str, external_id: str) -> Any:
+        return self.collection
+
+    async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
+        if self.collection is None or self.deleted or self.collection.id != collection_id:
+            return None
+        return self.collection
+
+    async def create_with_entries(self, collection: dict[str, Any], entries: list[Any]) -> Any:
+        self.created, self.entries = collection, list(entries)
+        self.collection = SimpleNamespace(id=uuid.uuid4(), created_at=None, **collection)
+        return self.collection
+
+    async def add_entries(self, collection: Any, entries: list[Any]) -> None:
+        self.added += entries
+
+    async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus, int | None]]:
+        return self.held_rows
+
+    async def requeue(self, ids: list[uuid.UUID]) -> int:
+        self.requeued += ids
+        return len(ids)
+
+    async def member_rows(self, collection_id: uuid.UUID) -> list[Any]:
+        return [(uuid.uuid4(), DownloadStatus.PENDING, 0, None) for _ in self.entries]
+
+    async def watched_counts(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        return dict.fromkeys(ids, 0)
+
+    async def downloads_page(self, collection_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Any], Meta]:
+        return list(self.page), Meta(page=page, page_size=page_size, total=len(self.page), total_pages=1)
+
+    async def pause(self, collection_id: uuid.UUID) -> list[uuid.UUID]:
+        self.calls.append(("pause", collection_id))
+        return list(self.running)
+
+    async def resume(self, collection_id: uuid.UUID) -> int:
+        self.calls.append(("resume", collection_id))
+        return 0
+
+    async def remove(self, collection_id: uuid.UUID) -> list[uuid.UUID]:
+        self.calls.append(("remove", collection_id))
+        return list(self.running)
+
+    async def soft_delete(self, collection: Any) -> None:
+        self.deleted = True
+
+
+def request(count: int = 3, *, channel_tab: bool = False, preset: Preset = Preset.P1080) -> CollectionRequest:
+    return CollectionRequest(
+        url="https://www.youtube.com/playlist?list=PL1",
+        extractor="YoutubeTab",
+        external_id="PL1",
+        title="29C3: Not my department",
+        channel_tab=channel_tab,
+        preset=preset,
+        entries=[
+            CollectionEntryRequest(index=n, id=f"v{n}", url=f"https://youtu.be/v{n}", title=f"Talk {n}")
+            for n in range(1, count + 1)
+        ],
+    )
+
+
+def service(repo: FakeCollections, root: Path) -> CollectionService:
+    hub, live = RecordingHub(), LiveStats()
+    return CollectionService(
+        repo=repo,  # ty: ignore[invalid-argument-type]
+        segment_repo=None,
+        control=DownloadControl(),
+        downloads_root=root,
+        totals=CollectionTotals(repo, hub, live),  # ty: ignore[invalid-argument-type]
+        views=memory_views(live=live),
+    )
+
+
+def held_collection(repo: FakeCollections, root: Path) -> Any:
+    repo.collection = SimpleNamespace(
+        id=uuid.uuid4(),
+        kind=CollectionKind.PLAYLIST,
+        source_url="u",
+        extractor="YoutubeTab",
+        external_id="PL1",
+        title="29C3: Not my department",
+        folder="29C3_ Not my department",
+        preset=Preset.P1080,
+        created_at=None,
+    )
+    (root / "29C3_ Not my department").mkdir()
+    return repo.collection
+
+
+@pytest.mark.asyncio
+async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp_path: Path) -> None:
+    repo = FakeCollections()
+
+    schema = await service(repo, tmp_path).add(request(12))
+
+    assert repo.created is not None
+    assert (repo.created["kind"], repo.created["external_id"], repo.created["folder"]) == (
+        CollectionKind.PLAYLIST,
+        "PL1",
+        "29C3_ Not my department",
+    )
+    assert (tmp_path / "29C3_ Not my department").is_dir()
+    first = repo.entries[0]
+    assert (first.download["position"], first.download["media_kind"], first.download["title"]) == (
+        1,
+        MediaKind.VIDEO,
+        "Talk 1",
+    )
+    assert first.site == {"extractor": "Youtube", "video_id": "v1", "preset": Preset.P1080}
+    assert [e.filename for e in repo.entries[:2]] == ["01_", "02_"]
+    assert schema.type == "collection"
+    assert schema.counts.total == 12
+
+
+@pytest.mark.asyncio
+async def test_a_channel_tab_is_a_channel_and_is_not_numbered(tmp_path: Path) -> None:
+    repo = FakeCollections()
+
+    await service(repo, tmp_path).add(request(2, channel_tab=True))
+
+    assert repo.created is not None and repo.created["kind"] == CollectionKind.CHANNEL
+    assert repo.entries[0].filename == ""
+
+
+@pytest.mark.asyncio
+async def test_mp3_videos_are_audio(tmp_path: Path) -> None:
+    repo = FakeCollections()
+
+    await service(repo, tmp_path).add(request(1, preset=Preset.MP3))
+
+    assert repo.entries[0].download["media_kind"] == MediaKind.AUDIO
+
+
+@pytest.mark.asyncio
+async def test_more_than_ten_thousand_videos_are_refused(tmp_path: Path) -> None:
+    repo = FakeCollections()
+
+    with pytest.raises(Error) as caught:
+        await service(repo, tmp_path).add(request(10_001))
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.created is None
+
+
+@pytest.mark.asyncio
+async def test_adding_a_list_again_joins_its_collection(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+    repo.held_rows = {
+        "v1": (uuid.uuid4(), DownloadStatus.COMPLETE, 1),
+        "v2": (uuid.uuid4(), DownloadStatus.COMPLETE, 2),
+    }
+
+    joined = await service(repo, tmp_path).add(request(4))
+
+    assert joined.id == collection.id
+    assert repo.created is None  # no second collection
+    assert [(e.site["video_id"], e.download["position"], e.filename) for e in repo.added] == [
+        ("v3", 3, "03_"),
+        ("v4", 4, "04_"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_joining_appends_after_the_highest_position(tmp_path: Path) -> None:
+    """A tab lists newest first, so a later listing's numbers would collide."""
+    repo = FakeCollections()
+    held_collection(repo, tmp_path)
+    repo.held_rows = {"v3": (uuid.uuid4(), DownloadStatus.COMPLETE, 7)}
+
+    await service(repo, tmp_path).add(request(3, channel_tab=True))
+
+    assert [(e.site["video_id"], e.download["position"], e.filename) for e in repo.added] == [
+        ("v1", 8, ""),
+        ("v2", 9, ""),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    held_collection(repo, tmp_path)
+    failed, paused, done = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    repo.held_rows = {
+        "v1": (failed, DownloadStatus.FAILED, 1),
+        "v2": (paused, DownloadStatus.PAUSED, 2),
+        "v3": (done, DownloadStatus.COMPLETE, 3),
+    }
+
+    await service(repo, tmp_path).add(request(3))
+
+    assert repo.added == []
+    assert sorted(map(str, repo.requeued)) == sorted(map(str, [failed, paused]))
+
+
+@pytest.mark.asyncio
+async def test_a_join_past_ten_thousand_is_refused(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    held_collection(repo, tmp_path)
+    repo.held_rows = {f"x{n}": (uuid.uuid4(), DownloadStatus.COMPLETE, n) for n in range(1, 9_999)}
+
+    with pytest.raises(Error) as caught:
+        await service(repo, tmp_path).add(request(3))
+
+    assert caught.value.code == Code.UNPROCESSABLE_ENTITY
+    assert repo.added == []
+
+
+@pytest.mark.asyncio
+async def test_a_collection_lists_its_videos(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+    video = download_row(collection_id=collection.id, position=1)
+    repo.page = [video]
+
+    rows, meta = await service(repo, tmp_path).downloads_page(collection.id, 1, 50)
+
+    assert [r.id for r in rows] == [video.id]
+    assert meta.total == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_collection_is_a_404(tmp_path: Path) -> None:
+    with pytest.raises(Error) as caught:
+        await service(FakeCollections(), tmp_path).downloads_page(uuid.uuid4(), 1, 50)
+    assert caught.value.code == Code.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_collection_pauses_its_videos_and_stops_the_running_ones(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+    running = uuid.uuid4()
+    repo.running = [running]
+    svc = service(repo, tmp_path)
+
+    schema = await svc.pause(collection.id)
+
+    assert repo.calls == [("pause", collection.id)]
+    assert svc._control.is_stopping(running)
+    assert schema.id == collection.id
+
+
+@pytest.mark.asyncio
+async def test_resuming_a_collection_requeues_its_videos(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+
+    await service(repo, tmp_path).resume(collection.id)
+
+    assert repo.calls == [("resume", collection.id)]
+
+
+@pytest.mark.asyncio
+async def test_removing_a_collection_with_its_files_deletes_the_folder(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+    running = uuid.uuid4()
+    (tmp_path / str(running)).mkdir()
+    repo.running = [running]
+
+    await service(repo, tmp_path).cancel(collection.id, delete_files=True)
+
+    assert repo.calls == [("remove", collection.id)]
+    assert not (tmp_path / "29C3_ Not my department").exists()
+    assert not (tmp_path / str(running)).exists()
+    assert repo.deleted
+
+
+@pytest.mark.asyncio
+async def test_removing_a_collection_can_keep_what_finished_even_mid_download(tmp_path: Path) -> None:
+    repo = FakeCollections()
+    collection = held_collection(repo, tmp_path)
+    (tmp_path / "29C3_ Not my department" / "01_done.mp4").write_bytes(b"x")
+
+    await service(repo, tmp_path).cancel(collection.id, delete_files=False)
+
+    assert (tmp_path / "29C3_ Not my department" / "01_done.mp4").exists()
+    assert repo.deleted
