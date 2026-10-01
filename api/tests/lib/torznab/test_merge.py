@@ -13,15 +13,76 @@ def _result(title: str, **fields: object) -> Result:
 
 
 def test_one_torrent_from_two_indexers_is_one_result_with_the_best_numbers() -> None:
+    """Rewritten: link wins over magnet; copy_from names the source."""
     prowlarr = [_result("Bunny", info_hash="aa", seeders=120, leechers=15, link="http://p/dl/1", indexers=("p",))]
     jackett = [_result("Bunny", info_hash="aa", seeders=150, leechers=10, magnet="magnet:?xt=urn:btih:aa", link=None, indexers=("j",))]
 
     (bunny,) = merge([prowlarr, jackett], limit=10)
 
     assert (bunny.seeders, bunny.leechers) == (150, 15)
-    assert bunny.magnet == "magnet:?xt=urn:btih:aa"
     assert bunny.link == "http://p/dl/1"
+    assert bunny.magnet is None
+    assert bunny.copy_from == "p"
     assert bunny.indexers == ("p", "j")
+
+
+def test_a_link_beats_a_magnet_whatever_order_they_arrive_in() -> None:
+    """The copy that carries a passkey wins; the order they came in is the bug this fixes."""
+    linked = _result("Bunny", info_hash="aa", seeders=5, link="http://p/dl/1", indexers=("p",))
+    magnet = _result("Bunny", info_hash="aa", seeders=500, magnet="magnet:?xt=urn:btih:aa", link=None, indexers=("j",))
+
+    for rows in ([[linked], [magnet]], [[magnet], [linked]]):
+        (bunny,) = merge(rows, limit=10)
+        assert (bunny.link, bunny.magnet, bunny.copy_from) == ("http://p/dl/1", None, "p")
+        # Both sources are still listed, in the order they arrived.
+        assert sorted(bunny.indexers) == ["j", "p"]
+
+
+def test_among_two_magnets_the_most_seeded_is_the_copy() -> None:
+    weak = _result("Bunny", info_hash="aa", seeders=2, magnet="magnet:?xt=urn:btih:aa", link=None, indexers=("j",))
+    strong = _result("Bunny", info_hash="aa", seeders=90, magnet="magnet:?xt=urn:btih:bb", link=None, indexers=("p",))
+
+    (bunny,) = merge([[weak], [strong]], limit=10)
+
+    assert (bunny.magnet, bunny.copy_from) == ("magnet:?xt=urn:btih:bb", "p")
+
+
+def test_an_unknown_seeder_count_loses_to_a_known_one() -> None:
+    unknown = _result("Bunny", info_hash="aa", seeders=None, magnet="magnet:?xt=urn:btih:aa", link=None, indexers=("j",))
+    known = _result("Bunny", info_hash="aa", seeders=1, magnet="magnet:?xt=urn:btih:bb", link=None, indexers=("p",))
+
+    (bunny,) = merge([[unknown], [known]], limit=10)
+
+    assert bunny.copy_from == "p"
+
+
+def test_a_result_only_one_source_has_still_names_that_source() -> None:
+    """It is its own winning candidate: nothing merges into it, so nothing names it."""
+    (bunny,) = merge([[_result("Bunny", info_hash="aa")]], limit=10)
+
+    assert bunny.copy_from == "p"
+
+
+def test_a_lone_result_carrying_both_copies_keeps_only_one() -> None:
+    """Nothing merged into it, so the ranking never ran: it still holds one copy."""
+    both = _result("Bunny", info_hash="aa", magnet="magnet:?xt=urn:btih:aa", link="http://p/dl/1")
+
+    (bunny,) = merge([[both]], limit=10)
+
+    assert (bunny.link, bunny.magnet) == ("http://p/dl/1", None)
+
+
+def test_a_tie_goes_to_the_first_source_seen_and_size_keeps_the_first() -> None:
+    """Equal copies keep the first source's; size keeps its first-non-null rule."""
+    (bunny,) = merge(
+        [
+            [_result("Bunny", info_hash="aa", seeders=5, size=1)],
+            [_result("Bunny", info_hash="aa", seeders=5, size=2, indexers=("j",))],
+        ],
+        limit=10,
+    )
+
+    assert (bunny.copy_from, bunny.seeders, bunny.size) == ("p", 5, 1)
 
 
 def test_without_a_hash_the_title_and_size_decide() -> None:

@@ -147,5 +147,6 @@ def _schema(result: Result) -> SearchResultSchema:
         info_hash=result.info_hash,
         magnet=result.magnet,
         link=result.link,
+        copy_from=result.copy_from,
         indexers=list(result.indexers),
     )

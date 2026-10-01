@@ -322,6 +322,7 @@ export const AppShell = component$<AppShellProps>(
                                 onAddVideo={$((url: string) =>
                                     onAdd({ type: "link", value: url }),
                                 )}
+                                onPlay={onPlayClick}
                                 onNotify={onNotify}
                             />
                         ) : (

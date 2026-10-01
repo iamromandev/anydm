@@ -225,6 +225,8 @@ async def test_a_second_browse_within_five_minutes_does_not_reach_the_indexers()
 
     assert len(asked) == 1
     assert second == first
+    # The cached answer names its source, so a row served from cache is not blank.
+    assert first.results[0].copy_from == PROWLARR.name
 
 
 @pytest.mark.asyncio

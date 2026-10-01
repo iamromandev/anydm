@@ -23,6 +23,8 @@ export type FoundTorrent = {
     magnet: string | null;
     /** A .torrent on the indexer, fetched through `POST /search/torrent`. */
     link: string | null;
+    /** The source that copy came from; the server picked it. */
+    copyFrom: string;
     indexers: string[];
 };
 
@@ -62,6 +64,7 @@ export function normalizeFound(raw: any): FoundTorrent {
         infoHash: textOrNull(raw?.info_hash),
         magnet: textOrNull(raw?.magnet),
         link: textOrNull(raw?.link),
+        copyFrom: textOrNull(raw?.copy_from) ?? "",
         indexers: Array.isArray(raw?.indexers)
             ? raw.indexers.filter((n: unknown) => typeof n === "string")
             : [],

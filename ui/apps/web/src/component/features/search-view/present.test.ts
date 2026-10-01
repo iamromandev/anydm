@@ -12,13 +12,16 @@ import {
     formatDuration,
     formatSize,
     formatViews,
-    indexerLabel,
     modeFor,
     nextSort,
+    playKind,
+    playSource,
+    rowKey,
     seederTone,
     SORT_OPTIONS,
     sortFound,
     sortOptionId,
+    sourceLabel,
     statusLine,
     swarmTicks,
     VIDEO_EMPTY_IDLE,
@@ -39,6 +42,7 @@ const found = (
     infoHash: null,
     magnet: null,
     link: "http://p/dl",
+    copyFrom: "p",
     indexers: [
         "p",
     ],
@@ -106,6 +110,23 @@ describe("sortFound", () => {
         sortFound(rows, { key: "title", descending: false });
         expect(rows).toEqual(copy);
     });
+
+    it("sorts the source column by the name it shows", () => {
+        const sources = [
+            found("a", { copyFrom: "nyaa" }),
+            found("b", { copyFrom: "apibay" }),
+        ];
+
+        expect(
+            sortFound(sources, {
+                key: "indexer",
+                descending: false,
+            }).map((r) => r.title),
+        ).toEqual([
+            "b",
+            "a",
+        ]);
+    });
 });
 
 describe("nextSort", () => {
@@ -143,19 +164,35 @@ describe("formatting", () => {
         expect(seederTone(null)).toBe("none");
     });
 
-    it("names the first indexer and counts the rest", () => {
+    it("names the source the copy came from, and counts the rest", () => {
+        expect(sourceLabel(found("a", { copyFrom: "prowlarr-1" }))).toBe(
+            "prowlarr-1",
+        );
         expect(
-            indexerLabel([
-                "prowlarr-1",
-            ]),
-        ).toBe("prowlarr-1");
+            sourceLabel(
+                found("a", {
+                    copyFrom: "nyaa",
+                    indexers: [
+                        "nyaa",
+                        "eztv",
+                        "apibay",
+                    ],
+                }),
+            ),
+        ).toBe("nyaa +2");
+    });
+
+    it("falls back to the first indexer when the API named no source", () => {
         expect(
-            indexerLabel([
-                "prowlarr-1",
-                "jackett-all",
-                "x",
-            ]),
-        ).toBe("prowlarr-1 +2");
+            sourceLabel(
+                found("a", {
+                    copyFrom: "",
+                    indexers: [
+                        "jackett-all",
+                    ],
+                }),
+            ),
+        ).toBe("jackett-all");
     });
 
     it("says what came back, and why an indexer didn't", () => {
@@ -215,6 +252,49 @@ describe("modes", () => {
         expect(emptyText("search", "bunny")).toBe(
             "Nothing for “bunny”. Try fewer words, or turn on more sources in Settings.",
         );
+    });
+});
+
+describe("playKind", () => {
+    it("keeps a fetched magnet a magnet, and a fetched file a torrent", () => {
+        expect(playKind({ type: "magnet" })).toBe("magnet");
+        expect(playKind({ type: "file" })).toBe("torrent");
+    });
+});
+
+describe("rowKey", () => {
+    it("prefers the hash, then a link, then a magnet, then the title", () => {
+        expect(
+            rowKey(found("a", { infoHash: "aa", link: "http://p/dl" })),
+        ).toBe("aa");
+        expect(rowKey(found("a", { link: "http://p/dl" }))).toBe("http://p/dl");
+        expect(
+            rowKey(
+                found("a", { link: null, magnet: "magnet:?xt=urn:btih:aa" }),
+            ),
+        ).toBe("magnet:?xt=urn:btih:aa");
+        expect(rowKey(found("a", { link: null, magnet: null }))).toBe("a");
+    });
+});
+
+describe("playSource", () => {
+    it("plays a magnet as it is", () => {
+        expect(
+            playSource(
+                found("a", { link: null, magnet: "magnet:?xt=urn:btih:aa" }),
+            ),
+        ).toEqual({ kind: "magnet", value: "magnet:?xt=urn:btih:aa" });
+    });
+
+    it("fetches a link-only result's copy first", () => {
+        expect(playSource(found("a"))).toEqual({
+            kind: "link",
+            value: "http://p/dl",
+        });
+    });
+
+    it("does nothing without a copy", () => {
+        expect(playSource(found("a", { link: null }))).toBeNull();
     });
 });
 

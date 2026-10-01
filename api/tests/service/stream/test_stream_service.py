@@ -470,6 +470,34 @@ SEASON_DETAILS = TorrentDetails(
 
 
 @pytest.mark.asyncio
+async def test_a_torrent_session_carries_its_media_files(tmp_path: Path) -> None:
+    """The player's file menu is these; a subtitle file is not one of them."""
+    torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
+    service, _ = _torrent_service(tmp_path, torrent_client=torrent_client, task_repo=FakeTaskRepo())
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:5ea50ea5")
+    await asyncio.gather(*session.background_tasks)
+
+    assert [f.path for f in session.files] == ["Show.S01E10.mkv", "Show.S01E2.mkv"]
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_with_one_media_file_carries_only_it(tmp_path: Path) -> None:
+    details = TorrentDetails(
+        info_hash="a1a1a1a1",
+        name="Movie",
+        output_folder="/workdir/download/torrent/Movie",
+        files=[FileInfo(index=0, path="Movie.mkv", size_bytes=900), FileInfo(index=1, path="readme.txt", size_bytes=10)],
+    )
+    service, _ = _torrent_service(tmp_path, torrent_client=FakeTorrentClient(details=details), task_repo=FakeTaskRepo())
+
+    session = await service.start_torrent_session("magnet:?xt=urn:btih:a1a1a1a1")
+    await asyncio.gather(*session.background_tasks)
+
+    assert [f.path for f in session.files] == ["Movie.mkv"]
+
+
+@pytest.mark.asyncio
 async def test_start_torrent_session_plays_the_file_asked_for(tmp_path: Path) -> None:
     """Episode 2, not whichever is biggest (#98)."""
     torrent_client = FakeTorrentClient(details=SEASON_DETAILS)
@@ -825,6 +853,16 @@ async def test_a_page_link_plays_its_formats_instead_of_probing_the_page(tmp_pat
     assert session.origin == SiteOrigin(site_info("youtube").webpage_url, (video, audio))
     assert probed == [(media_url("youtube", video), HEADERS)]
     assert session.playlists == []
+
+
+@pytest.mark.asyncio
+async def test_a_site_session_carries_no_files(tmp_path: Path) -> None:
+    """A page's inputs are not a file list: the menu has nothing to switch between."""
+    service, _, _ = _site_service(tmp_path, FakeSiteClient(site_info("youtube")))
+
+    session = await service.start_session(YOUTUBE_PAGE)
+
+    assert session.files == []
 
 
 @pytest.mark.asyncio
@@ -1338,6 +1376,9 @@ async def test_a_torrent_still_downloading_plays_from_its_torrent(tmp_path: Path
     assert session.inputs[0].url == "http://torrent-anydm-api:3030/torrents/deadbeef/stream/1"
     assert session.info_hash == "deadbeef"
     assert session.status == "ready"
+    # A task's answer carries no file list, so the client keeps the one it was
+    # handed for the task; only a magnet or .torrent start names its own files.
+    assert session.files == []
 
 
 @pytest.mark.asyncio
@@ -1455,6 +1496,8 @@ async def test_a_torrent_picks_its_track_once_probed_and_switches_on_the_same_to
 
     assert (new.info_hash, new.inputs) == (old.info_hash, old.inputs)
     assert new.progress_task is not None
+    # The switched session offers the same files, so the menu survives a switch.
+    assert [f.path for f in new.files] == [f.path for f in old.files] == ["Movie.mkv"]
     assert _maps(encoded[-1]) == ["0:v:0", "0:a:0"]
     assert len(torrent_client.added) == 1
 

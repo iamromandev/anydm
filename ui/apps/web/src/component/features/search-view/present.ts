@@ -53,7 +53,7 @@ function valueOf(result: FoundTorrent, key: SortKey): string | number | null {
         case "published":
             return result.published ? Date.parse(result.published) : null;
         case "indexer":
-            return (result.indexers[0] ?? "").toLowerCase();
+            return result.copyFrom.toLowerCase();
     }
 }
 
@@ -177,9 +177,33 @@ export function sortOptionId(sort: SortState): string {
     return SORT_OPTIONS.find((o) => o.sort.key === sort.key)?.id ?? "seeders";
 }
 
-export function indexerLabel(indexers: string[]): string {
-    if (indexers.length <= 1) return indexers[0] ?? "";
-    return `${indexers[0]} +${indexers.length - 1}`;
+/** The source whose copy this result carries, and how many others have it too. */
+export function sourceLabel(result: FoundTorrent): string {
+    const name = result.copyFrom || result.indexers[0] || "";
+    return result.indexers.length > 1
+        ? `${name} +${result.indexers.length - 1}`
+        : name;
+}
+
+/** One row's identity: the list key, and what its in-flight state is keyed by. */
+export function rowKey(result: FoundTorrent): string {
+    return result.infoHash || result.link || result.magnet || result.title;
+}
+
+/** What a row's Play starts from: the magnet as it is, or the link to fetch a copy from first. */
+export type PlaySource = { kind: "magnet" | "link"; value: string };
+
+export function playSource(result: FoundTorrent): PlaySource | null {
+    if (result.magnet) return { kind: "magnet", value: result.magnet };
+    if (result.link) return { kind: "link", value: result.link };
+    return null;
+}
+
+/** The kind the player starts a fetched copy with: `AddInitial`'s "file" is a torrent. */
+export function playKind(fetched: {
+    type: "magnet" | "file";
+}): "magnet" | "torrent" {
+    return fetched.type === "magnet" ? "magnet" : "torrent";
 }
 
 export function statusLine(

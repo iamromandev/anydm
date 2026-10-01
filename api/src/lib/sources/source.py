@@ -31,6 +31,7 @@ class Result:
     magnet: str | None
     link: str | None
     indexers: tuple[str, ...]
+    copy_from: str = ""
 
 
 class SourceError(Exception):

@@ -61,9 +61,9 @@ import dev.anydm.store.emptyText
 import dev.anydm.store.errorChip
 import dev.anydm.store.formatAge
 import dev.anydm.store.formatSize
-import dev.anydm.store.indexerLabel
 import dev.anydm.store.seederTone
 import dev.anydm.store.sortFound
+import dev.anydm.store.sourceLabel
 import dev.anydm.store.statusLine
 
 private val SIZE_W = 76.dp
@@ -311,7 +311,7 @@ private fun ResultRow(
         NumberCell(row.leechers?.toString() ?: "—", COUNT_W, t.secondaryText)
         NumberCell(formatAge(row.published, now), AGE_W, t.secondaryText)
         Text(
-            indexerLabel(row.indexers),
+            sourceLabel(row),
             Modifier.width(SOURCE_W),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

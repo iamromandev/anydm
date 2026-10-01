@@ -186,6 +186,29 @@ def _most(a: int | None, b: int | None) -> int | None:
     return b if a is None else a if b is None else max(a, b)
 
 
+def _copy_rank(result: Result) -> tuple[int, int, int]:
+    """Which copy is better: a link beats a magnet, then more seeders, then known over unknown."""
+    return (1 if result.link else 0, result.seeders or 0, 1 if result.seeders is not None else 0)
+
+
+def _one_copy(result: Result) -> Result:
+    """One copy only, named by its source: a link wins, and a result is its own best candidate."""
+    return replace(
+        result,
+        magnet=None if result.link is not None else result.magnet,
+        copy_from=result.copy_from or result.indexers[0],
+    )
+
+
+def _best_copy(seen: Result, candidate: Result) -> Result:
+    """The one of two candidates' copies to hand over, named by the source it came from.
+
+    The loser's field goes even when the winner carried both, so the result holds one copy.
+    """
+    winner = seen if _copy_rank(seen) >= _copy_rank(candidate) else candidate
+    return _one_copy(winner)
+
+
 def merge(per_indexer: list[list[Result]], limit: int, order: Literal["seeders", "newest"] = "seeders") -> list[Result]:
     """One result per torrent; most seeded first (``seeders``) or newest first (``newest``); at most ``limit``."""
     merged: dict[tuple[str, ...], Result] = {}
@@ -194,16 +217,22 @@ def merge(per_indexer: list[list[Result]], limit: int, order: Literal["seeders",
             key = _key(result)
             seen = merged.get(key)
             if seen is None:
-                merged[key] = result
+                # Nothing merges into it, so the ranking never runs: it is its own
+                # best candidate, and still has to end up with one named copy.
+                merged[key] = _one_copy(result)
                 continue
+            best = _best_copy(seen, result)
             merged[key] = replace(
                 seen,
                 seeders=_most(seen.seeders, result.seeders),
                 leechers=_most(seen.leechers, result.leechers),
                 size=seen.size or result.size,
                 published=seen.published or result.published,
-                magnet=seen.magnet or result.magnet,
-                link=seen.link or result.link,
+                # The copy alone comes from the winner: `indexers` keeps arrival
+                # order, which is not the copy's order.
+                magnet=best.magnet,
+                link=best.link,
+                copy_from=best.copy_from,
                 indexers=seen.indexers + tuple(n for n in result.indexers if n not in seen.indexers),
             )
     if order == "newest":

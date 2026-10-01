@@ -159,6 +159,12 @@ export const PlayerModal = component$<PlayerModalProps>(
             isLoading: false,
             error: "" as string,
             sessionId: "" as string,
+            /**
+             * The last answer's own file list, which a torrent's answer always
+             * carries and a task's never does. Assigned on every start, so a new
+             * source cannot inherit the previous one's.
+             */
+            sessionFiles: [] as PlayableFile[],
             hasVideo: true,
             streamStatus: "" as string,
             isTorrent: false,
@@ -212,6 +218,14 @@ export const PlayerModal = component$<PlayerModalProps>(
             upNextTitle: "" as string,
         });
 
+        /**
+         * The files the menu offers: the last answer's own list when it carried
+         * one (a torrent's always does), else the list this modal was handed —
+         * a task's own files, or the add dialog's resolve (#98).
+         */
+        const fileList =
+            store.sessionFiles.length > 0 ? store.sessionFiles : (files ?? []);
+
         /** Another queue item: the page swaps the source, then the task re-runs. */
         const goItem = $(async (dir: 1 | -1) => {
             const move = dir === 1 ? onNextItem : onPreviousItem;
@@ -240,13 +254,16 @@ export const PlayerModal = component$<PlayerModalProps>(
                 // whoever opened the player, or its largest. Known here rather
                 // than left to the API, so the menu can show it (#98).
                 const playIndex =
-                    picked ?? sourceFileIndex ?? defaultFileIndex(files ?? []);
+                    picked ?? sourceFileIndex ?? defaultFileIndex(fileList);
                 store.currentFileIndex = playIndex;
 
                 store.isLoading = true;
                 store.error = "";
                 store.sessionId = "";
                 store.streamStatus = "";
+                // Cleared with the rest: a start that fails must not leave the
+                // previous source's files in the menu.
+                store.sessionFiles = [];
                 // Known synchronously from the picked kind, not from the
                 // server response — for a magnet link, even the initial
                 // POST /stream/start can take a while (metadata resolve),
@@ -406,6 +423,9 @@ export const PlayerModal = component$<PlayerModalProps>(
                         store.segmentSeconds = session.segmentSeconds;
                         offerSubtitles(session.subtitleTracks);
                         store.quality = session.quality;
+                        // A torrent's answer names its own files; a task's leaves
+                        // this empty and the `files` prop stands.
+                        store.sessionFiles = session.files;
                         ready = session.status !== "connecting";
                     }
                     if (session && session.status === "connecting") {
@@ -599,7 +619,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 // later pick and fire on its own.
                                 clearUpNext();
                                 const next = adjacentFileIndex(
-                                    files ?? [],
+                                    fileList,
                                     store.currentFileIndex,
                                     1,
                                 );
@@ -610,7 +630,7 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 store.upNextItem = next === null;
                                 store.upNextTitle =
                                     next !== null
-                                        ? ((files ?? [])
+                                        ? (fileList
                                               .find((f) => f.index === next)
                                               ?.path.split("/")
                                               .pop() ?? "")
@@ -1090,7 +1110,7 @@ export const PlayerModal = component$<PlayerModalProps>(
         // through `files` in the natural order the file menu already uses.
         const handlePreviousFile = $(async () => {
             const index = adjacentFileIndex(
-                files ?? [],
+                fileList,
                 store.currentFileIndex,
                 -1,
             );
@@ -1099,7 +1119,7 @@ export const PlayerModal = component$<PlayerModalProps>(
         });
         const handleNextFile = $(async () => {
             const index = adjacentFileIndex(
-                files ?? [],
+                fileList,
                 store.currentFileIndex,
                 1,
             );
@@ -1481,25 +1501,25 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 onToggleMute={handleToggleMute}
                                 onPlaybackRateChange={handlePlaybackRateChange}
                                 onToggleFullscreen={handleToggleFullscreen}
-                                files={files}
+                                files={fileList}
                                 currentFileIndex={store.currentFileIndex}
                                 onPickFile={handlePickFile}
                                 onPreviousFile={handlePreviousFile}
                                 onNextFile={handleNextFile}
                                 showSteps={
-                                    (files?.length ?? 0) > 1 ||
+                                    (fileList?.length ?? 0) > 1 ||
                                     Boolean(hasNextItem || hasPreviousItem)
                                 }
                                 hasPreviousFile={
                                     adjacentFileIndex(
-                                        files ?? [],
+                                        fileList,
                                         store.currentFileIndex,
                                         -1,
                                     ) !== null || Boolean(hasPreviousItem)
                                 }
                                 hasNextFile={
                                     adjacentFileIndex(
-                                        files ?? [],
+                                        fileList,
                                         store.currentFileIndex,
                                         1,
                                     ) !== null || Boolean(hasNextItem)

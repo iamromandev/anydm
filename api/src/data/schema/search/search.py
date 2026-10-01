@@ -14,9 +14,19 @@ class SearchResultSchema(BaseSchema):
     published: datetime | None = None
     category: str = "other"
     info_hash: str | None = None
+    #: Exactly one of ``magnet`` and ``link``: the copy the client is to use.
     magnet: str | None = None
     link: str | None = None
+    #: The source that copy came from; ``indexers`` names every source that had the result.
+    copy_from: str
     indexers: list[str]
+
+    @model_validator(mode="after")
+    def _one_copy(self) -> SearchResultSchema:
+        """One copy, so a client never has to choose between a magnet and a link."""
+        if (self.magnet is None) == (self.link is None):
+            raise ValueError("Give exactly one of magnet and link")
+        return self
 
 
 class IndexerErrorSchema(BaseSchema):

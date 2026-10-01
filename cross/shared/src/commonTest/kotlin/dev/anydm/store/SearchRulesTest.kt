@@ -11,7 +11,8 @@ private fun found(
     size: Long? = null,
     published: String? = null,
     indexers: List<String> = listOf("p"),
-) = FoundTorrent(title = title, seeders = seeders, sizeBytes = size, published = published, indexers = indexers)
+    copyFrom: String = "p",
+) = FoundTorrent(title = title, seeders = seeders, sizeBytes = size, published = published, indexers = indexers, copyFrom = copyFrom)
 
 class SearchRulesTest {
     @Test
@@ -111,10 +112,24 @@ class SearchRulesTest {
     }
 
     @Test
-    fun `the source column names the first and counts the rest`() {
-        assertEquals("prowlarr-1", indexerLabel(listOf("prowlarr-1")))
-        assertEquals("prowlarr-1 +2", indexerLabel(listOf("prowlarr-1", "jackett-all", "x")))
-        assertEquals("", indexerLabel(emptyList()))
+    fun `the source column names the copy's source and counts the rest`() {
+        assertEquals("prowlarr-1", sourceLabel(found("a", copyFrom = "prowlarr-1")))
+        assertEquals(
+            "nyaa +2",
+            sourceLabel(found("a", copyFrom = "nyaa", indexers = listOf("nyaa", "eztv", "apibay"))),
+        )
+    }
+
+    @Test
+    fun `the source column falls back to the first indexer when none was named`() {
+        assertEquals("jackett-all", sourceLabel(found("a", copyFrom = "", indexers = listOf("jackett-all"))))
+    }
+
+    @Test
+    fun `the source column sorts by the name it shows`() {
+        val rows = listOf(found("a", copyFrom = "nyaa"), found("b", copyFrom = "apibay"))
+
+        assertEquals(listOf("b", "a"), sortFound(rows, SortState(SortKey.INDEXER, false)).map { it.title })
     }
 
     @Test
