@@ -1,5 +1,11 @@
-from .download import File as File
+from .category import Category as Category
+from .collection import Collection as Collection
+from .download import Download as Download
+from .download import DownloadFile as DownloadFile
+from .download import Mirror as Mirror
 from .download import PlaybackPosition as PlaybackPosition
 from .download import Segment as Segment
+from .download import SiteDetail as SiteDetail
+from .download import TorrentDetail as TorrentDetail
+from .queue import Queue as Queue
 from .shared import Source as Source
-from .task import Task as Task
