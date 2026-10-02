@@ -15,7 +15,7 @@ interface TaskApi {
 
     suspend fun summary(): SummaryDto
 
-    /** A group's videos, in playlist order. */
+    /** A collection's videos, in listing order. */
     suspend fun entries(id: String): List<TaskDto>
 
     fun events(): Flow<ServerEvent>
@@ -30,13 +30,21 @@ interface TaskApi {
         files: List<Int> = emptyList(),
     ): TaskDto
 
-    suspend fun pause(id: String): TaskDto
+    /** [collection] for a playlist row: a collection has its own routes. */
+    suspend fun pause(
+        id: String,
+        collection: Boolean = false,
+    ): TaskDto
 
-    suspend fun resume(id: String): TaskDto
+    suspend fun resume(
+        id: String,
+        collection: Boolean = false,
+    ): TaskDto
 
     suspend fun remove(
         id: String,
         deleteFiles: Boolean,
+        collection: Boolean = false,
     )
 
     suspend fun stopSeeding(id: String)

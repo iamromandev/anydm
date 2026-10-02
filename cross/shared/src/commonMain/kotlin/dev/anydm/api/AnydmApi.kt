@@ -91,7 +91,7 @@ class AnydmApi(
 
     override suspend fun summary(): SummaryDto = decode(call(HttpMethod.Get, listOf("download", "summary")).data)
 
-    override suspend fun entries(id: String): List<TaskDto> = decode(call(HttpMethod.Get, listOf("download", id, "entries")).data)
+    override suspend fun entries(id: String): List<TaskDto> = decode(call(HttpMethod.Get, listOf("collection", id, "downloads")).data)
 
     suspend fun extract(url: String): Extracted {
         val data = call(HttpMethod.Post, listOf("extract"), body = obj("url" to url)).data
@@ -158,15 +158,22 @@ class AnydmApi(
         }
     }
 
-    override suspend fun pause(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "pause")).data)
+    override suspend fun pause(
+        id: String,
+        collection: Boolean,
+    ): TaskDto = decode(call(HttpMethod.Post, listOf(owner(collection), id, "pause")).data)
 
-    override suspend fun resume(id: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", id, "resume")).data)
+    override suspend fun resume(
+        id: String,
+        collection: Boolean,
+    ): TaskDto = decode(call(HttpMethod.Post, listOf(owner(collection), id, "resume")).data)
 
     override suspend fun remove(
         id: String,
         deleteFiles: Boolean,
+        collection: Boolean,
     ) {
-        call(HttpMethod.Delete, listOf("download", id), query = mapOf("delete_files" to deleteFiles))
+        call(HttpMethod.Delete, listOf(owner(collection), id), query = mapOf("delete_files" to deleteFiles))
     }
 
     override suspend fun stopSeeding(id: String) {
@@ -177,15 +184,17 @@ class AnydmApi(
     override suspend fun bulk(action: String): Int =
         decode<BulkResultDto>(call(HttpMethod.Post, listOf("download", "bulk"), body = obj("action" to action)).data).affected
 
-    /** A finished file's URL, with the key in its query: for a player or a save that can't send headers. */
+    /**
+     * A finished file's URL, with the key in its query: for a player or a save that can't send headers.
+     * Without [fileIndex], a site or direct download's one file, at index 0.
+     */
     fun fileUrl(
         id: String,
         fileIndex: Int? = null,
     ): String =
         URLBuilder(config.baseUrl)
             .apply {
-                appendPathSegments("download", id, "file")
-                if (fileIndex != null) appendPathSegments(fileIndex.toString())
+                appendPathSegments("download", id, "file", (fileIndex ?: 0).toString())
                 config.apiKey?.let { parameters.append("api_key", it) }
             }.buildString()
 
@@ -239,6 +248,9 @@ class AnydmApi(
             }
         return unwrap(response.status.value, response.bodyAsText())
     }
+
+    /** Whose routes an action goes to: a collection's, or a download's. */
+    private fun owner(collection: Boolean) = if (collection) "collection" else "download"
 
     private fun obj(vararg fields: Pair<String, String>) = JsonObject(fields.associate { (k, v) -> k to JsonPrimitive(v) })
 

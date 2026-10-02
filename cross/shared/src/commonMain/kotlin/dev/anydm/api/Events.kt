@@ -27,11 +27,17 @@ sealed interface ServerEvent {
         val tasks: List<Task>,
     ) : ServerEvent
 
+    /** A download, whole, on any status change. */
     data class TaskChanged(
         val task: Task,
     ) : ServerEvent
 
-    /** Only the numbers that moved; a group's video carries `parentId`. */
+    /** A collection's computed totals, as its playlist row. */
+    data class CollectionChanged(
+        val task: Task,
+    ) : ServerEvent
+
+    /** Only the numbers that moved; a collection's video carries `collectionId`. */
     data class Progress(
         val progress: ProgressDto,
     ) : ServerEvent
@@ -44,8 +50,9 @@ sealed interface ServerEvent {
 /** A frame as an event, or `null` for one this build doesn't know. */
 fun toServerEvent(frame: SseFrame): ServerEvent? =
     when (frame.event) {
-        "tasks" -> ServerEvent.Snapshot(AnydmJson.decodeFromString<List<TaskDto>>(frame.data).map { it.toTask() })
-        "task" -> ServerEvent.TaskChanged(AnydmJson.decodeFromString<TaskDto>(frame.data).toTask())
+        "downloads" -> ServerEvent.Snapshot(AnydmJson.decodeFromString<List<TaskDto>>(frame.data).map { it.toTask() })
+        "download" -> ServerEvent.TaskChanged(AnydmJson.decodeFromString<TaskDto>(frame.data).toTask())
+        "collection" -> ServerEvent.CollectionChanged(AnydmJson.decodeFromString<TaskDto>(frame.data).toTask())
         "progress" -> ServerEvent.Progress(AnydmJson.decodeFromString<ProgressDto>(frame.data))
         "disk" -> ServerEvent.Disk(AnydmJson.decodeFromString<DiskDto>(frame.data))
         else -> null

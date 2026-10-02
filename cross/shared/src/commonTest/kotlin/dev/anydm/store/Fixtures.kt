@@ -24,7 +24,11 @@ fun task(
     entryCounts: EntryCounts? = null,
     positions: List<Position>? = null,
 ): Task =
-    TaskDto(id = id, kind = kind.wire, status = status.wire, title = title)
+    when (kind) {
+        TaskKind.PLAYLIST -> TaskDto(type = "collection", id = id, kind = "playlist", status = status.wire, title = title)
+        TaskKind.TORRENT -> TaskDto(id = id, platform = "torrent", status = status.wire, title = title)
+        else -> TaskDto(id = id, mediaKind = kind.wire, status = status.wire, title = title)
+    }
         .toTask()
         .copy(
             parentId = parentId,
@@ -42,4 +46,4 @@ fun task(
 fun dto(
     id: String,
     status: TaskStatus = TaskStatus.DOWNLOADING,
-): TaskDto = TaskDto(id = id, kind = "file", status = status.wire, title = id)
+): TaskDto = TaskDto(id = id, mediaKind = "file", status = status.wire, title = id)

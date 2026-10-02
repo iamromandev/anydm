@@ -3,35 +3,33 @@ package dev.anydm.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** A task row as the API sends it (`TaskSchema`); absent numbers read as 0. */
+/** One item of the API's list: a download (`DownloadSchema`) or a collection (`CollectionSchema`), by `type`. */
 @Serializable
 data class TaskDto(
+    val type: String = "download",
     val id: String,
     @SerialName("source_url") val sourceUrl: String = "",
     val platform: String = "",
-    val extractor: String? = null,
-    @SerialName("video_id") val videoId: String? = null,
-    @SerialName("parent_id") val parentId: String? = null,
-    val position: Int? = null,
-    val preset: String? = null,
+    @SerialName("media_kind") val mediaKind: String = "",
+    /** A collection's kind: `playlist` or `channel`. */
     val kind: String = "",
     val title: String = "",
-    val filename: String = "",
     val status: String = "",
     val progress: Int = 0,
+    @SerialName("collection_id") val collectionId: String? = null,
+    val position: Int? = null,
     @SerialName("downloaded_bytes") val downloadedBytes: Long = 0,
     @SerialName("total_bytes") val totalBytes: Long? = null,
-    @SerialName("speed_bps") val speedBps: Long = 0,
-    @SerialName("eta_seconds") val etaSeconds: Int? = null,
-    @SerialName("info_hash") val infoHash: String? = null,
-    @SerialName("uploaded_bytes") val uploadedBytes: Long = 0,
-    @SerialName("upload_speed_bps") val uploadSpeedBps: Long = 0,
-    @SerialName("peers_connected") val peersConnected: Int = 0,
-    val files: List<FileDto>? = null,
-    val positions: List<PositionDto>? = null,
-    @SerialName("entry_counts") val entryCounts: EntryCountsDto? = null,
+    val live: LiveDto = LiveDto(),
+    val site: SiteDto? = null,
+    val torrent: TorrentDto? = null,
+    val files: List<FileDto> = emptyList(),
     val folder: String? = null,
-    @SerialName("file_size") val fileSize: Long? = null,
+    val extractor: String? = null,
+    val preset: String? = null,
+    val counts: CountsDto? = null,
+    /** A collection's: the sum of its videos' live speeds. */
+    @SerialName("speed_bps") val speedBps: Long = 0,
     val error: String? = null,
     @SerialName("error_code") val errorCode: String? = null,
     val attempts: Int = 0,
@@ -42,6 +40,29 @@ data class TaskDto(
     @SerialName("completed_at") val completedAt: String? = null,
 )
 
+/** A download's numbers that live only in memory on the API: speed, ETA, and a torrent's swarm. */
+@Serializable
+data class LiveDto(
+    @SerialName("speed_bps") val speedBps: Long = 0,
+    @SerialName("eta_seconds") val etaSeconds: Int? = null,
+    @SerialName("upload_speed_bps") val uploadSpeedBps: Long = 0,
+    val peers: Int = 0,
+)
+
+@Serializable
+data class SiteDto(
+    val extractor: String = "",
+    @SerialName("video_id") val videoId: String = "",
+    val preset: String? = null,
+)
+
+@Serializable
+data class TorrentDto(
+    @SerialName("info_hash") val infoHash: String = "",
+    @SerialName("uploaded_bytes") val uploadedBytes: Long = 0,
+)
+
+/** One file of a download. A site or direct download has exactly one, at index 0. */
 @Serializable
 data class FileDto(
     val index: Int = 0,
@@ -49,18 +70,21 @@ data class FileDto(
     @SerialName("size_bytes") val sizeBytes: Long = 0,
     val selected: Boolean = true,
     @SerialName("downloaded_bytes") val downloadedBytes: Long = 0,
+    @SerialName("mime_type") val mimeType: String? = null,
+    val playback: PlaybackDto? = null,
 )
 
+/** Where a file was left in the player. */
 @Serializable
-data class PositionDto(
-    @SerialName("file_index") val fileIndex: Int = 0,
+data class PlaybackDto(
     @SerialName("position_seconds") val positionSeconds: Double = 0.0,
     @SerialName("duration_seconds") val durationSeconds: Double = 0.0,
     val watched: Boolean = false,
 )
 
+/** How a collection's videos stand. */
 @Serializable
-data class EntryCountsDto(
+data class CountsDto(
     val total: Int = 0,
     val complete: Int = 0,
     val active: Int = 0,
@@ -90,12 +114,20 @@ data class DiskDto(
 @Serializable
 data class ProgressDto(
     val id: String,
-    @SerialName("parent_id") val parentId: String? = null,
+    /** A collection's video: its collection. */
+    @SerialName("collection_id") val collectionId: String? = null,
     val progress: Int? = null,
     @SerialName("downloaded_bytes") val downloadedBytes: Long? = null,
     @SerialName("total_bytes") val totalBytes: Long? = null,
-    @SerialName("speed_bps") val speedBps: Long? = null,
-    @SerialName("eta_seconds") val etaSeconds: Int? = null,
+    val live: LiveDto? = null,
+    /** A torrent's files that moved: index and bytes. */
+    val files: List<FileProgressDto>? = null,
+)
+
+@Serializable
+data class FileProgressDto(
+    val index: Int,
+    @SerialName("downloaded_bytes") val downloadedBytes: Long,
 )
 
 @Serializable

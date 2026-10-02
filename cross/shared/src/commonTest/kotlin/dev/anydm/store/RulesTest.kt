@@ -2,7 +2,11 @@ package dev.anydm.store
 
 import dev.anydm.model.EntryCounts
 import dev.anydm.model.Position
+import dev.anydm.model.FileProgressDto
+import dev.anydm.model.LiveDto
 import dev.anydm.model.ProgressDto
+import dev.anydm.model.TaskKind
+import dev.anydm.model.TaskFile
 import dev.anydm.model.Task
 import dev.anydm.model.TaskStatus.CANCELED
 import dev.anydm.model.TaskStatus.COMPLETE
@@ -79,11 +83,24 @@ class RulesTest {
     @Test
     fun `applyProgress changes what the frame names and nothing else`() {
         val tasks = listOf(task("a", progress = 10, totalBytes = 100), task("b"))
-        val after = applyProgress(tasks, ProgressDto(id = "a", progress = 40, speedBps = 7))
+        val after = applyProgress(tasks, ProgressDto(id = "a", progress = 40, live = LiveDto(speedBps = 7, peers = 3)))
         assertEquals(40, after[0].progress)
         assertEquals(100, after[0].totalBytes)
         assertEquals(7, after[0].downloadSpeed)
+        assertEquals(3, after[0].peersConnected)
         assertEquals(tasks[1], after[1])
+    }
+
+    @Test
+    fun `applyProgress takes a torrent's file bytes and keeps what the frame left out`() {
+        val torrent =
+            task("t", kind = TaskKind.TORRENT).copy(
+                files = listOf(TaskFile(0, "a.mkv", 100, true, 10), TaskFile(1, "b.nfo", 5, false, 0)),
+                etaSeconds = 30,
+            )
+        val after = applyProgress(listOf(torrent), ProgressDto(id = "t", files = listOf(FileProgressDto(0, 60)))).single()
+        assertEquals(listOf(60L, 0L), after.files?.map { it.downloadedBytes })
+        assertEquals(30, after.etaSeconds)
     }
 
     @Test

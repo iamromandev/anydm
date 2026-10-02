@@ -11,7 +11,7 @@ class BulkTest {
     private fun task(
         id: String,
         status: String,
-    ) = TaskDto(id = id, kind = "file", status = status, title = id).toTask()
+    ) = TaskDto(id = id, mediaKind = "file", status = status, title = id).toTask()
 
     @Test
     fun `Space pauses whatever runs in a mixed selection, else resumes the stopped`() {

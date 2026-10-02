@@ -1,6 +1,7 @@
 package dev.anydm.desktop.files
 
 import com.sun.net.httpserver.HttpServer
+import dev.anydm.model.FileDto
 import dev.anydm.model.TaskDto
 import dev.anydm.model.TaskFile
 import dev.anydm.model.toTask
@@ -40,14 +41,15 @@ class SaverTest {
 
     @Test
     fun `a single download saves its one file under its own name`() {
-        val task = TaskDto(id = "t", kind = "file", status = "complete", title = "clip", filename = "clip.mp4").toTask()
+        val task = TaskDto(id = "t", mediaKind = "file", status = "complete", title = "clip", files = listOf(FileDto(path = "clip.mp4")))
+                .toTask()
         assertEquals(listOf(SaveTarget("u/t", "clip.mp4")), saveTargets(task, fileUrl))
     }
 
     @Test
     fun `a torrent of several files saves each selected one`() {
         val task =
-            TaskDto(id = "t", kind = "torrent", status = "seeding", title = "pack").toTask().copy(
+            TaskDto(id = "t", platform = "torrent", status = "seeding", title = "pack").toTask().copy(
                 files =
                     listOf(
                         TaskFile(0, "pack/a.mkv", 1, true, 1),

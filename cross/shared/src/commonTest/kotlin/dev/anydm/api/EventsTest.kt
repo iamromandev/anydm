@@ -15,16 +15,19 @@ import kotlin.test.assertIs
 class EventsTest {
     private val stream =
         listOf(
-            "event: tasks",
-            """data: [{"id":"a","status":"downloading","kind":"file"}]""",
+            "event: downloads",
+            """data: [{"type":"download","id":"a","status":"downloading","media_kind":"file"}]""",
             "",
             ": ping",
             "",
             "event: progress",
-            """data: {"id":"v","parent_id":"g","speed_bps":10}""",
+            """data: {"id":"v","collection_id":"g","live":{"speed_bps":10}}""",
             "",
-            "event: task",
-            """data: {"id":"a","status":"complete","kind":"file"}""",
+            "event: download",
+            """data: {"type":"download","id":"a","status":"complete","media_kind":"file"}""",
+            "",
+            "event: collection",
+            """data: {"type":"collection","id":"c1","kind":"playlist","status":"downloading"}""",
             "",
             "event: disk",
             """data: {"total_bytes":100,"free_bytes":40,"min_free_bytes":10}""",
@@ -51,11 +54,14 @@ class EventsTest {
             val events = api.events().toList()
 
             assertEquals("k", key)
-            assertEquals(4, events.size)
+            assertEquals(5, events.size)
             assertEquals(TaskStatus.DOWNLOADING, assertIs<ServerEvent.Snapshot>(events[0]).tasks.single().status)
-            assertEquals("g", assertIs<ServerEvent.Progress>(events[1]).progress.parentId)
+            val progress = assertIs<ServerEvent.Progress>(events[1]).progress
+            assertEquals("g", progress.collectionId)
+            assertEquals(10, progress.live?.speedBps)
             assertEquals(TaskStatus.COMPLETE, assertIs<ServerEvent.TaskChanged>(events[2]).task.status)
-            assertEquals(40, assertIs<ServerEvent.Disk>(events[3]).disk.freeBytes)
+            assertEquals("c1", assertIs<ServerEvent.CollectionChanged>(events[3]).task.id)
+            assertEquals(40, assertIs<ServerEvent.Disk>(events[4]).disk.freeBytes)
         }
 
     @Test

@@ -2,6 +2,7 @@ package dev.anydm.desktop.ui
 
 import dev.anydm.model.EntryCounts
 import dev.anydm.model.Task
+import dev.anydm.model.SiteDto
 import dev.anydm.model.TaskDto
 import dev.anydm.model.toTask
 import dev.anydm.store.retryLabel
@@ -20,7 +21,16 @@ class RowViewTest {
         kind: String = "file",
         extractor: String? = null,
         sourceUrl: String = "https://a.example/f",
-    ): Task = TaskDto(id = "t", kind = kind, status = status, title = "clip", extractor = extractor, sourceUrl = sourceUrl).toTask()
+    ): Task =
+        TaskDto(
+            id = "t",
+            platform = if (kind == "torrent") "torrent" else "site",
+            mediaKind = kind,
+            status = status,
+            title = "clip",
+            site = extractor?.let { SiteDto(extractor = it) },
+            sourceUrl = sourceUrl,
+        ).toTask()
 
     @Test
     fun `a download in progress says how far, how fast and how long, with its bar`() {
@@ -86,7 +96,7 @@ class RowViewTest {
     @Test
     fun `a group expands and reads as its counts`() {
         val group =
-            TaskDto(id = "g", kind = "playlist", status = "downloading", title = "29C3")
+            TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading", title = "29C3")
                 .toTask()
                 .copy(
                     entryCounts =

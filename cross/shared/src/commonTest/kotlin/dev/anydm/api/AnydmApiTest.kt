@@ -18,7 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
-private const val TASK = """{"id":"t1","status":"paused","kind":"file","title":"a"}"""
+private const val TASK = """{"type":"download","id":"t1","status":"paused","media_kind":"file","title":"a"}"""
 
 private fun ok(json: String) = """{"status":"success","code":200,"data":$json}"""
 
@@ -85,6 +85,19 @@ class AnydmApiTest {
             assertEquals("/download/t1/resume", seen.last().url.encodedPath)
             client.stopSeeding("t1")
             assertEquals("/download/t1/seed/stop", seen.last().url.encodedPath)
+        }
+
+    @Test
+    fun `a collection is paused, resumed and removed by its own routes`() =
+        runTest {
+            val client = api { json(ok(TASK)) }
+            client.pause("c1", collection = true)
+            assertEquals("/collection/c1/pause", seen.last().url.encodedPath)
+            client.resume("c1", collection = true)
+            assertEquals("/collection/c1/resume", seen.last().url.encodedPath)
+            client.remove("c1", deleteFiles = false, collection = true)
+            assertEquals(HttpMethod.Delete, seen.last().method)
+            assertEquals("/collection/c1", seen.last().url.encodedPath)
         }
 
     @Test
@@ -169,9 +182,10 @@ class AnydmApiTest {
     @Test
     fun `a file URL carries the key in its query, for a player that can't send headers`() {
         val client = api { json(ok("null")) }
-        assertEquals("http://nas:8030/download/t1/file?api_key=k", client.fileUrl("t1"))
+        // A download's one file is index 0; every file is fetched by its index.
+        assertEquals("http://nas:8030/download/t1/file/0?api_key=k", client.fileUrl("t1"))
         assertEquals("http://nas:8030/download/t1/file/2?api_key=k", client.fileUrl("t1", 2))
-        assertEquals("http://nas:8030/download/t1/file", api(key = null) { json(ok("null")) }.fileUrl("t1"))
+        assertEquals("http://nas:8030/download/t1/file/0", api(key = null) { json(ok("null")) }.fileUrl("t1"))
     }
 
     @Test
@@ -182,10 +196,10 @@ class AnydmApiTest {
     }
 
     @Test
-    fun `a group's videos come from its entries`() =
+    fun `a collection's videos come from its downloads page`() =
         runTest {
             val rows = api { json(ok("[$TASK]")) }.entries("g1")
-            assertEquals("/download/g1/entries", seen.last().url.encodedPath)
+            assertEquals("/collection/g1/downloads", seen.last().url.encodedPath)
             assertEquals(HttpMethod.Get, seen.last().method)
             assertEquals(listOf("t1"), rows.map { it.id })
         }
