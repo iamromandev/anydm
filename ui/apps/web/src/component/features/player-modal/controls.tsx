@@ -1,11 +1,16 @@
 import { $, component$, useOnWindow, useSignal } from "@qwik.dev/core";
 import {
+    LuCaptions,
+    LuCheck,
+    LuChevronLeft,
+    LuChevronRight,
     LuMaximize,
     LuMinimize,
     LuPause,
     LuPlay,
     LuFastForward,
     LuRewind,
+    LuSettings,
     LuSkipBack,
     LuSkipForward,
     LuVolume2,
@@ -19,7 +24,17 @@ import {
 import { type AudioTrack, audioTrackLabel } from "@/lib/audio";
 import type { PlayableFile } from "@/lib/media";
 import { defaultQualityLabel, type QualityMenu } from "@/lib/quality";
-import { type SubtitleTrack, subtitleTrackLabel } from "@/lib/subtitles";
+import {
+    type SubtitleTrack,
+    subtitleToToggleOn,
+    subtitleTrackLabel,
+} from "@/lib/subtitles";
+import {
+    availablePages,
+    formatRate,
+    SETTINGS_PAGE_TITLES,
+    type SettingsPage,
+} from "./settings-menu";
 import "./controls.css";
 
 export interface PlayerControlsProps {
@@ -75,6 +90,30 @@ const PLAYBACK_RATES = [
     2,
 ];
 
+const MenuOption = component$<{
+    checked: boolean;
+    label: string;
+    disabled?: boolean;
+    onPick$: () => void;
+}>(({ checked, label, disabled, onPick$ }) => (
+    <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={checked}
+        class="player-controls-menu-option"
+        disabled={disabled}
+        onClick$={onPick$}
+    >
+        <LuCheck
+            class="player-controls-menu-tick"
+            width="16"
+            height="16"
+            aria-hidden="true"
+        />
+        <span class="player-controls-menu-label">{label}</span>
+    </button>
+));
+
 export const PlayerControls = component$<PlayerControlsProps>(
     ({
         paused,
@@ -115,6 +154,12 @@ export const PlayerControls = component$<PlayerControlsProps>(
         const trackRef = useSignal<HTMLDivElement>();
         const isDragging = useSignal(false);
         const hoverRatio = useSignal<number | null>(null);
+        // The settings menu: closed, or open on its list of rows ("main") or
+        // on one row's options.
+        const menuOpen = useSignal(false);
+        const menuPage = useSignal<SettingsPage | "main">("main");
+        // The track captions came back to last time they were switched off.
+        const lastSubtitle = useSignal<number | null>(null);
 
         // Drag can carry the pointer off the track element itself, so these
         // listen on the window rather than the track — a native <input
@@ -136,6 +181,19 @@ export const PlayerControls = component$<PlayerControlsProps>(
                     rectWidth: rect.width,
                 });
                 onSeek(ratio * duration);
+            }),
+        );
+
+        // A press anywhere but the menu and its gear dismisses the menu.
+        useOnWindow(
+            "pointerdown",
+            $((event: Event) => {
+                const target = event.target as Element | null;
+                if (
+                    !target?.closest?.(".player-controls-menu, [aria-haspopup]")
+                ) {
+                    menuOpen.value = false;
+                }
             }),
         );
 
@@ -325,156 +383,49 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         {formatClockTime(duration)}
                     </span>
 
-                    {files && files.length > 1 && (
-                        <select
-                            class="player-controls-file"
-                            value={String(currentFileIndex ?? "")}
-                            onChange$={(e: Event) => {
-                                onPickFile?.(
-                                    Number(
-                                        (e.target as HTMLSelectElement).value,
-                                    ),
-                                );
-                            }}
-                            aria-label="File"
-                        >
-                            {/* `selected` too, for the reason the speed menu
-                                gives below. */}
-                            {files.map((file) => (
-                                <option
-                                    key={file.index}
-                                    value={file.index}
-                                    selected={file.index === currentFileIndex}
-                                >
-                                    {file.path.split("/").pop()}
-                                </option>
-                            ))}
-                        </select>
-                    )}
-
-                    {audioTracks && audioTracks.length > 1 && (
-                        <select
-                            class="player-controls-audio"
-                            value={String(audioTrack ?? "")}
-                            disabled={audioPending}
-                            onChange$={(e: Event) => {
-                                onPickAudio?.(
-                                    Number(
-                                        (e.target as HTMLSelectElement).value,
-                                    ),
-                                );
-                            }}
-                            aria-label="Audio track"
-                            aria-busy={audioPending}
-                        >
-                            {/* `selected` too, for the reason the speed menu
-                                gives below. */}
-                            {audioTracks.map((track) => (
-                                <option
-                                    key={track.index}
-                                    value={track.index}
-                                    selected={track.index === audioTrack}
-                                >
-                                    {audioPending && track.index === audioTrack
-                                        ? "Switching…"
-                                        : audioTrackLabel(track, audioTracks)}
-                                </option>
-                            ))}
-                        </select>
-                    )}
+                    <span class="player-controls-spacer" />
 
                     {subtitleTracks && subtitleTracks.length > 0 && (
-                        <select
-                            class="player-controls-subtitles"
-                            value={String(subtitleTrack ?? "")}
-                            onChange$={(e: Event) => {
-                                const value = (e.target as HTMLSelectElement)
-                                    .value;
-                                onPickSubtitle?.(
-                                    value === "" ? null : Number(value),
-                                );
-                            }}
+                        <button
+                            type="button"
+                            class="player-controls-button"
+                            aria-pressed={(subtitleTrack ?? null) !== null}
                             aria-label="Subtitles"
-                        >
-                            {/* `selected` too, for the reason the speed menu
-                                gives below. */}
-                            <option value="" selected={subtitleTrack === null}>
-                                Subtitles off
-                            </option>
-                            {subtitleTracks.map((track) => (
-                                <option
-                                    key={track.index}
-                                    value={track.index}
-                                    disabled={!track.text}
-                                    selected={track.index === subtitleTrack}
-                                >
-                                    {subtitleTrackLabel(track, subtitleTracks)}
-                                </option>
-                            ))}
-                        </select>
-                    )}
-
-                    {quality && quality.heights.length > 0 && (
-                        <select
-                            class="player-controls-quality"
-                            value={String(quality.chosen ?? "")}
-                            disabled={qualityPending}
-                            onChange$={(e: Event) => {
-                                const value = (e.target as HTMLSelectElement)
-                                    .value;
-                                onPickQuality?.(
-                                    value === "" ? null : Number(value),
+                            onClick$={() => {
+                                if (subtitleTrack != null) {
+                                    lastSubtitle.value = subtitleTrack;
+                                    onPickSubtitle?.(null);
+                                    return;
+                                }
+                                const next = subtitleToToggleOn(
+                                    subtitleTracks,
+                                    lastSubtitle.value,
+                                    null,
                                 );
+                                if (next !== null) onPickSubtitle?.(next);
                             }}
-                            aria-label="Quality"
-                            aria-busy={qualityPending}
                         >
-                            {/* `selected` too, for the reason the speed menu
-                                gives below. */}
-                            <option value="" selected={quality.chosen === null}>
-                                {qualityPending && quality.chosen === null
-                                    ? "Switching…"
-                                    : defaultQualityLabel(quality)}
-                            </option>
-                            {quality.heights.map((height) => (
-                                <option
-                                    key={height}
-                                    value={height}
-                                    selected={height === quality.chosen}
-                                >
-                                    {qualityPending && height === quality.chosen
-                                        ? "Switching…"
-                                        : `${height}p`}
-                                </option>
-                            ))}
-                        </select>
+                            <LuCaptions
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
                     )}
 
-                    <select
-                        class="player-controls-rate"
-                        value={String(playbackRate)}
-                        onChange$={(e: Event) => {
-                            onPlaybackRateChange(
-                                Number((e.target as HTMLSelectElement).value),
-                            );
+                    <button
+                        type="button"
+                        class="player-controls-button"
+                        aria-label="Settings"
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpen.value}
+                        onClick$={() => {
+                            menuPage.value = "main";
+                            menuOpen.value = !menuOpen.value;
                         }}
-                        aria-label="Playback speed"
                     >
-                        {/* `selected` as well as the select's `value`: the
-                            value is applied before these options exist, so
-                            on first render it matches nothing and the menu
-                            showed "0.5x", the first option, whatever the
-                            rate. `value` still carries later changes. */}
-                        {PLAYBACK_RATES.map((rate) => (
-                            <option
-                                key={rate}
-                                value={rate}
-                                selected={rate === playbackRate}
-                            >
-                                {`${rate}x`}
-                            </option>
-                        ))}
-                    </select>
+                        <LuSettings width="18" height="18" aria-hidden="true" />
+                    </button>
 
                     <button
                         type="button"
@@ -499,6 +450,242 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         )}
                     </button>
                 </div>
+                {menuOpen.value && (
+                    <div
+                        class="player-controls-menu"
+                        role="menu"
+                        aria-label="Settings"
+                        stoppropagation:keydown
+                        onKeyDown$={(e: KeyboardEvent) => {
+                            if (e.key !== "Escape") return;
+                            if (menuPage.value === "main") {
+                                menuOpen.value = false;
+                            } else {
+                                menuPage.value = "main";
+                            }
+                        }}
+                    >
+                        {menuPage.value === "main" ? (
+                            availablePages({
+                                files: files?.length ?? 0,
+                                audio: audioTracks?.length ?? 0,
+                                subtitles: subtitleTracks?.length ?? 0,
+                                quality: quality?.heights.length ?? 0,
+                            }).map((page) => (
+                                <button
+                                    key={page}
+                                    type="button"
+                                    role="menuitem"
+                                    class="player-controls-menu-row"
+                                    onClick$={() => {
+                                        menuPage.value = page;
+                                    }}
+                                >
+                                    <span class="player-controls-menu-label">
+                                        {SETTINGS_PAGE_TITLES[page]}
+                                    </span>
+                                    <span class="player-controls-menu-value">
+                                        {page === "speed" &&
+                                            formatRate(playbackRate)}
+                                        {page === "quality" &&
+                                            quality &&
+                                            (quality.chosen === null
+                                                ? defaultQualityLabel(quality)
+                                                : `${quality.chosen}p`)}
+                                        {page === "audio" &&
+                                            audioTracks &&
+                                            audioTracks
+                                                .filter(
+                                                    (t) =>
+                                                        t.index === audioTrack,
+                                                )
+                                                .map((t) =>
+                                                    audioTrackLabel(
+                                                        t,
+                                                        audioTracks,
+                                                    ),
+                                                )
+                                                .join("")}
+                                        {page === "subtitles" &&
+                                            subtitleTracks &&
+                                            (subtitleTrack === null
+                                                ? "Off"
+                                                : subtitleTracks
+                                                      .filter(
+                                                          (t) =>
+                                                              t.index ===
+                                                              subtitleTrack,
+                                                      )
+                                                      .map((t) =>
+                                                          subtitleTrackLabel(
+                                                              t,
+                                                              subtitleTracks,
+                                                          ),
+                                                      )
+                                                      .join(""))}
+                                        {page === "files" &&
+                                            files &&
+                                            files
+                                                .filter(
+                                                    (f) =>
+                                                        f.index ===
+                                                        currentFileIndex,
+                                                )
+                                                .map((f) =>
+                                                    f.path.split("/").pop(),
+                                                )
+                                                .join("")}
+                                    </span>
+                                    <LuChevronRight
+                                        width="16"
+                                        height="16"
+                                        aria-hidden="true"
+                                    />
+                                </button>
+                            ))
+                        ) : (
+                            <>
+                                <div class="player-controls-menu-head">
+                                    <button
+                                        type="button"
+                                        class="player-controls-button"
+                                        aria-label="Back to settings"
+                                        onClick$={() => {
+                                            menuPage.value = "main";
+                                        }}
+                                    >
+                                        <LuChevronLeft
+                                            width="16"
+                                            height="16"
+                                            aria-hidden="true"
+                                        />
+                                    </button>
+                                    {SETTINGS_PAGE_TITLES[menuPage.value]}
+                                </div>
+
+                                {menuPage.value === "speed" &&
+                                    PLAYBACK_RATES.map((rate) => (
+                                        <MenuOption
+                                            key={rate}
+                                            checked={rate === playbackRate}
+                                            label={formatRate(rate)}
+                                            onPick$={() => {
+                                                onPlaybackRateChange(rate);
+                                                menuPage.value = "main";
+                                            }}
+                                        />
+                                    ))}
+
+                                {menuPage.value === "quality" && quality && (
+                                    <>
+                                        <MenuOption
+                                            checked={quality.chosen === null}
+                                            disabled={qualityPending}
+                                            label={defaultQualityLabel(quality)}
+                                            onPick$={() => {
+                                                onPickQuality?.(null);
+                                                menuPage.value = "main";
+                                            }}
+                                        />
+                                        {quality.heights.map((height) => (
+                                            <MenuOption
+                                                key={height}
+                                                checked={
+                                                    height === quality.chosen
+                                                }
+                                                disabled={qualityPending}
+                                                label={`${height}p`}
+                                                onPick$={() => {
+                                                    onPickQuality?.(height);
+                                                    menuPage.value = "main";
+                                                }}
+                                            />
+                                        ))}
+                                        <p class="player-controls-menu-note">
+                                            {qualityPending
+                                                ? "Switching…"
+                                                : "Changing quality restarts the stream where you are."}
+                                        </p>
+                                    </>
+                                )}
+
+                                {menuPage.value === "audio" &&
+                                    audioTracks?.map((track) => (
+                                        <MenuOption
+                                            key={track.index}
+                                            checked={track.index === audioTrack}
+                                            disabled={audioPending}
+                                            label={
+                                                audioPending &&
+                                                track.index === audioTrack
+                                                    ? "Switching…"
+                                                    : audioTrackLabel(
+                                                          track,
+                                                          audioTracks,
+                                                      )
+                                            }
+                                            onPick$={() => {
+                                                onPickAudio?.(track.index);
+                                                menuPage.value = "main";
+                                            }}
+                                        />
+                                    ))}
+
+                                {menuPage.value === "subtitles" &&
+                                    subtitleTracks && (
+                                        <>
+                                            <MenuOption
+                                                checked={subtitleTrack === null}
+                                                label="Off"
+                                                onPick$={() => {
+                                                    onPickSubtitle?.(null);
+                                                    menuPage.value = "main";
+                                                }}
+                                            />
+                                            {subtitleTracks.map((track) => (
+                                                <MenuOption
+                                                    key={track.index}
+                                                    checked={
+                                                        track.index ===
+                                                        subtitleTrack
+                                                    }
+                                                    disabled={!track.text}
+                                                    label={subtitleTrackLabel(
+                                                        track,
+                                                        subtitleTracks,
+                                                    )}
+                                                    onPick$={() => {
+                                                        onPickSubtitle?.(
+                                                            track.index,
+                                                        );
+                                                        menuPage.value = "main";
+                                                    }}
+                                                />
+                                            ))}
+                                        </>
+                                    )}
+
+                                {menuPage.value === "files" &&
+                                    files?.map((file) => (
+                                        <MenuOption
+                                            key={file.index}
+                                            checked={
+                                                file.index === currentFileIndex
+                                            }
+                                            label={
+                                                file.path.split("/").pop() ??
+                                                file.path
+                                            }
+                                            onPick$={() => {
+                                                onPickFile?.(file.index);
+                                                menuOpen.value = false;
+                                            }}
+                                        />
+                                    ))}
+                            </>
+                        )}
+                    </div>
+                )}
             </div>
         );
     },

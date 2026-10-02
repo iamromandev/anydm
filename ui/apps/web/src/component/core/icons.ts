@@ -47,6 +47,9 @@ import {
     LuRewind as _LuRewind,
     LuFastForward as _LuFastForward,
     LuMinimize as _LuMinimize,
+    LuCheck as _LuCheck,
+    LuChevronLeft as _LuChevronLeft,
+    LuCaptions as _LuCaptions,
 } from "qwikset-icons-v2/lucide";
 
 export const LuDownload = _LuDownload;
@@ -92,6 +95,9 @@ export const LuSkipBack = _LuSkipBack;
 export const LuSkipForward = _LuSkipForward;
 export const LuRewind = _LuRewind;
 export const LuFastForward = _LuFastForward;
+export const LuCheck = _LuCheck;
+export const LuChevronLeft = _LuChevronLeft;
+export const LuCaptions = _LuCaptions;
 
 // Simple Icons (brand logos)
 import {
