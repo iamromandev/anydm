@@ -4,6 +4,8 @@ import {
     LuMinimize,
     LuPause,
     LuPlay,
+    LuFastForward,
+    LuRewind,
     LuSkipBack,
     LuSkipForward,
     LuVolume2,
@@ -31,6 +33,9 @@ export interface PlayerControlsProps {
     segments: ScrubberSegments;
     onTogglePlay: () => void;
     onSeek: (time: number) => void;
+    /** The skip buttons: back (-1) or forward (1) by `skipSeconds`. */
+    onSkip?: (direction: 1 | -1) => void;
+    skipSeconds?: number;
     onVolumeChange: (volume: number) => void;
     onToggleMute: () => void;
     onPlaybackRateChange: (rate: number) => void;
@@ -82,6 +87,8 @@ export const PlayerControls = component$<PlayerControlsProps>(
         segments,
         onTogglePlay,
         onSeek,
+        onSkip,
+        skipSeconds,
         onVolumeChange,
         onToggleMute,
         onPlaybackRateChange,
@@ -214,6 +221,21 @@ export const PlayerControls = component$<PlayerControlsProps>(
                         </button>
                     )}
 
+                    {onSkip && duration > 0 && (
+                        <button
+                            type="button"
+                            class="player-controls-button"
+                            onClick$={() => onSkip(-1)}
+                            aria-label={`Back ${skipSeconds ?? 10} seconds`}
+                        >
+                            <LuRewind
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         class="player-controls-button"
@@ -230,6 +252,21 @@ export const PlayerControls = component$<PlayerControlsProps>(
                             />
                         )}
                     </button>
+
+                    {onSkip && duration > 0 && (
+                        <button
+                            type="button"
+                            class="player-controls-button"
+                            onClick$={() => onSkip(1)}
+                            aria-label={`Forward ${skipSeconds ?? 10} seconds`}
+                        >
+                            <LuFastForward
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
 
                     {showSteps && (
                         <button

@@ -63,6 +63,19 @@ export function seekRatioFromPointerX(input: SeekRatioInput): number {
     return Math.min(1, Math.max(0, ratio));
 }
 
+/** Where a seek to `time` lands: inside `[0, duration]`, or just at or above 0
+ * while the duration isn't known yet. `null` for a time that isn't a number,
+ * which is no seek at all. */
+export function clampSeek(time: number, duration: number): number | null {
+    if (!Number.isFinite(time)) {
+        return null;
+    }
+    const floored = Math.max(0, time);
+    return Number.isFinite(duration) && duration > 0
+        ? Math.min(duration, floored)
+        : floored;
+}
+
 /** "m:ss", or "h:mm:ss" once past an hour — the clock-readout shape the time
  * display and hover tooltip need, distinct from core/utils.tsx's word-form
  * `formatTime` (used for the swarm ETA, e.g. "1m 0s"). */

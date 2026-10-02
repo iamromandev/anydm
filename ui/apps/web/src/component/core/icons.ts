@@ -44,6 +44,8 @@ import {
     LuMaximize as _LuMaximize,
     LuSkipBack as _LuSkipBack,
     LuSkipForward as _LuSkipForward,
+    LuRewind as _LuRewind,
+    LuFastForward as _LuFastForward,
     LuMinimize as _LuMinimize,
 } from "qwikset-icons-v2/lucide";
 
@@ -88,6 +90,8 @@ export const LuMaximize = _LuMaximize;
 export const LuMinimize = _LuMinimize;
 export const LuSkipBack = _LuSkipBack;
 export const LuSkipForward = _LuSkipForward;
+export const LuRewind = _LuRewind;
+export const LuFastForward = _LuFastForward;
 
 // Simple Icons (brand logos)
 import {
