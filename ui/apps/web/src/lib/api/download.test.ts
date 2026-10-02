@@ -19,8 +19,12 @@ import {
     resumeAt,
     watchedProgress,
     withPosition,
+    applyProgressFrame,
     normalizeApiTask,
+    normalizeCollection,
     normalizeEntryCounts,
+    normalizePlayback,
+    normalizePositions,
     normalizeSegments,
     normalizeFiles,
     pickFileToOpen,
@@ -30,37 +34,53 @@ import {
     type SegmentView,
     type TaskStatus,
     type UiTask,
-} from "./task";
+} from "./download";
 
 describe("normalizeApiTask", () => {
     const raw = {
+        type: "download",
         id: "abc",
         source_url: "https://youtu.be/x",
+        platform: "site",
+        media_kind: "video",
         title: "clip",
-        filename: "clip.mp4",
-        kind: "video",
-        preset: "1080",
         status: "downloading",
         progress: 42,
         downloaded_bytes: 4200,
         total_bytes: 10000,
-        speed_bps: 512,
-        eta_seconds: 11,
+        live: {
+            speed_bps: 512,
+            eta_seconds: 11,
+            upload_speed_bps: 0,
+            peers: 0,
+        },
+        site: { extractor: "Youtube", video_id: "x", preset: "1080" },
+        files: [
+            {
+                index: 0,
+                path: "clip.mp4",
+                size_bytes: 0,
+                downloaded_bytes: 4200,
+                selected: true,
+            },
+        ],
         error: null,
     };
 
-    it("keeps the site a task came from", () => {
+    it("keeps the site a download came from, and its preset", () => {
+        const task = normalizeApiTask(raw);
+        expect(task.extractor).toBe("Youtube");
+        expect(task.preset).toBe("1080");
         expect(
-            normalizeApiTask({ ...raw, platform: "site", extractor: "Vimeo" })
-                .extractor,
-        ).toBe("Vimeo");
-        expect(normalizeApiTask(raw).extractor).toBeUndefined();
+            normalizeApiTask({ ...raw, site: undefined }).extractor,
+        ).toBeUndefined();
     });
 
     it("maps snake_case onto the UI shape", () => {
         const task = normalizeApiTask(raw);
         expect(task.id).toBe("abc");
         expect(task.title).toBe("clip");
+        expect(task.kind).toBe("video");
         expect(task.progress).toBe(42);
         expect(task.eta).toBe(11);
     });
@@ -82,19 +102,195 @@ describe("normalizeApiTask", () => {
         const task = normalizeApiTask({
             ...raw,
             total_bytes: null,
-            eta_seconds: null,
-            speed_bps: 0,
+            live: { speed_bps: 0, eta_seconds: null },
         });
         expect(task.totalBytes).toBe(0);
         expect(task.eta).toBe(0);
     });
 
-    it("falls back to the filename when there is no title", () => {
+    it("falls back to its file's name when there is no title", () => {
         expect(normalizeApiTask({ ...raw, title: "" }).title).toBe("clip.mp4");
     });
 
-    it("keeps a direct download's own kind", () => {
-        expect(normalizeApiTask({ ...raw, kind: "file" }).kind).toBe("file");
+    it("leaves the size out until the file is finished", () => {
+        expect(normalizeApiTask(raw).fileSize).toBeUndefined();
+    });
+});
+
+describe("normalizeApiTask on the new wire shape", () => {
+    const directWire = {
+        type: "download",
+        id: "d1",
+        source_url: "https://e.com/a.mp4",
+        platform: "direct",
+        media_kind: "file",
+        title: "",
+        status: "complete",
+        progress: 100,
+        queue: { id: "q", name: "Main" },
+        total_bytes: 10,
+        downloaded_bytes: 10,
+        live: {
+            speed_bps: 0,
+            eta_seconds: null,
+            upload_speed_bps: 0,
+            peers: 0,
+        },
+        files: [
+            {
+                index: 0,
+                path: "a.mp4",
+                size_bytes: 10,
+                downloaded_bytes: 10,
+                selected: true,
+                mime_type: "video/mp4",
+                playback: {
+                    position_seconds: 4,
+                    duration_seconds: 60,
+                    watched: false,
+                },
+            },
+        ],
+        mirrors: [],
+        attempts: 1,
+        max_attempts: 3,
+    };
+
+    const torrentWire = {
+        ...directWire,
+        id: "t1",
+        platform: "torrent",
+        title: "Big Buck Bunny",
+        status: "downloading",
+        torrent: { info_hash: "a".repeat(40), uploaded_bytes: 5 },
+        live: {
+            speed_bps: 900,
+            eta_seconds: 40,
+            upload_speed_bps: 7,
+            peers: 3,
+        },
+        files: [
+            {
+                index: 1,
+                path: "bbb.mp4",
+                size_bytes: 100,
+                downloaded_bytes: 10,
+                selected: true,
+            },
+        ],
+    };
+
+    const collectionWire = {
+        type: "collection",
+        id: "c1",
+        kind: "playlist",
+        source_url: "https://youtube.com/playlist?list=PL",
+        extractor: "YoutubeTab",
+        external_id: "PL",
+        title: "Talks",
+        folder: "Talks_PL",
+        preset: "best",
+        status: "downloading",
+        progress: 50,
+        counts: {
+            total: 2,
+            complete: 1,
+            active: 1,
+            downloading: 1,
+            paused: 0,
+            failed: 0,
+            watched: 1,
+        },
+        total_bytes: 200,
+        downloaded_bytes: 150,
+        speed_bps: 40,
+    };
+
+    it("reads a direct download's one file as its filename and playback", () => {
+        const task = normalizeApiTask(directWire);
+        expect(task.kind).toBe("file");
+        expect(task.title).toBe("a.mp4");
+        expect(task.filename).toBe("a.mp4");
+        expect(task.fileSize).toBe(10);
+        expect(task.files).toBeUndefined();
+        expect(task.positions).toEqual([
+            {
+                fileIndex: 0,
+                positionSeconds: 4,
+                durationSeconds: 60,
+                watched: false,
+            },
+        ]);
+    });
+
+    it("reads a torrent's live numbers, hash and files", () => {
+        const task = normalizeApiTask(torrentWire);
+        expect(task.kind).toBe("torrent");
+        expect(task.downloadSpeed).toBe(900);
+        expect(task.uploadSpeed).toBe(7);
+        expect(task.peersConnected).toBe(3);
+        expect(task.eta).toBe(40);
+        expect(task.infoHash).toBe("a".repeat(40));
+        expect(task.ratio).toBe(0.5);
+        expect(task.files?.[0].index).toBe(1);
+    });
+
+    it("reads a collection as a playlist row", () => {
+        const task = normalizeApiTask(collectionWire);
+        expect(task).toEqual(normalizeCollection(collectionWire));
+        expect(task.kind).toBe("playlist");
+        expect(task.downloadSpeed).toBe(40);
+        expect(task.entryCounts?.watched).toBe(1);
+        expect(task.folder).toBe("Talks_PL");
+    });
+
+    it("carries a collection video's collection as parentId", () => {
+        expect(
+            normalizeApiTask({ ...directWire, collection_id: "c1" }).parentId,
+        ).toBe("c1");
+    });
+
+    it("lists only played files, and nothing for a frame without files", () => {
+        expect(normalizePositions({ id: "x" })).toBeUndefined();
+        expect(normalizePositions(torrentWire)).toEqual([]);
+    });
+
+    it("reads a saved playback for the file it was saved on", () => {
+        expect(
+            normalizePlayback(
+                { position_seconds: 5, duration_seconds: 9, watched: true },
+                2,
+            ),
+        ).toEqual({
+            fileIndex: 2,
+            positionSeconds: 5,
+            durationSeconds: 9,
+            watched: true,
+        });
+    });
+
+    it("takes what moved from a progress frame, keeps what is absent, and merges file progress", () => {
+        const task = normalizeApiTask(torrentWire);
+        const next = applyProgressFrame(task, {
+            id: "t1",
+            downloaded_bytes: 50,
+            progress: 50,
+            live: {
+                speed_bps: 10,
+                eta_seconds: null,
+                upload_speed_bps: 1,
+                peers: 2,
+            },
+            files: [
+                { index: 1, downloaded_bytes: 50 },
+            ],
+        });
+        expect(next.downloadedBytes).toBe(50);
+        expect(next.totalBytes).toBe(task.totalBytes);
+        expect(next.downloadSpeed).toBe(10);
+        expect(next.eta).toBe(task.eta);
+        expect(next.peersConnected).toBe(2);
+        expect(next.files?.[0].downloadedBytes).toBe(50);
     });
 });
 
@@ -225,21 +421,23 @@ describe("segmentLayout", () => {
 
 describe("torrent fields", () => {
     const rawTorrent = {
+        type: "download",
         id: "t1",
         source_url: "magnet:?xt=urn:btih:abc",
+        platform: "torrent",
+        media_kind: "file",
         title: "Some Release",
-        filename: "Some Release",
-        kind: "torrent",
-        preset: "best",
         status: "seeding",
         progress: 100,
         downloaded_bytes: 1000,
         total_bytes: 1000,
-        speed_bps: 0,
-        eta_seconds: null,
-        info_hash: "abc",
-        uploaded_bytes: 500,
-        peers_connected: 7,
+        live: {
+            speed_bps: 0,
+            eta_seconds: null,
+            upload_speed_bps: 0,
+            peers: 7,
+        },
+        torrent: { info_hash: "abc", uploaded_bytes: 500 },
         files: [
             {
                 index: 0,
@@ -282,8 +480,8 @@ describe("torrent fields", () => {
         expect(task.files?.[1].downloadedBytes).toBe(0);
     });
 
-    it("leaves files undefined for a task that is not a torrent", () => {
-        const task = normalizeApiTask({ ...rawTorrent, files: undefined });
+    it("leaves files undefined for a download that is not a torrent", () => {
+        const task = normalizeApiTask({ ...rawTorrent, platform: "direct" });
         expect(task.files).toBeUndefined();
     });
 
@@ -558,7 +756,8 @@ describe("normalizeApiTask, for a retry in progress", () => {
     const raw = {
         id: "a",
         source_url: "https://example.com/a.mkv",
-        kind: "file",
+        platform: "direct",
+        media_kind: "file",
         status: "pending",
         attempts: 2,
         max_attempts: 3,
@@ -1071,15 +1270,20 @@ describe("where a download was left (#96)", () => {
         downloadedBytes: 1,
     });
 
-    it("reads positions off a task, and leaves them absent when the row has none", () => {
+    it("reads positions off a download's files, and leaves them absent when the row has none", () => {
         const task = normalizeApiTask({
             id: "t",
-            positions: [
+            platform: "torrent",
+            files: [
+                { index: 0, path: "a.mkv" },
                 {
-                    file_index: 1,
-                    position_seconds: 61.5,
-                    duration_seconds: 1300,
-                    watched: false,
+                    index: 1,
+                    path: "b.mkv",
+                    playback: {
+                        position_seconds: 61.5,
+                        duration_seconds: 1300,
+                        watched: false,
+                    },
                 },
             ],
         });
@@ -1287,16 +1491,17 @@ describe("which file Play opens (#97)", () => {
     });
 });
 
-describe("normalizeApiTask for groups", () => {
-    it("reads a group's counts and folder", () => {
+describe("normalizeApiTask for collections", () => {
+    it("reads a collection's counts and folder", () => {
         const group = normalizeApiTask({
+            type: "collection",
             id: "g",
             kind: "playlist",
             status: "downloading",
             source_url: "https://y.test/list",
             title: "29C3",
             folder: "29C3",
-            entry_counts: {
+            counts: {
                 total: 3,
                 complete: 1,
                 active: 2,
@@ -1320,15 +1525,23 @@ describe("normalizeApiTask for groups", () => {
         });
     });
 
-    it("reads a video's group and place", () => {
+    it("reads a channel's tab as a playlist row too", () => {
+        expect(
+            normalizeApiTask({ type: "collection", id: "c", kind: "channel" })
+                .kind,
+        ).toBe("playlist");
+    });
+
+    it("reads a video's collection and place", () => {
         const video = normalizeApiTask({
+            type: "download",
             id: "v",
-            kind: "video",
+            platform: "site",
+            media_kind: "video",
             status: "pending",
             source_url: "https://y.test/v",
-            parent_id: "g",
+            collection_id: "g",
             position: 2,
-            file_path: "29C3/02_v.mp4",
         });
 
         expect(video.parentId).toBe("g");
@@ -1337,13 +1550,14 @@ describe("normalizeApiTask for groups", () => {
         expect(video.folder).toBeUndefined();
     });
 
-    it("leaves a standalone task out of any group", () => {
+    it("leaves a standalone download out of any collection", () => {
         const task = normalizeApiTask({
+            type: "download",
             id: "t",
-            kind: "video",
+            media_kind: "video",
             status: "pending",
             source_url: "https://y.test/t",
-            parent_id: null,
+            collection_id: null,
         });
 
         expect(task.parentId).toBeUndefined();

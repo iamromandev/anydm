@@ -1,7 +1,9 @@
 /**
- * The task contract, in one place.
+ * The download contract, in one place.
  *
- * These types mirror `src/data/type/download/task.py` on the API side. They are
+ * These types mirror `src/data/type/download/download.py` on the API side. The
+ * UI keeps its own row, `UiTask`: a collection is a row of kind `playlist`, and
+ * a collection's video carries its collection as `parentId`. They are
  * written as unions rather than `string` so that a status the API gains — and
  * the UI has not been taught to draw — is a compile error here instead of an
  * exception in the middle of a render.
@@ -19,7 +21,7 @@ export type TaskStatus =
     | "failed"
     | "canceled";
 
-/** `torrent` has no API counterpart yet; the card already draws it. `playlist` is a group (v0.5). */
+/** A download's `media_kind`, or `torrent` for its platform. `playlist` is a collection's own row. */
 export type TaskKind = "video" | "audio" | "file" | "torrent" | "playlist";
 
 /** How a group's videos stand (v0.5). */
@@ -69,11 +71,11 @@ export type UiTask = {
     errorCode?: string;
     /** Present only while a segmented transfer is running. */
     segments?: SegmentView[];
-    /** Torrent-only. Absent for every other task. */
+    /** Torrent-only. Absent for every other download, whose one file is `filename`. */
     files?: FileView[];
     /**
-     * Where each file was left in the player (#96). Only the list and a single
-     * task carry it; stream frames don't, and `keepPositions` holds it.
+     * Where each file was left in the player (#96). Only a row with its files
+     * carries it; `progress` frames don't, and `keepPositions` holds it.
      */
     positions?: PositionView[];
     /** A group's video: its group's id. Such a row never enters the list. */
@@ -156,33 +158,42 @@ export function segmentLayout(
     });
 }
 
-/** A FastAPI task row, flattened into the shape the components read. */
+/** An API list item (a download or a collection), flattened into the shape the components read. */
 export function normalizeApiTask(raw: any): UiTask {
+    if (raw?.type === "collection") return normalizeCollection(raw);
     const downloadedBytes = raw.downloaded_bytes ?? 0;
-    const uploadedBytes = raw.uploaded_bytes ?? 0;
+    const uploadedBytes = raw.torrent?.uploaded_bytes ?? 0;
+    const isTorrent = raw.platform === "torrent";
+    const files: any[] = Array.isArray(raw.files) ? raw.files : [];
+    // A site or direct download has exactly one file, at index 0.
+    const single = isTorrent
+        ? undefined
+        : files.find((file) => (file.index ?? 0) === 0);
 
     return {
         id: raw.id,
-        title: raw.title || raw.filename || raw.source_url,
+        title: raw.title || single?.path || raw.source_url,
         url: raw.source_url ?? "",
-        kind: raw.kind,
+        kind: isTorrent ? "torrent" : raw.media_kind,
         status: raw.status,
         progress: raw.progress ?? 0,
-        eta: raw.eta_seconds ?? 0,
+        eta: raw.live?.eta_seconds ?? 0,
         error: raw.error ?? undefined,
         downloadedBytes,
         totalBytes: raw.total_bytes ?? 0,
-        downloadSpeed: raw.speed_bps ?? 0,
-        // Torrent-only: the engine reports an upload rate and the monitor
-        // mirrors it. Every other platform leaves the key absent, which is 0.
-        uploadSpeed: raw.upload_speed_bps ?? 0,
-        peersConnected: raw.peers_connected ?? 0,
+        downloadSpeed: raw.live?.speed_bps ?? 0,
+        // Torrent-only: the engine reports an upload rate. Every other
+        // platform's is 0.
+        uploadSpeed: raw.live?.upload_speed_bps ?? 0,
+        peersConnected: raw.live?.peers ?? 0,
         attempts: raw.attempts ?? 0,
         platform: raw.platform ?? undefined,
-        extractor: raw.extractor ?? undefined,
-        preset: raw.preset ?? undefined,
-        filename: raw.filename || undefined,
-        fileSize: raw.file_size ?? undefined,
+        extractor: raw.site?.extractor ?? undefined,
+        preset: raw.site?.preset ?? undefined,
+        filename: single?.path || undefined,
+        // Zero until it finishes: the size is the finished file's.
+        fileSize:
+            single && single.size_bytes > 0 ? single.size_bytes : undefined,
         createdAt: raw.created_at ? Date.parse(raw.created_at) : undefined,
         startedAt: raw.started_at ? Date.parse(raw.started_at) : undefined,
         completedAt: raw.completed_at
@@ -196,22 +207,76 @@ export function normalizeApiTask(raw: any): UiTask {
             ? Date.parse(raw.next_attempt_at)
             : undefined,
         errorCode: raw.error_code ?? undefined,
-        infoHash: raw.info_hash ?? undefined,
+        infoHash: raw.torrent?.info_hash ?? undefined,
         // Undefined rather than 0 when nothing has downloaded: the card hides
         // a ratio it has no value for instead of claiming a ratio of zero.
         ratio:
             downloadedBytes > 0 ? uploadedBytes / downloadedBytes : undefined,
-        files: normalizeFiles(raw),
-        positions: normalizePositions(raw?.positions),
-        parentId: raw.parent_id ?? undefined,
+        files: isTorrent ? normalizeFiles(raw) : undefined,
+        positions: normalizePositions(raw),
+        parentId: raw.collection_id ?? undefined,
         position: raw.position ?? undefined,
-        entryCounts: normalizeEntryCounts(raw.entry_counts),
-        // Only a group's row carries one.
+    };
+}
+
+/** A collection, as the playlist row the group card draws. */
+export function normalizeCollection(raw: any): UiTask {
+    return {
+        id: raw.id,
+        title: raw.title || raw.source_url,
+        url: raw.source_url ?? "",
+        kind: "playlist",
+        status: raw.status,
+        progress: raw.progress ?? 0,
+        eta: 0,
+        downloadedBytes: raw.downloaded_bytes ?? 0,
+        totalBytes: raw.total_bytes ?? 0,
+        // The sum of its videos' live speeds, as the API last computed it.
+        downloadSpeed: raw.speed_bps ?? 0,
+        uploadSpeed: 0,
+        peersConnected: 0,
+        attempts: 0,
+        platform: "site",
+        extractor: raw.extractor ?? undefined,
+        preset: raw.preset ?? undefined,
+        createdAt: raw.created_at ? Date.parse(raw.created_at) : undefined,
+        entryCounts: normalizeEntryCounts(raw.counts),
         folder: raw.folder || undefined,
     };
 }
 
-/** A group's counts, or `undefined` for any other row. `watched` waits for part 4. */
+/**
+ * A `progress` frame's numbers on a row. Absent fields are unchanged, never
+ * zero: the API leaves out what did not move.
+ */
+export function applyProgressFrame(task: UiTask, data: any): UiTask {
+    const moved = new Map<number, number>(
+        Array.isArray(data?.files)
+            ? data.files.map((file: any) => [
+                  file.index,
+                  file.downloaded_bytes,
+              ])
+            : [],
+    );
+    return {
+        ...task,
+        progress: data.progress ?? task.progress,
+        eta: data.live?.eta_seconds ?? task.eta,
+        downloadedBytes: data.downloaded_bytes ?? task.downloadedBytes,
+        totalBytes: data.total_bytes ?? task.totalBytes,
+        downloadSpeed: data.live?.speed_bps ?? task.downloadSpeed,
+        uploadSpeed: data.live?.upload_speed_bps ?? task.uploadSpeed,
+        peersConnected: data.live?.peers ?? task.peersConnected,
+        segments: normalizeSegments(data) ?? task.segments,
+        files: task.files?.map((file) =>
+            moved.has(file.index)
+                ? { ...file, downloadedBytes: moved.get(file.index) ?? 0 }
+                : file,
+        ),
+    };
+}
+
+/** A collection's counts, or `undefined` for any other row. */
 export function normalizeEntryCounts(raw: any): EntryCounts | undefined {
     if (!raw || typeof raw !== "object") return undefined;
     return {
@@ -531,24 +596,28 @@ export type PositionView = {
     watched: boolean;
 };
 
-export function normalizePosition(raw: any): PositionView {
+/** One file's playback, as the API answers a save or carries it on a file. */
+export function normalizePlayback(raw: any, fileIndex: number): PositionView {
     return {
-        fileIndex: raw?.file_index ?? 0,
+        fileIndex,
         positionSeconds: raw?.position_seconds ?? 0,
         durationSeconds: raw?.duration_seconds ?? 0,
         watched: raw?.watched ?? false,
     };
 }
 
-/** A task's positions, or `undefined` when the row carries none. */
+/** The row's played files, or `undefined` when it carries no file list (a frame). */
 export function normalizePositions(raw: any): PositionView[] | undefined {
-    return Array.isArray(raw) ? raw.map(normalizePosition) : undefined;
+    if (!Array.isArray(raw?.files)) return undefined;
+    return raw.files
+        .filter((file: any) => file.playback)
+        .map((file: any) => normalizePlayback(file.playback, file.index ?? 0));
 }
 
 /**
  * Positions from what's on screen, for rows that came without them.
  *
- * A stream frame has no positions: only the list and a single task do. Like
+ * A progress frame has no positions: only a row with its files does. Like
  * `keepSegments`, this stops every frame blanking the card's watched bar.
  */
 export function keepPositions(rows: UiTask[], held: UiTask[]): UiTask[] {

@@ -17,7 +17,7 @@ import {
     videoStatus,
     withGroupSpeeds,
 } from "./group";
-import type { EntryCounts, TaskStatus, UiTask } from "./task";
+import type { EntryCounts, TaskStatus, UiTask } from "./download";
 
 const row = (
     id: string,
@@ -238,7 +238,7 @@ describe("entries lists", () => {
         const next = applyVideoProgress(open, "g", {
             id: "v1",
             progress: 40,
-            speed_bps: 12,
+            live: { speed_bps: 12 },
         });
         expect([
             next.g.rows[0].progress,

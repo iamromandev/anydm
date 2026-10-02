@@ -104,9 +104,9 @@ describe("playing a finished download (#94)", () => {
     });
 
     it("starts a session from a task, with a torrent's file when there is one", () => {
-        expect(buildTaskStreamBody("t1", null)).toEqual({ task_id: "t1" });
+        expect(buildTaskStreamBody("t1", null)).toEqual({ download_id: "t1" });
         expect(buildTaskStreamBody("t1", 4)).toEqual({
-            task_id: "t1",
+            download_id: "t1",
             file_index: 4,
         });
     });
@@ -126,10 +126,10 @@ describe("choosing the audio (#99)", () => {
             }),
         ).toEqual({ torrent: "magnet:?x", file_index: 1, audio_track: 0 });
         expect(buildTaskStreamBody("t1", null, { language: "" })).toEqual({
-            task_id: "t1",
+            download_id: "t1",
         });
         expect(buildTaskStreamBody("t1", 2, { track: 1 })).toEqual({
-            task_id: "t1",
+            download_id: "t1",
             file_index: 2,
             audio_track: 1,
         });
