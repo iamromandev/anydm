@@ -1,10 +1,36 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    clampSeek,
     formatClockTime,
     scrubberSegments,
     seekRatioFromPointerX,
 } from "./scrubber-progress";
+
+describe("clampSeek", () => {
+    it("keeps a time inside the file as it is", () => {
+        expect(clampSeek(42, 120)).toBe(42);
+    });
+
+    it("floors a time before the start at 0", () => {
+        expect(clampSeek(-8, 120)).toBe(0);
+    });
+
+    it("caps a time past the end at the duration", () => {
+        expect(clampSeek(500, 120)).toBe(120);
+    });
+
+    it("only floors at 0 while the duration is not known yet", () => {
+        expect(clampSeek(30, 0)).toBe(30);
+        expect(clampSeek(30, Number.NaN)).toBe(30);
+        expect(clampSeek(-3, Number.NaN)).toBe(0);
+    });
+
+    it("returns null for a time that is not a number", () => {
+        expect(clampSeek(Number.NaN, 120)).toBeNull();
+        expect(clampSeek(Number.POSITIVE_INFINITY, 120)).toBeNull();
+    });
+});
 
 describe("scrubberSegments", () => {
     it("computes all three segments for an in-progress torrent session", () => {

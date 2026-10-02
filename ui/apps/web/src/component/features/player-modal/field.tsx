@@ -57,8 +57,13 @@ import {
 import { getBufferedPercent } from "./buffered-progress";
 import { PlayerControls } from "./controls";
 import { PlayerHud } from "./hud";
-import { formatClockTime, scrubberSegments } from "./scrubber-progress";
 import {
+    clampSeek,
+    formatClockTime,
+    scrubberSegments,
+} from "./scrubber-progress";
+import {
+    SEEK_LONG_S,
     SHORTCUT_HINTS,
     resolveShortcut,
     type PlayerAction,
@@ -187,6 +192,9 @@ export const PlayerModal = component$<PlayerModalProps>(
             // way. Empty when nothing is showing.
             flash: "",
             flashToken: "",
+            // The video is waiting on data: a seek into a part still coming
+            // down, or playback that caught up with the download.
+            buffering: false,
             // Which of a torrent's files is playing, for the file menu (#98).
             currentFileIndex: null as number | null,
             // Where playback resumed, for the note offering to start over (#96).
@@ -537,6 +545,14 @@ export const PlayerModal = component$<PlayerModalProps>(
                             const updateDuration = () => {
                                 store.duration = video.duration;
                             };
+                            // A seek past what has downloaded waits for the
+                            // swarm, so say so rather than freeze the frame.
+                            const startBuffering = () => {
+                                store.buffering = true;
+                            };
+                            const stopBuffering = () => {
+                                store.buffering = false;
+                            };
 
                             const videoListeners: [
                                 string,
@@ -573,6 +589,26 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 [
                                     "loadedmetadata",
                                     updateDuration,
+                                ],
+                                [
+                                    "seeking",
+                                    startBuffering,
+                                ],
+                                [
+                                    "waiting",
+                                    startBuffering,
+                                ],
+                                [
+                                    "seeked",
+                                    stopBuffering,
+                                ],
+                                [
+                                    "playing",
+                                    stopBuffering,
+                                ],
+                                [
+                                    "canplay",
+                                    stopBuffering,
                                 ],
                             ];
                             for (const [
@@ -1275,10 +1311,14 @@ export const PlayerModal = component$<PlayerModalProps>(
 
         const handleSeek = $((time: number) => {
             const video = videoRef.value;
-            if (!video || !Number.isFinite(time)) {
+            if (!video) {
                 return;
             }
-            video.currentTime = Math.max(0, time);
+            const target = clampSeek(time, video.duration);
+            if (target === null) {
+                return;
+            }
+            video.currentTime = target;
         });
 
         const handleVolumeChange = $((volume: number) => {
@@ -1408,6 +1448,15 @@ export const PlayerModal = component$<PlayerModalProps>(
             }
         });
 
+        // The skip buttons take the same road as J and L, so a click leaves
+        // the same "+10s" label.
+        const handleSkip = $(async (direction: 1 | -1) => {
+            await applyShortcut({
+                type: "seekBy",
+                seconds: direction * SEEK_LONG_S,
+            });
+        });
+
         useVisibleTask$(
             ({ track, cleanup }) => {
                 // Its own task, separate from the one that starts the stream: the
@@ -1497,6 +1546,8 @@ export const PlayerModal = component$<PlayerModalProps>(
                                 })}
                                 onTogglePlay={handleTogglePlay}
                                 onSeek={handleSeek}
+                                onSkip={handleSkip}
+                                skipSeconds={SEEK_LONG_S}
                                 onVolumeChange={handleVolumeChange}
                                 onToggleMute={handleToggleMute}
                                 onPlaybackRateChange={handlePlaybackRateChange}
@@ -1545,6 +1596,12 @@ export const PlayerModal = component$<PlayerModalProps>(
                 {store.flash && (
                     <div class="player-flash" aria-live="polite">
                         {store.flash}
+                    </div>
+                )}
+
+                {store.buffering && !store.error && (
+                    <div class="player-buffering" role="status">
+                        Buffering…
                     </div>
                 )}
 

@@ -90,6 +90,21 @@
 
 /* The brief label a key press leaves behind. Centred over the video, ignoring
    pointer events so it can never sit between a click and the controls. */
+/* Below the flash label, so a seek's "+10s" and its wait can show together. */
+.player-buffering {
+    position: absolute;
+    top: 62%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3;
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 0.875rem;
+    pointer-events: none;
+}
+
 .player-flash {
     position: absolute;
     top: 50%;
