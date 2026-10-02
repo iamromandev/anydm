@@ -1,35 +1,35 @@
-"""An in-memory SearchSourceRepo, for tests that don't need Postgres."""
+"""An in-memory SourceRepo, for tests that don't need Postgres."""
 
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 
-from src.data.repo.search.interface.source import SearchSourceRepo, SearchSourceRow
+from src.data.repo.search.interface.source import SourceRepo, SourceRow
 
 
-class FakeSourceRepo(SearchSourceRepo):
-    def __init__(self, rows: Sequence[SearchSourceRow] = ()) -> None:
-        self.rows: dict[uuid.UUID, SearchSourceRow] = {}
+class FakeSourceRepo(SourceRepo):
+    def __init__(self, rows: Sequence[SourceRow] = ()) -> None:
+        self.rows: dict[uuid.UUID, SourceRow] = {}
         for row in rows:
             key = row.id or uuid.uuid4()
             self.rows[key] = replace(row, id=key)
 
-    def _by_name(self, name: str) -> SearchSourceRow | None:
+    def _by_name(self, name: str) -> SourceRow | None:
         return next((row for row in self.rows.values() if row.name == name), None)
 
-    async def list_all(self) -> list[SearchSourceRow]:
+    async def list_all(self) -> list[SourceRow]:
         return list(self.rows.values())
 
-    async def get(self, id: uuid.UUID) -> SearchSourceRow | None:
+    async def get(self, id: uuid.UUID) -> SourceRow | None:
         return self.rows.get(id)
 
-    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SearchSourceRow:
+    async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SourceRow:
         key = uuid.uuid4()
-        row = SearchSourceRow(name, kind, enabled, base_url, api_key, key)
+        row = SourceRow(name, kind, enabled, base_url, api_key, key)
         self.rows[key] = row
         return row
 
-    async def insert_missing(self, rows: Sequence[SearchSourceRow]) -> int:
+    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
         added = 0
         for row in rows:
             if self._by_name(row.name) is None:
@@ -45,7 +45,7 @@ class FakeSourceRepo(SearchSourceRepo):
         base_url: str | None,
         api_key: str | None = None,
         clear_api_key: bool = False,
-    ) -> SearchSourceRow | None:
+    ) -> SourceRow | None:
         row = self.rows.get(id)
         if row is None:
             return None

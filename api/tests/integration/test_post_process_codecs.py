@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from src.data.type import Kind
+from src.data.type import MediaKind
 from src.lib.site.format import container_for
 from src.service.download.post_process import FfmpegPostProcessor
 
@@ -102,7 +102,7 @@ async def test_two_parts_mux_into_the_container_chosen_for_them(
     }
     destination = tmp_path / f"out.{extension}"
 
-    await FfmpegPostProcessor("ffmpeg").run(SimpleNamespace(kind=Kind.VIDEO), parts, destination)
+    await FfmpegPostProcessor("ffmpeg").run(SimpleNamespace(media_kind=MediaKind.VIDEO), parts, destination)
 
     format_name, codecs = _probe(destination)
     assert codecs == sorted([video, audio])
@@ -117,7 +117,7 @@ async def test_an_mp3_is_made_from_any_audio_codec(audio: str, clips: dict[str, 
     parts = {"audio": _part(clips[audio], tmp_path / "audio.part")}
     destination = tmp_path / "out.mp3"
 
-    await FfmpegPostProcessor("ffmpeg").run(SimpleNamespace(kind=Kind.AUDIO), parts, destination)
+    await FfmpegPostProcessor("ffmpeg").run(SimpleNamespace(media_kind=MediaKind.AUDIO), parts, destination)
 
     assert _probe(destination)[1] == ["mp3"]
 
@@ -134,7 +134,7 @@ async def test_an_hls_part_is_remuxed_into_a_playable_mp4(tmp_path: Path) -> Non
     destination = tmp_path / "out.mp4"
 
     await FfmpegPostProcessor("ffmpeg").run(
-        SimpleNamespace(kind=Kind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
+        SimpleNamespace(media_kind=MediaKind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
     )
 
     format_name, codecs = _probe(destination)

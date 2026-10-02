@@ -1,7 +1,7 @@
 from typing import Any
 
 import pytest
-from src.data.type import TaskStatus
+from src.data.type import DownloadStatus
 from src.lib.torrent.mapping import (
     bps_from_mbps,
     eta_from,
@@ -150,26 +150,26 @@ def _progress(state: str, *, finished: bool = False) -> TorrentProgress:
 @pytest.mark.parametrize(
     ("state", "finished", "expected"),
     [
-        ("initializing", False, TaskStatus.DOWNLOADING),
-        ("live", False, TaskStatus.DOWNLOADING),
-        ("live", True, TaskStatus.SEEDING),
-        ("paused", False, TaskStatus.PAUSED),
-        ("error", False, TaskStatus.FAILED),
-        ("error", True, TaskStatus.FAILED),
+        ("initializing", False, DownloadStatus.DOWNLOADING),
+        ("live", False, DownloadStatus.DOWNLOADING),
+        ("live", True, DownloadStatus.SEEDING),
+        ("paused", False, DownloadStatus.PAUSED),
+        ("error", False, DownloadStatus.FAILED),
+        ("error", True, DownloadStatus.FAILED),
     ],
 )
-def test_status_for(state: str, finished: bool, expected: TaskStatus) -> None:
-    assert status_for(_progress(state, finished=finished), TaskStatus.DOWNLOADING) == expected
+def test_status_for(state: str, finished: bool, expected: DownloadStatus) -> None:
+    assert status_for(_progress(state, finished=finished), DownloadStatus.DOWNLOADING) == expected
 
 
 def test_a_stopped_seed_stays_complete() -> None:
     """Stopping seeding pauses the engine. That pause must not un-complete the row."""
-    assert status_for(_progress("paused", finished=True), TaskStatus.COMPLETE) == TaskStatus.COMPLETE
+    assert status_for(_progress("paused", finished=True), DownloadStatus.COMPLETE) == DownloadStatus.COMPLETE
 
 
 def test_a_canceled_row_is_never_revived() -> None:
-    assert status_for(_progress("live"), TaskStatus.CANCELED) == TaskStatus.CANCELED
+    assert status_for(_progress("live"), DownloadStatus.CANCELED) == DownloadStatus.CANCELED
 
 
 def test_a_failed_torrent_recovers_when_the_engine_does() -> None:
-    assert status_for(_progress("live"), TaskStatus.FAILED) == TaskStatus.DOWNLOADING
+    assert status_for(_progress("live"), DownloadStatus.FAILED) == DownloadStatus.DOWNLOADING

@@ -7,7 +7,7 @@
  * label-and-value pairs rather than a thicket of conditionals.
  */
 
-import type { UiTask } from "./task";
+import type { UiTask } from "./download";
 import { countsLine } from "./group";
 import { siteName } from "./site";
 

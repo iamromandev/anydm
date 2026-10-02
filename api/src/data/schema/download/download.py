@@ -2,66 +2,129 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import Field
 
-from src.config import get_settings
 from src.core.base import BaseSchema
-from src.data.schema.download.torrent import FileSchema
-from src.data.type import BulkAction, Kind, Platform, Preset, TaskStatus
+from src.data.type import BulkAction, ChecksumAlgo, CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 
 
-class PositionSchema(BaseSchema):
-    """Where one file of a download was left in the player (#96)."""
+class PlaybackSchema(BaseSchema):
+    """Where one file was left in the player (#96)."""
 
-    #: A torrent's file; 0 for a download's one file.
-    file_index: int = 0
     position_seconds: float = 0.0
     duration_seconds: float = 0.0
     #: Played to within its last seconds, at least once.
     watched: bool = False
 
 
-class PositionRequest(BaseSchema):
-    file_index: Annotated[
-        int | None,
-        Field(default=None, ge=0, description="A torrent's file; leave out for a download's one file"),
-    ]
+class PlaybackRequest(BaseSchema):
     position_seconds: Annotated[float, Field(ge=0)]
     duration_seconds: Annotated[float, Field(ge=0)]
 
 
-class MediaDownloadRequest(BaseSchema):
-    url: Annotated[str, Field(min_length=1, description="A page on any supported site: YouTube, Vimeo, ...")]
-    preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
+class CategoryRef(BaseSchema):
+    id: uuid.UUID
+    name: str
 
 
-class PlaylistEntryRequest(BaseSchema):
-    """One chosen video, as ``GET /extract/entries`` listed it."""
-
-    index: Annotated[int, Field(ge=1)]
-    id: Annotated[str, Field(min_length=1)]
-    url: Annotated[str, Field(pattern=r"^https?://")]
-    title: str | None = None
-    duration: int | None = None
+class QueueRef(BaseSchema):
+    id: uuid.UUID
+    name: str
 
 
-class PlaylistDownloadRequest(BaseSchema):
-    """A playlist's chosen videos, to add as one group (v0.5)."""
+class LimitsSchema(BaseSchema):
+    #: Null: the global limit alone.
+    download_bps: int | None = None
 
-    url: Annotated[str, Field(min_length=1, description="The playlist, or the channel's tab")]
+
+class ChecksumSchema(BaseSchema):
+    algo: ChecksumAlgo
+    expected: str
+    #: Null until checked.
+    ok: bool | None = None
+
+
+class LiveSchema(BaseSchema):
+    """``LiveStats``: never stored, zero after a restart until the first tick."""
+
+    speed_bps: int = 0
+    eta_seconds: int | None = None
+    upload_speed_bps: int = 0
+    peers: int = 0
+
+
+class SiteSchema(BaseSchema):
+    #: yt-dlp's name for the site: "Youtube", "Vimeo", ...
     extractor: str
-    playlist_id: Annotated[str, Field(min_length=1)]
+    video_id: str
+    preset: Preset
+    video_format: str | None = None
+    audio_format: str | None = None
+
+
+class TorrentInfoSchema(BaseSchema):
+    info_hash: str
+    uploaded_bytes: int = 0
+
+
+class DownloadFileSchema(BaseSchema):
+    index: int
+    path: str
+    size_bytes: int = 0
+    downloaded_bytes: int = 0
+    selected: bool = True
+    mime_type: str | None = None
+    playback: PlaybackSchema | None = None
+
+
+class MirrorSchema(BaseSchema):
+    url: str
+    position: int
+    last_error: str | None = None
+
+
+class DownloadSchema(BaseSchema):
+    type: Literal["download"] = "download"
+    id: uuid.UUID
+    source_url: str
+    platform: Platform
+    media_kind: MediaKind
     title: str = ""
-    #: A channel's own uploads: its files aren't numbered.
-    channel_tab: bool = False
-    preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset, a ceiling for each video")]
-    entries: Annotated[list[PlaylistEntryRequest], Field(min_length=1)]
+    status: DownloadStatus
+    progress: int = 0
+    category: CategoryRef | None = None
+    #: The collection it was added in; ``None`` for a standalone download.
+    collection_id: uuid.UUID | None = None
+    position: int | None = None
+    queue: QueueRef | None = None
+    queue_position: int = 0
+    start_at: datetime | None = None
+    folder: str | None = None
+    limits: LimitsSchema = Field(default_factory=LimitsSchema)
+    checksum: ChecksumSchema | None = None
+    total_bytes: int | None = None
+    downloaded_bytes: int = 0
+    live: LiveSchema = Field(default_factory=LiveSchema)
+    site: SiteSchema | None = None
+    torrent: TorrentInfoSchema | None = None
+    files: list[DownloadFileSchema] = Field(default_factory=list)
+    mirrors: list[MirrorSchema] = Field(default_factory=list)
+    error: str | None = None
+    error_code: str | None = None
+    attempts: int = 0
+    #: The retry budget, from settings: identical for every download, so no column.
+    max_attempts: int = 0
+    #: When the queue will consider this download again, while a retry is pending.
+    next_attempt_at: datetime | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
-class EntryCountsSchema(BaseSchema):
-    """How a group's videos stand, by kind of status."""
+class CollectionCountsSchema(BaseSchema):
+    """How a collection's videos stand, by kind of status."""
 
     total: int = 0
     complete: int = 0
@@ -71,12 +134,63 @@ class EntryCountsSchema(BaseSchema):
     downloading: int = 0
     paused: int = 0
     failed: int = 0
-    #: Videos watched to the end; counted when the list is read, left out of frames.
+    #: Watched to the end; counted when the list is read, absent from frames.
     watched: int | None = None
+
+
+class CollectionSchema(BaseSchema):
+    type: Literal["collection"] = "collection"
+    id: uuid.UUID
+    kind: CollectionKind
+    source_url: str
+    extractor: str
+    external_id: str
+    title: str = ""
+    folder: str
+    preset: Preset
+    status: DownloadStatus
+    progress: int = 0
+    counts: CollectionCountsSchema = Field(default_factory=CollectionCountsSchema)
+    total_bytes: int | None = None
+    downloaded_bytes: int = 0
+    #: The sum of its members' live speeds.
+    speed_bps: int = 0
+    created_at: datetime | None = None
+
+
+ListItem = DownloadSchema | CollectionSchema
+
+
+class MediaDownloadRequest(BaseSchema):
+    url: Annotated[str, Field(min_length=1, description="A page on any supported site: YouTube, Vimeo, ...")]
+    preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
 
 
 class UrlDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
+
+
+class CollectionEntryRequest(BaseSchema):
+    """One chosen video, as ``GET /extract/entries`` listed it."""
+
+    index: Annotated[int, Field(ge=1)]
+    id: Annotated[str, Field(min_length=1)]
+    url: Annotated[str, Field(pattern=r"^https?://")]
+    title: str | None = None
+    duration: int | None = None
+
+
+class CollectionRequest(BaseSchema):
+    """A playlist's or a channel tab's chosen videos, added as one collection."""
+
+    url: Annotated[str, Field(min_length=1, description="The playlist, or the channel's tab")]
+    extractor: str
+    external_id: Annotated[str, Field(min_length=1)]
+    title: str = ""
+    #: A channel's own uploads: its files aren't numbered.
+    channel_tab: bool = False
+    preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset, a ceiling for each video")]
+    entries: Annotated[list[CollectionEntryRequest], Field(min_length=1)]
 
 
 class BulkActionRequest(BaseSchema):
@@ -98,78 +212,10 @@ class BulkResultSchema(BaseSchema):
     affected: int = 0
 
 
-class TaskSummarySchema(BaseSchema):
-    """How many tasks each sidebar filter would show.
-
-    Counted in the database rather than from the rows the browser happens to
-    hold, so the numbers stay right no matter how little of the list has been
-    loaded.
-    """
+class DownloadSummarySchema(BaseSchema):
+    """How many list items each sidebar filter would show, counted in the database."""
 
     all: int = 0
     downloading: int = 0
     seeding: int = 0
     completed: int = 0
-
-
-class TaskSchema(BaseSchema):
-    id: uuid.UUID
-    source_url: str
-    platform: Platform
-    #: yt-dlp's name for the site of a ``site`` task: "Youtube", "Vimeo", ...
-    extractor: str | None = None
-    video_id: str | None = None
-    #: The group this video was added in (v0.5).
-    parent_id: uuid.UUID | None = None
-    position: int | None = None
-    preset: Preset
-    kind: Kind
-    title: str = ""
-    filename: str = ""
-    mime_type: str | None = None
-    status: TaskStatus
-    progress: int = 0
-    downloaded_bytes: int = 0
-    total_bytes: int | None = None
-    speed_bps: int = 0
-    eta_seconds: int | None = None
-    # torrent. Absent, zero and None for every other platform.
-    info_hash: str | None = None
-    uploaded_bytes: int = 0
-    upload_speed_bps: int = 0
-    peers_connected: int = 0
-    #: ``None`` rather than ``[]`` on purpose: a missing key means "this is not
-    #: a torrent", which is the same rule ``segments`` already follows.
-    files: list[FileSchema] | None = None
-    #: Where each file was left in the player (#96). Filled on the list and a
-    #: single task, not on the event stream's frames, which the UI merges.
-    positions: list[PositionSchema] | None = None
-    #: A group's videos by kind of status; ``None`` for anything else.
-    entry_counts: EntryCountsSchema | None = None
-    #: A group's folder under ``DOWNLOAD_DIR``, read from its ``file_path``.
-    #: Only a group's: any other task's path stays on the server.
-    folder: Annotated[str | None, Field(validation_alias=AliasChoices("folder", "file_path"))] = None
-    file_size: int | None = None
-    error: str | None = None
-    error_code: str | None = None
-    attempts: int = 0
-    #: When the queue will consider this task again. Set only while a retry is
-    #: pending, which is the one case where ``pending`` does not mean "waiting
-    #: for a free worker" and the browser has no other way to tell.
-    next_attempt_at: datetime | None = None
-    #: The retry budget this task is spending, so the client can say "attempt 2
-    #: of 3" rather than a number with nothing to measure it against. It comes
-    #: from settings rather than the row: it is configuration, identical for
-    #: every task, and a column would only let the two disagree.
-    max_attempts: int = Field(
-        default_factory=lambda: get_settings().download_max_attempts
-    )
-    created_at: datetime | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-
-    @model_validator(mode="after")
-    def _only_a_group_names_a_folder(self) -> TaskSchema:
-        if self.kind != Kind.PLAYLIST:
-            self.folder = None
-        return self

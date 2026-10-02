@@ -275,8 +275,8 @@ export function buildTaskStreamBody(
     audio: StreamAudio = {},
 ): Record<string, string | number> {
     return fileIndex === null
-        ? { task_id: taskId, ...audioBody(audio) }
-        : { task_id: taskId, file_index: fileIndex, ...audioBody(audio) };
+        ? { download_id: taskId, ...audioBody(audio) }
+        : { download_id: taskId, file_index: fileIndex, ...audioBody(audio) };
 }
 
 /** A session that reads a finished download's file from disk. */

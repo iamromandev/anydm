@@ -6,16 +6,16 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 from src.data.db import DB_CONFIG
-from src.data.db.model import SearchSource
-from src.data.repo import SearchSourceDatabaseRepo
-from src.data.repo.search.interface.source import SearchSourceRow
+from src.data.db.model import Source
+from src.data.repo import SourceDatabaseRepo
+from src.data.repo.search.interface.source import SourceRow
 from tortoise import Tortoise
 
 pytestmark = pytest.mark.integration
 
 
-def _saved_row(source: SearchSource) -> SearchSourceRow:
-    return SearchSourceRow(
+def _saved_row(source: Source) -> SourceRow:
+    return SourceRow(
         name=source.name,
         kind=source.kind,
         enabled=source.enabled,
@@ -26,17 +26,17 @@ def _saved_row(source: SearchSource) -> SearchSourceRow:
 
 
 @pytest_asyncio.fixture
-async def sources() -> AsyncIterator[SearchSourceDatabaseRepo]:
+async def sources() -> AsyncIterator[SourceDatabaseRepo]:
     """This file's own fixture: it snapshots the table, empties it, and puts every row back."""
     await Tortoise.init(config=DB_CONFIG)
-    saved = [_saved_row(s) for s in await SearchSource.all()]
-    await SearchSource.all().delete()
-    yield SearchSourceDatabaseRepo()
-    await SearchSource.all().delete()
+    saved = [_saved_row(s) for s in await Source.all()]
+    await Source.all().delete()
+    yield SourceDatabaseRepo()
+    await Source.all().delete()
     if saved:
-        await SearchSource.bulk_create(
+        await Source.bulk_create(
             [
-                SearchSource(name=r.name, kind=r.kind, enabled=r.enabled, base_url=r.base_url, api_key=r.api_key)
+                Source(name=r.name, kind=r.kind, enabled=r.enabled, base_url=r.base_url, api_key=r.api_key)
                 for r in saved
             ]
         )
@@ -44,7 +44,7 @@ async def sources() -> AsyncIterator[SearchSourceDatabaseRepo]:
 
 
 @pytest.mark.asyncio
-async def test_create_then_get_round_trips_every_field(sources: SearchSourceDatabaseRepo) -> None:
+async def test_create_then_get_round_trips_every_field(sources: SourceDatabaseRepo) -> None:
     created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
     source_id = created.id
 
@@ -53,21 +53,21 @@ async def test_create_then_get_round_trips_every_field(sources: SearchSourceData
 
 
 @pytest.mark.asyncio
-async def test_update_changes_what_is_given_and_reports_a_missing_row(sources: SearchSourceDatabaseRepo) -> None:
+async def test_update_changes_what_is_given_and_reports_a_missing_row(sources: SourceDatabaseRepo) -> None:
     created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
     source_id = created.id
     assert source_id is not None
 
-    assert await sources.update(source_id, enabled=False, base_url=None) == SearchSourceRow(
+    assert await sources.update(source_id, enabled=False, base_url=None) == SourceRow(
         "prowlarr", "torznab", False, "http://p.test/1/api", "key-1", source_id
     )
-    assert await sources.update(source_id, enabled=None, base_url="http://q.test/1/api") == SearchSourceRow(
+    assert await sources.update(source_id, enabled=None, base_url="http://q.test/1/api") == SourceRow(
         "prowlarr", "torznab", False, "http://q.test/1/api", "key-1", source_id
     )
 
 
 @pytest.mark.asyncio
-async def test_clearing_the_key_needs_saying_so(sources: SearchSourceDatabaseRepo) -> None:
+async def test_clearing_the_key_needs_saying_so(sources: SourceDatabaseRepo) -> None:
     created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=True)
     source_id = created.id
     assert source_id is not None
@@ -80,7 +80,7 @@ async def test_clearing_the_key_needs_saying_so(sources: SearchSourceDatabaseRep
 
 
 @pytest.mark.asyncio
-async def test_delete_removes_and_a_second_delete_is_false(sources: SearchSourceDatabaseRepo) -> None:
+async def test_delete_removes_and_a_second_delete_is_false(sources: SourceDatabaseRepo) -> None:
     created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key=None, enabled=True)
     source_id = created.id
     assert source_id is not None
@@ -91,21 +91,21 @@ async def test_delete_removes_and_a_second_delete_is_false(sources: SearchSource
 
 
 @pytest.mark.asyncio
-async def test_get_on_a_random_id_is_none(sources: SearchSourceDatabaseRepo) -> None:
+async def test_get_on_a_random_id_is_none(sources: SourceDatabaseRepo) -> None:
     assert await sources.get(uuid.uuid4()) is None
     assert await sources.update(uuid.uuid4(), enabled=False, base_url=None) is None
 
 
 @pytest.mark.asyncio
-async def test_insert_missing_never_overwrites_an_edited_row(sources: SearchSourceDatabaseRepo) -> None:
-    await sources.insert_missing([SearchSourceRow("nyaa", "nyaa", True, "https://n.test", None)])
+async def test_insert_missing_never_overwrites_an_edited_row(sources: SourceDatabaseRepo) -> None:
+    await sources.insert_missing([SourceRow("nyaa", "nyaa", True, "https://n.test", None)])
     listed = await sources.list_all()
     assert len(listed) == 1
     source_id = listed[0].id
     assert source_id is not None
     await sources.update(source_id, enabled=False, base_url="https://mirror.test")
 
-    assert await sources.insert_missing([SearchSourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
-    assert await sources.get(source_id) == SearchSourceRow(
+    assert await sources.insert_missing([SourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
+    assert await sources.get(source_id) == SourceRow(
         "nyaa", "nyaa", False, "https://mirror.test", None, source_id
     )

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { toEntry } from "./api/playlist";
-import type { UiTask } from "./api/task";
+import type { UiTask } from "./api/download";
 import {
     adjacentItem,
     queueFromEntries,

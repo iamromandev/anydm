@@ -7,13 +7,13 @@ from src.service.download.control import DownloadControl
 
 def test_stop_registry_roundtrip() -> None:
     control = DownloadControl()
-    task_id = uuid.uuid4()
+    download_id = uuid.uuid4()
 
-    assert control.is_stopping(task_id) is False
-    control.request_stop(task_id)
-    assert control.is_stopping(task_id) is True
-    control.clear_stop(task_id)
-    assert control.is_stopping(task_id) is False
+    assert control.is_stopping(download_id) is False
+    control.request_stop(download_id)
+    assert control.is_stopping(download_id) is True
+    control.clear_stop(download_id)
+    assert control.is_stopping(download_id) is False
 
 
 def test_stops_are_independent() -> None:

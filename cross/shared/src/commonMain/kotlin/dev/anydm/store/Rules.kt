@@ -60,12 +60,16 @@ fun applyProgress(
         if (it.id != progress.id) {
             it
         } else {
+            val moved = progress.files.orEmpty().associate { file -> file.index to file.downloadedBytes }
             it.copy(
                 progress = progress.progress ?: it.progress,
                 downloadedBytes = progress.downloadedBytes ?: it.downloadedBytes,
                 totalBytes = progress.totalBytes ?: it.totalBytes,
-                downloadSpeed = progress.speedBps ?: it.downloadSpeed,
-                etaSeconds = progress.etaSeconds ?: it.etaSeconds,
+                downloadSpeed = progress.live?.speedBps ?: it.downloadSpeed,
+                etaSeconds = progress.live?.etaSeconds ?: it.etaSeconds,
+                uploadSpeed = progress.live?.uploadSpeedBps ?: it.uploadSpeed,
+                peersConnected = progress.live?.peers ?: it.peersConnected,
+                files = it.files?.map { file -> moved[file.index]?.let { bytes -> file.copy(downloadedBytes = bytes) } ?: file },
             )
         }
     }

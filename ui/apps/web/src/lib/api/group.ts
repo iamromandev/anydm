@@ -10,7 +10,12 @@ import { formatBytes } from "@/component/core/utils";
 import { PRESET_OPTIONS } from "@/lib/prefs";
 import type { ToastTone } from "@/lib/toast";
 import { siteName } from "./site";
-import { statusView, type EntryCounts, type UiTask } from "./task";
+import {
+    applyProgressFrame,
+    statusView,
+    type EntryCounts,
+    type UiTask,
+} from "./download";
 
 const count = (n: number) => n.toLocaleString("en-US");
 
@@ -153,16 +158,7 @@ export function applyVideoProgress(
     const view = open[groupId];
     if (!view) return open;
     const rows = view.rows.map((row) =>
-        row.id === data.id
-            ? {
-                  ...row,
-                  progress: data.progress ?? row.progress,
-                  eta: data.eta_seconds ?? row.eta,
-                  downloadedBytes: data.downloaded_bytes ?? row.downloadedBytes,
-                  totalBytes: data.total_bytes ?? row.totalBytes,
-                  downloadSpeed: data.speed_bps ?? row.downloadSpeed,
-              }
-            : row,
+        row.id === data.id ? applyProgressFrame(row, data) : row,
     );
     return { ...open, [groupId]: { ...view, rows } };
 }

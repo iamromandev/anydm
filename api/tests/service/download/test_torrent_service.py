@@ -1,3 +1,4 @@
+import base64
 import uuid
 from collections import namedtuple
 from pathlib import Path
@@ -6,14 +7,24 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.core.type import Code
-from src.data.type import Kind, Platform, Preset, TaskStatus
-from src.lib.event import EventHub
+from src.data.type import DownloadStatus, MediaKind, Platform
 from src.lib.media.sidecar import TorrentFile
+from src.lib.torrent import error as torrent_error
 from src.lib.torrent.protocol import FileInfo, TorrentDetails
 from src.service.download.disk import DiskGuard
+from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_service import TorrentService
 
+from tests.service.download.memory import (
+    MemoryFiles,
+    RecordingHub,
+    download_row,
+    memory_views,
+    torrent_detail,
+)
+
 MAGNET = "magnet:?xt=urn:btih:abc123"
+ROOT = Path("/workdir/download")
 
 DETAILS = TorrentDetails(
     info_hash="abc123",
@@ -37,9 +48,6 @@ class FakeTorrentClient:
         self.deleted: list[str] = []
         self.forgotten: list[str] = []
 
-    async def ping(self) -> bool:
-        return self.fail is None
-
     async def resolve(self, source: Any) -> TorrentDetails:
         if self.fail:
             raise self.fail
@@ -49,15 +57,8 @@ class FakeTorrentClient:
     async def add(self, source: Any, *, only_files: Any, output_folder: str) -> TorrentDetails:
         if self.fail:
             raise self.fail
-        self.added.append(
-            {"source": source, "only_files": list(only_files), "output_folder": output_folder}
-        )
+        self.added.append({"source": source, "only_files": list(only_files), "output_folder": output_folder})
         return self.details
-
-    async def list_progress(self) -> list[Any]:
-        return []
-
-    async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None: ...
 
     async def pause(self, info_hash: str) -> None:
         if self.fail:
@@ -80,74 +81,48 @@ class FakeTorrentClient:
         self.forgotten.append(info_hash)
 
 
-class FakeTaskRepo:
+class FakeDownloadRepo:
     def __init__(self) -> None:
-        self.created: list[dict[str, Any]] = []
         self.rows: dict[uuid.UUID, Any] = {}
+        self.created: list[dict[str, Any]] = []
+        self.files: MemoryFiles | None = None
 
-    async def create(self, **kwargs: Any) -> Any:
-        kwargs.setdefault("id", uuid.uuid4())
-        kwargs.setdefault("created_at", None)
-        kwargs.setdefault("updated_at", None)
-        kwargs.setdefault("downloaded_bytes", 0)
-        kwargs.setdefault("speed_bps", 0)
-        kwargs.setdefault("eta_seconds", None)
-        kwargs.setdefault("uploaded_bytes", 0)
-        kwargs.setdefault("peers_connected", 0)
-        kwargs.setdefault("file_size", None)
-        kwargs.setdefault("error", None)
-        kwargs.setdefault("error_code", None)
-        kwargs.setdefault("attempts", 0)
-        kwargs.setdefault("started_at", None)
-        kwargs.setdefault("completed_at", None)
-        self.created.append(kwargs)
-        return type("Row", (), kwargs)()
+    async def create_torrent(self, download: dict[str, Any], info_hash: str, files: list[Any]) -> Any:
+        self.created.append({"download": download, "info_hash": info_hash, "files": list(files)})
+        row = download_row(**download, torrent_detail=torrent_detail(info_hash))
+        self.rows[row.id] = row
+        if self.files is not None:
+            await self.files.replace(row.id, files)
+        return row
 
-    async def get_active_by_id(self, task_id: uuid.UUID) -> Any:
-        return self.rows.get(task_id)
-
-
-class FakeFileRepo:
-    def __init__(self) -> None:
-        self.replaced: dict[uuid.UUID, list[tuple[int, str, int, bool]]] = {}
-        self.rows: list[Any] = []
-        #: Rows per task for ``list_for_tasks``, and each batch it was asked for.
-        self.by_task: dict[uuid.UUID, list[Any]] = {}
-        self.batches: list[list[uuid.UUID]] = []
-
-    async def replace(self, task_id: uuid.UUID, files: Any) -> None:
-        self.replaced[task_id] = list(files)
-
-    async def list_for(self, task_id: uuid.UUID) -> list[Any]:
-        return self.rows
-
-    async def list_for_tasks(self, task_ids: Any) -> dict[uuid.UUID, list[Any]]:
-        self.batches.append(list(task_ids))
-        return {task_id: self.by_task.get(task_id, []) for task_id in task_ids}
-
-    async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
-        return [index for index, _, _, selected in self.replaced.get(task_id, []) if selected]
-
-    async def flush_progress(self, task_id: uuid.UUID, file_progress: Any) -> None: ...
-
-    async def selected_size(self, task_id: uuid.UUID) -> int:
-        return sum(size for _, _, size, selected in self.replaced.get(task_id, []) if selected)
+    async def get_active_by_id(self, download_id: uuid.UUID) -> Any:
+        return self.rows.get(download_id)
 
 
 def _service(
     client: FakeTorrentClient | None = None,
     *,
-    repo: FakeTaskRepo | None = None,
-    file_repo: FakeFileRepo | None = None,
+    repo: FakeDownloadRepo | None = None,
+    files: MemoryFiles | None = None,
+    hub: RecordingHub | None = None,
+    live: LiveStats | None = None,
+    root: Path = ROOT,
     enabled: bool = True,
     disk: DiskGuard | None = None,
 ) -> TorrentService:
+    repo = repo or FakeDownloadRepo()
+    files = files or MemoryFiles()
+    repo.files = files
+    live = live or LiveStats()
     return TorrentService(
-        repo=repo or FakeTaskRepo(),  # ty: ignore[invalid-argument-type]
-        file_repo=file_repo or FakeFileRepo(),  # ty: ignore[invalid-argument-type]
-        client=client or FakeTorrentClient(),
-        hub=EventHub(),
-        torrent_root=Path("/workdir/download/torrent"),
+        repo=repo,  # ty: ignore[invalid-argument-type]
+        file_repo=files,  # ty: ignore[invalid-argument-type]
+        client=client or FakeTorrentClient(),  # ty: ignore[invalid-argument-type]
+        hub=hub or RecordingHub(),  # ty: ignore[invalid-argument-type]
+        views=memory_views(files=files, live=live),
+        live=live,
+        downloads_root=root,
+        torrent_root=root / "torrent",
         enabled=enabled,
         disk=disk,
     )
@@ -161,10 +136,29 @@ def _disk(free: int, min_free: int = 50) -> DiskGuard:
     return DiskGuard("/data", min_free, usage=lambda _path: _Usage(10_000, 0, free))
 
 
+def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "source_url": MAGNET,
+        "platform": Platform.TORRENT,
+        "title": "Some Release",
+        "status": DownloadStatus.DOWNLOADING,
+        "downloaded_bytes": 400,
+        "total_bytes": 1000,
+        "folder": "Some Release",
+        "torrent_detail": torrent_detail("abc123"),
+    }
+    fields.update(overrides)
+    row = download_row(**fields)
+    repo.rows[row.id] = row
+    return row
+
+
+# --- resolve and enqueue ---------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_enqueue_refuses_a_selection_that_would_not_fit_before_the_engine_starts() -> None:
-    client = FakeTorrentClient()
-    repo = FakeTaskRepo()
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
 
     # The video alone is 900 bytes; with the 50-byte minimum it needs 950.
     with pytest.raises(Error) as caught:
@@ -186,22 +180,15 @@ async def test_enqueue_counts_only_the_selected_files() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_returns_the_file_list_without_creating_a_task() -> None:
-    repo = FakeTaskRepo()
+async def test_resolve_returns_the_file_list_without_creating_a_download() -> None:
+    repo = FakeDownloadRepo()
     response = await _service(repo=repo).resolve(MAGNET)
 
-    assert response.info_hash == "abc123"
-    assert response.title == "Some Release"
-    assert response.total_bytes == 1000
+    assert (response.info_hash, response.title, response.total_bytes) == ("abc123", "Some Release", 1000)
     assert [f.index for f in response.files] == [0, 1]
     assert response.files[0].path == "video.mkv"
-    assert repo.created == []
-
-
-@pytest.mark.asyncio
-async def test_resolve_preselects_every_file() -> None:
-    response = await _service().resolve(MAGNET)
     assert all(f.selected for f in response.files)
+    assert repo.created == []
 
 
 @pytest.mark.asyncio
@@ -223,8 +210,6 @@ async def test_resolve_is_unavailable_when_torrents_are_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_surfaces_an_engine_failure_unchanged() -> None:
-    from src.lib.torrent import error as torrent_error
-
     client = FakeTorrentClient(fail=torrent_error.metadata_timeout(30))
     with pytest.raises(Error) as caught:
         await _service(client).resolve(MAGNET)
@@ -232,48 +217,48 @@ async def test_resolve_surfaces_an_engine_failure_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_adds_to_the_engine_and_creates_a_task() -> None:
-    client = FakeTorrentClient()
-    repo = FakeTaskRepo()
-    files = FakeFileRepo()
+async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the_download_dir(
+    tmp_path: Path,
+) -> None:
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
 
-    task = await _service(client, repo=repo, file_repo=files).enqueue(MAGNET, [0])
+    schema = await _service(client, repo=repo, root=tmp_path).enqueue(MAGNET, [0])
 
     assert client.added[0]["only_files"] == [0]
-    # Its own folder, and the row records the one rqbit is told (#107).
-    assert client.added[0]["output_folder"] == "/workdir/download/torrent/Some Release"
-
+    # Its own folder, and the row records the one rqbit is told (#107), relative to DOWNLOAD_DIR.
+    assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release")
     created = repo.created[0]
-    assert created["file_path"] == "/workdir/download/torrent/Some Release"
-    assert created["platform"].value == "torrent"
-    assert created["kind"].value == "torrent"
-    assert created["status"].value == "pending"
-    assert created["info_hash"] == "abc123"
-    assert created["title"] == "Some Release"
-    assert created["source_url"] == MAGNET
+    download = created["download"]
+    assert download["folder"] == "torrent/Some Release"
+    assert (download["platform"], download["media_kind"], download["status"]) == (
+        Platform.TORRENT,
+        MediaKind.FILE,
+        DownloadStatus.PENDING,
+    )
+    assert (download["title"], download["source_url"]) == ("Some Release", MAGNET)
     # Only the selected file counts towards the size the UI shows.
-    assert created["total_bytes"] == 900
-    assert task.info_hash == "abc123"
+    assert download["total_bytes"] == 900
+    assert created["info_hash"] == "abc123"
+    assert schema.type == "download"
+    assert schema.torrent is not None and schema.torrent.info_hash == "abc123"
 
 
 @pytest.mark.asyncio
 async def test_enqueue_records_which_files_were_chosen() -> None:
-    files = FakeFileRepo()
-    task = await _service(file_repo=files).enqueue(MAGNET, [1])
+    repo = FakeDownloadRepo()
+    await _service(repo=repo).enqueue(MAGNET, [1])
 
-    rows = files.replaced[task.id]
-    assert rows == [(0, "video.mkv", 900, False), (1, "readme.txt", 100, True)]
+    assert repo.created[0]["files"] == [(0, "video.mkv", 900, False), (1, "readme.txt", 100, True)]
 
 
 @pytest.mark.asyncio
 async def test_an_empty_selection_means_every_file() -> None:
-    client = FakeTorrentClient()
-    files = FakeFileRepo()
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
 
-    task = await _service(client, file_repo=files).enqueue(MAGNET, [])
+    await _service(client, repo=repo).enqueue(MAGNET, [])
 
     assert client.added[0]["only_files"] == []
-    assert [selected for _, _, _, selected in files.replaced[task.id]] == [True, True]
+    assert [selected for _, _, _, selected in repo.created[0]["files"]] == [True, True]
 
 
 @pytest.mark.asyncio
@@ -288,40 +273,24 @@ async def test_a_selection_naming_no_real_file_is_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None:
-    """A base64 .torrent must not be written into source_url.
-
-    Reconciliation re-adds a lost torrent from this column, and an info-hash
-    magnet is both small and re-addable. The original blob is neither.
-    """
-    import base64
-
-    repo = FakeTaskRepo()
+    """A base64 .torrent must not be written into source_url: reconciliation re-adds from it."""
+    repo = FakeDownloadRepo()
     encoded = base64.b64encode(b"d8:announce1:xe").decode()
 
     await _service(repo=repo).enqueue(encoded, [0])
 
-    assert repo.created[0]["source_url"] == "magnet:?xt=urn:btih:abc123"
+    assert repo.created[0]["download"]["source_url"] == "magnet:?xt=urn:btih:abc123"
 
 
 @pytest.mark.asyncio
-async def test_enqueue_publishes_the_new_task() -> None:
-    hub = EventHub()
-    subscription = hub.subscribe()
-    service = TorrentService(
-        repo=FakeTaskRepo(),  # ty: ignore[invalid-argument-type]
-        file_repo=FakeFileRepo(),  # ty: ignore[invalid-argument-type]
-        client=FakeTorrentClient(),
-        hub=hub,
-        torrent_root=Path("/workdir/download/torrent"),
-        enabled=True,
-    )
+async def test_enqueue_publishes_the_new_download_with_its_files() -> None:
+    hub = RecordingHub()
 
-    await service.enqueue(MAGNET, [0])
+    await _service(hub=hub).enqueue(MAGNET, [0])
 
-    event, data = await anext(aiter(subscription))
-    assert event == "task"
-    assert data["info_hash"] == "abc123"
-    subscription.close()
+    (data,) = hub.named("download")
+    assert data["torrent"]["info_hash"] == "abc123"
+    assert [f["path"] for f in data["files"]] == ["video.mkv", "readme.txt"]
 
 
 @pytest.mark.asyncio
@@ -331,407 +300,236 @@ async def test_enqueue_is_unavailable_when_torrents_are_disabled() -> None:
     assert caught.value.code == Code.SERVICE_UNAVAILABLE
 
 
-def _torrent_row(task_id: uuid.UUID, **overrides: Any) -> Any:
-    fields: dict[str, Any] = {
-        "id": task_id,
-        "source_url": MAGNET,
-        "platform": Platform.TORRENT,
-        "video_id": None,
-        "preset": Preset.BEST,
-        "kind": Kind.TORRENT,
-        "title": "Some Release",
-        "filename": "Some Release",
-        "mime_type": None,
-        "info_hash": "abc123",
-        "status": TaskStatus.DOWNLOADING,
-        "progress": 40,
-        "downloaded_bytes": 400,
-        "total_bytes": 1000,
-        "speed_bps": 100,
-        "eta_seconds": 10,
-        "uploaded_bytes": 0,
-        "peers_connected": 3,
-        "file_path": "/workdir/download/torrent/Some Release",
-        "file_size": None,
-        "error": None,
-        "error_code": None,
-        "attempts": 0,
-        "next_attempt_at": None,
-        "deleted_at": None,
-        "created_at": None,
-        "started_at": None,
-        "completed_at": None,
-    }
-    fields.update(overrides)
-    row = type("Row", (), fields)()
-
-    async def _save(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    row.save = _save
-    return row
+# --- control verbs ---------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_pause_pauses_the_engine_and_the_row() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+async def test_pause_pauses_the_engine_and_the_row_and_stills_its_numbers() -> None:
+    repo, live, hub = FakeDownloadRepo(), LiveStats(), RecordingHub()
+    row = _torrent_row(repo, status=DownloadStatus.DOWNLOADING)
+    live.set(row.id, Live(speed_bps=100, peers=3))
     client = FakeTorrentClient()
 
-    schema = await _service(client, repo=repo).pause(task_id)
+    schema = await _service(client, repo=repo, live=live, hub=hub).pause(row.id)
 
     assert client.paused == ["abc123"]
-    assert schema.status == TaskStatus.PAUSED
-    assert schema.speed_bps == 0
+    assert schema.status == DownloadStatus.PAUSED
+    assert live.get(row.id) == Live()
+    assert hub.named("download")[0]["status"] == "paused"
 
 
 @pytest.mark.asyncio
 async def test_resume_starts_the_engine_and_clears_the_error() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.FAILED, error="boom")
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.FAILED, error="boom")
     client = FakeTorrentClient()
 
-    schema = await _service(client, repo=repo).resume(task_id)
+    schema = await _service(client, repo=repo).resume(row.id)
 
     assert client.started == ["abc123"]
-    assert schema.status == TaskStatus.DOWNLOADING
+    assert schema.status == DownloadStatus.DOWNLOADING
     assert schema.error is None
 
 
 @pytest.mark.asyncio
 async def test_stop_seeding_pauses_the_engine_and_completes_the_row() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, progress=100)
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
     client = FakeTorrentClient()
 
-    schema = await _service(client, repo=repo).stop_seeding(task_id)
+    schema = await _service(client, repo=repo).stop_seeding(row.id)
 
     assert client.paused == ["abc123"]
-    assert schema.status == TaskStatus.COMPLETE
+    assert schema.status == DownloadStatus.COMPLETE
 
 
 @pytest.mark.asyncio
-async def test_stop_seeding_refuses_a_task_that_is_not_seeding() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
+async def test_stop_seeding_refuses_a_download_that_is_not_seeding() -> None:
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.DOWNLOADING)
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo).stop_seeding(task_id)
+        await _service(repo=repo).stop_seeding(row.id)
     assert caught.value.code == Code.CONFLICT
 
 
 @pytest.mark.asyncio
 async def test_cancel_deletes_from_the_engine_and_soft_deletes_the_row() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    row = _torrent_row(task_id, status=TaskStatus.SEEDING)
-    repo.rows[task_id] = row
-    client = FakeTorrentClient()
+    repo, client = FakeDownloadRepo(), FakeTorrentClient()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
 
-    await _service(client, repo=repo).cancel(task_id)
+    await _service(client, repo=repo).cancel(row.id)
 
     assert client.deleted == ["abc123"]
-    assert row.status == TaskStatus.CANCELED
+    assert row.status == DownloadStatus.CANCELED
     assert row.deleted_at is not None
 
 
 @pytest.mark.asyncio
 async def test_cancel_keeping_files_forgets_rather_than_deletes() -> None:
     """`delete` takes the data with it; `forget` is the one that leaves it."""
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    row = _torrent_row(task_id, status=TaskStatus.SEEDING)
-    repo.rows[task_id] = row
-    client = FakeTorrentClient()
+    repo, client = FakeDownloadRepo(), FakeTorrentClient()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
 
-    await _service(client, repo=repo).cancel(task_id, delete_files=False)
+    await _service(client, repo=repo).cancel(row.id, delete_files=False)
 
     assert client.forgotten == ["abc123"]
     assert client.deleted == []
-    assert row.status == TaskStatus.CANCELED
-    assert row.deleted_at is not None
+    assert row.status == DownloadStatus.CANCELED
 
 
 @pytest.mark.asyncio
 async def test_cancel_still_soft_deletes_when_the_engine_is_gone() -> None:
     """The user asked for it gone. An unreachable engine must not block that."""
-    from src.data.type import TaskStatus
-    from src.lib.torrent import error as torrent_error
-
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    row = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
-    repo.rows[task_id] = row
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.DOWNLOADING)
     client = FakeTorrentClient(fail=torrent_error.engine_unavailable("refused"))
 
-    await _service(client, repo=repo).cancel(task_id)
+    await _service(client, repo=repo).cancel(row.id)
 
-    assert row.status == TaskStatus.CANCELED
+    assert row.status == DownloadStatus.CANCELED
+
+
+# --- files -----------------------------------------------------------------------------
+
+
+async def _with_files(files: MemoryFiles, row: Any, rows: list[tuple[int, str, int, bool]]) -> None:
+    await files.replace(row.id, rows)
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_returns_the_path_for_an_index(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
     folder = tmp_path / "Some Release"
     folder.mkdir()
     (folder / "video.mkv").write_bytes(b"data")
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
+    await _with_files(files, row, [(0, "video.mkv", 4, True), (1, "readme.txt", 1, False)])
 
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(
-        task_id, status=TaskStatus.SEEDING, file_path=str(folder)
-    )
-    files = FakeFileRepo()
-    files.rows = [
-        type("F", (), {"index": 0, "path": "video.mkv", "selected": True})(),
-        type("F", (), {"index": 1, "path": "readme.txt", "selected": False})(),
-    ]
+    path, filename, media_type = await _service(repo=repo, files=files, root=tmp_path).resolve_file(row.id, 0)
 
-    path, filename, media_type = await _service(repo=repo, file_repo=files).resolve_file(task_id, 0)
-
-    assert path == folder / "video.mkv"
+    assert path == (folder / "video.mkv").resolve()
     assert filename == "video.mkv"
     assert media_type == "video/x-matroska"
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_refuses_a_file_that_was_not_selected(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
-    files = FakeFileRepo()
-    files.rows = [type("F", (), {"index": 1, "path": "readme.txt", "selected": False})()]
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
+    await _with_files(files, row, [(1, "readme.txt", 1, False)])
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo, file_repo=files).resolve_file(task_id, 1)
+        await _service(repo=repo, files=files, root=tmp_path).resolve_file(row.id, 1)
     assert caught.value.code == Code.CONFLICT
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_404s_on_an_unknown_index(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
-    files = FakeFileRepo()
-    files.rows = []
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo, file_repo=files).resolve_file(task_id, 9)
+        await _service(repo=repo, root=tmp_path).resolve_file(row.id, 9)
     assert caught.value.code == Code.NOT_FOUND
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_409s_while_the_torrent_is_still_downloading(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(
-        task_id, status=TaskStatus.DOWNLOADING, file_path=str(tmp_path)
-    )
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo, status=DownloadStatus.DOWNLOADING)
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo).resolve_file(task_id, 0)
+        await _service(repo=repo, root=tmp_path).resolve_file(row.id, 0)
     assert caught.value.code == Code.CONFLICT
 
 
 @pytest.mark.asyncio
 async def test_resolve_file_refuses_a_path_escaping_the_output_folder(tmp_path: Path) -> None:
     """A torrent's file names come from a stranger. They do not get to escape."""
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
-    files = FakeFileRepo()
-    files.rows = [type("F", (), {"index": 0, "path": "../../etc/passwd", "selected": True})()]
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
+    await _with_files(files, row, [(0, "../../etc/passwd", 1, True)])
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo, file_repo=files).resolve_file(task_id, 0)
+        await _service(repo=repo, files=files, root=tmp_path).resolve_file(row.id, 0)
     assert caught.value.code == Code.NOT_FOUND
-
-
-def _file(index: int, path: str, *, selected: bool = True, size: int = 100, done: int = 0) -> Any:
-    fields = {"index": index, "path": path, "size_bytes": size, "selected": selected, "downloaded_bytes": done}
-    return type("F", (), fields)()
-
-
-@pytest.mark.asyncio
-async def test_schema_carries_a_torrents_files() -> None:
-    """#107: the card's file list waited on data the API never sent."""
-    files = FakeFileRepo()
-    files.rows = [_file(0, "video.mkv", size=900, done=450), _file(1, "readme.txt", selected=False)]
-
-    schema = await _service(file_repo=files).schema(_torrent_row(uuid.uuid4()))
-
-    assert [(f.index, f.path, f.size_bytes, f.selected, f.downloaded_bytes) for f in schema.files or []] == [
-        (0, "video.mkv", 900, True, 450),
-        (1, "readme.txt", 100, False, 0),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_schemas_load_a_pages_files_in_one_query_and_skip_other_platforms() -> None:
-    first, second, direct = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    files = FakeFileRepo()
-    files.by_task = {first: [_file(0, "a.mkv")], second: [_file(0, "b.mkv"), _file(1, "c.srt")]}
-    rows = [
-        _torrent_row(first),
-        _torrent_row(direct, platform=Platform.DIRECT, kind=Kind.FILE, info_hash=None),
-        _torrent_row(second),
-    ]
-
-    schemas = await _service(file_repo=files).schemas(rows)
-
-    assert files.batches == [[first, second]]
-    assert [s.id for s in schemas] == [first, direct, second]
-    assert [f.path for f in schemas[0].files or []] == ["a.mkv"]
-    assert schemas[1].files is None
-    assert [f.path for f in schemas[2].files or []] == ["b.mkv", "c.srt"]
-
-
-@pytest.mark.asyncio
-async def test_schemas_of_no_torrents_ask_for_no_files() -> None:
-    files = FakeFileRepo()
-    row = _torrent_row(uuid.uuid4(), platform=Platform.DIRECT, kind=Kind.FILE, info_hash=None)
-
-    await _service(file_repo=files).schemas([row])
-
-    assert files.batches == []
-
-
-@pytest.mark.asyncio
-async def test_published_torrent_frames_carry_files() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
-    files = FakeFileRepo()
-    files.rows = [_file(0, "video.mkv")]
-    hub = EventHub()
-    subscription = hub.subscribe()
-    service = TorrentService(
-        repo=repo,  # ty: ignore[invalid-argument-type]
-        file_repo=files,  # ty: ignore[invalid-argument-type]
-        client=FakeTorrentClient(),
-        hub=hub,
-        torrent_root=Path("/workdir/download/torrent"),
-        enabled=True,
-    )
-
-    schema = await service.pause(task_id)
-
-    assert [f.path for f in schema.files or []] == ["video.mkv"]
-    event, data = await anext(aiter(subscription))
-    assert event == "task"
-    assert data["files"][0]["path"] == "video.mkv"
-    subscription.close()
-
-
-@pytest.mark.asyncio
-async def test_resolve_only_file_serves_a_single_file_torrent(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
-    folder = tmp_path / "Some Release"
-    folder.mkdir()
-    (folder / "video.mkv").write_bytes(b"data")
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.COMPLETE, file_path=str(folder))
-    files = FakeFileRepo()
-    files.rows = [_file(0, "video.mkv"), _file(1, "readme.txt", selected=False)]
-
-    path, filename, _ = await _service(repo=repo, file_repo=files).resolve_only_file(task_id)
-
-    assert path == folder / "video.mkv"
-    assert filename == "video.mkv"
-
-
-@pytest.mark.asyncio
-async def test_resolve_only_file_asks_for_one_at_a_time_when_there_are_several(tmp_path: Path) -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING, file_path=str(tmp_path))
-    files = FakeFileRepo()
-    files.rows = [_file(0, "E1.mkv"), _file(1, "E2.mkv"), _file(2, "notes.txt", selected=False)]
-
-    with pytest.raises(Error) as caught:
-        await _service(repo=repo, file_repo=files).resolve_only_file(task_id)
-
-    assert caught.value.code == Code.CONFLICT
-    assert caught.value.message == "This torrent has 2 files; download them one at a time"
 
 
 @pytest.mark.asyncio
 async def test_the_file_to_play_is_the_largest_selected_media_file() -> None:
-    """What Play on a torrent's card opens until #98 lets you choose (#94)."""
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING)
-    files = FakeFileRepo()
-    files.rows = [
-        _file(0, "Sample.mkv", size=50),
-        _file(1, "Movie.mkv", size=900),
-        _file(2, "Extras.mkv", size=5000, selected=False),
-        _file(3, "Movie.iso", size=9000),
-        _file(4, "Movie.en.srt", size=10),
-    ]
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
+    await _with_files(
+        files,
+        row,
+        [
+            (0, "Sample.mkv", 50, True),
+            (1, "Movie.mkv", 900, True),
+            (2, "Extras.mkv", 5000, False),
+            (3, "Movie.iso", 9000, True),
+            (4, "Movie.en.srt", 10, True),
+        ],
+    )
 
-    assert await _service(repo=repo, file_repo=files).media_file_index(task_id) == 1
+    assert await _service(repo=repo, files=files).media_file_index(row.id) == 1
 
 
 @pytest.mark.asyncio
 async def test_a_torrent_with_no_selected_media_has_nothing_to_play() -> None:
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.SEEDING)
-    files = FakeFileRepo()
-    files.rows = [_file(0, "readme.txt"), _file(1, "Movie.mkv", selected=False)]
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.SEEDING)
+    await _with_files(files, row, [(0, "readme.txt", 1, True), (1, "Movie.mkv", 1, False)])
 
     with pytest.raises(Error) as caught:
-        await _service(repo=repo, file_repo=files).media_file_index(task_id)
+        await _service(repo=repo, files=files).media_file_index(row.id)
     assert caught.value.code == Code.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
 async def test_a_named_file_to_play_must_be_a_selected_media_file() -> None:
     """What a torrent still downloading may play (#95): what it's downloading."""
-    task_id = uuid.uuid4()
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=TaskStatus.DOWNLOADING)
-    files = FakeFileRepo()
-    files.rows = [_file(0, "E1.mkv"), _file(1, "E2.mkv", selected=False), _file(2, "E1.en.srt")]
-    service = _service(repo=repo, file_repo=files)
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=DownloadStatus.DOWNLOADING)
+    await _with_files(files, row, [(0, "E1.mkv", 1, True), (1, "E2.mkv", 1, False), (2, "E1.en.srt", 1, True)])
+    service = _service(repo=repo, files=files)
 
-    assert await service.media_file_index(task_id, 0) == 0
+    assert await service.media_file_index(row.id, 0) == 0
     for refused in (1, 2, 9):
         with pytest.raises(Error) as caught:
-            await service.media_file_index(task_id, refused)
+            await service.media_file_index(row.id, refused)
         assert caught.value.code == Code.UNPROCESSABLE_ENTITY
 
 
-# --- subtitle files beside the video (#101) -------------------------------------------
+# --- subtitle files beside the video (#101) --------------------------------------------
 
-def _release(tmp_path: Path, status: TaskStatus) -> tuple[TorrentService, uuid.UUID, Path]:
+
+async def _release(tmp_path: Path, status: DownloadStatus) -> tuple[TorrentService, uuid.UUID, Path]:
     """A film with a subtitle file beside it on disk, and one in Subs/ that wasn't selected."""
-    task_id = uuid.uuid4()
     folder = tmp_path / "Some Release"
     (folder / "Subs").mkdir(parents=True)
     (folder / "Movie.mkv").write_bytes(b"x" * 900)
     (folder / "Movie.en.srt").write_bytes(b"s" * 10)
-    repo = FakeTaskRepo()
-    repo.rows[task_id] = _torrent_row(task_id, status=status, file_path=str(folder))
-    files = FakeFileRepo()
-    files.rows = [
-        _file(0, "Movie.mkv", size=900),
-        _file(1, "Movie.en.srt", size=10),
-        _file(2, "Subs/2_French.srt", size=12, selected=False),
-        _file(3, "Other.en.srt", size=10),
-    ]
-    return _service(repo=repo, file_repo=files), task_id, folder
+    repo, files = FakeDownloadRepo(), MemoryFiles()
+    row = _torrent_row(repo, status=status)
+    await _with_files(
+        files,
+        row,
+        [
+            (0, "Movie.mkv", 900, True),
+            (1, "Movie.en.srt", 10, True),
+            (2, "Subs/2_French.srt", 12, False),
+            (3, "Other.en.srt", 10, True),
+        ],
+    )
+    return _service(repo=repo, files=files, root=tmp_path), row.id, folder
 
 
 @pytest.mark.asyncio
 async def test_a_downloading_torrent_offers_its_subtitle_files_from_disk_or_rqbit(tmp_path: Path) -> None:
-    service, task_id, folder = _release(tmp_path, TaskStatus.DOWNLOADING)
+    service, download_id, folder = await _release(tmp_path, DownloadStatus.DOWNLOADING)
 
-    found = await service.subtitle_files(task_id, None)
+    found = await service.subtitle_files(download_id, None)
 
     assert [(sidecar.path, source) for sidecar, source in found] == [
         ("Movie.en.srt", (folder / "Movie.en.srt").resolve()),
@@ -743,19 +541,19 @@ async def test_a_downloading_torrent_offers_its_subtitle_files_from_disk_or_rqbi
 
 @pytest.mark.asyncio
 async def test_a_half_written_subtitle_file_is_read_through_rqbit(tmp_path: Path) -> None:
-    service, task_id, folder = _release(tmp_path, TaskStatus.SEEDING)
+    service, download_id, folder = await _release(tmp_path, DownloadStatus.SEEDING)
     (folder / "Movie.en.srt").write_bytes(b"s" * 4)
 
-    found = await service.subtitle_files(task_id, 0)
+    found = await service.subtitle_files(download_id, 0)
 
     assert found[0][1] == TorrentFile("abc123", 1)
 
 
 @pytest.mark.asyncio
 async def test_a_finished_torrent_rqbit_no_longer_has_offers_only_what_s_on_disk(tmp_path: Path) -> None:
-    service, task_id, folder = _release(tmp_path, TaskStatus.COMPLETE)
+    service, download_id, folder = await _release(tmp_path, DownloadStatus.COMPLETE)
 
-    found = await service.subtitle_files(task_id, None)
+    found = await service.subtitle_files(download_id, None)
 
     assert [(sidecar.path, source) for sidecar, source in found] == [
         ("Movie.en.srt", (folder / "Movie.en.srt").resolve())

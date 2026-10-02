@@ -26,6 +26,9 @@ class FakeApi : TaskApi {
     var answer: TaskDto = TaskDto(id = "x")
     var failWith: ApiException? = null
     val removed = mutableListOf<String>()
+
+    /** Ids an action was sent to by the collection's routes. */
+    val viaCollection = mutableListOf<String>()
     var affected = 0
 
     override suspend fun listTasks(
@@ -59,14 +62,28 @@ class FakeApi : TaskApi {
         files: List<Int>,
     ) = answerOrFail()
 
-    override suspend fun pause(id: String) = answerOrFail()
+    override suspend fun pause(
+        id: String,
+        collection: Boolean,
+    ): TaskDto {
+        if (collection) viaCollection += id
+        return answerOrFail()
+    }
 
-    override suspend fun resume(id: String) = answerOrFail()
+    override suspend fun resume(
+        id: String,
+        collection: Boolean,
+    ): TaskDto {
+        if (collection) viaCollection += id
+        return answerOrFail()
+    }
 
     override suspend fun remove(
         id: String,
         deleteFiles: Boolean,
+        collection: Boolean,
     ) {
+        if (collection) viaCollection += id
         removed += id
         failWith?.let { throw it }
     }

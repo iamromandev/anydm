@@ -1,38 +1,44 @@
-"""Where a task's bytes live: ``<downloads>/<task_id>/<filename>``.
+"""Where a download's bytes are worked on: ``<downloads>/<download_id>/<filename>``.
 
-Namespacing by task id is what makes cancel a directory removal and keeps two
+Namespacing by download id is what makes cancel a directory removal and keeps two
 downloads of the same video from colliding. It also matches the Bun API's
 layout, so the torrent port can reuse it.
 """
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 
 
-def task_dir(root: Path, task_id: uuid.UUID) -> Path:
-    return root / str(task_id)
+def work_dir(root: Path, download_id: uuid.UUID) -> Path:
+    return root / str(download_id)
 
 
-def part_path(root: Path, task_id: uuid.UUID, name: str) -> Path:
-    return task_dir(root, task_id) / f"{name}.part"
+def part_path(root: Path, download_id: uuid.UUID, name: str) -> Path:
+    return work_dir(root, download_id) / f"{name}.part"
 
 
-def final_path(root: Path, task_id: uuid.UUID, filename: str) -> Path:
+def final_path(root: Path, download_id: uuid.UUID, filename: str) -> Path:
     """The finished file.
 
     ``Path(filename).name`` is not decoration: ``filename`` is derived from a
     video title, and a title containing slashes must not be able to place a
-    file outside the task's own directory.
+    file outside the download's own directory.
     """
-    return task_dir(root, task_id) / Path(filename).name
+    return work_dir(root, download_id) / Path(filename).name
 
 
-def group_destination(root: Path, folder: str, filename: str, video_id: str) -> Path:
-    """Where a group's video ends up: its group's folder, under its own name
+def collection_destination(root: Path, folder: str, filename: str, video_id: str) -> Path:
+    """Where a collection's video ends up: its collection's folder, under its own name
     unless that is taken, when the video's id tells the two apart (v0.5)."""
     target = root / folder / Path(filename).name
     if target.exists():
         target = target.with_name(f"{target.stem}_{video_id}{target.suffix}")
     return target
+
+
+def remove_work_files(root: Path, download_id: uuid.UUID) -> None:
+    """Delete a download's whole work directory. Used by cancel."""
+    shutil.rmtree(work_dir(root, download_id), ignore_errors=True)

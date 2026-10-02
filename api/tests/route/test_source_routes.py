@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from pydantic import SecretStr
 from src.config import get_settings
-from src.data.repo.search.interface.source import SearchSourceRow
+from src.data.repo.search.interface.source import SourceRow
 from src.lib.sources.registry import BUILTINS
 from src.main import app
 from src.service import get_source_service
@@ -44,7 +44,7 @@ async def http() -> AsyncIterator[httpx.AsyncClient]:
 
 async def _seed_registry(repo: FakeSourceRepo) -> None:
     await repo.insert_missing(
-        [SearchSourceRow(b.name, b.name, b.default_enabled, b.default_url, None) for b in BUILTINS.values()]
+        [SourceRow(b.name, b.name, b.default_enabled, b.default_url, None) for b in BUILTINS.values()]
     )
 
 

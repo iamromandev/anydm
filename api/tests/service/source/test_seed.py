@@ -1,7 +1,7 @@
 """Seeding inserts the registry's constants for what is missing, and never overwrites."""
 
 import pytest
-from src.data.repo.search.interface.source import SearchSourceRow
+from src.data.repo.search.interface.source import SourceRow
 from src.lib.sources.registry import BUILTINS
 from src.service.source.seed import seed_missing_sources
 
@@ -21,10 +21,10 @@ async def test_an_empty_table_gets_every_builtin_at_its_default() -> None:
 
 @pytest.mark.asyncio
 async def test_seeding_twice_changes_nothing_and_an_edited_row_survives() -> None:
-    repo = FakeSourceRepo([SearchSourceRow("nyaa", "nyaa", False, "https://mirror.test", None)])
+    repo = FakeSourceRepo([SourceRow("nyaa", "nyaa", False, "https://mirror.test", None)])
 
     assert await seed_missing_sources(repo) == 2
     assert await seed_missing_sources(repo) == 0
 
     stored = {r.name: r for r in await repo.list_all()}
-    assert stored["nyaa"] == SearchSourceRow("nyaa", "nyaa", False, "https://mirror.test", None, stored["nyaa"].id)
+    assert stored["nyaa"] == SourceRow("nyaa", "nyaa", False, "https://mirror.test", None, stored["nyaa"].id)

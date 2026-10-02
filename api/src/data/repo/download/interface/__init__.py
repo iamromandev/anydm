@@ -1,6 +1,15 @@
+from .category import CategoryRepo as CategoryRepo
+from .category import CategoryRow as CategoryRow
+from .collection import CollectionRepo as CollectionRepo
+from .collection import EntryRow as EntryRow
+from .collection import MemberRow as MemberRow
+from .download import RELATED as RELATED
+from .download import DownloadRepo as DownloadRepo
 from .file import FileRepo as FileRepo
 from .file import FileRow as FileRow
+from .mirror import MirrorRepo as MirrorRepo
 from .position import PositionRepo as PositionRepo
+from .queue import QueueRepo as QueueRepo
+from .queue import QueueRow as QueueRow
 from .segment import Reconciled as Reconciled
 from .segment import SegmentRepo as SegmentRepo
-from .task import TaskRepo as TaskRepo

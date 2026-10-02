@@ -5,7 +5,7 @@
  */
 
 import { entryLabel, type PlaylistEntry } from "./api/playlist";
-import type { PositionView, UiTask } from "./api/task";
+import type { PositionView, UiTask } from "./api/download";
 
 /** A finished download plays from its file; anything else from its page. */
 export type QueueSource = { taskId: string } | { url: string };

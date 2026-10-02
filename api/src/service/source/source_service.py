@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import httpx
 
-from src.data.repo.search.interface.source import SearchSourceRepo, SearchSourceRow
+from src.data.repo.search.interface.source import SourceRepo, SourceRow
 from src.data.schema.source import SourceListSchema, SourceSchema, SourceTestSchema
 from src.lib.sources.registry import (
     BUILTINS,
@@ -31,7 +31,7 @@ def _masked(api_key: str | None) -> str | None:
     return f"{api_key[:4]}…{api_key[-4:]}"
 
 
-def _view(row: SearchSourceRow) -> SourceSchema:
+def _view(row: SourceRow) -> SourceSchema:
     """A stored row as a client sees it; every view comes from a stored row, so the id is always set."""
     assert row.id is not None
     return SourceSchema(
@@ -58,7 +58,7 @@ def _ms(started: float) -> int:
 
 
 class SourceService:
-    def __init__(self, repo: SearchSourceRepo, client: httpx.AsyncClient, timeout_s: float) -> None:
+    def __init__(self, repo: SourceRepo, client: httpx.AsyncClient, timeout_s: float) -> None:
         self._repo = repo
         self._client = client
         self._timeout = timeout_s

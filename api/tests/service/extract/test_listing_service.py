@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from src.data.type import TaskStatus
+from src.data.type import DownloadStatus
 from src.lib.site import error as site_error
 from src.lib.site.client import PlaylistEntry
 from src.service.extract.listing_service import BATCH_SIZE, ListingService
@@ -76,9 +76,9 @@ async def test_the_limit_reaches_the_client() -> None:
 async def test_have_says_what_is_already_held() -> None:
     held = HeldVideos(
         {
-            ("Youtube", "v1"): TaskStatus.COMPLETE,
-            ("Youtube", "v2"): TaskStatus.PAUSED,
-            ("Youtube", "v3"): TaskStatus.FAILED,
+            ("Youtube", "v1"): DownloadStatus.COMPLETE,
+            ("Youtube", "v2"): DownloadStatus.PAUSED,
+            ("Youtube", "v3"): DownloadStatus.FAILED,
         }
     )
     client = FakeSiteClient(site_info("youtube"), listing=[_entry(n) for n in range(1, 5)])

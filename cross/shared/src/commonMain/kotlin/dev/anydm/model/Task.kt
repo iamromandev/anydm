@@ -23,7 +23,7 @@ enum class TaskStatus(
     }
 }
 
-/** What a task is. A `PLAYLIST` is a group of videos (v0.5). */
+/** What a task is: a download's `media_kind`, or `TORRENT`. A `PLAYLIST` is a collection's own row. */
 enum class TaskKind(
     val wire: String,
 ) {
@@ -40,7 +40,7 @@ enum class TaskKind(
     }
 }
 
-/** How a group's videos stand. `watched` is only on the list's reads, never on frames. */
+/** How a collection's videos stand. `watched` is only on the list's reads, never on frames. */
 data class EntryCounts(
     val total: Int,
     val complete: Int,
@@ -108,43 +108,90 @@ data class Task(
 @OptIn(ExperimentalTime::class)
 private fun instantOf(value: String?): Instant? = value?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
-/** The API's row, flattened into what the client draws. Its title falls back as the web's does. */
+/** An API list item, flattened into what the client draws. Its title falls back as the web's does. */
 @OptIn(ExperimentalTime::class)
-fun TaskDto.toTask(): Task =
-    Task(
+fun TaskDto.toTask(): Task {
+    if (type == "collection") return toCollectionTask()
+    val isTorrent = platform == "torrent"
+    // A site or direct download has exactly one file, at index 0.
+    val single = if (isTorrent) null else files.firstOrNull { it.index == 0 }
+    return Task(
         id = id,
-        title = title.ifBlank { filename.ifBlank { sourceUrl } },
+        title = title.ifBlank { single?.path?.ifBlank { null } ?: sourceUrl },
         url = sourceUrl,
-        kind = TaskKind.of(kind),
+        kind = if (isTorrent) TaskKind.TORRENT else TaskKind.of(mediaKind),
         status = TaskStatus.of(status),
         progress = progress,
-        etaSeconds = etaSeconds,
+        etaSeconds = live.etaSeconds,
         error = error,
         errorCode = errorCode,
         downloadedBytes = downloadedBytes,
         totalBytes = totalBytes ?: 0,
-        downloadSpeed = speedBps,
-        uploadSpeed = uploadSpeedBps,
-        peersConnected = peersConnected,
+        downloadSpeed = live.speedBps,
+        uploadSpeed = live.uploadSpeedBps,
+        peersConnected = live.peers,
         attempts = attempts,
         maxAttempts = maxAttempts,
         nextAttemptAt = instantOf(nextAttemptAt),
         platform = platform,
-        extractor = extractor,
-        preset = preset,
-        filename = filename.ifBlank { null },
-        fileSize = fileSize,
-        infoHash = infoHash,
+        extractor = site?.extractor,
+        preset = site?.preset,
+        filename = single?.path?.ifBlank { null },
+        // Zero until it finishes: the size is the finished file's.
+        fileSize = single?.sizeBytes?.takeIf { it > 0 },
+        infoHash = torrent?.infoHash,
         createdAt = instantOf(createdAt),
         startedAt = instantOf(startedAt),
         completedAt = instantOf(completedAt),
-        parentId = parentId,
+        parentId = collectionId,
         position = position,
+        entryCounts = null,
+        folder = null,
+        files = if (isTorrent) files.map { TaskFile(it.index, it.path, it.sizeBytes, it.selected, it.downloadedBytes) } else null,
+        positions =
+            files.mapNotNull { file ->
+                file.playback?.let { Position(file.index, it.positionSeconds, it.durationSeconds, it.watched) }
+            },
+    )
+}
+
+/** A collection, as the playlist row the group card draws. */
+@OptIn(ExperimentalTime::class)
+private fun TaskDto.toCollectionTask(): Task =
+    Task(
+        id = id,
+        title = title.ifBlank { sourceUrl },
+        url = sourceUrl,
+        kind = TaskKind.PLAYLIST,
+        status = TaskStatus.of(status),
+        progress = progress,
+        etaSeconds = null,
+        error = null,
+        errorCode = null,
+        downloadedBytes = downloadedBytes,
+        totalBytes = totalBytes ?: 0,
+        downloadSpeed = speedBps,
+        uploadSpeed = 0,
+        peersConnected = 0,
+        attempts = 0,
+        maxAttempts = null,
+        nextAttemptAt = null,
+        platform = "site",
+        extractor = extractor,
+        preset = preset,
+        filename = null,
+        fileSize = null,
+        infoHash = null,
+        createdAt = instantOf(createdAt),
+        startedAt = null,
+        completedAt = null,
+        parentId = null,
+        position = null,
         entryCounts =
-            entryCounts?.let {
+            counts?.let {
                 EntryCounts(it.total, it.complete, it.active, it.downloading, it.paused, it.failed, it.watched)
             },
         folder = folder,
-        files = files?.map { TaskFile(it.index, it.path, it.sizeBytes, it.selected, it.downloadedBytes) },
-        positions = positions?.map { Position(it.fileIndex, it.positionSeconds, it.durationSeconds, it.watched) },
+        files = null,
+        positions = null,
     )

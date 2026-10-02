@@ -3,7 +3,7 @@ export * from "./detail";
 export * from "./envelope";
 export * from "./position";
 export * from "./stream";
-export * from "./task";
+export * from "./download";
 export * from "./torrent";
 export * from "./site";
 export * from "./group";

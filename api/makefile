@@ -4,9 +4,10 @@ DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm
 UV := uv
 UVX := $(UV)x
 SERVER_CONTAINER := server-anydm-api
+TEST_DB := anydm_test
 
 # phony targets
-.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate seed help
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate seed db-reset help
 
 ## operation
 # system cleanup
@@ -61,7 +62,11 @@ check: # Run lint + type checks
 test: # Run the unit test suite
 	$(UV) run pytest
 
-test-all: # Run every test, integration included (needs `make up`); not the live-site ones
+test-all: export DB_NAME = $(TEST_DB)
+test-all: export DB_HOST = localhost
+test-all: export DB_PORT = 5430
+test-all: # Run every test, integration included, against $(TEST_DB) (needs `make up`); not the live-site ones
+	$(UV) run python -m scripts.test_db
 	$(UV) run pytest -m "not network"
 
 test-live: # Run the live-site tests: real sites, over the internet
@@ -83,8 +88,12 @@ migrate: # Run database migrations, then seed the built-in search sources
 	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
 	$(MAKE) seed
 
-seed: # Seed the search sources and import .env indexers once: adds what is missing, never overwrites (needs migrate first)
+seed: # Seed the built-in search sources: adds any that are missing, never overwrites (needs migrate first)
 	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
+
+db-reset: # DESTROYS every download row: drop and recreate the dev database, then migrate
+	docker exec db-anydm-api sh -c 'psql -U "$$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$$POSTGRES_DB\" WITH (FORCE)" -c "CREATE DATABASE \"$$POSTGRES_DB\""'
+	$(MAKE) migrate
 
 # help
 help:

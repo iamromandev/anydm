@@ -3,52 +3,60 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from src.data.db.model import File
+from src.data.db.model import DownloadFile
 from src.data.repo.download.interface.file import FileRepo, FileRow
 
 
 class FileDatabaseRepo(FileRepo):
-    async def replace(self, task_id: uuid.UUID, files: Sequence[FileRow]) -> None:
+    async def replace(self, download_id: uuid.UUID, files: Sequence[FileRow]) -> None:
         # Delete then insert rather than upsert: the list is small, it changes
         # only when a torrent is added or re-added, and this cannot leave a
         # stale row behind for a file the torrent no longer has.
-        await File.filter(task_id=task_id).delete()
-        if not files:
-            return
-        await File.bulk_create(
-            [
-                File(
-                    task_id=task_id,
-                    index=index,
-                    path=path,
-                    size_bytes=size_bytes,
-                    selected=selected,
-                )
-                for index, path, size_bytes, selected in files
-            ]
+        await DownloadFile.filter(download_id=download_id).delete()
+        if files:
+            await DownloadFile.bulk_create(
+                [
+                    DownloadFile(download_id=download_id, index=index, path=path, size_bytes=size, selected=selected)
+                    for index, path, size, selected in files
+                ]
+            )
+
+    async def single(self, download_id: uuid.UUID) -> DownloadFile | None:
+        return await DownloadFile.filter(download_id=download_id, index=0).first()
+
+    async def set_single(self, download_id: uuid.UUID, *, path: str, mime_type: str | None) -> DownloadFile:
+        row, _ = await DownloadFile.update_or_create(
+            defaults={"path": path, "mime_type": mime_type}, download_id=download_id, index=0
+        )
+        return row
+
+    async def finish_single(self, download_id: uuid.UUID, *, path: str, size_bytes: int) -> None:
+        await DownloadFile.filter(download_id=download_id, index=0).update(
+            path=path, size_bytes=size_bytes, downloaded_bytes=size_bytes
         )
 
-    async def list_for(self, task_id: uuid.UUID) -> list[File]:
-        return await File.filter(task_id=task_id).order_by("index")
+    async def get(self, download_id: uuid.UUID, index: int) -> DownloadFile | None:
+        return await DownloadFile.filter(download_id=download_id, index=index).first()
 
-    async def list_for_tasks(self, task_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[File]]:
-        by_task: dict[uuid.UUID, list[File]] = {task_id: [] for task_id in task_ids}
-        if not by_task:
-            return by_task
-        for row in await File.filter(task_id__in=list(by_task)).order_by("index"):
-            by_task[row.task_id].append(row)  # ty: ignore[unresolved-attribute]
-        return by_task
+    async def list_for(self, download_id: uuid.UUID) -> list[DownloadFile]:
+        return await DownloadFile.filter(download_id=download_id).order_by("index")
 
-    async def selected_indexes(self, task_id: uuid.UUID) -> list[int]:
-        rows = await File.filter(task_id=task_id, selected=True).order_by("index")
+    async def list_for_downloads(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[DownloadFile]]:
+        by_download: dict[uuid.UUID, list[DownloadFile]] = {download_id: [] for download_id in ids}
+        if by_download:
+            for row in await DownloadFile.filter(download_id__in=list(by_download)).order_by("index"):
+                by_download[row.download_id].append(row)
+        return by_download
+
+    async def selected_indexes(self, download_id: uuid.UUID) -> list[int]:
+        rows = await DownloadFile.filter(download_id=download_id, selected=True).order_by("index")
         return [row.index for row in rows]
 
-    async def flush_progress(self, task_id: uuid.UUID, file_progress: Sequence[int]) -> None:
+    async def flush_progress(self, download_id: uuid.UUID, file_progress: Sequence[int]) -> None:
         if not file_progress:
             return
-        rows = await File.filter(task_id=task_id).order_by("index")
-        changed: list[File] = []
-        for row in rows:
+        changed: list[DownloadFile] = []
+        for row in await DownloadFile.filter(download_id=download_id).order_by("index"):
             if row.index >= len(file_progress):
                 continue
             value = int(file_progress[row.index])
@@ -56,8 +64,4 @@ class FileDatabaseRepo(FileRepo):
                 row.downloaded_bytes = value
                 changed.append(row)
         if changed:
-            await File.bulk_update(changed, fields=["downloaded_bytes"])
-
-    async def selected_size(self, task_id: uuid.UUID) -> int:
-        rows = await File.filter(task_id=task_id, selected=True)
-        return sum(row.size_bytes for row in rows)
+            await DownloadFile.bulk_update(changed, fields=["downloaded_bytes"])

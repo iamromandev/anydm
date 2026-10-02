@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from src.data.type import SegmentPart
+
 
 @dataclass(frozen=True, slots=True)
 class Reconciled:
@@ -18,7 +20,9 @@ class Reconciled:
 
 class SegmentRepo(ABC):
     @abstractmethod
-    async def reconcile(self, task_id: uuid.UUID, part: str, plan: Sequence[tuple[int, int, int]]) -> Reconciled:
+    async def reconcile(
+        self, download_id: uuid.UUID, part: SegmentPart, plan: Sequence[tuple[int, int, int]]
+    ) -> Reconciled:
         """Match ``plan`` against the stored rows, replacing them if it differs.
 
         ``plan`` is ``(index, start, end)`` triples rather than the service
@@ -27,12 +31,12 @@ class SegmentRepo(ABC):
         ...
 
     @abstractmethod
-    async def flush(self, task_id: uuid.UUID, part: str, watermarks: Mapping[int, int]) -> None:
+    async def flush(self, download_id: uuid.UUID, part: SegmentPart, watermarks: Mapping[int, int]) -> None:
         """Write every watermark in one statement."""
         ...
 
     @abstractmethod
-    async def progress(self, task_id: uuid.UUID, part: str) -> int:
+    async def progress(self, download_id: uuid.UUID, part: SegmentPart) -> int:
         """Bytes already on disk for this part, across every stored segment.
 
         Read before planning: a part with progress keeps the plan that produced
@@ -42,6 +46,6 @@ class SegmentRepo(ABC):
         ...
 
     @abstractmethod
-    async def clear(self, task_id: uuid.UUID, part: str | None = None) -> None:
-        """Delete one part's segments, or all of the task's."""
+    async def clear(self, download_id: uuid.UUID, part: SegmentPart | None = None) -> None:
+        """Delete one part's segments, or all of the download's."""
         ...

@@ -8,8 +8,9 @@ import {
     appendPage,
     getApi,
     getPageApi,
+    applyProgressFrame,
     normalizeApiTask,
-    normalizeSegments,
+    normalizeCollection,
     postApi,
     keepSegments,
     keepPositions,
@@ -166,7 +167,7 @@ export default component$(() => {
         // Each running group video's speed, for its group's live speed.
         videoSpeeds: {} as VideoSpeeds,
         // A play queue (part 4): its items, the one playing, and for a group,
-        // which of its /entries pages are loaded. Empty when nothing queues.
+        // which of its /downloads pages are loaded. Empty when nothing queues.
         queue: [] as QueueItem[],
         queueIndex: -1,
         queueGroup: null as {
@@ -357,33 +358,22 @@ export default component$(() => {
      * "unchanged", not "zero" — defaulting to 0 blanked the size mid-download.
      */
     const applyProgress = $((data: any) => {
-        // A group's video: its row in an open Entries list, and its group's
-        // live speed. Never a row of the list.
-        if (data.parent_id) {
-            const groupId = String(data.parent_id);
+        // A collection's video: its row in an open Entries list, and its
+        // collection's live speed. Never a row of the list.
+        if (data.collection_id) {
+            const groupId = String(data.collection_id);
             store.videoSpeeds = trackVideoSpeed(
                 store.videoSpeeds,
                 groupId,
                 data.id,
-                data.speed_bps ?? 0,
+                data.live?.speed_bps ?? 0,
             );
             store.entries = applyVideoProgress(store.entries, groupId, data);
             store.tasks = withGroupSpeeds(store.tasks, store.videoSpeeds);
             return;
         }
         store.tasks = store.tasks.map((t) =>
-            t.id === data.id
-                ? {
-                      ...t,
-                      progress: data.progress ?? t.progress,
-                      eta: data.eta_seconds ?? t.eta,
-                      downloadedBytes:
-                          data.downloaded_bytes ?? t.downloadedBytes,
-                      totalBytes: data.total_bytes ?? t.totalBytes,
-                      downloadSpeed: data.speed_bps ?? t.downloadSpeed,
-                      segments: normalizeSegments(data) ?? t.segments,
-                  }
-                : t,
+            t.id === data.id ? applyProgressFrame(t, data) : t,
         );
     });
 
@@ -473,7 +463,7 @@ export default component$(() => {
                 apiEvents = new EventSource(
                     apiUrl("/download/events", { withKey: true }),
                 );
-                apiEvents.addEventListener("tasks", (event) => {
+                apiEvents.addEventListener("downloads", (event) => {
                     try {
                         const rows = JSON.parse(
                             (event as MessageEvent).data,
@@ -483,10 +473,21 @@ export default component$(() => {
                         // malformed event
                     }
                 });
-                apiEvents.addEventListener("task", (event) => {
+                apiEvents.addEventListener("download", (event) => {
                     try {
                         mergeTasks([
                             normalizeApiTask(
+                                JSON.parse((event as MessageEvent).data),
+                            ),
+                        ]);
+                    } catch {
+                        // malformed event
+                    }
+                });
+                apiEvents.addEventListener("collection", (event) => {
+                    try {
+                        mergeTasks([
+                            normalizeCollection(
                                 JSON.parse((event as MessageEvent).data),
                             ),
                         ]);
@@ -642,7 +643,7 @@ export default component$(() => {
             [groupId]: { ...view, loading: true },
         };
         const result = await getPageApi<any[]>(
-            `/download/${groupId}/entries?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
+            `/collection/${groupId}/downloads?page=${view.page + 1}&page_size=${ENTRIES_PAGE}`,
         ).catch(() => null);
         // Read again: the stream may have written while the page was out.
         const current = store.entries[groupId];
@@ -679,7 +680,9 @@ export default component$(() => {
 
             try {
                 const updated = await postApi<any>(
-                    `/download/${taskId}/${action}`,
+                    task.kind === "playlist"
+                        ? `/collection/${taskId}/${action}`
+                        : `/download/${taskId}/${action}`,
                     {},
                 );
                 if (updated) {
@@ -705,10 +708,15 @@ export default component$(() => {
     const handleRemoveConfirm = $(
         async (taskId: string, deleteFiles: boolean) => {
             store.removing = null;
+            // A collection is removed by its own route; a collection's video,
+            // which is never a row of the list, by the download's.
+            const removing = store.tasks.find((t) => t.id === taskId);
 
             try {
                 await deleteApi(
-                    `/download/${taskId}?delete_files=${deleteFiles}`,
+                    removing?.kind === "playlist"
+                        ? `/collection/${taskId}?delete_files=${deleteFiles}`
+                        : `/download/${taskId}?delete_files=${deleteFiles}`,
                 );
             } catch (err) {
                 // The row still goes: the person asked for it gone, and a failure
@@ -840,13 +848,15 @@ export default component$(() => {
         const task = store.tasks.find((t) => t.id === taskId);
         if (!task) return;
 
-        // An index picks one file out of a torrent; without one, the task's only file.
-        const path =
-            fileIndex === undefined
-                ? `/download/${taskId}/file`
-                : `/download/${taskId}/file/${fileIndex}`;
+        // A torrent's file by its index; any other download's one file is index 0,
+        // and a torrent of one selected file hands over that file.
+        const index =
+            fileIndex ??
+            (task.kind === "torrent"
+                ? (task.files?.find((file) => file.selected)?.index ?? 0)
+                : 0);
         const a = document.createElement("a");
-        a.href = apiUrl(path, { withKey: true });
+        a.href = apiUrl(`/download/${taskId}/file/${index}`, { withKey: true });
         a.style.display = "none";
         document.body.appendChild(a);
         a.click();
@@ -953,7 +963,7 @@ export default component$(() => {
         const group = store.queueGroup;
         if (!group || group.page >= group.totalPages) return false;
         const result = await getPageApi<any[]>(
-            `/download/${group.id}/entries?page=${group.page + 1}&page_size=${QUEUE_PAGE}`,
+            `/collection/${group.id}/downloads?page=${group.page + 1}&page_size=${QUEUE_PAGE}`,
         ).catch(() => null);
         // Read again: the queue may have been closed or replaced meanwhile.
         if (result === null || store.queueGroup?.id !== group.id) return false;
@@ -1059,7 +1069,7 @@ export default component$(() => {
     /** A playlist's ticked videos, as one group. Its row arrives by its frame. */
     const handleAddPlaylist = $(async (request: PlaylistRequest) => {
         try {
-            await postApi("/download/playlist", request);
+            await postApi("/collection", request);
         } catch (err) {
             notify("error", errorMessage(err));
             // Rethrown so the picker stays open on what was ticked.

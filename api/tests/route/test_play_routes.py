@@ -12,7 +12,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from src.config import get_settings
-from src.data.schema.download import PositionSchema
+from src.data.schema.download import PlaybackSchema
 from src.lib.media.audio import AudioTrack
 from src.lib.media.subtitle import SubtitleTrack
 from src.lib.torrent.protocol import FileInfo
@@ -49,19 +49,19 @@ class _FakeStream:
         #: What a torrent-backed session answers with; a test sets it.
         self.torrent_files: list[Any] = []
 
-    async def media_info(self, task_id: uuid.UUID, file_index: int | None) -> MediaInfo:
-        self.calls.append(("media_info", (task_id, file_index)))
+    async def media_info(self, download_id: uuid.UUID, file_index: int | None) -> MediaInfo:
+        self.calls.append(("media_info", (download_id, file_index)))
         return MediaInfo(
-            file_index=file_index if file_index is not None else (3 if task_id != TASK else None),
+            file_index=file_index if file_index is not None else (3 if download_id != TASK else None),
             filename="Movie.mp4",
             duration_seconds=30.0,
             has_video=True,
             media_type='video/mp4; codecs="avc1.640028, mp4a.40.2"',
-            audio_tracks=tuple(TRACKS) if task_id != TASK else (),
+            audio_tracks=tuple(TRACKS) if download_id != TASK else (),
         )
 
-    async def start_task_session(self, task_id: uuid.UUID, file_index: int | None, **audio: Any) -> Any:
-        self.calls.append(("start_task_session", (task_id, file_index)))
+    async def start_download_session(self, download_id: uuid.UUID, file_index: int | None, **audio: Any) -> Any:
+        self.calls.append(("start_download_session", (download_id, file_index)))
         self.audio = audio
         return _session("s1", "ready", 30.0)
 
@@ -86,8 +86,8 @@ class _FakeStream:
         self.calls.append(("get_subtitle_file", (session.id, track)))
         return self.vtt
 
-    async def subtitle_file(self, task_id: uuid.UUID, file_index: int | None, track: int) -> Any:
-        self.calls.append(("subtitle_file", (task_id, file_index, track)))
+    async def subtitle_file(self, download_id: uuid.UUID, file_index: int | None, track: int) -> Any:
+        self.calls.append(("subtitle_file", (download_id, file_index, track)))
         return self.vtt
 
     async def switch_quality(self, session: Any, height: int | None) -> Any:
@@ -123,13 +123,13 @@ async def test_media_names_the_file_and_where_to_fetch_it(client: httpx.AsyncCli
     response = await client.get(f"/download/{TASK}/media")
 
     assert response.status_code == 200
-    # A download's one file has no index, and the envelope leaves out what is None.
+    # A download's one file is index 0, and the envelope leaves out what is None.
     assert response.json()["data"] == {
         "filename": "Movie.mp4",
         "duration_seconds": 30.0,
         "has_video": True,
         "media_type": 'video/mp4; codecs="avc1.640028, mp4a.40.2"',
-        "file_url": f"/download/{TASK}/file",
+        "file_url": f"/download/{TASK}/file/0",
         "audio_tracks": [],
         "subtitle_tracks": [],
     }
@@ -151,12 +151,12 @@ async def test_a_torrents_media_points_at_that_file(client: httpx.AsyncClient, s
 
 
 @pytest.mark.asyncio
-async def test_a_session_starts_from_a_task(client: httpx.AsyncClient, stream: _FakeStream) -> None:
-    response = await client.post("/stream/start", json={"task_id": str(TASK), "file_index": 2})
+async def test_a_session_starts_from_a_download(client: httpx.AsyncClient, stream: _FakeStream) -> None:
+    response = await client.post("/stream/start", json={"download_id": str(TASK), "file_index": 2})
 
     assert response.status_code == 201
     assert response.json()["data"]["session_id"] == "s1"
-    assert stream.calls == [("start_task_session", (TASK, 2))]
+    assert stream.calls == [("start_download_session", (TASK, 2))]
     assert stream.audio == {"audio_language": None, "audio_track": None, "quality": None}
 
 
@@ -233,7 +233,7 @@ async def test_a_session_with_no_torrent_answers_with_no_files(client: httpx.Asy
 @pytest.mark.parametrize(
     "body",
     [
-        {"task_id": str(TASK), "url": "https://example.com/a.mp4"},
+        {"download_id": str(TASK), "url": "https://example.com/a.mp4"},
         {"url": "https://example.com/a.mp4", "torrent": "magnet:?xt=urn:btih:abc"},
         {"url": "https://example.com/a.mp4", "file_index": 1},
         {"file_index": 1},
@@ -253,16 +253,15 @@ class _FakeDownloads:
     def __init__(self) -> None:
         self.saved: list[tuple[uuid.UUID, int | None, float, float]] = []
 
-    async def save_position(
-        self, task_id: uuid.UUID, file_index: int | None, *, position_seconds: float, duration_seconds: float
-    ) -> PositionSchema:
-        self.saved.append((task_id, file_index, position_seconds, duration_seconds))
-        return PositionSchema(file_index=file_index or 0, position_seconds=position_seconds,
-                              duration_seconds=duration_seconds)
+    async def save_playback(
+        self, download_id: uuid.UUID, file_index: int | None, *, position_seconds: float, duration_seconds: float
+    ) -> PlaybackSchema:
+        self.saved.append((download_id, file_index, position_seconds, duration_seconds))
+        return PlaybackSchema(position_seconds=position_seconds, duration_seconds=duration_seconds)
 
 
 @pytest.mark.asyncio
-async def test_a_position_is_saved_through_the_route(
+async def test_playback_is_saved_through_the_route(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#96: the player's regular save."""
@@ -271,9 +270,11 @@ async def test_a_position_is_saved_through_the_route(
     app.dependency_overrides[get_download_service] = lambda: fake
     try:
         response = await client.put(
-            f"/download/{TASK}/position", json={"file_index": 2, "position_seconds": 61.5, "duration_seconds": 1300}
+            f"/download/{TASK}/file/2/playback", json={"position_seconds": 61.5, "duration_seconds": 1300}
         )
-        refused = await client.put(f"/download/{TASK}/position", json={"position_seconds": -1, "duration_seconds": 1})
+        refused = await client.put(
+            f"/download/{TASK}/file/2/playback", json={"position_seconds": -1, "duration_seconds": 1}
+        )
     finally:
         app.dependency_overrides.clear()
 
@@ -328,7 +329,6 @@ async def test_a_subtitle_file_is_served_whole(client: httpx.AsyncClient, stream
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/vtt")
     assert stream.calls == [("get_subtitle_file", ("s1", 2))]
-
 
 
 @pytest.mark.asyncio

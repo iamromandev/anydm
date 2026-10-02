@@ -4,6 +4,7 @@ import dev.anydm.api.ServerEvent
 import dev.anydm.api.TaskApi
 import dev.anydm.api.Unauthorized
 import dev.anydm.model.Task
+import dev.anydm.model.TaskKind
 import dev.anydm.model.toTask
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -135,16 +136,19 @@ class TaskStore(
     suspend fun addTorrent(torrent: String): Boolean =
         act { merge(listOf(api.addTorrent(torrent).toTask())) }.also { if (it) loadSummary() }
 
-    suspend fun pause(id: String): Boolean = act { merge(listOf(api.pause(id).toTask())) }
+    /** A playlist row is a collection, which the API acts on by its own routes. */
+    private fun isCollection(id: String): Boolean = state.value.tasks.any { it.id == id && it.kind == TaskKind.PLAYLIST }
 
-    suspend fun resume(id: String): Boolean = act { merge(listOf(api.resume(id).toTask())) }
+    suspend fun pause(id: String): Boolean = act { merge(listOf(api.pause(id, isCollection(id)).toTask())) }
+
+    suspend fun resume(id: String): Boolean = act { merge(listOf(api.resume(id, isCollection(id)).toTask())) }
 
     /** The row goes whatever the answer: a failure here is nearly always a row the API has already forgotten. */
     suspend fun remove(
         id: String,
         deleteFiles: Boolean,
     ): Boolean {
-        val removed = act { api.remove(id, deleteFiles) }
+        val removed = act { api.remove(id, deleteFiles, isCollection(id)) }
         mutableState.update { it.copy(tasks = it.tasks.filterNot { row -> row.id == id }) }
         loadSummary()
         return removed
@@ -246,8 +250,12 @@ class TaskStore(
                 merge(listOf(event.task))
             }
 
+            is ServerEvent.CollectionChanged -> {
+                merge(listOf(event.task))
+            }
+
             is ServerEvent.Progress -> {
-                val parent = event.progress.parentId
+                val parent = event.progress.collectionId
                 if (parent == null) {
                     mutableState.update { it.copy(tasks = applyProgress(it.tasks, event.progress)) }
                 } else if (parent in state.value.entries) {

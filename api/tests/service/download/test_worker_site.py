@@ -1,63 +1,23 @@
-"""The worker downloading a site task: one extraction per attempt, headers with every part."""
+"""The worker downloading a site download: one extraction per attempt, headers with every part."""
 
-import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.type import Kind, Platform, Preset, TaskStatus
-from src.lib.event import EventHub
+from src.data.type import DownloadStatus, MediaKind, Preset
 from src.lib.media.sidecar import folder_listing, match_sidecars
 from src.lib.site.subtitles import SiteSubtitle
-from src.service.download.control import DownloadControl
-from src.service.download.download_worker import DownloadWorker, remove_task_files
+from src.service.download.download_worker import DownloadWorker
 from src.service.download.downloader import Stopped
+from src.service.download.paths import remove_work_files
 from src.service.download.progress import AggregateSample
 
+from tests.service.download.memory import MemoryFiles
+from tests.service.download.workers import FakeCollections, FlushRecordingRepo, RecordingTotals, site_row, worker
 from tests.sites import HEADERS, FakeSiteClient, media_url, site_info
-
-
-class FakeRow:
-    """A claimed YouTube task at 1080p: two parts, video and audio."""
-
-    def __init__(self, **overrides: Any) -> None:
-        self.id = uuid.uuid4()
-        self.source_url = "https://youtu.be/dQw4w9WgXcQ"
-        self.platform = Platform.SITE
-        self.extractor = "Youtube"
-        self.video_id = "dQw4w9WgXcQ"
-        self.preset = Preset.P1080
-        self.kind = Kind.VIDEO
-        self.title = "Rick"
-        self.filename = "Rick_1080p.mp4"
-        self.video_format: str | None = "137"
-        self.audio_format: str | None = "140"
-        self.total_bytes: int | None = None
-        self.attempts = 0
-        self.status = TaskStatus.DOWNLOADING
-        self.parent_id: uuid.UUID | None = None
-        self.position: int | None = None
-        self.mime_type: str | None = None
-        self.file_path: str | None = None
-        for key, value in overrides.items():
-            setattr(self, key, value)
-
-    async def save(self, update_fields: list[str]) -> None:
-        return None
-
-    async def refresh_from_db(self) -> None:
-        return None
-
-
-class FakeSegmentRepo:
-    async def progress(self, task_id: uuid.UUID, part: str) -> int:
-        return 0
-
-    async def clear(self, task_id: uuid.UUID, part: str | None = None) -> None:
-        return None
 
 
 class RecordingEngine:
@@ -96,21 +56,13 @@ class RecordingFragments:
         return 7
 
 
-class FlushRecordingRepo:
-    def __init__(self) -> None:
-        self.flushed: list[int] = []
-
-    async def flush_progress(self, task_id: uuid.UUID, **fields: Any) -> None:
-        self.flushed.append(fields["downloaded_bytes"])
-
-
 class TouchingPostProcessor:
     def __init__(self) -> None:
         self.parts: dict[str, Path] = {}
         self.fragmented: frozenset[str] = frozenset()
 
     async def run(
-        self, task: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
+        self, download: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
     ) -> None:
         self.parts = dict(parts)
         self.fragmented = fragmented
@@ -119,168 +71,145 @@ class TouchingPostProcessor:
 
 def _worker(
     tmp_path: Path,
+    files: MemoryFiles,
     client: FakeSiteClient,
-    engine: RecordingEngine,
-    post: TouchingPostProcessor,
-    *,
-    fragments: RecordingFragments | None = None,
-    repo: Any = None,
+    engine: RecordingEngine | None = None,
+    post: TouchingPostProcessor | None = None,
+    **kwargs: Any,
 ) -> DownloadWorker:
-    return DownloadWorker(
-        name="test",
-        repo=cast(Any, repo or object()),
-        segment_repo=cast(Any, FakeSegmentRepo()),
-        client=cast(Any, client),
-        engine=cast(Any, engine),
-        post_processor=cast(Any, post),
-        control=DownloadControl(),
-        hub=EventHub(),
-        downloads_root=tmp_path,
-        max_attempts=3,
-        segments=4,
-        fragments=cast(Any, fragments),
+    return worker(
+        tmp_path,
+        files=files,
+        client=client,
+        engine=engine or RecordingEngine(),
+        post=post or TouchingPostProcessor(),
+        **kwargs,
     )
+
+
+async def _path(files: MemoryFiles, row: Any) -> str:
+    single = await files.single(row.id)
+    assert single is not None
+    return single.path
 
 
 @pytest.mark.asyncio
 async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
-    client = FakeSiteClient(site_info("youtube"))
-    row = FakeRow()
+    files, client = MemoryFiles(), FakeSiteClient(site_info("youtube"))
+    row = await site_row(files)
 
-    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+    await _worker(tmp_path, files, client).run_task(row)
 
     assert client.resolved == [("https://youtu.be/dQw4w9WgXcQ", ["137", "140"])]
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
+    assert row.folder == str(row.id)
 
 
 @pytest.mark.asyncio
 async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path) -> None:
-    # A playlist's video, added with its number and no formats (v0.5).
-    client = FakeSiteClient(site_info("vimeo"))
-    row = FakeRow(
+    # A collection's video, added with its number and no formats (v0.5).
+    files, client = MemoryFiles(), FakeSiteClient(site_info("vimeo"))
+    row = await site_row(
+        files,
+        filename="03_",
         source_url="http://vimeo.com/75629013",
         extractor="Vimeo",
         video_format=None,
         audio_format=None,
-        filename="03_",
         title="listed title",
         preset=Preset.P720,
         position=3,
     )
 
-    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+    await _worker(tmp_path, files, client).run_task(row)
 
     assert client.opened == ["http://vimeo.com/75629013"]
     # The plan's extraction also gave the URLs.
     assert client.resolved == []
-    assert row.filename.startswith("03_") and row.video_format
+    assert (await _path(files, row)).startswith("03_")
+    assert row.site_detail.video_format
     assert row.title == site_info("vimeo").title
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
 
 
 @pytest.mark.asyncio
 async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
-    client = FakeSiteClient(site_info("vimeo"))
-    row = FakeRow(
+    files, client = MemoryFiles(), FakeSiteClient(site_info("vimeo"))
+    row = await site_row(
+        files,
+        filename="Key_9999p.mp4",
         source_url="http://vimeo.com/75629013",
         extractor="Vimeo",
         video_format="http-9999p",
         audio_format=None,
-        filename="Key_9999p.mp4",
         preset=Preset.P720,
     )
 
-    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+    await _worker(tmp_path, files, client).run_task(row)
 
-    assert row.video_format != "http-9999p"
+    assert row.site_detail.video_format != "http-9999p"
     assert client.opened == ["http://vimeo.com/75629013"]
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
 
 
-class GroupRepo:
-    """Answers for one group row, the only one a group video's worker looks up."""
-
-    def __init__(self, group: FakeRow) -> None:
-        self.group = group
-
-    async def get_active_by_id(self, task_id: uuid.UUID) -> FakeRow | None:
-        return self.group if task_id == self.group.id else None
-
-
-def _group(tmp_path: Path) -> FakeRow:
+def _collection(tmp_path: Path) -> FakeCollections:
     (tmp_path / "List").mkdir()
-    return FakeRow(kind=Kind.PLAYLIST, file_path="List")
+    return FakeCollections("List")
 
 
 @pytest.mark.asyncio
-async def test_a_group_video_finishes_into_the_group_folder(tmp_path: Path) -> None:
-    group = _group(tmp_path)
-    row = FakeRow(parent_id=group.id, filename="02_Rick_1080p.mp4")
+async def test_a_collection_video_finishes_into_the_collection_folder(tmp_path: Path) -> None:
+    files, collections = MemoryFiles(), _collection(tmp_path)
+    row = await site_row(files, filename="02_Rick_1080p.mp4", collection_id=collections.collection.id)
 
-    await _worker(
-        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
-    ).run_task(cast(Any, row))
+    await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 
-    assert row.file_path == "List/02_Rick_1080p.mp4"
+    assert (row.folder, await _path(files, row)) == ("List", "02_Rick_1080p.mp4")
     assert (tmp_path / "List" / "02_Rick_1080p.mp4").read_bytes() == b"done"
     assert not (tmp_path / str(row.id)).exists()
 
 
-class RecordingGroups:
-    def __init__(self) -> None:
-        self.refreshed: list[uuid.UUID] = []
-
-    async def refresh(self, group_id: uuid.UUID) -> None:
-        self.refreshed.append(group_id)
-
-
 @pytest.mark.asyncio
-async def test_each_change_to_a_group_video_refreshes_its_group(tmp_path: Path) -> None:
-    group = _group(tmp_path)
-    groups = RecordingGroups()
-    row = FakeRow(parent_id=group.id)
-    worker = _worker(
-        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
-    )
-    worker._groups = cast(Any, groups)
+async def test_each_change_to_a_collection_video_refreshes_its_collection(tmp_path: Path) -> None:
+    files, collections, totals = MemoryFiles(), _collection(tmp_path), RecordingTotals()
+    row = await site_row(files, collection_id=collections.collection.id)
 
-    await worker.run_task(cast(Any, row))
+    await _worker(
+        tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections, totals=totals
+    ).run_task(row)
 
     # Once when it started, once when it finished.
-    assert groups.refreshed == [group.id, group.id]
+    assert totals.refreshed == [collections.collection.id, collections.collection.id]
 
 
 @pytest.mark.asyncio
-async def test_a_standalone_task_refreshes_no_group(tmp_path: Path) -> None:
-    groups = RecordingGroups()
-    worker = _worker(tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor())
-    worker._groups = cast(Any, groups)
+async def test_a_standalone_download_refreshes_no_collection(tmp_path: Path) -> None:
+    files, totals = MemoryFiles(), RecordingTotals()
 
-    await worker.run_task(cast(Any, FakeRow()))
+    await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), totals=totals).run_task(
+        await site_row(files)
+    )
 
-    assert groups.refreshed == []
+    assert totals.refreshed == []
 
 
 @pytest.mark.asyncio
 async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
-    group = _group(tmp_path)
+    files, collections = MemoryFiles(), _collection(tmp_path)
     (tmp_path / "List" / "Rick_1080p.mp4").write_bytes(b"other")
-    row = FakeRow(parent_id=group.id)
+    row = await site_row(files, collection_id=collections.collection.id)
 
-    await _worker(
-        tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), TouchingPostProcessor(), repo=GroupRepo(group)
-    ).run_task(cast(Any, row))
+    await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 
-    assert row.file_path == "List/Rick_1080p_dQw4w9WgXcQ.mp4"
+    assert await _path(files, row) == "Rick_1080p_dQw4w9WgXcQ.mp4"
     assert (tmp_path / "List" / "Rick_1080p.mp4").read_bytes() == b"other"
 
 
 @pytest.mark.asyncio
 async def test_each_part_gets_its_own_url_and_the_format_s_headers(tmp_path: Path) -> None:
-    engine = RecordingEngine()
-    post = TouchingPostProcessor()
+    files, engine, post = MemoryFiles(), RecordingEngine(), TouchingPostProcessor()
 
-    await _worker(tmp_path, FakeSiteClient(site_info("youtube")), engine, post).run_task(cast(Any, FakeRow()))
+    await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), engine, post).run_task(await site_row(files))
 
     assert [(url, headers) for _, url, headers in engine.parts] == [
         (media_url("youtube", "137"), HEADERS),
@@ -291,36 +220,40 @@ async def test_each_part_gets_its_own_url_and_the_format_s_headers(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_a_combined_format_is_a_single_video_part(tmp_path: Path) -> None:
-    client = FakeSiteClient(site_info("vimeo"))
-    engine = RecordingEngine()
-    post = TouchingPostProcessor()
-    row = FakeRow(source_url="http://vimeo.com/75629013", extractor="Vimeo", video_format="http-1080p", audio_format=None)
+    files, client, post = MemoryFiles(), FakeSiteClient(site_info("vimeo")), TouchingPostProcessor()
+    row = await site_row(
+        files, source_url="http://vimeo.com/75629013", extractor="Vimeo", video_format="http-1080p", audio_format=None
+    )
 
-    await _worker(tmp_path, client, engine, post).run_task(cast(Any, row))
+    await _worker(tmp_path, files, client, post=post).run_task(row)
 
     assert client.resolved == [("http://vimeo.com/75629013", ["http-1080p"])]
     assert list(post.parts) == ["video"]
 
 
 @pytest.mark.asyncio
-async def test_a_vanished_format_with_nothing_to_re_plan_to_fails_the_task(tmp_path: Path) -> None:
+async def test_a_vanished_format_with_nothing_to_re_plan_to_fails_the_download(tmp_path: Path) -> None:
     # The format is gone, and the page no longer has audio for an MP3: one
-    # re-plan, then the task fails for good.
+    # re-plan, then the download fails for good.
     info = site_info("youtube")
+    files = MemoryFiles()
     client = FakeSiteClient(replace(info, formats=[f for f in info.formats if not f.has_audio]))
-    row = FakeRow(video_format=None, audio_format="99999", preset=Preset.MP3, kind=Kind.AUDIO)
+    row = await site_row(
+        files, video_format=None, audio_format="99999", preset=Preset.MP3, media_kind=MediaKind.AUDIO
+    )
 
-    await _worker(tmp_path, client, RecordingEngine(), TouchingPostProcessor()).run_task(cast(Any, row))
+    await _worker(tmp_path, files, client).run_task(row)
 
-    assert row.status == TaskStatus.FAILED
+    assert row.status == DownloadStatus.FAILED
     assert client.opened == ["https://youtu.be/dQw4w9WgXcQ"]
 
 
-def _dailymotion() -> FakeRow:
-    return FakeRow(
+async def _dailymotion(files: MemoryFiles) -> Any:
+    return await site_row(
+        files,
+        filename="Clip_1080p.mp4",
         source_url="https://www.dailymotion.com/video/x8",
         extractor="Dailymotion",
-        filename="Clip_1080p.mp4",
         video_format="hls-1080",
         audio_format=None,
     )
@@ -328,50 +261,51 @@ def _dailymotion() -> FakeRow:
 
 @pytest.mark.asyncio
 async def test_a_fragmented_part_goes_to_yt_dlp_with_the_page_and_its_format(tmp_path: Path) -> None:
-    engine, fragments, post = RecordingEngine(), RecordingFragments(), TouchingPostProcessor()
-    row = _dailymotion()
+    files, engine, fragments, post = MemoryFiles(), RecordingEngine(), RecordingFragments(), TouchingPostProcessor()
+    row = await _dailymotion(files)
 
-    await _worker(tmp_path, FakeSiteClient(site_info("dailymotion")), engine, post, fragments=fragments).run_task(
-        cast(Any, row)
-    )
+    await _worker(
+        tmp_path, files, FakeSiteClient(site_info("dailymotion")), engine, post, fragments=fragments
+    ).run_task(row)
 
     assert fragments.calls == [("https://www.dailymotion.com/video/x8", "hls-1080", "video.part")]
     assert engine.parts == []
     assert post.fragmented == frozenset({"video"})
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
 
 
 @pytest.mark.asyncio
 async def test_a_mixed_plan_sends_each_part_down_its_own_path(tmp_path: Path) -> None:
     # Reddit's Best: the taller HLS video, and its HTTPS audio.
-    engine, fragments, post = RecordingEngine(report=True), RecordingFragments(report=True), TouchingPostProcessor()
-    repo = FlushRecordingRepo()
-    row = FakeRow(
+    files, post, repo = MemoryFiles(), TouchingPostProcessor(), FlushRecordingRepo()
+    engine, fragments = RecordingEngine(report=True), RecordingFragments(report=True)
+    row = await site_row(
+        files,
         source_url="https://www.reddit.com/r/videos/comments/6rrwyj/x/",
         extractor="Reddit",
         video_format="hls-1875",
         audio_format="dash-AUDIO-1",
     )
 
-    await _worker(tmp_path, FakeSiteClient(site_info("reddit")), engine, post, fragments=fragments, repo=repo).run_task(
-        cast(Any, row)
-    )
+    await _worker(
+        tmp_path, files, FakeSiteClient(site_info("reddit")), engine, post, fragments=fragments, repo=repo
+    ).run_task(row)
 
     assert [call[1] for call in fragments.calls] == ["hls-1875"]
     assert [url for _, url, _ in engine.parts] == [media_url("reddit", "dash-AUDIO-1")]
     assert sorted(post.parts) == ["audio", "video"]
     assert post.fragmented == frozenset({"video"})
     # The audio part's progress continues from the video's 7 bytes.
-    assert repo.flushed == [7, 17]
+    assert [fields["downloaded_bytes"] for fields in repo.flushed] == [7, 17]
 
 
 @pytest.mark.asyncio
 async def test_an_http_plan_never_touches_the_fragment_path(tmp_path: Path) -> None:
-    fragments, post = RecordingFragments(), TouchingPostProcessor()
+    files, fragments, post = MemoryFiles(), RecordingFragments(), TouchingPostProcessor()
 
-    await _worker(tmp_path, FakeSiteClient(site_info("youtube")), RecordingEngine(), post, fragments=fragments).run_task(
-        cast(Any, FakeRow())
-    )
+    await _worker(
+        tmp_path, files, FakeSiteClient(site_info("youtube")), post=post, fragments=fragments
+    ).run_task(await site_row(files))
 
     assert fragments.calls == []
     assert post.fragmented == frozenset()
@@ -379,31 +313,28 @@ async def test_an_http_plan_never_touches_the_fragment_path(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_a_stop_on_the_fragment_path_is_a_stop_not_a_failure(tmp_path: Path) -> None:
-    row = _dailymotion()
+    files = MemoryFiles()
+    row = await _dailymotion(files)
 
     await _worker(
-        tmp_path,
-        FakeSiteClient(site_info("dailymotion")),
-        RecordingEngine(),
-        TouchingPostProcessor(),
-        fragments=RecordingFragments(fail=Stopped()),
-    ).run_task(cast(Any, row))
+        tmp_path, files, FakeSiteClient(site_info("dailymotion")), fragments=RecordingFragments(fail=Stopped())
+    ).run_task(row)
 
-    assert row.status == TaskStatus.DOWNLOADING
+    assert row.status == DownloadStatus.DOWNLOADING
 
 
 @pytest.mark.asyncio
 async def test_a_worker_without_a_fragment_downloader_fails_a_fragmented_part(tmp_path: Path) -> None:
-    row = _dailymotion()
+    files = MemoryFiles()
+    row = await _dailymotion(files)
 
-    await _worker(
-        tmp_path, FakeSiteClient(site_info("dailymotion")), RecordingEngine(), TouchingPostProcessor()
-    ).run_task(cast(Any, row))
+    await _worker(tmp_path, files, FakeSiteClient(site_info("dailymotion"))).run_task(row)
 
-    assert row.status == TaskStatus.FAILED
+    assert row.status == DownloadStatus.FAILED
 
 
 # --- a site's subtitles, saved beside the download (#102) --------------------------------
+
 
 def _with_subtitles() -> Any:
     return replace(
@@ -428,23 +359,26 @@ class FakeSubtitleServer:
         return f"WEBVTT from {url}\n".encode()
 
 
-def _subtitled_worker(tmp_path: Path, server: FakeSubtitleServer) -> DownloadWorker:
-    worker = _worker(tmp_path, FakeSiteClient(_with_subtitles()), RecordingEngine(), TouchingPostProcessor())
-    worker._fetch_subtitle = server
-    return worker
+def _subtitled_worker(tmp_path: Path, files: MemoryFiles, server: FakeSubtitleServer) -> DownloadWorker:
+    w = _worker(tmp_path, files, FakeSiteClient(_with_subtitles()))
+    w._fetch_subtitle = server
+    return w
 
 
 @pytest.mark.asyncio
 async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: Path) -> None:
-    row = FakeRow()
-    server = FakeSubtitleServer()
+    files, server = MemoryFiles(), FakeSubtitleServer()
+    row = await site_row(files)
 
-    await _subtitled_worker(tmp_path, server).run_task(cast(Any, row))
+    await _subtitled_worker(tmp_path, files, server).run_task(row)
 
     folder = tmp_path / str(row.id)
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
     assert sorted(p.name for p in folder.iterdir() if p.suffix != ".part") == [
-        "Rick_1080p.en.auto.vtt", "Rick_1080p.en.vtt", "Rick_1080p.es.srt", "Rick_1080p.mp4",
+        "Rick_1080p.en.auto.vtt",
+        "Rick_1080p.en.vtt",
+        "Rick_1080p.es.srt",
+        "Rick_1080p.mp4",
     ]
     assert (folder / "Rick_1080p.en.vtt").read_text() == "WEBVTT from https://yt.test/en.vtt\n"
     assert server.fetched[0] == ("https://yt.test/en.vtt", {"User-Agent": "UA"})
@@ -452,46 +386,50 @@ async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: P
     found = match_sidecars("Rick_1080p.mp4", folder_listing(folder))
     # Captions after the rest, so English picks the real subtitles.
     assert [(sidecar.path, sidecar.language, sidecar.automatic) for sidecar in found] == [
-        ("Rick_1080p.en.vtt", "en", False), ("Rick_1080p.es.srt", "es", False),
+        ("Rick_1080p.en.vtt", "en", False),
+        ("Rick_1080p.es.srt", "es", False),
         ("Rick_1080p.en.auto.vtt", "en", True),
     ]
-    # Deleting the task's files takes them too.
-    remove_task_files(tmp_path, row.id)
+    # Deleting the download's work files takes them too.
+    remove_work_files(tmp_path, row.id)
     assert not folder.exists()
 
 
 @pytest.mark.asyncio
 async def test_a_subtitle_that_fails_is_skipped_and_the_download_still_completes(tmp_path: Path) -> None:
-    row = FakeRow()
+    files = MemoryFiles()
+    row = await site_row(files)
 
-    await _subtitled_worker(tmp_path, FakeSubtitleServer(failing={"https://yt.test/es.srt"})).run_task(cast(Any, row))
+    await _subtitled_worker(tmp_path, files, FakeSubtitleServer(failing={"https://yt.test/es.srt"})).run_task(row)
 
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
     assert sorted(p.name for p in (tmp_path / str(row.id)).iterdir() if p.suffix != ".part") == [
-        "Rick_1080p.en.auto.vtt", "Rick_1080p.en.vtt", "Rick_1080p.mp4",
+        "Rick_1080p.en.auto.vtt",
+        "Rick_1080p.en.vtt",
+        "Rick_1080p.mp4",
     ]
 
 
 @pytest.mark.asyncio
 async def test_an_extraction_that_fails_leaves_the_download_complete(tmp_path: Path) -> None:
-    row = FakeRow()
-    worker = _subtitled_worker(tmp_path, FakeSubtitleServer())
+    files = MemoryFiles()
+    row = await site_row(files)
+    w = _subtitled_worker(tmp_path, files, FakeSubtitleServer())
 
     async def broken(_url: str) -> Any:
         raise Error.create(code=Code.BAD_GATEWAY, message="bot check", error_type=ErrorType.EXTERNAL_API_ERROR)
 
-    worker._client.extract = broken  # ty: ignore[invalid-assignment]
-    await worker.run_task(cast(Any, row))
+    w._client.extract = broken  # ty: ignore[invalid-assignment]
+    await w.run_task(row)
 
-    assert row.status == TaskStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETE
 
 
 @pytest.mark.asyncio
 async def test_an_audio_download_saves_no_subtitles(tmp_path: Path) -> None:
-    row = FakeRow()
-    row.kind = Kind.AUDIO
-    server = FakeSubtitleServer()
+    files, server = MemoryFiles(), FakeSubtitleServer()
+    row = await site_row(files, media_kind=MediaKind.AUDIO)
 
-    await _subtitled_worker(tmp_path, server).run_task(cast(Any, row))
+    await _subtitled_worker(tmp_path, files, server).run_task(row)
 
     assert server.fetched == []

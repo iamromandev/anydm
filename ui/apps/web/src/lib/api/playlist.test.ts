@@ -198,7 +198,7 @@ describe("playlistRequest", () => {
         ).toEqual({
             url: target.url,
             extractor: "YoutubeTab",
-            playlist_id: "PL1",
+            external_id: "PL1",
             title: "29C3",
             channel_tab: false,
             preset: "1080",

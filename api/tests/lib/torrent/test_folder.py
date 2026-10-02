@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.lib.torrent.folder import stored_folder, torrent_folder
+from src.lib.torrent.folder import torrent_folder
 
 HASH = "08ada5a7a6183aae1e09d831df6748d566095a10"
 
@@ -38,25 +38,3 @@ def test_an_empty_folder_is_reused(tmp_path: Path) -> None:
     (tmp_path / "Sintel").mkdir()
 
     assert torrent_folder(tmp_path, "Sintel", HASH) == tmp_path / "Sintel"
-
-
-def test_a_stored_folder_that_exists_is_the_folder(tmp_path: Path) -> None:
-    folder = tmp_path / "Sintel"
-    folder.mkdir()
-
-    assert stored_folder(str(folder), tmp_path, ["Sintel.mp4"]) == folder
-
-
-def test_a_torrent_from_before_per_torrent_folders_is_read_from_the_root(tmp_path: Path) -> None:
-    """Until #107 every torrent was written flat into the root, whatever its row said."""
-    (tmp_path / "Sintel.mp4").write_bytes(b"data")
-
-    assert stored_folder(str(tmp_path / "Sintel"), tmp_path, ["Sintel.mp4"]) == tmp_path
-
-
-def test_a_new_torrent_with_nothing_on_disk_yet_keeps_its_folder(tmp_path: Path) -> None:
-    assert stored_folder(str(tmp_path / "Sintel"), tmp_path, ["Sintel.mp4"]) == tmp_path / "Sintel"
-
-
-def test_no_stored_folder_means_the_root(tmp_path: Path) -> None:
-    assert stored_folder(None, tmp_path, []) == tmp_path

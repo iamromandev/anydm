@@ -21,7 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from src.data.type import Kind
+from src.data.type import MediaKind
 from src.lib.site.client import YtDlpClient
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
@@ -164,7 +164,7 @@ async def test_an_hls_stream_downloads_and_remuxes_into_a_playable_mp4(kind: str
 
     destination = tmp_path / "out.mp4"
     await FfmpegPostProcessor("ffmpeg").run(
-        SimpleNamespace(kind=Kind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
+        SimpleNamespace(media_kind=MediaKind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
     )
 
     format_name, codecs, duration = _probe(destination)

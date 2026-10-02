@@ -13,7 +13,7 @@ import contextlib
 
 from loguru import logger
 
-from src.data.repo.download.interface.task import TaskRepo
+from src.data.repo.download.interface import DownloadRepo
 from src.lib.torrent.protocol import TorrentClient
 from src.service.stream.session import StreamSessionStore
 
@@ -22,12 +22,12 @@ class TorrentReaper:
     def __init__(
         self,
         client: TorrentClient,
-        task_repo: TaskRepo,
+        downloads: DownloadRepo,
         sessions: StreamSessionStore,
         poll_s: float = 60.0,
     ) -> None:
         self._client = client
-        self._task_repo = task_repo
+        self._downloads = downloads
         self._sessions = sessions
         self._poll_s = poll_s
         self._task: asyncio.Task[None] | None = None
@@ -63,8 +63,6 @@ class TorrentReaper:
         for progress in await self._client.list_progress():
             if progress.info_hash in live_hashes:
                 continue
-            owner = await self._task_repo.get_one(
-                info_hash=progress.info_hash, deleted_at__isnull=True
-            )
+            owner = await self._downloads.by_info_hash(progress.info_hash)
             if owner is None:
                 await self._client.delete(progress.info_hash)

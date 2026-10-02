@@ -98,7 +98,7 @@ class TaskStoreTest {
             api.stream = {
                 emit(ServerEvent.Snapshot(listOf(task("a", progress = 10, totalBytes = 100))))
                 emit(ServerEvent.Progress(ProgressDto(id = "a", progress = 40)))
-                emit(ServerEvent.Progress(ProgressDto(id = "video", parentId = "a", progress = 99)))
+                emit(ServerEvent.Progress(ProgressDto(id = "video", collectionId = "a", progress = 99)))
                 awaitCancellation()
             }
             val store = store()
@@ -214,6 +214,23 @@ class TaskStoreTest {
             store.remove("a", deleteFiles = false)
             assertEquals(emptyList(), store.state.value.tasks)
             assertEquals(listOf("a"), api.removed)
+            assertEquals(emptyList(), api.viaCollection)
+        }
+
+    @Test
+    fun `a playlist row is paused, resumed and removed as a collection`() =
+        runTest {
+            api.pages[1] = page(TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading"))
+            api.stream = { awaitCancellation() }
+            val store = store()
+            store.start()
+            runCurrent()
+
+            api.answer = TaskDto(type = "collection", id = "g", kind = "playlist", status = "paused")
+            assertTrue(store.pause("g"))
+            assertTrue(store.resume("g"))
+            store.remove("g", deleteFiles = true)
+            assertEquals(listOf("g", "g", "g"), api.viaCollection)
         }
 
     @Test
@@ -275,7 +292,7 @@ class TaskStoreTest {
     @Test
     fun `an open group's videos load, follow their frames, and go when it closes`() =
         runTest {
-            api.entries["g"] = listOf(dto("v2").copy(parentId = "g", position = 2), dto("v1").copy(parentId = "g", position = 1))
+            api.entries["g"] = listOf(dto("v2").copy(collectionId = "g", position = 2), dto("v1").copy(collectionId = "g", position = 1))
             api.stream = {
                 emit(ServerEvent.Snapshot(listOf(task("g", kind = TaskKind.PLAYLIST))))
                 awaitCancellation()
@@ -294,7 +311,7 @@ class TaskStoreTest {
 
             api.stream = {}
             store.onFrame(ServerEvent.TaskChanged(task("v1", COMPLETE, parentId = "g")))
-            store.onFrame(ServerEvent.Progress(ProgressDto(id = "v2", parentId = "g", progress = 55)))
+            store.onFrame(ServerEvent.Progress(ProgressDto(id = "v2", collectionId = "g", progress = 55)))
             store.onFrame(ServerEvent.TaskChanged(task("other", parentId = "closed")))
             runCurrent()
             val open =

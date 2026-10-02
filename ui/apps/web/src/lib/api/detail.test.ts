@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { detailRows, relativeTime } from "./detail";
-import type { UiTask } from "./task";
+import type { UiTask } from "./download";
 
 const NOW = Date.parse("2026-09-20T12:00:00Z");
 

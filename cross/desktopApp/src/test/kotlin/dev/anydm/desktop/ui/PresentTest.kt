@@ -12,7 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PresentTest {
-    private fun task(status: String): Task = TaskDto(id = "t", kind = "file", status = status, title = "clip").toTask()
+    private fun task(status: String): Task = TaskDto(id = "t", mediaKind = "file", status = status, title = "clip").toTask()
 
     @Test
     fun `sizes, speeds and times read as the web writes them`() {
@@ -74,15 +74,22 @@ class PresentTest {
         assertEquals(listOf(CardAction.PLAY, CardAction.SAVE, CardAction.REMOVE), cardView(video, 0).actions)
         val iso = task("complete").copy(filename = "debian.iso")
         assertEquals(listOf(CardAction.SAVE, CardAction.REMOVE), cardView(iso, 0).actions)
-        val group = TaskDto(id = "g", kind = "playlist", status = "complete", title = "29C3").toTask()
+        val group = TaskDto(type = "collection", id = "g", kind = "playlist", status = "complete", title = "29C3").toTask()
         assertEquals(listOf(CardAction.REMOVE), cardView(group, 0).actions)
     }
 
     @Test
     fun `a group card counts its videos`() {
         val group =
-            TaskDto(id = "g", kind = "playlist", status = "downloading", title = "29C3", extractor = "YoutubeTab", preset = "1080")
-                .toTask()
+            TaskDto(
+                type = "collection",
+                id = "g",
+                kind = "playlist",
+                status = "downloading",
+                title = "29C3",
+                extractor = "YoutubeTab",
+                preset = "1080",
+            ).toTask()
                 .copy(downloadedBytes = (12.4 * 1024 * 1024 * 1024).toLong(), entryCounts = EntryCounts(96, 38, 57, 2, 0, 1, null))
         val card = cardView(group, 0)
         assertEquals("Playlist · YouTube · 96 videos · 1080p", card.meta)

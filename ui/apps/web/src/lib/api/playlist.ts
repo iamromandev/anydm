@@ -56,11 +56,11 @@ export interface PickerTarget {
     channelTab: boolean;
 }
 
-/** `POST /download/playlist`'s body. */
+/** `POST /collection`'s body. */
 export interface PlaylistRequest {
     url: string;
     extractor: string;
-    playlist_id: string;
+    external_id: string;
     title: string;
     channel_tab: boolean;
     preset: string;
@@ -83,7 +83,7 @@ export function playlistRequest(
     return {
         url: target.url,
         extractor: target.extractor,
-        playlist_id: target.playlistId,
+        external_id: target.playlistId,
         title: target.title,
         channel_tab: target.channelTab,
         preset,

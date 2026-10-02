@@ -1,6 +1,9 @@
+from .download import CategoryDatabaseRepo as CategoryDatabaseRepo
+from .download import CollectionDatabaseRepo as CollectionDatabaseRepo
+from .download import DownloadDatabaseRepo as DownloadDatabaseRepo
 from .download import FileDatabaseRepo as FileDatabaseRepo
+from .download import MirrorDatabaseRepo as MirrorDatabaseRepo
 from .download import PositionDatabaseRepo as PositionDatabaseRepo
+from .download import QueueDatabaseRepo as QueueDatabaseRepo
 from .download import SegmentDatabaseRepo as SegmentDatabaseRepo
-from .download import TaskDatabaseRepo as TaskDatabaseRepo
-from .flag import AppFlagDatabaseRepo as AppFlagDatabaseRepo
-from .search import SearchSourceDatabaseRepo as SearchSourceDatabaseRepo
+from .search import SourceDatabaseRepo as SourceDatabaseRepo

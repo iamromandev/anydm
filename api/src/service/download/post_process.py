@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.core.error import Error
-from src.data.type import Kind
+from src.data.type import MediaKind
 from src.lib import media
 
 Runner = Callable[[list[str]], Awaitable[None]]
@@ -19,7 +19,7 @@ Runner = Callable[[list[str]], Awaitable[None]]
 
 class PostProcessor(Protocol):
     async def run(
-        self, task: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
+        self, download: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
     ) -> None:
         """Turn ``parts`` into the single file at ``destination``.
 
@@ -32,7 +32,7 @@ class PostProcessor(Protocol):
 class FfmpegPostProcessor(PostProcessor):
     """Turns the downloaded parts into the finished file.
 
-    Three cases, in the order they are checked. An MP3 task is transcoded even
+    Three cases, in the order they are checked. An MP3 download is transcoded even
     though it has only one part, because the stream YouTube serves is AAC or
     Opus. Any other single part is already the file and is renamed into place,
     which covers combined streams and every direct download. The exception is
@@ -45,15 +45,15 @@ class FfmpegPostProcessor(PostProcessor):
         self._run = runner
 
     async def run(
-        self, task: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
+        self, download: Any, parts: dict[str, Path], destination: Path, *, fragmented: frozenset[str] = frozenset()
     ) -> None:
         if not parts:
             raise Error.internal(message="Nothing was downloaded")
 
-        if task.kind == Kind.AUDIO:
+        if download.media_kind == MediaKind.AUDIO:
             audio = parts.get("audio")
             if audio is None:
-                raise Error.internal(message="Audio task has no audio part")
+                raise Error.internal(message="Audio download has no audio part")
             await self._run(media.mp3_args(self._ffmpeg, audio, destination))
             audio.unlink(missing_ok=True)
             return
