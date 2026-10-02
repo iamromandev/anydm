@@ -1,9 +1,93 @@
-event: tasks
-data: [{"id": "fa95d7f9-96c2-4b9e-9238-31083832e939", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "platform": "site", "extractor": "YoutubeTab", "video_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "preset": "480", "kind": "playlist", "title": "29C3: Not my department", "filename": "", "status": "paused", "progress": 0, "downloaded_bytes": 0, "total_bytes": 222988152, "speed_bps": 0, "uploaded_bytes": 0, "upload_speed_bps": 0, "peers_connected": 0, "positions": [], "entry_counts": {"total": 2, "complete": 0, "active": 0, "downloading": 0, "paused": 2, "failed": 0, "watched": 0}, "folder": "29C3_ Not my department", "attempts": 0, "max_attempts": 3, "created_at": "2026-09-28T15:01:27.534218Z"}, {"id": "174e2358-0e37-46c1-aea4-da921cb3c29a", "source_url": "https://deb.debian.org/debian/README", "platform": "direct", "preset": "best", "kind": "file", "title": "README", "filename": "README", "status": "complete", "progress": 100, "downloaded_bytes": 1198, "total_bytes": 1198, "speed_bps": 0, "uploaded_bytes": 0, "upload_speed_bps": 0, "peers_connected": 0, "positions": [], "file_size": 1198, "attempts": 1, "max_attempts": 3, "created_at": "2026-09-28T15:01:19.412350Z", "started_at": "2026-09-28T15:01:19.420636Z", "completed_at": "2026-09-28T15:01:19.547342Z"}]
+event: downloads
+data: [{"type": "download", "id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "source_url": "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337", "platform": "torrent", "media_kind": "file", "title": "Big Buck Bunny", "status": "downloading", "progress": 0, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 3, "folder": "torrent/Big Buck Bunny", "limits": {}, "total_bytes": 276299776, "downloaded_bytes": 524288, "live": {"speed_bps": 257603, "eta_seconds": 1070, "upload_speed_bps": 0, "peers": 62}, "torrent": {"info_hash": "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c", "uploaded_bytes": 0}, "files": [{"index": 0, "path": "Big Buck Bunny.en.srt", "size_bytes": 140, "downloaded_bytes": 140, "selected": false}, {"index": 1, "path": "Big Buck Bunny.mp4", "size_bytes": 276134947, "downloaded_bytes": 359459, "selected": true}, {"index": 2, "path": "poster.jpg", "size_bytes": 310380, "downloaded_bytes": 164689, "selected": false}], "mirrors": [], "attempts": 0, "max_attempts": 3, "created_at": "2026-10-02T01:55:52.171349Z"}, {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "paused", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 0, "downloading": 0, "paused": 2, "failed": 0, "watched": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 0, "created_at": "2026-10-02T01:55:49.843623Z"}, {"type": "download", "id": "074b4410-81bb-4ecc-b480-a412eeeefcee", "source_url": "https://deb.debian.org/debian/README", "platform": "direct", "media_kind": "file", "title": "README", "status": "complete", "progress": 100, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 0, "folder": "074b4410-81bb-4ecc-b480-a412eeeefcee", "limits": {}, "total_bytes": 1198, "downloaded_bytes": 1198, "live": {"speed_bps": 0, "upload_speed_bps": 0, "peers": 0}, "files": [{"index": 0, "path": "README", "size_bytes": 1198, "downloaded_bytes": 1198, "selected": true}], "mirrors": [], "attempts": 1, "max_attempts": 3, "created_at": "2026-10-02T01:55:46.902169Z", "started_at": "2026-10-02T01:55:46.925869Z", "completed_at": "2026-10-02T01:55:47.217567Z"}]
 
 event: disk
-data: {"path": "/tmp/dl", "total_bytes": 269426429952, "free_bytes": 217661595648, "min_free_bytes": 1073741824}
+data: {"path": "/downloads", "total_bytes": 494384795648, "free_bytes": 53248000000, "min_free_bytes": 1073741824}
 
-event: disk
-data: {"path": "/tmp/dl", "total_bytes": 269426429952, "free_bytes": 217661591552, "min_free_bytes": 1073741824}
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 321441, "eta_seconds": 857, "upload_speed_bps": 0, "peers": 64}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: download
+data: {"type": "download", "id": "287298e9-0181-48dd-b8f8-64fa75e290fd", "source_url": "https://deb.debian.org/debian/ls-lR.gz", "platform": "direct", "media_kind": "file", "title": "ls-lR.gz", "status": "pending", "progress": 0, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 4, "limits": {}, "downloaded_bytes": 0, "live": {"speed_bps": 0, "upload_speed_bps": 0, "peers": 0}, "files": [{"index": 0, "path": "ls-lR.gz", "size_bytes": 0, "downloaded_bytes": 0, "selected": true}], "mirrors": [], "attempts": 0, "max_attempts": 3, "created_at": "2026-10-02T01:56:01.199137Z"}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 356125, "eta_seconds": 774, "upload_speed_bps": 0, "peers": 65}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "287298e9-0181-48dd-b8f8-64fa75e290fd", "downloaded_bytes": 10485760, "progress": 64, "live": {"speed_bps": 10437069, "eta_seconds": 0, "upload_speed_bps": 0, "peers": 0}, "total_bytes": 16149548}
+
+event: progress
+data: {"id": "287298e9-0181-48dd-b8f8-64fa75e290fd", "downloaded_bytes": 16149548, "progress": 100, "live": {"speed_bps": 10651949, "eta_seconds": 0, "upload_speed_bps": 0, "peers": 0}, "total_bytes": 16149548}
+
+event: download
+data: {"type": "download", "id": "287298e9-0181-48dd-b8f8-64fa75e290fd", "source_url": "https://deb.debian.org/debian/ls-lR.gz", "platform": "direct", "media_kind": "file", "title": "ls-lR.gz", "status": "complete", "progress": 100, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 4, "folder": "287298e9-0181-48dd-b8f8-64fa75e290fd", "limits": {}, "total_bytes": 16149548, "downloaded_bytes": 16149548, "live": {"speed_bps": 0, "upload_speed_bps": 0, "peers": 0}, "files": [{"index": 0, "path": "ls-lR.gz", "size_bytes": 16149548, "downloaded_bytes": 16149548, "selected": true}], "mirrors": [], "attempts": 1, "max_attempts": 3, "created_at": "2026-10-02T01:56:01.199137Z", "started_at": "2026-10-02T01:56:01.203884Z", "completed_at": "2026-10-02T01:56:02.947087Z"}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 323620, "eta_seconds": 852, "upload_speed_bps": 0, "peers": 63}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "downloading", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 2, "downloading": 0, "paused": 0, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 0, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "downloading", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 2, "downloading": 2, "paused": 0, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 0, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "downloading", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 2, "downloading": 2, "paused": 0, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 0, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 386797, "eta_seconds": 712, "upload_speed_bps": 0, "peers": 61}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 387590, "eta_seconds": 711, "upload_speed_bps": 0, "peers": 60}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "a43e4eb1-0a55-44be-ad5b-036f15259f9f", "downloaded_bytes": 0, "progress": 0, "live": {"speed_bps": 61358, "eta_seconds": 1595, "upload_speed_bps": 0, "peers": 0}, "total_bytes": 152230608, "collection_id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "segments": [{"index": 0, "start": 0, "end": 24467879, "downloaded": 0, "speed_bps": 61358}, {"index": 1, "start": 24467880, "end": 48935759, "downloaded": 0, "speed_bps": 0}, {"index": 2, "start": 48935760, "end": 73403639, "downloaded": 0, "speed_bps": 0}, {"index": 3, "start": 73403640, "end": 97871522, "downloaded": 0, "speed_bps": 0}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 524288, "progress": 0, "live": {"speed_bps": 353453, "eta_seconds": 780, "upload_speed_bps": 0, "peers": 57}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 359459}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "paused", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 0, "downloading": 0, "paused": 2, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 61358, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: progress
+data: {"id": "22aaf1d2-23c5-4326-990f-4bb93ebabf0d", "downloaded_bytes": 0, "progress": 0, "live": {"speed_bps": 0, "eta_seconds": null, "upload_speed_bps": 0, "peers": 0}, "total_bytes": 70757544, "collection_id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "segments": [{"index": 0, "start": 0, "end": 9451334, "downloaded": 0, "speed_bps": 0}, {"index": 1, "start": 9451335, "end": 18902669, "downloaded": 0, "speed_bps": 0}, {"index": 2, "start": 18902670, "end": 28354004, "downloaded": 0, "speed_bps": 0}, {"index": 3, "start": 28354005, "end": 37805341, "downloaded": 0, "speed_bps": 0}]}
+
+event: download
+data: {"type": "download", "id": "22aaf1d2-23c5-4326-990f-4bb93ebabf0d", "source_url": "https://www.youtube.com/watch?v=6RR00hxX7W0", "platform": "site", "media_kind": "video", "title": "29C3: (Un)Sicherheit Hardware-basierter Festplattenverschl\u00fcsselung (DE)", "status": "paused", "progress": 0, "collection_id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "position": 2, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 2, "limits": {}, "total_bytes": 70757544, "downloaded_bytes": 0, "live": {"speed_bps": 0, "upload_speed_bps": 0, "peers": 0}, "site": {"extractor": "Youtube", "video_id": "6RR00hxX7W0", "preset": "480", "video_format": "135", "audio_format": "140-1"}, "files": [{"index": 0, "path": "02_29C3_UnSicherheit_Hardware-basierter_Festplattenverschl\u00fcsselung_DE_480p.mp4", "size_bytes": 0, "downloaded_bytes": 0, "selected": true, "mime_type": "video/mp4"}], "mirrors": [], "attempts": 1, "max_attempts": 3, "created_at": "2026-10-02T01:55:49.845699Z", "started_at": "2026-10-02T01:55:49.851275Z"}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "paused", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 0, "downloading": 0, "paused": 2, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 0, "speed_bps": 61358, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: progress
+data: {"id": "a43e4eb1-0a55-44be-ad5b-036f15259f9f", "downloaded_bytes": 262144, "progress": 0, "live": {"speed_bps": 0, "eta_seconds": null, "upload_speed_bps": 0, "peers": 0}, "total_bytes": 152230608, "collection_id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "segments": [{"index": 0, "start": 0, "end": 24467879, "downloaded": 65536, "speed_bps": 0}, {"index": 1, "start": 24467880, "end": 48935759, "downloaded": 65536, "speed_bps": 0}, {"index": 2, "start": 48935760, "end": 73403639, "downloaded": 65536, "speed_bps": 0}, {"index": 3, "start": 73403640, "end": 97871522, "downloaded": 65536, "speed_bps": 0}]}
+
+event: download
+data: {"type": "download", "id": "a43e4eb1-0a55-44be-ad5b-036f15259f9f", "source_url": "https://www.youtube.com/watch?v=6ueeeG0TBjs", "platform": "site", "media_kind": "video", "title": "29C3: \"How I met your pointer\" (EN)", "status": "paused", "progress": 0, "collection_id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "position": 1, "queue": {"id": "0b774b30-276b-40ad-a084-4b69bb990433", "name": "Main"}, "queue_position": 1, "limits": {}, "total_bytes": 152230608, "downloaded_bytes": 262144, "live": {"speed_bps": 0, "upload_speed_bps": 0, "peers": 0}, "site": {"extractor": "Youtube", "video_id": "6ueeeG0TBjs", "preset": "480", "video_format": "135", "audio_format": "140-10"}, "files": [{"index": 0, "path": "01_29C3_How_I_met_your_pointer_EN_480p.mp4", "size_bytes": 0, "downloaded_bytes": 0, "selected": true, "mime_type": "video/mp4"}], "mirrors": [], "attempts": 1, "max_attempts": 3, "created_at": "2026-10-02T01:55:49.845678Z", "started_at": "2026-10-02T01:55:49.850372Z"}
+
+event: collection
+data: {"type": "collection", "id": "23b5f7b2-9cf7-47c0-9054-1db7a1e39e4e", "kind": "playlist", "source_url": "https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "extractor": "YoutubeTab", "external_id": "PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", "title": "29C3: Not my department", "folder": "29C3_ Not my department", "preset": "480", "status": "paused", "progress": 0, "counts": {"total": 2, "complete": 0, "active": 0, "downloading": 0, "paused": 2, "failed": 0}, "total_bytes": 222988152, "downloaded_bytes": 262144, "speed_bps": 0, "created_at": "2026-10-02T01:55:49.843623Z"}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 786432, "progress": 0, "live": {"speed_bps": 257377, "eta_seconds": 1070, "upload_speed_bps": 0, "peers": 56}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 621603}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 786432, "progress": 0, "live": {"speed_bps": 387978, "eta_seconds": 710, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 621603}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 786432, "progress": 0, "live": {"speed_bps": 543763, "eta_seconds": 506, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 621603}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 1310720, "progress": 0, "live": {"speed_bps": 386693, "eta_seconds": 711, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 1145891}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 1310720, "progress": 0, "live": {"speed_bps": 551950, "eta_seconds": 498, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 1145891}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 1310720, "progress": 0, "live": {"speed_bps": 350320, "eta_seconds": 784, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 1145891}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 1835008, "progress": 0, "live": {"speed_bps": 420605, "eta_seconds": 652, "upload_speed_bps": 0, "peers": 53}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 1670179}, {"index": 2, "downloaded_bytes": 164689}]}
+
+event: progress
+data: {"id": "1ecab505-43fa-43bf-8282-af9a478d79f4", "downloaded_bytes": 1835008, "progress": 0, "live": {"speed_bps": 485218, "eta_seconds": 565, "upload_speed_bps": 0, "peers": 54}, "total_bytes": 276299776, "files": [{"index": 0, "downloaded_bytes": 140}, {"index": 1, "downloaded_bytes": 1670179}, {"index": 2, "downloaded_bytes": 164689}]}
 

@@ -26,10 +26,12 @@ class FixtureTest {
         assertTrue(task.title.isNotBlank())
         assertEquals(null, task.parentId)
         assertNotNull(task.completedAt)
+        assertEquals(task.filename, task.title)
+        assertNotNull(task.fileSize)
     }
 
     @Test
-    fun `a group carries its counts and folder`() {
+    fun `a collection carries its counts and folder`() {
         val group = dataOf<TaskDto>("task_group.json").toTask()
         assertEquals(TaskKind.PLAYLIST, group.kind)
         val counts = assertNotNull(group.entryCounts)
@@ -39,17 +41,23 @@ class FixtureTest {
     }
 
     @Test
-    fun `a torrent carries its files`() {
+    fun `a torrent carries its files, hash and swarm`() {
         val torrent = dataOf<TaskDto>("task_torrent.json").toTask()
-        assertEquals(TaskStatus.SEEDING, torrent.status)
-        assertEquals(listOf(true, false), torrent.files?.map { it.selected })
-        assertEquals(3, torrent.peersConnected)
+        assertEquals(TaskKind.TORRENT, torrent.kind)
+        assertEquals(TaskStatus.DOWNLOADING, torrent.status)
+        assertEquals(listOf(false, true, false), torrent.files?.map { it.selected })
+        assertEquals("dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c", torrent.infoHash)
+        assertTrue(torrent.peersConnected > 0)
+        assertTrue(torrent.downloadSpeed > 0)
     }
 
     @Test
     fun `a page and the summary read`() {
-        val rows = dataOf<List<TaskDto>>("page.json")
-        assertTrue(rows.isNotEmpty())
+        val rows = dataOf<List<TaskDto>>("page.json").map { it.toTask() }
+        // Downloads and a collection in one list, each read by its type.
+        assertEquals(1, rows.count { it.kind == TaskKind.PLAYLIST })
+        assertEquals(1, rows.count { it.kind == TaskKind.TORRENT })
+        assertTrue(rows.none { it.kind == TaskKind.UNKNOWN })
         val summary = dataOf<SummaryDto>("summary.json")
         assertTrue(summary.all >= 1)
         assertEquals(0, dataOf<BulkResultDto>("bulk.json").affected)

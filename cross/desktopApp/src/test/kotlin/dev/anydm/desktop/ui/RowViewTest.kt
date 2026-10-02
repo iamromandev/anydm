@@ -1,8 +1,8 @@
 package dev.anydm.desktop.ui
 
 import dev.anydm.model.EntryCounts
-import dev.anydm.model.Task
 import dev.anydm.model.SiteDto
+import dev.anydm.model.Task
 import dev.anydm.model.TaskDto
 import dev.anydm.model.toTask
 import dev.anydm.store.retryLabel

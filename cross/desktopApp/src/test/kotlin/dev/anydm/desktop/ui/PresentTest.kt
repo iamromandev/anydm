@@ -81,8 +81,15 @@ class PresentTest {
     @Test
     fun `a group card counts its videos`() {
         val group =
-            TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading", title = "29C3", extractor = "YoutubeTab", preset = "1080")
-                .toTask()
+            TaskDto(
+                type = "collection",
+                id = "g",
+                kind = "playlist",
+                status = "downloading",
+                title = "29C3",
+                extractor = "YoutubeTab",
+                preset = "1080",
+            ).toTask()
                 .copy(downloadedBytes = (12.4 * 1024 * 1024 * 1024).toLong(), entryCounts = EntryCounts(96, 38, 57, 2, 0, 1, null))
         val card = cardView(group, 0)
         assertEquals("Playlist · YouTube · 96 videos · 1080p", card.meta)

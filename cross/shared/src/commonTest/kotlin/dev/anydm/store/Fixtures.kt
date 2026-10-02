@@ -28,8 +28,7 @@ fun task(
         TaskKind.PLAYLIST -> TaskDto(type = "collection", id = id, kind = "playlist", status = status.wire, title = title)
         TaskKind.TORRENT -> TaskDto(id = id, platform = "torrent", status = status.wire, title = title)
         else -> TaskDto(id = id, mediaKind = kind.wire, status = status.wire, title = title)
-    }
-        .toTask()
+    }.toTask()
         .copy(
             parentId = parentId,
             progress = progress,

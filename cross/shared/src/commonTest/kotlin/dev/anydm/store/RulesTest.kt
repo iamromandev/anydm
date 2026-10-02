@@ -1,13 +1,13 @@
 package dev.anydm.store
 
 import dev.anydm.model.EntryCounts
-import dev.anydm.model.Position
 import dev.anydm.model.FileProgressDto
 import dev.anydm.model.LiveDto
+import dev.anydm.model.Position
 import dev.anydm.model.ProgressDto
-import dev.anydm.model.TaskKind
-import dev.anydm.model.TaskFile
 import dev.anydm.model.Task
+import dev.anydm.model.TaskFile
+import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus.CANCELED
 import dev.anydm.model.TaskStatus.COMPLETE
 import dev.anydm.model.TaskStatus.DOWNLOADING
