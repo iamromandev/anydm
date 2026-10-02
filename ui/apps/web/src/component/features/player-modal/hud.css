@@ -11,9 +11,10 @@
     gap: 0.25rem;
     min-width: 160px;
     padding: 0.625rem 0.75rem;
-    border-radius: var(--radius-md, 8px);
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(6px);
+    border-radius: var(--player-surface-radius, 10px);
+    background: var(--player-surface, rgba(18, 16, 28, 0.94));
+    border: 1px solid var(--player-surface-border, rgba(255, 255, 255, 0.12));
+    backdrop-filter: var(--player-surface-blur, blur(10px));
     color: #fff;
     font-size: 0.75rem;
     pointer-events: none;
