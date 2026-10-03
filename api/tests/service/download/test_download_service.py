@@ -82,11 +82,9 @@ class FakeCollectionRepo:
         self.rows[collection_id] = SimpleNamespace(
             id=collection_id,
             kind=CollectionKind.PLAYLIST,
-            source_url="u",
             extractor="YoutubeTab",
-            external_id="PL",
+            ref_id="PL",
             title="Talks",
-            folder="Talks",
             preset=Preset.BEST,
             created_at=None,
         )
@@ -550,7 +548,7 @@ async def test_resolve_file_rejects_an_incomplete_download(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_a_finished_single_file_is_served_from_its_folder(tmp_path: Path) -> None:
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Video")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Video")
     (tmp_path / "Video").mkdir()
     (tmp_path / "Video" / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
@@ -571,7 +569,7 @@ async def test_resolve_file_404s_when_the_row_is_gone(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_resolve_file_404s_when_the_file_vanished(tmp_path: Path) -> None:
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Video")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Video")
     await h.files.set_single(row.id, path="gone.mp4", mime_type="video/mp4")
 
     with pytest.raises(Error) as caught:
@@ -582,7 +580,7 @@ async def test_resolve_file_404s_when_the_file_vanished(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_a_download_has_no_file_at_another_index(tmp_path: Path) -> None:
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Video")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Video")
 
     with pytest.raises(Error) as caught:
         await h.service.resolve_file(row.id, 2)
@@ -602,7 +600,7 @@ async def test_resolve_file_hands_a_torrent_to_the_torrent_service(status: Downl
 async def test_the_media_file_of_a_download_is_its_file(tmp_path: Path) -> None:
     """What Play on a finished card reads from disk (#94)."""
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Video")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Video")
     (tmp_path / "Video").mkdir()
     (tmp_path / "Video" / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
@@ -627,7 +625,7 @@ async def test_the_media_file_of_a_torrent_is_the_one_asked_for_or_its_largest()
 async def test_a_download_s_subtitle_files_are_its_neighbours_on_disk(tmp_path: Path) -> None:
     """#101: beside it, or in a subtitles folder there; never another film's."""
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Films")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Films")
     folder = tmp_path / "Films"
     (folder / "Subs").mkdir(parents=True)
     for name in ("Movie.mkv", "Movie.en.srt", "Subs/Movie.fr.srt", "Other.en.srt"):
@@ -789,7 +787,7 @@ async def test_cancel_stops_the_download_and_removes_its_work_files(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_cancel_can_keep_the_file_of_a_finished_download(tmp_path: Path) -> None:
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="Video")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="Video")
     (tmp_path / "Video").mkdir()
     (tmp_path / "Video" / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
@@ -803,7 +801,7 @@ async def test_cancel_can_keep_the_file_of_a_finished_download(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_cancel_with_files_takes_a_finished_download_s_file_and_its_subtitles(tmp_path: Path) -> None:
     h = _service(tmp_path)
-    row = _row(h, status=DownloadStatus.COMPLETE, folder="List")
+    row = _row(h, status=DownloadStatus.COMPLETE, path="List")
     folder = tmp_path / "List"
     folder.mkdir()
     for name in ("02_Talk_720p.mp4", "02_Talk_720p.en.vtt", "03_Other_720p.mp4"):
@@ -969,7 +967,7 @@ async def test_clear_finished_keeps_a_finished_file_but_not_a_failed_one(tmp_pat
     failed = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.FAILED)
     (tmp_path / str(failed.id)).mkdir()
     finished = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.COMPLETE)
-    finished.folder = "Other"
+    finished.path = "Other"
     (tmp_path / "Other").mkdir()
     (tmp_path / "Other" / "f.bin").write_bytes(b"x")
     await h.files.set_single(finished.id, path="f.bin", mime_type=None)
@@ -985,7 +983,7 @@ async def test_clear_finished_keeps_a_finished_file_but_not_a_failed_one(tmp_pat
 async def test_clear_finished_can_take_the_files_too(tmp_path: Path) -> None:
     h = _bulk_service(tmp_path)
     finished = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.COMPLETE)
-    finished.folder = "Other"
+    finished.path = "Other"
     (tmp_path / "Other").mkdir()
     (tmp_path / "Other" / "f.bin").write_bytes(b"x")
     await h.files.set_single(finished.id, path="f.bin", mime_type=None)

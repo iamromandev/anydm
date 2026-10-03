@@ -24,7 +24,7 @@ class PlaybackRequest(BaseSchema):
     duration_seconds: Annotated[float, Field(ge=0)]
 
 
-class CategoryRef(BaseSchema):
+class FolderRef(BaseSchema):
     id: uuid.UUID
     name: str
 
@@ -94,7 +94,8 @@ class DownloadSchema(BaseSchema):
     title: str = ""
     status: DownloadStatus
     progress: int = 0
-    category: CategoryRef | None = None
+    #: The key stays ``category``: the clients read it, and the contract is not part of this change.
+    category: FolderRef | None = None
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
     position: int | None = None
@@ -142,7 +143,6 @@ class CollectionSchema(BaseSchema):
     type: Literal["collection"] = "collection"
     id: uuid.UUID
     kind: CollectionKind
-    source_url: str
     extractor: str
     external_id: str
     title: str = ""

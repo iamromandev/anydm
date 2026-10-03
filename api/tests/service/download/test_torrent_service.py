@@ -144,7 +144,7 @@ def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
         "status": DownloadStatus.DOWNLOADING,
         "downloaded_bytes": 400,
         "total_bytes": 1000,
-        "folder": "Some Release",
+        "path": "Some Release",
         "torrent_detail": torrent_detail("abc123"),
     }
     fields.update(overrides)
@@ -229,7 +229,7 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release")
     created = repo.created[0]
     download = created["download"]
-    assert download["folder"] == "torrent/Some Release"
+    assert download["path"] == "torrent/Some Release"
     assert (download["platform"], download["media_kind"], download["status"]) == (
         Platform.TORRENT,
         MediaKind.FILE,

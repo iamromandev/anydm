@@ -27,10 +27,8 @@ def site_detail(video_id: str = "abc") -> dict:
 async def a_collection() -> Collection:
     return await Collection.create(
         kind=CollectionKind.PLAYLIST,
-        source_url="https://youtube.com/playlist?list=PL",
         extractor="YoutubeTab",
-        external_id=uuid.uuid4().hex,
-        folder="Talks",
+        ref_id=uuid.uuid4().hex,
         preset=Preset.BEST,
     )
 
@@ -56,7 +54,7 @@ async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
             "media_kind": MediaKind.FILE,
             "title": "T",
             "status": DownloadStatus.PENDING,
-            "folder": "torrent/T",
+            "path": "torrent/T",
         },
         "a" * 40,
         [(0, "x.mkv", 10, True)],

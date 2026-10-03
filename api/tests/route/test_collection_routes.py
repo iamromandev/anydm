@@ -24,7 +24,6 @@ def _collection(**fields: Any) -> CollectionSchema:
     base: dict[str, Any] = {
         "id": COLLECTION,
         "kind": CollectionKind.PLAYLIST,
-        "source_url": "https://www.youtube.com/playlist?list=PL1",
         "extractor": "YoutubeTab",
         "external_id": "PL1",
         "folder": "A list",

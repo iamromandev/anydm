@@ -13,7 +13,7 @@ from src.data.schema.download import DownloadSummarySchema
 from src.data.type import DownloadStatus
 
 #: The relations every read loads, so a schema can be built without another query.
-RELATED = ("site_detail", "torrent_detail", "category", "queue")
+RELATED = ("site_detail", "torrent_detail", "folder", "queue")
 
 
 class DownloadRepo(CrudRepo[Download]):

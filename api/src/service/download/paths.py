@@ -10,6 +10,9 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
+from typing import Any
+
+from src.lib.folder import collection_dirname
 
 
 def work_dir(root: Path, download_id: uuid.UUID) -> Path:
@@ -28,6 +31,18 @@ def final_path(root: Path, download_id: uuid.UUID, filename: str) -> Path:
     file outside the download's own directory.
     """
     return work_dir(root, download_id) / Path(filename).name
+
+
+def collection_relpath(base: str | None, title: str, ref_id: str) -> str:
+    """A collection's directory, relative to ``DOWNLOAD_DIR``: its folder's ``save_dir``, then its own name."""
+    return str(Path(base or "") / collection_dirname(title, ref_id))
+
+
+async def collection_path(collection: Any) -> str:
+    """``collection_relpath`` for a collection row, reading its folder when it has one."""
+    folder_id = getattr(collection, "folder_id", None)
+    base = (await collection.folder).save_dir if folder_id is not None else None
+    return collection_relpath(base, collection.title, collection.ref_id)
 
 
 def collection_destination(root: Path, folder: str, filename: str, video_id: str) -> Path:

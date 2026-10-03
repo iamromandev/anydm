@@ -15,8 +15,8 @@ TABLES = {
         "site_detail",
         "torrent_detail",
     },
-    "organize": {"collection", "queue"},
-    "shared": {"category", "source", "tag"},
+    "organize": {"collection", "folder", "queue"},
+    "shared": {"source", "tag"},
 }
 
 

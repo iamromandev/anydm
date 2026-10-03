@@ -7,21 +7,20 @@ from tortoise import fields
 from src.core.base import LinkBase
 
 
-class Category(LinkBase):
-    """A kind of download, the folder it lands in, and the file types that put a download here."""
+class Folder(LinkBase):
+    """A place downloads are filed: the directory, and the file types that send a download there."""
 
     name: str = fields.CharField(max_length=64, unique=True)
-    #: Relative to ``DOWNLOAD_DIR``.
+    slug: str = fields.CharField(max_length=64, unique=True)
     save_dir: str = fields.CharField(max_length=1024)
-    #: Lower-case, without the dot. An extension belongs to at most one category.
     extensions: list[str] = fields.JSONField(default=list)
     position: int = fields.IntField(default=0)
 
     def __str__(self) -> str:
-        return f"[Category: {self.name}]"
+        return f"[Folder: {self.slug}]"
 
     class Meta:
-        table: ClassVar[str] = "category"
-        table_description: ClassVar[str] = "Category"
-        schema: ClassVar[str] = "shared"
+        table: ClassVar[str] = "folder"
+        table_description: ClassVar[str] = "Folder"
+        schema: ClassVar[str] = "organize"
         ordering: ClassVar[list[str]] = ["position"]

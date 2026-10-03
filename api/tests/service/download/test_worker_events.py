@@ -119,9 +119,9 @@ async def test_completing_a_collection_video_moves_it_and_records_the_folder(tmp
     destination, folder = await w._into_folder(row, work / "01_Talk.mp4")
     await w._mark_complete(row, destination, folder)
 
-    assert (tmp_path / "Talks" / "01_Talk.mp4").read_bytes() == b"12345"
+    assert (tmp_path / "Talks [PL]" / "01_Talk.mp4").read_bytes() == b"12345"
     assert not work.exists()
-    assert (row.status, row.folder, row.total_bytes) == (DownloadStatus.COMPLETE, "Talks", 5)
+    assert (row.status, row.path, row.total_bytes) == (DownloadStatus.COMPLETE, "Talks [PL]", 5)
     single = await files.single(row.id)
     assert single is not None and (single.path, single.size_bytes) == ("01_Talk.mp4", 5)
     assert live.get(row.id) == Live()

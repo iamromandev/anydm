@@ -47,7 +47,7 @@ class FakeCollections:
     """The one collection a collection video's worker looks up."""
 
     def __init__(self, folder: str | None = None) -> None:
-        self.collection: Any = SimpleNamespace(id=uuid.uuid4(), folder=folder) if folder is not None else None
+        self.collection: Any = SimpleNamespace(id=uuid.uuid4(), title=folder, ref_id="PL", folder_id=None) if folder is not None else None
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
         if self.collection is not None and collection_id == self.collection.id:

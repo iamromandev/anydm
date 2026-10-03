@@ -162,7 +162,7 @@ class TorrentMonitor:
                 await self._client.add(
                     parse_source(row.source_url),
                     only_files=await self._file_repo.selected_indexes(row.id),
-                    output_folder=str(inside(self._downloads, row.folder or "")),
+                    output_folder=str(inside(self._downloads, row.path or "")),
                 )
                 logger.info("{}|re-added lost torrent {}", self._tag, _hash(row))
             except Error as error:

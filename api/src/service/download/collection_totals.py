@@ -16,6 +16,7 @@ from src.data.schema.download import CollectionCountsSchema, CollectionSchema
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
 from src.service.download.live import LiveStats
+from src.service.download.paths import collection_path
 
 #: Statuses that mean "still to do": queued or downloading.
 _ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
@@ -59,11 +60,10 @@ class CollectionTotals:
         return CollectionSchema(
             id=collection.id,
             kind=collection.kind,
-            source_url=collection.source_url,
             extractor=collection.extractor,
-            external_id=collection.external_id,
+            external_id=collection.ref_id,
             title=collection.title,
-            folder=collection.folder,
+            folder=await collection_path(collection),
             preset=collection.preset,
             status=collection_status(row[1] for row in rows),
             # Videos done over videos: sizes aren't known until each starts.

@@ -14,10 +14,10 @@ from typing import Any
 
 from src.data.repo.download.interface import FileRepo, MirrorRepo, PositionRepo
 from src.data.schema.download import (
-    CategoryRef,
     ChecksumSchema,
     DownloadFileSchema,
     DownloadSchema,
+    FolderRef,
     LimitsSchema,
     LiveSchema,
     MirrorSchema,
@@ -54,7 +54,7 @@ def download_schema(
     max_attempts: int,
 ) -> DownloadSchema:
     site, torrent = row.site_detail, row.torrent_detail
-    category, queue = row.category, row.queue
+    folder, queue = row.folder, row.queue
     return DownloadSchema(
         id=row.id,
         source_url=row.source_url,
@@ -63,13 +63,13 @@ def download_schema(
         title=row.title,
         status=row.status,
         progress=percent(row.downloaded_bytes, row.total_bytes),
-        category=CategoryRef(id=category.id, name=category.name) if category else None,
+        category=FolderRef(id=folder.id, name=folder.name) if folder else None,
         collection_id=row.collection_id,
         position=row.position,
         queue=QueueRef(id=queue.id, name=queue.name) if queue else None,
         queue_position=row.queue_position,
         start_at=row.start_at,
-        folder=row.folder,
+        folder=row.path,
         limits=LimitsSchema(download_bps=row.download_limit_bps),
         checksum=(
             ChecksumSchema(algo=row.checksum_algo, expected=row.checksum_expected or "", ok=row.checksum_ok)

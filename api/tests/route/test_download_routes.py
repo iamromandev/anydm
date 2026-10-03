@@ -35,7 +35,6 @@ class StubDownloads:
             CollectionSchema(
                 id=uuid.uuid4(),
                 kind=CollectionKind.PLAYLIST,
-                source_url="u",
                 extractor="YoutubeTab",
                 external_id="PL",
                 folder="Talks",

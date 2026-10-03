@@ -33,19 +33,17 @@ class Download(Base):
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, max_length=16, db_index=True)
 
     # organization
-    category = fields.ForeignKeyField(
-        "model.Category", related_name="downloads", null=True, on_delete=fields.SET_NULL
-    )
+    folder = fields.ForeignKeyField("model.Folder", related_name="downloads", null=True, on_delete=fields.SET_NULL)
     collection = fields.ForeignKeyField(
-        "model.Collection", related_name="downloads", null=True, on_delete=fields.CASCADE
+        "model.Collection", related_name=False, null=True, on_delete=fields.CASCADE
     )
     #: Its number in the collection's listing.
     position: int | None = fields.IntField(null=True)
-    #: Overrides the category's folder; relative to ``DOWNLOAD_DIR``.
+    #: Overrides the folder's directory; relative to ``DOWNLOAD_DIR``.
     save_dir: str | None = fields.CharField(max_length=1024, null=True)
-    #: The resolved folder, relative to ``DOWNLOAD_DIR``, fixed when it starts.
-    #: Kept so a finished download's files survive a change to its category.
-    folder: str | None = fields.CharField(max_length=1024, null=True)
+    #: The resolved directory, relative to ``DOWNLOAD_DIR``, fixed when it starts.
+    #: Kept so a finished download's files survive a change to its folder.
+    path: str | None = fields.CharField(max_length=1024, null=True)
 
     # queue
     queue = fields.ForeignKeyField("model.Queue", related_name="downloads", on_delete=fields.RESTRICT)
@@ -75,7 +73,7 @@ class Download(Base):
     completed_at: datetime | None = fields.DatetimeField(null=True)
 
     if TYPE_CHECKING:
-        category_id: UUID | None
+        folder_id: UUID | None
         collection_id: UUID | None
         queue_id: UUID
         #: The one-to-one details; prefetched by every repo read (``RELATED``).

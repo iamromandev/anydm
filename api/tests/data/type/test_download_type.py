@@ -3,7 +3,7 @@ from src.data.type import (
     ACTIVE_STATUSES,
     DOWNLOAD_GROUPS,
     MAIN_QUEUE,
-    OTHER_CATEGORY,
+    OTHER_FOLDER,
     ChecksumAlgo,
     CollectionKind,
     DownloadStatus,
@@ -49,7 +49,7 @@ def test_groups() -> None:
 def test_new_enums_and_names() -> None:
     assert {a.value for a in ChecksumAlgo} == {"sha256", "sha1", "md5"}
     assert {k.value for k in CollectionKind} == {"playlist", "channel"}
-    assert (MAIN_QUEUE, OTHER_CATEGORY) == ("Main", "Other")
+    assert (MAIN_QUEUE, OTHER_FOLDER) == ("Main", "Other")
 
 
 def test_preset_values_match_the_bun_api() -> None:

@@ -33,7 +33,7 @@ from src.service.download.disk import DiskGuard, is_insufficient_storage, storag
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
 from src.service.download.live import Live, LiveStats
-from src.service.download.paths import collection_destination, final_path, part_path, remove_work_files
+from src.service.download.paths import collection_destination, collection_path, final_path, part_path, remove_work_files
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
@@ -203,11 +203,12 @@ class DownloadWorker:
         if collection is None:
             return destination, str(download.id)
         video_id = download.site_detail.video_id if download.site_detail else str(download.id)
-        moved = collection_destination(self._root, collection.folder, destination.name, video_id)
+        path = await collection_path(collection)
+        moved = collection_destination(self._root, path, destination.name, video_id)
         moved.parent.mkdir(parents=True, exist_ok=True)
         destination.replace(moved)
         remove_work_files(self._root, download.id)
-        return moved, collection.folder
+        return moved, path
 
     async def _plan(self, download: Any, site: Any) -> dict[str, Resolved]:
         """Formats for the preset, from the one extraction that also gives their URLs (v0.5)."""
@@ -420,10 +421,10 @@ class DownloadWorker:
         if saved:
             logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), download.id)
 
-    async def _mark_complete(self, download: Any, destination: Path, folder: str) -> None:
+    async def _mark_complete(self, download: Any, destination: Path, path: str) -> None:
         size = destination.stat().st_size
         download.status = DownloadStatus.COMPLETE
-        download.folder = folder
+        download.path = path
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
         download.downloaded_bytes = size
@@ -432,7 +433,7 @@ class DownloadWorker:
         download.error = None
         download.error_code = None
         await download.save(
-            update_fields=["status", "folder", "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code"]
+            update_fields=["status", "path", "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code"]
         )
         await self._files.finish_single(download.id, path=destination.name, size_bytes=size)
         self._live.clear(download.id)
@@ -442,7 +443,7 @@ class DownloadWorker:
         # retry, and rebuilding the video plan at zero would re-download it.
         await self._segment_repo.clear(download.id)
         await self._changed(download)
-        logger.success("{}|completed {} -> {}/{}", self._name, download.id, folder, destination.name)
+        logger.success("{}|completed {} -> {}/{}", self._name, download.id, path, destination.name)
 
     async def _wait_for_space(self, download: Any, error: Error, *, refund: bool = False) -> None:
         """Back to the queue until the disk has room, keeping whatever is on disk.

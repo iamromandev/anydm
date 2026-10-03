@@ -24,11 +24,9 @@ def entry(video_id: str, position: int) -> EntryRow:
 
 COLLECTION = {
     "kind": CollectionKind.PLAYLIST,
-    "source_url": "https://youtube.com/playlist?list=PL",
     "extractor": "YoutubeTab",
-    "external_id": "PL",
+    "ref_id": "PL",
     "title": "Talks",
-    "folder": "Talks_PL",
     "preset": Preset.BEST,
 }
 
