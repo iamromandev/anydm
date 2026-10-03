@@ -18,8 +18,8 @@ from src.data.type import MAIN_QUEUE, DownloadStatus
 
 
 class CollectionDatabaseRepo(CollectionRepo):
-    async def find(self, extractor: str, external_id: str) -> Collection | None:
-        return await Collection.filter(extractor=extractor, external_id=external_id, deleted_at__isnull=True).first()
+    async def find(self, extractor: str, ref_id: str) -> Collection | None:
+        return await Collection.filter(extractor=extractor, ref_id=ref_id, deleted_at__isnull=True).first()
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Collection | None:
         return await Collection.filter(id=collection_id, deleted_at__isnull=True).first()

@@ -292,12 +292,12 @@ class DownloadService(BaseService):
             return await self._torrents.resolve_file(download_id, file_index)
         if file_index not in (None, 0):
             raise Error.not_found(message="Only a torrent has files by index")
-        if download.status != DownloadStatus.COMPLETE or not download.folder:
+        if download.status != DownloadStatus.COMPLETE or not download.path:
             raise Error.conflict(message=f"Download is {download.status.value}, not complete")
         file = await self._files.single(download_id)
         if file is None:
             raise Error.not_found(message="Download has no file")
-        path = inside(self._root, download.folder) / Path(file.path).name
+        path = inside(self._root, download.path) / Path(file.path).name
         if not path.is_file():
             raise Error.not_found(message="File is no longer on disk")
         return path, file.path, file.mime_type or "application/octet-stream"
@@ -420,9 +420,9 @@ class DownloadService(BaseService):
         if delete_files:
             remove_work_files(self._root, download_id)
             file = await self._files.single(download_id)
-            if download.folder and file is not None:
+            if download.path and file is not None:
                 # Its file and the subtitles beside it, never the folder it shares.
-                remove_collection_video_files(inside(self._root, download.folder) / Path(file.path).name)
+                remove_collection_video_files(inside(self._root, download.path) / Path(file.path).name)
         await self._segment_repo.clear(download_id)
         download.status = DownloadStatus.CANCELED
         download.deleted_at = now()

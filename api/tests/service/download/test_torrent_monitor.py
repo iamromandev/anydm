@@ -19,7 +19,7 @@ def _row(**overrides: Any) -> Any:
         "source_url": f"magnet:?xt=urn:btih:{HASH}",
         "platform": Platform.TORRENT,
         "title": "Some Release",
-        "folder": "torrent/Some Release",
+        "path": "torrent/Some Release",
         "torrent_detail": torrent_detail(HASH),
     }
     fields.update(overrides)

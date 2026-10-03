@@ -12,9 +12,9 @@ class Source(LinkBase):
 
     name: str = fields.CharField(max_length=64, unique=True)
     kind: str = fields.CharField(max_length=16)
-    enabled: bool = fields.BooleanField(default=True)
     base_url: str = fields.CharField(max_length=2048)
     api_key: str | None = fields.CharField(max_length=1024, null=True)
+    enabled: bool = fields.BooleanField(default=True)
 
     def __str__(self) -> str:
         return f"[Source: {self.name}, enabled={self.enabled}]"

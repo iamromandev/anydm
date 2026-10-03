@@ -128,7 +128,7 @@ class TorrentService(BaseService):
                 "status": DownloadStatus.PENDING,
                 "total_bytes": total_bytes,
                 # Relative to DOWNLOAD_DIR, like every folder (TORRENT_DIR lives under it).
-                "folder": str(folder.resolve().relative_to(self._downloads)),
+                "path": str(folder.resolve().relative_to(self._downloads)),
             },
             details.info_hash,
             [(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
@@ -231,7 +231,7 @@ class TorrentService(BaseService):
         await self._published(download)
 
     def _folder(self, download: Any) -> Path:
-        return inside(self._downloads, download.folder or "")
+        return inside(self._downloads, download.path or "")
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.

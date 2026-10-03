@@ -28,7 +28,7 @@ class User(LinkBase):
     password_hash: str = fields.CharField(max_length=255)
     role: UserRole = fields.CharEnumField(UserRole, max_length=8, default=UserRole.USER)
     is_active: bool = fields.BooleanField(default=True)
-    folder: str = fields.CharField(max_length=64, unique=True)
+    path: str = fields.CharField(max_length=64, unique=True)
     last_login_at: datetime | None = fields.DatetimeField(null=True)
 
     if TYPE_CHECKING:

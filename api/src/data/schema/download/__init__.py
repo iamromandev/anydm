@@ -1,6 +1,5 @@
 from .download import BulkActionRequest as BulkActionRequest
 from .download import BulkResultSchema as BulkResultSchema
-from .download import CategoryRef as CategoryRef
 from .download import ChecksumSchema as ChecksumSchema
 from .download import CollectionCountsSchema as CollectionCountsSchema
 from .download import CollectionEntryRequest as CollectionEntryRequest
@@ -9,6 +8,7 @@ from .download import CollectionSchema as CollectionSchema
 from .download import DownloadFileSchema as DownloadFileSchema
 from .download import DownloadSchema as DownloadSchema
 from .download import DownloadSummarySchema as DownloadSummarySchema
+from .download import FolderRef as FolderRef
 from .download import LimitsSchema as LimitsSchema
 from .download import ListItem as ListItem
 from .download import LiveSchema as LiveSchema

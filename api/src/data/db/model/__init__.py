@@ -7,8 +7,8 @@ from .iam import Share as Share
 from .iam import User as User
 from .iam import UserSetting as UserSetting
 from .organize import Collection as Collection
+from .organize import Folder as Folder
 from .organize import Queue as Queue
-from .shared import Category as Category
 from .shared import Source as Source
 from .shared import Tag as Tag
 from .transfer import Download as Download

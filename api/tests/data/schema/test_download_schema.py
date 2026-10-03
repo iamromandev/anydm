@@ -34,7 +34,6 @@ def test_a_collection_is_tagged_with_its_counts() -> None:
     schema = CollectionSchema(
         id=uuid.uuid4(),
         kind=CollectionKind.PLAYLIST,
-        source_url="u",
         extractor="YoutubeTab",
         external_id="PL",
         folder="Talks",

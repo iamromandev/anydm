@@ -102,7 +102,7 @@ async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
 
     assert client.resolved == [("https://youtu.be/dQw4w9WgXcQ", ["137", "140"])]
     assert row.status == DownloadStatus.COMPLETE
-    assert row.folder == str(row.id)
+    assert row.path == str(row.id)
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
 
 
 def _collection(tmp_path: Path) -> FakeCollections:
-    (tmp_path / "List").mkdir()
+    (tmp_path / "List [PL]").mkdir()
     return FakeCollections("List")
 
 
@@ -164,8 +164,8 @@ async def test_a_collection_video_finishes_into_the_collection_folder(tmp_path: 
 
     await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 
-    assert (row.folder, await _path(files, row)) == ("List", "02_Rick_1080p.mp4")
-    assert (tmp_path / "List" / "02_Rick_1080p.mp4").read_bytes() == b"done"
+    assert (row.path, await _path(files, row)) == ("List [PL]", "02_Rick_1080p.mp4")
+    assert (tmp_path / "List [PL]" / "02_Rick_1080p.mp4").read_bytes() == b"done"
     assert not (tmp_path / str(row.id)).exists()
 
 
@@ -196,13 +196,13 @@ async def test_a_standalone_download_refreshes_no_collection(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
     files, collections = MemoryFiles(), _collection(tmp_path)
-    (tmp_path / "List" / "Rick_1080p.mp4").write_bytes(b"other")
+    (tmp_path / "List [PL]" / "Rick_1080p.mp4").write_bytes(b"other")
     row = await site_row(files, collection_id=collections.collection.id)
 
     await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 
     assert await _path(files, row) == "Rick_1080p_dQw4w9WgXcQ.mp4"
-    assert (tmp_path / "List" / "Rick_1080p.mp4").read_bytes() == b"other"
+    assert (tmp_path / "List [PL]" / "Rick_1080p.mp4").read_bytes() == b"other"
 
 
 @pytest.mark.asyncio

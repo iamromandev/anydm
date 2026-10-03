@@ -20,11 +20,9 @@ SIZE = 5_000
 
 COLLECTION: dict[str, Any] = {
     "kind": CollectionKind.CHANNEL,
-    "source_url": "https://www.youtube.com/@TED/videos",
     "extractor": "YoutubeTab",
-    "external_id": "UCAuUUnT6oDeKwE6v1NGQxug",
+    "ref_id": "UCAuUUnT6oDeKwE6v1NGQxug",
     "title": "TED · Videos",
-    "folder": "TED_Videos",
     "preset": Preset.P720,
 }
 

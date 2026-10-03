@@ -76,13 +76,12 @@ class ChecksumAlgo(StrEnum):
 
 class CollectionKind(StrEnum):
     PLAYLIST = "playlist"
-    #: A channel's own uploads: its files aren't numbered.
     CHANNEL = "channel"
 
 
-#: The queue every download starts in, and the category nothing else claims.
+#: The queue every download starts in, and the folder nothing else claims.
 MAIN_QUEUE = "Main"
-OTHER_CATEGORY = "Other"
+OTHER_FOLDER = "Other"
 
 #: Statuses that mean "a worker was mid-flight". Every row in one of these at
 #: startup is an orphan by definition — this process is the only one that runs

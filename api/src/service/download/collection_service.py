@@ -18,14 +18,13 @@ from src.core.success import Meta
 from src.data.repo.download.interface import CollectionRepo, EntryRow, SegmentRepo
 from src.data.schema.download import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
-from src.lib.folder import named_folder
 from src.lib.site import error as site_error
 from src.lib.site.filename import number_prefix
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
 from src.service.download.folders import inside
-from src.service.download.paths import remove_work_files
+from src.service.download.paths import collection_path, collection_relpath, remove_work_files
 from src.service.download.views import DownloadViews
 
 #: The most videos one add takes; the picker stops there too.
@@ -79,17 +78,14 @@ class CollectionService(BaseService):
         existing = await self._repo.find(request.extractor, request.external_id)
         if existing is not None:
             return await self._join(existing, request)
-        folder = named_folder(self._root, request.title, request.external_id)
-        folder.mkdir(parents=True, exist_ok=True)
+        inside(self._root, collection_relpath(None, request.title, request.external_id)).mkdir(parents=True, exist_ok=True)
         largest = max(entry.index for entry in request.entries)
         collection = await self._repo.create_with_entries(
             {
                 "kind": CollectionKind.CHANNEL if request.channel_tab else CollectionKind.PLAYLIST,
-                "source_url": request.url,
                 "extractor": request.extractor,
-                "external_id": request.external_id,
+                "ref_id": request.external_id,
                 "title": request.title,
-                "folder": str(folder.relative_to(self._root)),
                 "preset": request.preset,
             },
             [self._entry(entry, request, position=entry.index, largest=largest) for entry in request.entries],
@@ -136,7 +132,7 @@ class CollectionService(BaseService):
         top = max((position or 0 for _, _, position in held.values()), default=0)
         largest = top + len(fresh)
         # Removed by hand since the first add: the videos still finish into it.
-        inside(self._root, collection.folder).mkdir(parents=True, exist_ok=True)
+        inside(self._root, await collection_path(collection)).mkdir(parents=True, exist_ok=True)
         if fresh:
             await self._repo.add_entries(
                 collection,
@@ -185,7 +181,7 @@ class CollectionService(BaseService):
             remove_work_files(self._root, video)
         if delete_files:
             # A folder of 5,000 files shouldn't hold up the API.
-            await asyncio.to_thread(shutil.rmtree, inside(self._root, collection.folder), ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, inside(self._root, await collection_path(collection)), ignore_errors=True)
         await self._repo.soft_delete(collection)
 
     async def _changed(self, collection: Any) -> CollectionSchema:

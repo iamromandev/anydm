@@ -34,7 +34,7 @@ class FakeCollections:
         self.page: list[Any] = []
         self.deleted = False
 
-    async def find(self, extractor: str, external_id: str) -> Any:
+    async def find(self, extractor: str, ref_id: str) -> Any:
         return self.collection
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
@@ -113,15 +113,14 @@ def held_collection(repo: FakeCollections, root: Path) -> Any:
     repo.collection = SimpleNamespace(
         id=uuid.uuid4(),
         kind=CollectionKind.PLAYLIST,
-        source_url="u",
         extractor="YoutubeTab",
-        external_id="PL1",
+        ref_id="PL1",
         title="29C3: Not my department",
-        folder="29C3_ Not my department",
+        folder_id=None,
         preset=Preset.P1080,
         created_at=None,
     )
-    (root / "29C3_ Not my department").mkdir()
+    (root / "29C3_ Not my department [PL1]").mkdir()
     return repo.collection
 
 
@@ -132,12 +131,9 @@ async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp
     schema = await service(repo, tmp_path).add(request(12))
 
     assert repo.created is not None
-    assert (repo.created["kind"], repo.created["external_id"], repo.created["folder"]) == (
-        CollectionKind.PLAYLIST,
-        "PL1",
-        "29C3_ Not my department",
-    )
-    assert (tmp_path / "29C3_ Not my department").is_dir()
+    assert (repo.created["kind"], repo.created["ref_id"]) == (CollectionKind.PLAYLIST, "PL1")
+    assert "path" not in repo.created
+    assert (tmp_path / "29C3_ Not my department [PL1]").is_dir()
     first = repo.entries[0]
     assert (first.download["position"], first.download["media_kind"], first.download["title"]) == (
         1,
@@ -300,7 +296,7 @@ async def test_removing_a_collection_with_its_files_deletes_the_folder(tmp_path:
     await service(repo, tmp_path).cancel(collection.id, delete_files=True)
 
     assert repo.calls == [("remove", collection.id)]
-    assert not (tmp_path / "29C3_ Not my department").exists()
+    assert not (tmp_path / "29C3_ Not my department [PL1]").exists()
     assert not (tmp_path / str(running)).exists()
     assert repo.deleted
 
@@ -309,9 +305,9 @@ async def test_removing_a_collection_with_its_files_deletes_the_folder(tmp_path:
 async def test_removing_a_collection_can_keep_what_finished_even_mid_download(tmp_path: Path) -> None:
     repo = FakeCollections()
     collection = held_collection(repo, tmp_path)
-    (tmp_path / "29C3_ Not my department" / "01_done.mp4").write_bytes(b"x")
+    (tmp_path / "29C3_ Not my department [PL1]" / "01_done.mp4").write_bytes(b"x")
 
     await service(repo, tmp_path).cancel(collection.id, delete_files=False)
 
-    assert (tmp_path / "29C3_ Not my department" / "01_done.mp4").exists()
+    assert (tmp_path / "29C3_ Not my department [PL1]" / "01_done.mp4").exists()
     assert repo.deleted

@@ -1,7 +1,7 @@
 from .download import ACTIVE_STATUSES as ACTIVE_STATUSES
 from .download import DOWNLOAD_GROUPS as DOWNLOAD_GROUPS
 from .download import MAIN_QUEUE as MAIN_QUEUE
-from .download import OTHER_CATEGORY as OTHER_CATEGORY
+from .download import OTHER_FOLDER as OTHER_FOLDER
 from .download import BulkAction as BulkAction
 from .download import ChecksumAlgo as ChecksumAlgo
 from .download import CollectionKind as CollectionKind
@@ -13,6 +13,6 @@ from .download import Platform as Platform
 from .download import Preset as Preset
 from .download import SegmentPart as SegmentPart
 from .iam import SessionKind as SessionKind
-from .iam import ShareResource as ShareResource
 from .iam import ShareRole as ShareRole
 from .iam import UserRole as UserRole
+from .shared import RefType as RefType

@@ -49,11 +49,9 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
         kind=CollectionKind.PLAYLIST,
-        source_url="u",
         extractor="YoutubeTab",
-        external_id="PL",
+        ref_id="PL",
         title="Talks",
-        folder="Talks",
         preset=Preset.BEST,
         created_at=None,
     )
@@ -75,11 +73,9 @@ async def test_schemas_carry_the_watched_count() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
         kind=CollectionKind.CHANNEL,
-        source_url="u",
         extractor="YoutubeTab",
-        external_id="UC",
+        ref_id="UC",
         title="",
-        folder="C",
         preset=Preset.BEST,
         created_at=None,
     )

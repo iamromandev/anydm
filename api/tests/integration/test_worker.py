@@ -132,7 +132,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
     await _run(tmp_path, DownloadControl(), httpx.MockTransport(lambda request: httpx.Response(200, content=BODY)))
 
     await row.refresh_from_db()
-    assert (row.status, row.folder, row.downloaded_bytes, row.total_bytes) == (
+    assert (row.status, row.path, row.downloaded_bytes, row.total_bytes) == (
         DownloadStatus.COMPLETE,
         str(row.id),
         500,

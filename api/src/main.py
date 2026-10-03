@@ -12,7 +12,7 @@ from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
-from src.data.repo import CategoryDatabaseRepo, DownloadDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
+from src.data.repo import DownloadDatabaseRepo, FolderDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
 from src.route import router as _router
 from src.service import (
     build_worker_pool,
@@ -58,14 +58,14 @@ async def lifespan(_app: FastAPI):
         logger.exception("lifespan|couldn't seed the search sources")
 
     try:
-        categories, queues = await seed_organization(
-            CategoryDatabaseRepo(), QueueDatabaseRepo(), workers=settings.download_workers
+        folders, queues = await seed_organization(
+            FolderDatabaseRepo(), QueueDatabaseRepo(), workers=settings.download_workers
         )
-        if categories or queues:
-            logger.info("lifespan|seeded {} categor(ies) and {} queue(s)", categories, queues)
+        if folders or queues:
+            logger.info("lifespan|seeded {} folder(s) and {} queue(s)", folders, queues)
     except Exception:
         # Without Main nothing can be queued; say so loudly, but keep search and play up.
-        logger.exception("lifespan|couldn't seed the categories and queues")
+        logger.exception("lifespan|couldn't seed the folders and queues")
 
     recovered = await DownloadDatabaseRepo().recover_orphans()
     if recovered:

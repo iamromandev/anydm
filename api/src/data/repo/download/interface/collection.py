@@ -25,7 +25,7 @@ class EntryRow:
 
 class CollectionRepo(ABC):
     @abstractmethod
-    async def find(self, extractor: str, external_id: str) -> Collection | None:
+    async def find(self, extractor: str, ref_id: str) -> Collection | None:
         """The collection not removed that was added from this listing, if any."""
         ...
 
