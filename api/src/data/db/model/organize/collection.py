@@ -8,7 +8,7 @@ from src.core.base import Base
 from src.data.type import CollectionKind, Preset
 
 if TYPE_CHECKING:
-    from src.data.db.model.download.download import Download
+    from src.data.db.model.transfer.download import Download
 
 
 class Collection(Base):
@@ -38,4 +38,5 @@ class Collection(Base):
     class Meta:
         table: ClassVar[str] = "collection"
         table_description: ClassVar[str] = "Collection"
+        schema: ClassVar[str] = "organize"
         ordering: ClassVar[list[str]] = ["-created_at"]

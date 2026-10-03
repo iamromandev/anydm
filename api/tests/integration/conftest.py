@@ -16,8 +16,10 @@ from src.service.download.seed import seed_organization
 from tortoise import Tortoise
 
 _TABLES = (
-    "playback_position, segment, mirror, download_file, site_detail, torrent_detail, "
-    "download, collection, category, download_queue"
+    "iam.user_setting, iam.share, iam.session, iam.user, "
+    "transfer.playback_position, transfer.segment, transfer.mirror, transfer.download_file, "
+    "transfer.site_detail, transfer.torrent_detail, transfer.download, "
+    "organize.collection, organize.queue, shared.category, shared.tag"
 )
 
 

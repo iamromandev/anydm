@@ -12,3 +12,7 @@ from .download import MediaKind as MediaKind
 from .download import Platform as Platform
 from .download import Preset as Preset
 from .download import SegmentPart as SegmentPart
+from .iam import SessionKind as SessionKind
+from .iam import ShareResource as ShareResource
+from .iam import ShareRole as ShareRole
+from .iam import UserRole as UserRole

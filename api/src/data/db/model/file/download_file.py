@@ -8,7 +8,7 @@ from tortoise import fields
 from src.core.base import LinkBase
 
 if TYPE_CHECKING:
-    from src.data.db.model.download.position import PlaybackPosition
+    from src.data.db.model.file.playback_position import PlaybackPosition
 
 
 class DownloadFile(LinkBase):
@@ -41,5 +41,6 @@ class DownloadFile(LinkBase):
     class Meta:
         table: ClassVar[str] = "download_file"
         table_description: ClassVar[str] = "DownloadFile"
+        schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["index"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("download", "index"),)

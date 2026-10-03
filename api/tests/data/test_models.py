@@ -4,7 +4,6 @@ In-memory SQLite: no Postgres needed, so this runs with the unit suite.
 """
 
 import pytest
-import pytest_asyncio
 from src.data.db.model import (
     Category,
     Collection,
@@ -25,15 +24,6 @@ from src.data.type import (
     Preset,
     SegmentPart,
 )
-from tortoise import Tortoise
-
-
-@pytest_asyncio.fixture
-async def sqlite():
-    await Tortoise.init(db_url="sqlite://:memory:", modules={"model": ["src.data.db.model"]})
-    await Tortoise.generate_schemas()
-    yield
-    await Tortoise.close_connections()
 
 
 @pytest.mark.asyncio

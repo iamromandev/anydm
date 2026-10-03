@@ -11,11 +11,11 @@ from src.core.base import Base
 from src.data.type import ChecksumAlgo, DownloadStatus, MediaKind, Platform
 
 if TYPE_CHECKING:
-    from src.data.db.model.download.file import DownloadFile
-    from src.data.db.model.download.mirror import Mirror
-    from src.data.db.model.download.segment import Segment
-    from src.data.db.model.download.site_detail import SiteDetail
-    from src.data.db.model.download.torrent_detail import TorrentDetail
+    from src.data.db.model.detail.site_detail import SiteDetail
+    from src.data.db.model.detail.torrent_detail import TorrentDetail
+    from src.data.db.model.file.download_file import DownloadFile
+    from src.data.db.model.transfer.mirror import Mirror
+    from src.data.db.model.transfer.segment import Segment
 
 
 class Download(Base):
@@ -91,6 +91,7 @@ class Download(Base):
     class Meta:
         table: ClassVar[str] = "download"
         table_description: ClassVar[str] = "Download"
+        schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["-created_at"]
         indexes: ClassVar[tuple[Index, ...]] = (
             Index(fields=["status", "created_at"], name="idx_download_status_created"),

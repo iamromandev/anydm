@@ -19,46 +19,52 @@ from src.data.type.download.download import (
     Preset,
     SegmentPart,
 )
+from src.data.type.iam.actor.user import UserRole
+from src.data.type.iam.membership.share import ShareResource, ShareRole
+from src.data.type.iam.runtime.session import SessionKind
 
 #: Standalone downloads and collections as one list, with a collection's status
 #: and totals computed from its downloads (the spec's amendment 6). Recreate it
 #: in a later migration whenever a column it reads changes.
 LIST_ITEM_VIEW = """
-CREATE VIEW list_item AS
+CREATE VIEW transfer.list_item AS
 SELECT 'download'::text AS type, d.id, d.title, d.status::text AS status, d.created_at,
        d.total_bytes, d.downloaded_bytes,
        CASE WHEN COALESCE(d.total_bytes, 0) > 0
             THEN LEAST(100, (d.downloaded_bytes * 100 / d.total_bytes))::int ELSE 0 END AS progress
-FROM download d
+FROM transfer.download d
 WHERE d.deleted_at IS NULL AND d.collection_id IS NULL
 UNION ALL
 SELECT 'collection'::text AS type, c.id, c.title,
        CASE
-         WHEN EXISTS (SELECT 1 FROM download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
+         WHEN EXISTS (SELECT 1 FROM transfer.download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
                       AND m.status IN ('pending', 'downloading', 'muxing')) THEN 'downloading'
-         WHEN EXISTS (SELECT 1 FROM download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
+         WHEN EXISTS (SELECT 1 FROM transfer.download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
                       AND m.status = 'paused') THEN 'paused'
-         WHEN EXISTS (SELECT 1 FROM download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
+         WHEN EXISTS (SELECT 1 FROM transfer.download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL
                       AND m.status = 'failed') THEN 'failed'
          ELSE 'complete'
        END AS status,
        c.created_at,
-       (SELECT SUM(m.total_bytes) FROM download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL)::bigint
+       (SELECT SUM(m.total_bytes) FROM transfer.download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL)::bigint
          AS total_bytes,
-       COALESCE((SELECT SUM(m.downloaded_bytes) FROM download m
+       COALESCE((SELECT SUM(m.downloaded_bytes) FROM transfer.download m
                  WHERE m.collection_id = c.id AND m.deleted_at IS NULL), 0)::bigint AS downloaded_bytes,
        COALESCE((SELECT (COUNT(*) FILTER (WHERE m.status IN ('complete', 'seeding')) * 100
                          / NULLIF(COUNT(*), 0))
-                 FROM download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL), 0)::int AS progress
-FROM collection c
+                 FROM transfer.download m WHERE m.collection_id = c.id AND m.deleted_at IS NULL), 0)::int AS progress
+FROM organize.collection c
 WHERE c.deleted_at IS NULL
 """
-
 
 class Migration(migrations.Migration):
     initial: ClassVar[bool] = True
 
     operations: ClassVar[list[Operation]] = [
+        ops.CreateSchema(schema_name='iam'),
+        ops.CreateSchema(schema_name='organize'),
+        ops.CreateSchema(schema_name='shared'),
+        ops.CreateSchema(schema_name='transfer'),
         ops.CreateModel(
             name='Category',
             fields=[
@@ -70,7 +76,7 @@ class Migration(migrations.Migration):
                 ('extensions', fields.JSONField(default=list, description='Lower-case, without the dot. An extension belongs to at most one category.', encoder=JSON_DUMPS, decoder=loads)),
                 ('position', fields.IntField(default=0)),
             ],
-            options={'table': 'category', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Category'},
+            options={'table': 'category', 'schema': 'shared', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Category'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -88,7 +94,7 @@ class Migration(migrations.Migration):
                 ('folder', fields.CharField(description='Relative to ``DOWNLOAD_DIR``; its videos finish into it.', max_length=1024)),
                 ('preset', fields.CharEnumField(description='BEST: best\nP2160: 2160\nP1440: 1440\nP1080: 1080\nP720: 720\nP480: 480\nMP3: mp3', enum_type=Preset, max_length=8)),
             ],
-            options={'table': 'collection', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Collection'},
+            options={'table': 'collection', 'schema': 'organize', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Collection'},
             bases=['Base'],
         ),
         ops.CreateModel(
@@ -104,7 +110,7 @@ class Migration(migrations.Migration):
                 ('days', fields.JSONField(null=True, description='ISO weekdays, 1 (Monday) to 7; null means every day.', encoder=JSON_DUMPS, decoder=loads)),
                 ('position', fields.IntField(default=0)),
             ],
-            options={'table': 'download_queue', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Queue'},
+            options={'table': 'queue', 'schema': 'organize', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Queue'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -140,7 +146,7 @@ class Migration(migrations.Migration):
                 ('started_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
             ],
-            options={'table': 'download', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created'), Index(fields=['collection_id', 'position'], name='idx_download_collection_position'), Index(fields=['queue_id', 'status', 'queue_position'], name='idx_download_queue_order')], 'pk_attr': 'id', 'table_description': 'Download'},
+            options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created'), Index(fields=['collection_id', 'position'], name='idx_download_collection_position'), Index(fields=['queue_id', 'status', 'queue_position'], name='idx_download_queue_order')], 'pk_attr': 'id', 'table_description': 'Download'},
             bases=['Base'],
         ),
         ops.CreateModel(
@@ -157,7 +163,7 @@ class Migration(migrations.Migration):
                 ('selected', fields.BooleanField(default=True)),
                 ('mime_type', fields.CharField(null=True, max_length=128)),
             ],
-            options={'table': 'download_file', 'app': 'model', 'unique_together': (('download', 'index'),), 'pk_attr': 'id', 'table_description': 'DownloadFile'},
+            options={'table': 'download_file', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'index'),), 'pk_attr': 'id', 'table_description': 'DownloadFile'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -171,7 +177,7 @@ class Migration(migrations.Migration):
                 ('position', fields.IntField()),
                 ('last_error', fields.TextField(null=True, description='Why this address failed the last time it was tried.', unique=False)),
             ],
-            options={'table': 'mirror', 'app': 'model', 'unique_together': (('download', 'position'),), 'pk_attr': 'id', 'table_description': 'Mirror'},
+            options={'table': 'mirror', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'position'),), 'pk_attr': 'id', 'table_description': 'Mirror'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -185,7 +191,7 @@ class Migration(migrations.Migration):
                 ('duration_seconds', fields.FloatField(default=0.0)),
                 ('watched', fields.BooleanField(default=False, description='Played to within its last seconds, at least once.')),
             ],
-            options={'table': 'playback_position', 'app': 'model', 'pk_attr': 'id', 'table_description': 'PlaybackPosition'},
+            options={'table': 'playback_position', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'PlaybackPosition'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -201,7 +207,7 @@ class Migration(migrations.Migration):
                 ('end_byte', fields.BigIntField()),
                 ('downloaded', fields.BigIntField(default=0, description='Bytes durably written, counted from ``start_byte``. Never ahead of disk.')),
             ],
-            options={'table': 'segment', 'app': 'model', 'unique_together': (('download', 'part', 'index'),), 'pk_attr': 'id', 'table_description': 'Segment'},
+            options={'table': 'segment', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'part', 'index'),), 'pk_attr': 'id', 'table_description': 'Segment'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -217,7 +223,7 @@ class Migration(migrations.Migration):
                 ('video_format', fields.CharField(null=True, description="The site's format ids, chosen when the download is planned. A YouTube itag, as a string.", max_length=64)),
                 ('audio_format', fields.CharField(null=True, max_length=64)),
             ],
-            options={'table': 'site_detail', 'app': 'model', 'pk_attr': 'id', 'table_description': 'SiteDetail'},
+            options={'table': 'site_detail', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'SiteDetail'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -232,7 +238,7 @@ class Migration(migrations.Migration):
                 ('base_url', fields.CharField(max_length=2048)),
                 ('api_key', fields.CharField(null=True, max_length=1024)),
             ],
-            options={'table': 'search_source', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Source'},
+            options={'table': 'source', 'schema': 'shared', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Source'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -245,24 +251,90 @@ class Migration(migrations.Migration):
                 ('info_hash', fields.CharField(unique=True, max_length=40)),
                 ('uploaded_bytes', fields.BigIntField(default=0, description='Stored so the share ratio needs no second source.')),
             ],
-            options={'table': 'torrent_detail', 'app': 'model', 'pk_attr': 'id', 'table_description': 'TorrentDetail'},
+            options={'table': 'torrent_detail', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'TorrentDetail'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='User',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('username', fields.CharField(unique=True, max_length=64)),
+                ('display_name', fields.CharField(default='', max_length=128)),
+                ('password_hash', fields.CharField(description='Never returned by the API and never logged.', max_length=255)),
+                ('role', fields.CharEnumField(default=UserRole.USER, description='ADMIN: admin\nUSER: user', enum_type=UserRole, max_length=8)),
+                ('is_active', fields.BooleanField(default=True)),
+                ('folder', fields.CharField(unique=True, max_length=64)),
+                ('last_login_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
+            ],
+            options={'table': 'user', 'schema': 'iam', 'app': 'model', 'pk_attr': 'id', 'table_description': 'User'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Session',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('user', fields.ForeignKeyField('model.User', source_field='user_id', db_constraint=True, to_field='id', related_name='sessions', on_delete=OnDelete.CASCADE)),
+                ('kind', fields.CharEnumField(description='SESSION: session\nAPI: api', enum_type=SessionKind, max_length=8)),
+                ('name', fields.CharField(null=True, description='What the person called an API token; null for a browser login.', max_length=64)),
+                ('token_hash', fields.CharField(unique=True, max_length=64)),
+                ('expires_at', fields.DatetimeField(null=True, description='Null: an API token that does not expire.', auto_now=False, auto_now_add=False)),
+                ('last_used_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
+                ('user_agent', fields.CharField(default='', max_length=255)),
+            ],
+            options={'table': 'session', 'schema': 'iam', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Session'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Share',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('resource_type', fields.CharEnumField(description='DOWNLOAD: download\nCOLLECTION: collection', enum_type=ShareResource, max_length=16)),
+                ('resource_id', fields.UUIDField()),
+                ('user', fields.ForeignKeyField('model.User', source_field='user_id', null=True, db_constraint=True, to_field='id', related_name='shares', on_delete=OnDelete.CASCADE)),
+                ('role', fields.CharEnumField(description='VIEW: view\nMANAGE: manage', enum_type=ShareRole, max_length=8)),
+                ('created_by', fields.ForeignKeyField('model.User', source_field='created_by_id', description='The owner or an admin. RESTRICT: a user who granted shares is not deleted by accident.', db_constraint=True, to_field='id', related_name='granted_shares', on_delete=OnDelete.RESTRICT)),
+            ],
+            options={'table': 'share', 'schema': 'iam', 'app': 'model', 'unique_together': (('resource_type', 'resource_id', 'user'),), 'indexes': [Index(fields=['user_id', 'resource_type'], name='idx_share_user_type'), Index(fields=['resource_type', 'resource_id'], name='idx_share_resource')], 'pk_attr': 'id', 'table_description': 'Share'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='UserSetting',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('user', fields.ForeignKeyField('model.User', source_field='user_id', db_constraint=True, to_field='id', related_name='user_settings', on_delete=OnDelete.CASCADE)),
+                ('key', fields.CharField(max_length=64)),
+                ('value', fields.JSONField(encoder=JSON_DUMPS, decoder=loads)),
+            ],
+            options={'table': 'user_setting', 'schema': 'iam', 'app': 'model', 'unique_together': (('user', 'key'),), 'pk_attr': 'id', 'table_description': 'UserSetting'},
             bases=['LinkBase'],
         ),
         # ``CreateModel`` applies neither partial uniques nor index methods
         # (src/core/base.py), so these are written out.
         ops.RunSQL(
             [
-                "CREATE UNIQUE INDEX uniq_collection_listing ON collection (extractor, external_id) "
+                "CREATE UNIQUE INDEX uniq_collection_listing ON organize.collection (extractor, external_id) "
                 "WHERE deleted_at IS NULL",
                 # Hash, not btree: a magnet with many trackers outgrows btree's row limit,
                 # and the duplicate check only ever asks for equality.
-                "CREATE INDEX idx_download_source_url ON download USING hash (source_url)",
+                "CREATE INDEX idx_download_source_url ON transfer.download USING hash (source_url)",
+                # A NULL user means "everyone"; unique_together never sees two NULLs as equal.
+                "CREATE UNIQUE INDEX uniq_share_everyone ON iam.share (resource_type, resource_id) "
+                "WHERE user_id IS NULL",
                 LIST_ITEM_VIEW,
             ],
             reverse_sql=[
-                "DROP VIEW IF EXISTS list_item",
-                "DROP INDEX IF EXISTS idx_download_source_url",
-                "DROP INDEX IF EXISTS uniq_collection_listing",
+                "DROP VIEW IF EXISTS transfer.list_item",
+                "DROP INDEX IF EXISTS iam.uniq_share_everyone",
+                "DROP INDEX IF EXISTS transfer.idx_download_source_url",
+                "DROP INDEX IF EXISTS organize.uniq_collection_listing",
             ],
         ),
     ]

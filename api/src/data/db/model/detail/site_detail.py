@@ -24,3 +24,4 @@ class SiteDetail(LinkBase):
     class Meta:
         table: ClassVar[str] = "site_detail"
         table_description: ClassVar[str] = "SiteDetail"
+        schema: ClassVar[str] = "transfer"

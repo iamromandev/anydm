@@ -24,6 +24,7 @@ class Queue(LinkBase):
         return f"[Queue: {self.name}]"
 
     class Meta:
-        table: ClassVar[str] = "download_queue"
+        table: ClassVar[str] = "queue"
         table_description: ClassVar[str] = "Queue"
+        schema: ClassVar[str] = "organize"
         ordering: ClassVar[list[str]] = ["position"]
