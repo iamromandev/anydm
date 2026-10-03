@@ -26,3 +26,4 @@ class PlaybackPosition(LinkBase):
     class Meta:
         table: ClassVar[str] = "playback_position"
         table_description: ClassVar[str] = "PlaybackPosition"
+        schema: ClassVar[str] = "transfer"

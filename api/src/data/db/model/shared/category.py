@@ -23,4 +23,5 @@ class Category(LinkBase):
     class Meta:
         table: ClassVar[str] = "category"
         table_description: ClassVar[str] = "Category"
+        schema: ClassVar[str] = "shared"
         ordering: ClassVar[list[str]] = ["position"]

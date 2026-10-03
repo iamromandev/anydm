@@ -159,7 +159,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             params.append([status.value for status in statuses])
             where = f"WHERE item.status = ANY(${len(params)}::text[])"
         source = (
-            "FROM list_item AS item "
+            "FROM transfer.list_item AS item "
             "LEFT JOIN unnest($1::uuid[], $2::bigint[]) AS live(id, speed) ON live.id = item.id "
             f"{where}"
         )
@@ -181,7 +181,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         numbers stay right however little of the list has been loaded.
         """
         rows = await Tortoise.get_connection("default").execute_query_dict(
-            "SELECT status, COUNT(*) AS n FROM list_item GROUP BY status"
+            "SELECT status, COUNT(*) AS n FROM transfer.list_item GROUP BY status"
         )
         counts = {str(row["status"]): int(row["n"]) for row in rows}
 

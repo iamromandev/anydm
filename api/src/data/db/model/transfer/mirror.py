@@ -23,5 +23,6 @@ class Mirror(LinkBase):
     class Meta:
         table: ClassVar[str] = "mirror"
         table_description: ClassVar[str] = "Mirror"
+        schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["position"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("download", "position"),)

@@ -22,3 +22,4 @@ class TorrentDetail(LinkBase):
     class Meta:
         table: ClassVar[str] = "torrent_detail"
         table_description: ClassVar[str] = "TorrentDetail"
+        schema: ClassVar[str] = "transfer"

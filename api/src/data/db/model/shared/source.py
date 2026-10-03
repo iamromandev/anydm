@@ -20,5 +20,6 @@ class Source(LinkBase):
         return f"[Source: {self.name}, enabled={self.enabled}]"
 
     class Meta:
-        table: ClassVar[str] = "search_source"
+        table: ClassVar[str] = "source"
         table_description: ClassVar[str] = "Source"
+        schema: ClassVar[str] = "shared"

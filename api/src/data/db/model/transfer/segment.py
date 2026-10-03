@@ -33,5 +33,6 @@ class Segment(LinkBase):
     class Meta:
         table: ClassVar[str] = "segment"
         table_description: ClassVar[str] = "Segment"
+        schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["index"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("download", "part", "index"),)
