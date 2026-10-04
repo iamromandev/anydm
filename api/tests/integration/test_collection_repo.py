@@ -2,7 +2,7 @@ import pytest
 from src.data.db.model import Download, PlaybackPosition
 from src.data.repo import CollectionDatabaseRepo, FileDatabaseRepo
 from src.data.repo.download.interface.collection import EntryRow
-from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("db")]
 
@@ -11,22 +11,28 @@ def entry(video_id: str, position: int) -> EntryRow:
     return EntryRow(
         download={
             "source_url": f"https://youtu.be/{video_id}",
+            "provider": "Youtube",
+            "ref_id": video_id,
             "platform": Platform.SITE,
             "media_kind": MediaKind.VIDEO,
             "title": video_id,
             "status": DownloadStatus.PENDING,
             "position": position,
         },
-        site={"extractor": "Youtube", "video_id": video_id, "preset": Preset.BEST},
+        site={"preset": Preset.BEST},
         filename=f"{position:03d}_",
     )
 
 
 COLLECTION = {
-    "kind": CollectionKind.PLAYLIST,
-    "extractor": "YoutubeTab",
+    "source_url": "https://youtube.com/playlist?list=PL",
+    "provider": "Youtube",
     "ref_id": "PL",
+    "platform": Platform.SITE,
+    "media_kind": MediaKind.PLAYLIST,
     "title": "Talks",
+    "path": "Talks [PL]",
+    "status": DownloadStatus.PENDING,
     "preset": Preset.BEST,
 }
 
@@ -35,17 +41,17 @@ COLLECTION = {
 async def test_create_find_page_and_hold() -> None:
     repo = CollectionDatabaseRepo()
     collection = await repo.create_with_entries(COLLECTION, [entry("a", 1), entry("b", 2)])
-    found = await repo.find("YoutubeTab", "PL")
+    found = await repo.find("Youtube", "PL")
     assert found is not None and found.id == collection.id
     await repo.add_entries(collection, [entry("c", 3)])
     page, meta = await repo.downloads_page(collection.id, 1, 2)
-    assert [row.site_detail and row.site_detail.video_id for row in page] == ["a", "b"]
+    assert [row.ref_id for row in page] == ["a", "b"]
     assert meta.total == 3
     held = await repo.held(collection.id)
     assert {video_id: position for video_id, (_, _, position) in held.items()} == {"a": 1, "b": 2, "c": 3}
     # Queue order follows listing order.
     ordered = (
-        await Download.filter(collection_id=collection.id).order_by("queue_position").values_list("position", flat=True)
+        await Download.filter(parent_id=collection.id).order_by("queue_position").values_list("position", flat=True)
     )
     assert ordered == [1, 2, 3]
 

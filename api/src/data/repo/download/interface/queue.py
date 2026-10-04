@@ -11,8 +11,10 @@ from src.data.db.model import Queue
 @dataclass(frozen=True, slots=True)
 class QueueRow:
     name: str
+    slug: str
     max_concurrent: int
     position: int
+    is_default: bool = False
 
 
 class QueueRepo(ABC):
@@ -24,10 +26,10 @@ class QueueRepo(ABC):
 
     @abstractmethod
     async def main(self) -> Queue:
-        """The queue every download starts in; always seeded."""
+        """The default queue, where every download starts; always seeded."""
         ...
 
     @abstractmethod
     async def insert_missing(self, rows: Sequence[QueueRow]) -> int:
-        """Insert the rows whose name is not taken; never touch one that is. Returns how many."""
+        """Insert the rows whose slug is not taken; never touch one that is. Returns how many."""
         ...

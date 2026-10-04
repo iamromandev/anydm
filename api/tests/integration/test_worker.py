@@ -8,7 +8,6 @@ from src.data.repo import (
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
-    MirrorDatabaseRepo,
     PositionDatabaseRepo,
     SegmentDatabaseRepo,
 )
@@ -48,7 +47,6 @@ def _views(live: LiveStats) -> DownloadViews:
     return DownloadViews(
         files=FileDatabaseRepo(),
         positions=PositionDatabaseRepo(),
-        mirrors=MirrorDatabaseRepo(),
         live=live,
         max_attempts=3,
     )
@@ -86,11 +84,13 @@ def _worker(tmp_path: Path, control: DownloadControl, client: httpx.AsyncClient,
 
 
 async def _site(*, attempts: int = 0, total_bytes: int | None = None, **site: Any) -> Download:
-    detail: dict[str, Any] = {"extractor": "Youtube", "video_id": "x", "preset": Preset.P720, "video_format": "22"}
+    detail: dict[str, Any] = {"preset": Preset.P720, "video_format": "22"}
     detail.update(site)
     row = await DownloadDatabaseRepo().create_site(
         {
             "source_url": "https://youtu.be/x",
+            "provider": "Youtube",
+            "ref_id": "x",
             "platform": Platform.SITE,
             "media_kind": MediaKind.VIDEO,
             "status": DownloadStatus.PENDING,
@@ -110,6 +110,8 @@ async def _direct(filename: str = "f.bin") -> Download:
     return await DownloadDatabaseRepo().create_direct(
         {
             "source_url": f"https://cdn.test/{filename}",
+            "provider": "http",
+            "ref_id": filename,
             "platform": Platform.DIRECT,
             "media_kind": MediaKind.FILE,
             "status": DownloadStatus.PENDING,

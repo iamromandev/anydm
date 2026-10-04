@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.core.success import Meta
-from src.data.db.model import Collection, Download
+from src.data.db.model import Download
 from src.data.type import DownloadStatus
 
 #: ``(download id, status, downloaded_bytes, total_bytes)`` of one member.
@@ -25,25 +25,25 @@ class EntryRow:
 
 class CollectionRepo(ABC):
     @abstractmethod
-    async def find(self, extractor: str, ref_id: str) -> Collection | None:
+    async def find(self, provider: str, ref_id: str) -> Download | None:
         """The collection not removed that was added from this listing, if any."""
         ...
 
     @abstractmethod
-    async def get_active_by_id(self, collection_id: uuid.UUID) -> Collection | None: ...
+    async def get_active_by_id(self, collection_id: uuid.UUID) -> Download | None: ...
 
     @abstractmethod
-    async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Collection]:
+    async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:
         """In the order asked."""
         ...
 
     @abstractmethod
-    async def create_with_entries(self, collection: dict[str, Any], entries: Sequence[EntryRow]) -> Collection:
+    async def create_with_entries(self, collection: dict[str, Any], entries: Sequence[EntryRow]) -> Download:
         """The collection and its videos in one transaction, queued at Main's end in listing order."""
         ...
 
     @abstractmethod
-    async def add_entries(self, collection: Collection, entries: Sequence[EntryRow]) -> None:
+    async def add_entries(self, collection: Download, entries: Sequence[EntryRow]) -> None:
         """More videos under an existing collection."""
         ...
 
@@ -51,15 +51,15 @@ class CollectionRepo(ABC):
     async def downloads_page(
         self, collection_id: uuid.UUID, page: int, page_size: int
     ) -> tuple[list[Download], Meta]:
-        """One page of its videos not removed, by ``position``."""
+        """One page of its videos not removed, in the order they were added."""
         ...
 
     @abstractmethod
     async def member_rows(self, collection_id: uuid.UUID) -> list[MemberRow]: ...
 
     @abstractmethod
-    async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus, int | None]]:
-        """Members by site video id: download id, status, position."""
+    async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus]]:
+        """Members by site video id: download id and status."""
         ...
 
     @abstractmethod
@@ -101,4 +101,4 @@ class CollectionRepo(ABC):
         ...
 
     @abstractmethod
-    async def soft_delete(self, collection: Collection) -> None: ...
+    async def soft_delete(self, collection: Download) -> None: ...

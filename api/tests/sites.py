@@ -151,6 +151,6 @@ class HeldVideos:
         self.held = held or {}
         self.asked: list[tuple[str, list[str]]] = []
 
-    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        self.asked.append((extractor, list(video_ids)))
-        return {v: s for (e, v), s in self.held.items() if e == extractor and v in video_ids}
+    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
+        self.asked.append((provider, list(ref_ids)))
+        return {v: s for (e, v), s in self.held.items() if e == provider and v in ref_ids}

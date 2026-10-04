@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from src.core.base import BaseSchema
-from src.data.type import BulkAction, ChecksumAlgo, CollectionKind, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import BulkAction, CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 
 
 class PlaybackSchema(BaseSchema):
@@ -37,13 +37,6 @@ class QueueRef(BaseSchema):
 class LimitsSchema(BaseSchema):
     #: Null: the global limit alone.
     download_bps: int | None = None
-
-
-class ChecksumSchema(BaseSchema):
-    algo: ChecksumAlgo
-    expected: str
-    #: Null until checked.
-    ok: bool | None = None
 
 
 class LiveSchema(BaseSchema):
@@ -79,12 +72,6 @@ class DownloadFileSchema(BaseSchema):
     playback: PlaybackSchema | None = None
 
 
-class MirrorSchema(BaseSchema):
-    url: str
-    position: int
-    last_error: str | None = None
-
-
 class DownloadSchema(BaseSchema):
     type: Literal["download"] = "download"
     id: uuid.UUID
@@ -98,20 +85,17 @@ class DownloadSchema(BaseSchema):
     category: FolderRef | None = None
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
-    position: int | None = None
     queue: QueueRef | None = None
     queue_position: int = 0
     start_at: datetime | None = None
     folder: str | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)
-    checksum: ChecksumSchema | None = None
     total_bytes: int | None = None
     downloaded_bytes: int = 0
     live: LiveSchema = Field(default_factory=LiveSchema)
     site: SiteSchema | None = None
     torrent: TorrentInfoSchema | None = None
     files: list[DownloadFileSchema] = Field(default_factory=list)
-    mirrors: list[MirrorSchema] = Field(default_factory=list)
     error: str | None = None
     error_code: str | None = None
     attempts: int = 0

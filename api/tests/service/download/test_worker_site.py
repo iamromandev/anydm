@@ -102,7 +102,7 @@ async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
 
     assert client.resolved == [("https://youtu.be/dQw4w9WgXcQ", ["137", "140"])]
     assert row.status == DownloadStatus.COMPLETE
-    assert row.path == str(row.id)
+    assert (tmp_path / str(row.id) / (await _path(files, row))).is_file()
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,6 @@ async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path)
         audio_format=None,
         title="listed title",
         preset=Preset.P720,
-        position=3,
     )
 
     await _worker(tmp_path, files, client).run_task(row)
@@ -160,11 +159,11 @@ def _collection(tmp_path: Path) -> FakeCollections:
 @pytest.mark.asyncio
 async def test_a_collection_video_finishes_into_the_collection_folder(tmp_path: Path) -> None:
     files, collections = MemoryFiles(), _collection(tmp_path)
-    row = await site_row(files, filename="02_Rick_1080p.mp4", collection_id=collections.collection.id)
+    row = await site_row(files, filename="02_Rick_1080p.mp4", parent_id=collections.collection.id)
 
     await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 
-    assert (row.path, await _path(files, row)) == ("List [PL]", "02_Rick_1080p.mp4")
+    assert (await _path(files, row)) == "02_Rick_1080p.mp4"
     assert (tmp_path / "List [PL]" / "02_Rick_1080p.mp4").read_bytes() == b"done"
     assert not (tmp_path / str(row.id)).exists()
 
@@ -172,7 +171,7 @@ async def test_a_collection_video_finishes_into_the_collection_folder(tmp_path: 
 @pytest.mark.asyncio
 async def test_each_change_to_a_collection_video_refreshes_its_collection(tmp_path: Path) -> None:
     files, collections, totals = MemoryFiles(), _collection(tmp_path), RecordingTotals()
-    row = await site_row(files, collection_id=collections.collection.id)
+    row = await site_row(files, parent_id=collections.collection.id)
 
     await _worker(
         tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections, totals=totals
@@ -197,7 +196,7 @@ async def test_a_standalone_download_refreshes_no_collection(tmp_path: Path) -> 
 async def test_a_taken_name_gets_the_video_id(tmp_path: Path) -> None:
     files, collections = MemoryFiles(), _collection(tmp_path)
     (tmp_path / "List [PL]" / "Rick_1080p.mp4").write_bytes(b"other")
-    row = await site_row(files, collection_id=collections.collection.id)
+    row = await site_row(files, parent_id=collections.collection.id)
 
     await _worker(tmp_path, files, FakeSiteClient(site_info("youtube")), collections=collections).run_task(row)
 

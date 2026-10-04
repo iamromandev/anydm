@@ -12,9 +12,36 @@ from tortoise.fields.base import StrEnum
 
 
 class Platform(StrEnum):
-    #: Any page yt-dlp extracts, YouTube included; ``SiteDetail.extractor`` says which.
+    #: Any page yt-dlp extracts, YouTube included; ``Download.provider`` says which.
     SITE = "site"
     DIRECT = "direct"
+    TORRENT = "torrent"
+
+
+class UrlKind(StrEnum):
+    """The protocol an url speaks: what kind of address it is."""
+
+    HTTP = "http"
+    HTTPS = "https"
+    FTP = "ftp"
+    FTPS = "ftps"
+    SFTP = "sftp"
+    FILE = "file"
+    MAGNET = "magnet"
+
+
+class ProviderStatus(StrEnum):
+    """Whether a provider answers."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class SourceKind(StrEnum):
+    """One way a Source uses its URL: the file itself, the page around it, or a torrent."""
+
+    DIRECT = "direct"
+    CONTENT = "content"
     TORRENT = "torrent"
 
 
@@ -36,11 +63,26 @@ class Preset(StrEnum):
 
 
 class MediaKind(StrEnum):
-    """What the bytes are. How they arrive is ``Platform``; a playlist is a ``Collection``."""
+    """What a download is. How its bytes arrive is ``Platform``.
+
+    A playlist or a channel's tab is a download too, one with children: it has no
+    bytes of its own, and its state is computed from its children.
+    """
 
     VIDEO = "video"
     AUDIO = "audio"
     FILE = "file"
+    PLAYLIST = "playlist"
+    #: A channel's own uploads: its videos aren't numbered.
+    CHANNEL = "channel"
+
+    @property
+    def is_container(self) -> bool:
+        return self in (MediaKind.PLAYLIST, MediaKind.CHANNEL)
+
+
+#: The kinds that hold other downloads: never claimed, never run, their state computed from their children.
+CONTAINER_KINDS = (MediaKind.PLAYLIST, MediaKind.CHANNEL)
 
 
 class DownloadStatus(StrEnum):
@@ -48,8 +90,6 @@ class DownloadStatus(StrEnum):
     DOWNLOADING = "downloading"
     MUXING = "muxing"
     PAUSED = "paused"
-    #: Every selected byte has landed and the torrent is still sharing. Not
-    #: terminal: the user can stop seeding, which is what moves it to COMPLETE.
     SEEDING = "seeding"
     COMPLETE = "complete"
     FAILED = "failed"

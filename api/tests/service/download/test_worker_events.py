@@ -109,7 +109,7 @@ async def test_the_offset_of_an_earlier_part_still_shifts_the_totals(tmp_path: P
 @pytest.mark.asyncio
 async def test_completing_a_collection_video_moves_it_and_records_the_folder(tmp_path: Path) -> None:
     files, live, collections = MemoryFiles(), LiveStats(), FakeCollections("Talks")
-    row = await site_row(files, filename="01_Talk.mp4", collection_id=collections.collection.id)
+    row = await site_row(files, filename="01_Talk.mp4", parent_id=collections.collection.id)
     live.set(row.id, Live(speed_bps=3))
     w = worker(tmp_path, files=files, live=live, collections=collections)
     work = tmp_path / str(row.id)
@@ -121,7 +121,8 @@ async def test_completing_a_collection_video_moves_it_and_records_the_folder(tmp
 
     assert (tmp_path / "Talks [PL]" / "01_Talk.mp4").read_bytes() == b"12345"
     assert not work.exists()
-    assert (row.status, row.path, row.total_bytes) == (DownloadStatus.COMPLETE, "Talks [PL]", 5)
+    assert (row.status, row.total_bytes) == (DownloadStatus.COMPLETE, 5)
+    assert not hasattr(row, "path")
     single = await files.single(row.id)
     assert single is not None and (single.path, single.size_bytes) == ("01_Talk.mp4", 5)
     assert live.get(row.id) == Live()
@@ -137,4 +138,4 @@ async def test_a_standalone_download_finishes_where_it_was_worked_on(tmp_path: P
 
     destination, folder = await worker(tmp_path, files=files)._into_folder(row, file)
 
-    assert (destination, folder) == (file, str(row.id))
+    assert (destination, folder) == (file, None)

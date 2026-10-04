@@ -13,7 +13,7 @@ from src.data.schema.download import DownloadSummarySchema
 from src.data.type import DownloadStatus
 
 #: The relations every read loads, so a schema can be built without another query.
-RELATED = ("site_detail", "torrent_detail", "folder", "queue")
+RELATED = ("site_detail", "queue")
 
 
 class DownloadRepo(CrudRepo[Download]):
@@ -28,7 +28,7 @@ class DownloadRepo(CrudRepo[Download]):
     async def create_direct(self, download: dict[str, Any], filename: str) -> Download: ...
 
     @abstractmethod
-    async def create_torrent(self, download: dict[str, Any], info_hash: str, files: Sequence[FileRow]) -> Download: ...
+    async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download: ...
 
     @abstractmethod
     async def claim_next(self, queue_ids: Sequence[uuid.UUID] | None = None) -> Download | None:
@@ -71,15 +71,15 @@ class DownloadRepo(CrudRepo[Download]):
 
     @abstractmethod
     async def by_statuses(self, statuses: Sequence[DownloadStatus]) -> list[Download]:
-        """Standalone downloads (no collection) in one of ``statuses``, oldest first."""
+        """Standalone downloads (no parent, and not themselves containers) in one of ``statuses``, oldest first."""
         ...
 
     @abstractmethod
     async def get_active_by_id(self, download_id: uuid.UUID) -> Download | None: ...
 
     @abstractmethod
-    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        """Each of ``video_ids`` that a download not removed holds, with that download's status.
+    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
+        """Each of ``ref_ids`` that a download not removed holds, with that download's status.
 
         For the picker's "already have it". Canceled downloads hold nothing. A
         video held twice reports the one furthest along: complete, then queued,
@@ -93,4 +93,4 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def by_info_hash(self, info_hash: str) -> Download | None: ...
+    async def by_ref(self, provider: str, ref_id: str) -> Download | None: ...

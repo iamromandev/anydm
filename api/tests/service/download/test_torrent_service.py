@@ -20,7 +20,6 @@ from tests.service.download.memory import (
     RecordingHub,
     download_row,
     memory_views,
-    torrent_detail,
 )
 
 MAGNET = "magnet:?xt=urn:btih:abc123"
@@ -87,9 +86,9 @@ class FakeDownloadRepo:
         self.created: list[dict[str, Any]] = []
         self.files: MemoryFiles | None = None
 
-    async def create_torrent(self, download: dict[str, Any], info_hash: str, files: list[Any]) -> Any:
-        self.created.append({"download": download, "info_hash": info_hash, "files": list(files)})
-        row = download_row(**download, torrent_detail=torrent_detail(info_hash))
+    async def create_torrent(self, download: dict[str, Any], files: list[Any]) -> Any:
+        self.created.append({"download": download, "files": list(files)})
+        row = download_row(**download)
         self.rows[row.id] = row
         if self.files is not None:
             await self.files.replace(row.id, files)
@@ -144,8 +143,8 @@ def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
         "status": DownloadStatus.DOWNLOADING,
         "downloaded_bytes": 400,
         "total_bytes": 1000,
-        "path": "Some Release",
-        "torrent_detail": torrent_detail("abc123"),
+        "provider": "torrent",
+        "ref_id": "abc123",
     }
     fields.update(overrides)
     row = download_row(**fields)
@@ -225,11 +224,12 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     schema = await _service(client, repo=repo, root=tmp_path).enqueue(MAGNET, [0])
 
     assert client.added[0]["only_files"] == [0]
-    # Its own folder, and the row records the one rqbit is told (#107), relative to DOWNLOAD_DIR.
-    assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release")
+    # Its own folder, derived from the same rule rqbit is told (#107), relative to DOWNLOAD_DIR.
+    assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release [abc123]")
     created = repo.created[0]
     download = created["download"]
-    assert download["path"] == "torrent/Some Release"
+    assert "path" not in download
+    assert schema.folder == "torrent/Some Release [abc123]"
     assert (download["platform"], download["media_kind"], download["status"]) == (
         Platform.TORRENT,
         MediaKind.FILE,
@@ -238,7 +238,7 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     assert (download["title"], download["source_url"]) == ("Some Release", MAGNET)
     # Only the selected file counts towards the size the UI shows.
     assert download["total_bytes"] == 900
-    assert created["info_hash"] == "abc123"
+    assert (download["provider"], download["ref_id"]) == ("torrent", "abc123")
     assert schema.type == "download"
     assert schema.torrent is not None and schema.torrent.info_hash == "abc123"
 
@@ -399,8 +399,8 @@ async def _with_files(files: MemoryFiles, row: Any, rows: list[tuple[int, str, i
 
 @pytest.mark.asyncio
 async def test_resolve_file_returns_the_path_for_an_index(tmp_path: Path) -> None:
-    folder = tmp_path / "Some Release"
-    folder.mkdir()
+    folder = tmp_path / "torrent" / "Some Release [abc123]"
+    folder.mkdir(parents=True)
     (folder / "video.mkv").write_bytes(b"data")
     repo, files = FakeDownloadRepo(), MemoryFiles()
     row = _torrent_row(repo, status=DownloadStatus.SEEDING)
@@ -506,7 +506,7 @@ async def test_a_named_file_to_play_must_be_a_selected_media_file() -> None:
 
 async def _release(tmp_path: Path, status: DownloadStatus) -> tuple[TorrentService, uuid.UUID, Path]:
     """A film with a subtitle file beside it on disk, and one in Subs/ that wasn't selected."""
-    folder = tmp_path / "Some Release"
+    folder = tmp_path / "torrent" / "Some Release [abc123]"
     (folder / "Subs").mkdir(parents=True)
     (folder / "Movie.mkv").write_bytes(b"x" * 900)
     (folder / "Movie.en.srt").write_bytes(b"s" * 10)

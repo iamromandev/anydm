@@ -13,12 +13,12 @@ from tortoise.transactions import in_transaction
 from src.core.base import BaseRepo
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, DownloadFile, Queue, SiteDetail, TorrentDetail
+from src.data.db.model import Download, DownloadFile, Queue, SiteDetail
 from src.data.repo.download.interface.download import RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
-from src.data.repo.download.transitions import next_queue_position
+from src.data.repo.download.mime import mime_of
 from src.data.schema.download import DownloadSummarySchema
-from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, MAIN_QUEUE, DownloadStatus, Platform
+from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DOWNLOAD_GROUPS, DownloadStatus, Platform
 
 #: Which of two downloads holding one video speaks for it: the one furthest along.
 _HELD_RANK = {
@@ -49,12 +49,10 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
 
     @staticmethod
     async def _placed(download: dict[str, Any], conn: BaseDBAsyncClient) -> dict[str, Any]:
-        """``download`` in a queue (Main unless named) and at that queue's end."""
+        """``download`` in a queue (Main unless named). Order is creation order."""
         row = dict(download)
         if "queue_id" not in row:
-            row["queue_id"] = (await Queue.get(name=MAIN_QUEUE, using_db=conn)).id
-        if "queue_position" not in row:
-            row["queue_position"] = await next_queue_position(row["queue_id"], conn)
+            row["queue_id"] = (await Queue.get(is_default=True, using_db=conn)).id
         return row
 
     @staticmethod
@@ -73,17 +71,25 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def create_direct(self, download: dict[str, Any], filename: str) -> Download:
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **await self._placed(download, conn))
-            await DownloadFile.create(using_db=conn, download_id=row.id, index=0, path=filename)
+            await DownloadFile.create(
+                using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_of(filename)
+            )
         return await self._loaded(row.id)
 
-    async def create_torrent(self, download: dict[str, Any], info_hash: str, files: Sequence[FileRow]) -> Download:
+    async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download:
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **await self._placed(download, conn))
-            await TorrentDetail.create(using_db=conn, download_id=row.id, info_hash=info_hash)
             if files:
                 await DownloadFile.bulk_create(
                     [
-                        DownloadFile(download_id=row.id, index=index, path=path, size_bytes=size, selected=selected)
+                        DownloadFile(
+                            download_id=row.id,
+                            index=index,
+                            path=path,
+                            size_bytes=size,
+                            selected=selected,
+                            mime_type=mime_of(path),
+                        )
                         for index, path, size, selected in files
                     ],
                     using_db=conn,
@@ -101,6 +107,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             runnable = (
                 Download.filter(status=DownloadStatus.PENDING, deleted_at__isnull=True)
                 .exclude(platform=Platform.TORRENT)
+                .exclude(media_kind__in=CONTAINER_KINDS)
                 .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
                 .filter(Q(start_at__isnull=True) | Q(start_at__lte=now()))
             )
@@ -111,7 +118,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             row = None
             for standalone in (True, False):
                 row = await (
-                    runnable.filter(collection_id__isnull=standalone)
+                    runnable.filter(parent_id__isnull=standalone)
                     .order_by("queue_position", "created_at")
                     .limit(1)
                     .select_for_update(skip_locked=True)
@@ -204,30 +211,35 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def by_statuses(self, statuses: Sequence[DownloadStatus]) -> list[Download]:
         """Oldest first: a bulk action reads better applied in the order the queue would reach them."""
         return await (
-            Download.filter(deleted_at__isnull=True, collection_id__isnull=True, status__in=list(statuses))
+            Download.filter(deleted_at__isnull=True, parent_id__isnull=True, status__in=list(statuses))
+            .exclude(media_kind__in=CONTAINER_KINDS)
             .order_by("created_at")
             .prefetch_related(*RELATED)
         )
 
     async def get_active_by_id(self, download_id: uuid.UUID) -> Download | None:
-        return await Download.filter(id=download_id, deleted_at__isnull=True).prefetch_related(*RELATED).first()
+        return await (
+            Download.filter(id=download_id, deleted_at__isnull=True)
+            .exclude(media_kind__in=CONTAINER_KINDS)
+            .prefetch_related(*RELATED)
+            .first()
+        )
 
-    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        if not video_ids:
+    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
+        if not ref_ids:
             return {}
         rows = (
-            await SiteDetail.filter(
-                extractor=extractor, video_id__in=list(video_ids), download__deleted_at__isnull=True
-            )
-            .exclude(download__status=DownloadStatus.CANCELED)
-            .values_list("video_id", "download__status")
+            await Download.filter(provider=provider, ref_id__in=list(ref_ids), deleted_at__isnull=True)
+            .exclude(status=DownloadStatus.CANCELED)
+            .exclude(media_kind__in=CONTAINER_KINDS)
+            .values_list("ref_id", "status")
         )
         found: dict[str, DownloadStatus] = {}
-        for video_id, raw in rows:
+        for ref_id, raw in rows:
             status = DownloadStatus(raw)
-            current = found.get(video_id)
+            current = found.get(ref_id)
             if current is None or _HELD_RANK.get(status, 0) > _HELD_RANK.get(current, 0):
-                found[video_id] = status
+                found[ref_id] = status
         return found
 
     async def torrents_to_watch(self) -> list[Download]:
@@ -237,9 +249,10 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             .prefetch_related(*RELATED)
         )
 
-    async def by_info_hash(self, info_hash: str) -> Download | None:
+    async def by_ref(self, provider: str, ref_id: str) -> Download | None:
         return await (
-            Download.filter(torrent_detail__info_hash=info_hash, deleted_at__isnull=True)
+            Download.filter(provider=provider, ref_id=ref_id, deleted_at__isnull=True)
+            .exclude(media_kind__in=CONTAINER_KINDS)
             .prefetch_related(*RELATED)
             .first()
         )

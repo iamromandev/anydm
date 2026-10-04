@@ -16,6 +16,7 @@ from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileR
 from src.data.schema.download import CollectionSchema, DownloadSchema, DownloadSummarySchema, PlaybackSchema
 from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, MediaKind, Platform, Preset
 from src.lib.event import EventHub
+from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER, url_ref
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
@@ -28,7 +29,7 @@ from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
-from src.service.download.paths import remove_work_files
+from src.service.download.paths import collection_folder, remove_work_files, standalone_folder
 from src.service.download.torrent_service import TorrentService
 from src.service.download.views import DownloadViews
 
@@ -114,6 +115,8 @@ class DownloadService(BaseService):
         download = await self._repo.create_site(
             {
                 "source_url": url,
+                "provider": info.extractor,
+                "ref_id": info.id,
                 "platform": Platform.SITE,
                 "media_kind": planned.media_kind,
                 "title": planned.title,
@@ -121,8 +124,6 @@ class DownloadService(BaseService):
                 "total_bytes": planned.total_bytes,
             },
             {
-                "extractor": info.extractor,
-                "video_id": info.id,
                 "preset": preset,
                 "video_format": planned.video_format,
                 "audio_format": planned.audio_format,
@@ -145,6 +146,8 @@ class DownloadService(BaseService):
         download = await self._repo.create_direct(
             {
                 "source_url": url,
+                "provider": HTTP_PROVIDER,
+                "ref_id": url_ref(url),
                 "platform": Platform.DIRECT,
                 "media_kind": MediaKind.FILE,
                 "title": name,
@@ -174,9 +177,7 @@ class DownloadService(BaseService):
         download_ids = [item_id for kind, item_id in items if kind == "download"]
         collection_ids = [item_id for kind, item_id in items if kind == "collection"]
         downloads = {s.id: s for s in await self._views.many(await self._repo.by_ids(download_ids))}
-        collections = {
-            s.id: s for s in await self._totals.schemas(await self._collection_repo.by_ids(collection_ids))
-        }
+        collections = {s.id: s for s in await self._totals.schemas(await self._collection_repo.by_ids(collection_ids))}
         ordered: list[DownloadSchema | CollectionSchema] = []
         for kind, item_id in items:
             found = downloads.get(item_id) if kind == "download" else collections.get(item_id)
@@ -292,19 +293,17 @@ class DownloadService(BaseService):
             return await self._torrents.resolve_file(download_id, file_index)
         if file_index not in (None, 0):
             raise Error.not_found(message="Only a torrent has files by index")
-        if download.status != DownloadStatus.COMPLETE or not download.path:
+        if download.status != DownloadStatus.COMPLETE:
             raise Error.conflict(message=f"Download is {download.status.value}, not complete")
         file = await self._files.single(download_id)
         if file is None:
             raise Error.not_found(message="Download has no file")
-        path = inside(self._root, download.path) / Path(file.path).name
+        path = await self._disk_path(download, file.path)
         if not path.is_file():
             raise Error.not_found(message="File is no longer on disk")
         return path, file.path, file.mime_type or "application/octet-stream"
 
-    async def resolve_media_file(
-        self, download_id: uuid.UUID, file_index: int | None
-    ) -> tuple[Path, str, int | None]:
+    async def resolve_media_file(self, download_id: uuid.UUID, file_index: int | None) -> tuple[Path, str, int | None]:
         """The file Play reads from disk, and its index in a torrent (#94).
 
         A download's own file, or one of a torrent's: the one asked for, else
@@ -356,7 +355,7 @@ class DownloadService(BaseService):
         index = await self._torrents.media_file_index(download_id, file_index)
         if download.status == DownloadStatus.PAUSED:
             await self._torrents.resume(download_id)
-        info_hash = download.torrent_detail.info_hash if download.torrent_detail else ""
+        info_hash = download.ref_id if download.provider == TORRENT_PROVIDER else ""
         return TorrentPlay(info_hash=info_hash, file_index=index)
 
     async def pause(self, download_id: uuid.UUID) -> Any:
@@ -420,9 +419,9 @@ class DownloadService(BaseService):
         if delete_files:
             remove_work_files(self._root, download_id)
             file = await self._files.single(download_id)
-            if download.path and file is not None:
+            if file is not None:
                 # Its file and the subtitles beside it, never the folder it shares.
-                remove_collection_video_files(inside(self._root, download.path) / Path(file.path).name)
+                remove_collection_video_files(await self._disk_path(download, file.path))
         await self._segment_repo.clear(download_id)
         download.status = DownloadStatus.CANCELED
         download.deleted_at = now()
@@ -433,8 +432,28 @@ class DownloadService(BaseService):
 
     async def _refresh_collection(self, download: Any) -> None:
         """Bring a collection video's collection up to date after a change to it."""
-        if download.collection_id is not None:
-            await self._totals.refresh(download.collection_id)
+        if download.parent_id is not None:
+            await self._totals.refresh(download.parent_id)
+
+    async def _folder_of(self, download: Any) -> str | None:
+        """The download's folder for its schema: derived when finished, else ``None``."""
+        if download.status != DownloadStatus.COMPLETE:
+            return None
+        if download.parent_id is not None:
+            collection = await self._collection_repo.get_active_by_id(download.parent_id)
+            if collection is None:
+                return None
+            return collection_folder(collection.title, collection.ref_id)
+        return standalone_folder(download.id)
+
+    async def _disk_path(self, download: Any, filename: str) -> Path:
+        """The finished file on disk: its derived folder plus its file name."""
+        if download.parent_id is not None:
+            collection = await self._collection_repo.get_active_by_id(download.parent_id)
+            if collection is None:
+                raise Error.not_found(message="Collection not found")
+            return inside(self._root, collection_folder(collection.title, collection.ref_id)) / Path(filename).name
+        return inside(self._root, standalone_folder(download.id)) / Path(filename).name
 
     async def _published(self, download: Any) -> DownloadSchema:
         """Serialise, announce and hand back.
@@ -442,7 +461,7 @@ class DownloadService(BaseService):
         Publishing here rather than only in the worker is what makes a change
         made through the API reach every open browser immediately.
         """
-        schema = await self._views.one(download)
+        schema = await self._views.one(download, folder=await self._folder_of(download))
         self._hub.publish("download", schema.to_json())
         return schema
 

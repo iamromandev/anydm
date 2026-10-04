@@ -47,7 +47,9 @@ class FakeCollections:
     """The one collection a collection video's worker looks up."""
 
     def __init__(self, folder: str | None = None) -> None:
-        self.collection: Any = SimpleNamespace(id=uuid.uuid4(), title=folder, ref_id="PL", folder_id=None) if folder is not None else None
+        self.collection: Any = (
+            SimpleNamespace(id=uuid.uuid4(), title=folder, ref_id="PL") if folder is not None else None
+        )
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
         if self.collection is not None and collection_id == self.collection.id:
@@ -66,16 +68,17 @@ class RecordingTotals:
 async def site_row(files: MemoryFiles, *, filename: str = "Rick_1080p.mp4", **overrides: Any) -> Any:
     """A claimed YouTube download at 1080p: two parts, video and audio."""
     detail: dict[str, Any] = {
-        "video_id": "dQw4w9WgXcQ",
         "preset": Preset.P1080,
         "video_format": "137",
         "audio_format": "140",
     }
-    for key in ("extractor", "video_id", "preset", "video_format", "audio_format"):
+    for key in ("preset", "video_format", "audio_format"):
         if key in overrides:
             detail[key] = overrides.pop(key)
     fields: dict[str, Any] = {
         "source_url": "https://youtu.be/dQw4w9WgXcQ",
+        "provider": overrides.pop("extractor", "Youtube"),
+        "ref_id": overrides.pop("video_id", "dQw4w9WgXcQ"),
         "platform": Platform.SITE,
         "media_kind": MediaKind.VIDEO,
         "title": "Rick",

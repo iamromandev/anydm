@@ -19,7 +19,7 @@ def test_platform_is_how_bytes_arrive() -> None:
 
 
 def test_media_kind_is_what_they_are() -> None:
-    assert [k.value for k in MediaKind] == ["video", "audio", "file"]
+    assert [k.value for k in MediaKind] == ["video", "audio", "file", "playlist", "channel"]
 
 
 def test_segment_parts_are_the_workers_part_names() -> None:

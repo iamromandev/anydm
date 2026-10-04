@@ -9,7 +9,7 @@ from src.lib.torrent.protocol import TorrentProgress
 from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_monitor import TorrentMonitor
 
-from tests.service.download.memory import MemoryFiles, RecordingHub, download_row, memory_views, torrent_detail
+from tests.service.download.memory import MemoryFiles, RecordingHub, download_row, memory_views
 
 HASH = "abc"
 
@@ -19,8 +19,8 @@ def _row(**overrides: Any) -> Any:
         "source_url": f"magnet:?xt=urn:btih:{HASH}",
         "platform": Platform.TORRENT,
         "title": "Some Release",
-        "path": "torrent/Some Release",
-        "torrent_detail": torrent_detail(HASH),
+        "provider": "torrent",
+        "ref_id": HASH,
     }
     fields.update(overrides)
     return download_row(**fields)
@@ -89,6 +89,7 @@ def _monitor(
     root: Path = Path("/workdir/download"),
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
+    torrent_root: Path | None = None,
 ) -> TorrentMonitor:
     files = files or MemoryFiles()
     live = live or LiveStats()
@@ -104,6 +105,7 @@ def _monitor(
         enabled=True,
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
+        torrent_root=torrent_root or root / "torrent",
     )
 
 
@@ -114,7 +116,7 @@ async def test_tick_mirrors_bytes_onto_the_row_and_live_numbers_into_live_stats(
     await _monitor([row], FakeClient([_sample()]), live=live).tick()
 
     assert (row.status, row.downloaded_bytes, row.total_bytes) == (DownloadStatus.DOWNLOADING, 500, 1000)
-    assert row.torrent_detail.uploaded_bytes == 100
+    assert row.uploaded_bytes == 100
     assert live.get(row.id) == Live(speed_bps=4096, eta_seconds=12, upload_speed_bps=512, peers=6)
     assert all("speed_bps" not in fields for fields in row.saved)
 
@@ -157,13 +159,14 @@ async def test_nothing_is_written_when_nothing_changed() -> None:
         status=DownloadStatus.DOWNLOADING,
         downloaded_bytes=500,
         total_bytes=1000,
-        torrent_detail=torrent_detail(HASH, uploaded_bytes=100),
+        provider="torrent",
+        ref_id=HASH,
+        uploaded_bytes=100,
     )
 
     await _monitor([row], FakeClient([_sample()])).tick()
 
     assert row.saved == []
-    assert row.torrent_detail.saved == []
 
 
 @pytest.mark.asyncio
@@ -214,7 +217,7 @@ async def test_a_row_the_engine_has_lost_is_re_added_into_its_folder_with_its_se
     await _monitor([row], client, files=files, root=tmp_path).tick()
 
     assert client.added == [
-        {"only_files": [0, 2], "output_folder": str((tmp_path / "torrent" / "Some Release").resolve())}
+        {"only_files": [0, 2], "output_folder": str((tmp_path / "torrent" / "Some Release [abc]").resolve())}
     ]
 
 

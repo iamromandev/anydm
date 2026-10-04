@@ -24,7 +24,7 @@ from src.data.type import DownloadStatus, MediaKind, Platform, SegmentPart
 from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
-from src.lib.site.entry_plan import is_unplanned, number_of, plan_fields, plan_for
+from src.lib.site.entry_plan import is_unplanned, leading_number, plan_fields, plan_for
 from src.lib.site.subtitles import fetch_subtitle
 from src.service.download import retry as retry_policy
 from src.service.download.collection_totals import CollectionTotals
@@ -33,7 +33,13 @@ from src.service.download.disk import DiskGuard, is_insufficient_storage, storag
 from src.service.download.downloader import Stopped
 from src.service.download.fragment import FragmentDownloader
 from src.service.download.live import Live, LiveStats
-from src.service.download.paths import collection_destination, collection_path, final_path, part_path, remove_work_files
+from src.service.download.paths import (
+    collection_destination,
+    collection_folder,
+    final_path,
+    part_path,
+    remove_work_files,
+)
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
 from src.service.download.segment import Segment
@@ -178,32 +184,33 @@ class DownloadWorker:
             logger.exception("{}|unexpected failure on {}", self._name, download.id)
             await self._mark_failed(download, Error.internal(message=str(exc)))
 
-    async def _emit(self, download: Any) -> None:
-        self._hub.publish("download", (await self._views.one(download)).to_json())
+    async def _emit(self, download: Any, *, folder: str | None = None) -> None:
+        self._hub.publish("download", (await self._views.one(download, folder=folder)).to_json())
 
     async def _refresh_collection(self, download: Any) -> None:
-        if self._totals is not None and download.collection_id is not None:
-            await self._totals.refresh(download.collection_id)
+        if self._totals is not None and download.parent_id is not None:
+            await self._totals.refresh(download.parent_id)
 
-    async def _changed(self, download: Any) -> None:
+    async def _changed(self, download: Any, *, folder: str | None = None) -> None:
         """Publish a status change, and bring a collection video's collection up to date with it."""
-        await self._emit(download)
+        await self._emit(download, folder=folder)
         await self._refresh_collection(download)
 
-    async def _into_folder(self, download: Any, destination: Path) -> tuple[Path, str]:
+    async def _into_folder(self, download: Any, destination: Path) -> tuple[Path, str | None]:
         """Where the finished file lives, and that folder relative to the download root.
 
         A standalone download stays in its work folder. A collection's video
         moves into the collection's folder, before COMPLETE: a crash here
         requeues it and the move runs again, replacing a file of the same name.
+        The folder is derived from the collection's row, never stored.
         """
-        if download.collection_id is None:
-            return destination, str(download.id)
-        collection = await self._collections.get_active_by_id(download.collection_id)
+        if download.parent_id is None:
+            return destination, None
+        collection = await self._collections.get_active_by_id(download.parent_id)
         if collection is None:
-            return destination, str(download.id)
-        video_id = download.site_detail.video_id if download.site_detail else str(download.id)
-        path = await collection_path(collection)
+            return destination, None
+        video_id = download.ref_id if download.site_detail else str(download.id)
+        path = collection_folder(collection.title, collection.ref_id)
         moved = collection_destination(self._root, path, destination.name, video_id)
         moved.parent.mkdir(parents=True, exist_ok=True)
         destination.replace(moved)
@@ -221,7 +228,7 @@ class DownloadWorker:
             plan_for(info.formats, site.preset),
             preset=site.preset,
             title=download.title,
-            number=number_of(file.path if file else "", download.position),
+            number=leading_number(file.path if file else ""),
         )
         download.media_kind = planned.media_kind
         download.title = planned.title
@@ -320,7 +327,7 @@ class DownloadWorker:
     ) -> None:
         download_id = download.id
         expected_total = download.total_bytes
-        collection_id = download.collection_id
+        collection_id = download.parent_id
 
         async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
             result = await self._segment_repo.reconcile(download_id, part, [(s.index, s.start, s.end) for s in plan])
@@ -359,7 +366,7 @@ class DownloadWorker:
             raise Error.internal(message="This worker has no fragment downloader")
         download_id = download.id
         expected_total = download.total_bytes
-        collection_id = download.collection_id
+        collection_id = download.parent_id
         await self._fragments.fetch(
             page_url,
             format_id,
@@ -421,10 +428,9 @@ class DownloadWorker:
         if saved:
             logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), download.id)
 
-    async def _mark_complete(self, download: Any, destination: Path, path: str) -> None:
+    async def _mark_complete(self, download: Any, destination: Path, folder: str | None = None) -> None:
         size = destination.stat().st_size
         download.status = DownloadStatus.COMPLETE
-        download.path = path
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
         download.downloaded_bytes = size
@@ -433,7 +439,7 @@ class DownloadWorker:
         download.error = None
         download.error_code = None
         await download.save(
-            update_fields=["status", "path", "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code"]
+            update_fields=["status", "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code"]
         )
         await self._files.finish_single(download.id, path=destination.name, size_bytes=size)
         self._live.clear(download.id)
@@ -442,8 +448,8 @@ class DownloadWorker:
         # download whose video succeeded and whose audio then failed will
         # retry, and rebuilding the video plan at zero would re-download it.
         await self._segment_repo.clear(download.id)
-        await self._changed(download)
-        logger.success("{}|completed {} -> {}/{}", self._name, download.id, path, destination.name)
+        await self._changed(download, folder=folder)
+        logger.success("{}|completed {} -> {}/{}", self._name, download.id, folder or download.id, destination.name)
 
     async def _wait_for_space(self, download: Any, error: Error, *, refund: bool = False) -> None:
         """Back to the queue until the disk has room, keeping whatever is on disk.

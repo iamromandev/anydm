@@ -3,16 +3,18 @@ from datetime import timedelta
 
 import pytest
 from src.core.common import now
-from src.data.db.model import Collection, Download
-from src.data.repo import DownloadDatabaseRepo
-from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
+from src.data.db.model import Download
+from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("db")]
 
 
-def site_fields(title: str = "Talk") -> dict:
+def site_fields(title: str = "Talk", video_id: str | None = None) -> dict:
     return {
         "source_url": f"https://youtu.be/{uuid.uuid4().hex[:8]}",
+        "provider": "Youtube",
+        "ref_id": video_id or uuid.uuid4().hex[:8],
         "platform": Platform.SITE,
         "media_kind": MediaKind.VIDEO,
         "title": title,
@@ -20,16 +22,23 @@ def site_fields(title: str = "Talk") -> dict:
     }
 
 
-def site_detail(video_id: str = "abc") -> dict:
-    return {"extractor": "Youtube", "video_id": video_id, "preset": Preset.BEST}
+def site_detail() -> dict:
+    return {"preset": Preset.BEST}
 
 
-async def a_collection() -> Collection:
-    return await Collection.create(
-        kind=CollectionKind.PLAYLIST,
-        extractor="YoutubeTab",
-        ref_id=uuid.uuid4().hex,
-        preset=Preset.BEST,
+async def a_collection() -> Download:
+    return await CollectionDatabaseRepo().create_with_entries(
+        {
+            "source_url": "https://www.youtube.com/playlist?list=PL",
+            "provider": "Youtube",
+            "ref_id": uuid.uuid4().hex,
+            "platform": Platform.SITE,
+            "media_kind": MediaKind.PLAYLIST,
+            "path": "Talks",
+            "status": DownloadStatus.PENDING,
+            "preset": Preset.BEST,
+        },
+        [],
     )
 
 
@@ -40,6 +49,8 @@ async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
     direct = await repo.create_direct(
         {
             "source_url": "https://e.com/a.iso",
+            "provider": "http",
+            "ref_id": "iso",
             "platform": Platform.DIRECT,
             "media_kind": MediaKind.FILE,
             "title": "a.iso",
@@ -50,20 +61,21 @@ async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
     torrent = await repo.create_torrent(
         {
             "source_url": "magnet:?xt=urn:btih:" + "a" * 40,
+            "provider": "torrent",
+            "ref_id": "a" * 40,
             "platform": Platform.TORRENT,
             "media_kind": MediaKind.FILE,
             "title": "T",
             "status": DownloadStatus.PENDING,
             "path": "torrent/T",
         },
-        "a" * 40,
         [(0, "x.mkv", 10, True)],
     )
     assert site.queue.name == "Main"
-    assert site.site_detail is not None and site.site_detail.video_id == "abc"
-    assert torrent.torrent_detail is not None and torrent.torrent_detail.info_hash == "a" * 40
+    assert site.site_detail is not None and site.site_detail.preset == Preset.BEST
+    assert (torrent.provider, torrent.ref_id) == ("torrent", "a" * 40)
     assert [site.queue_position, direct.queue_position, torrent.queue_position] == [0, 1, 2]
-    found = await repo.by_info_hash("a" * 40)
+    found = await repo.by_ref("torrent", "a" * 40)
     assert found is not None and found.id == torrent.id
 
 
@@ -72,15 +84,15 @@ async def test_claim_takes_standalone_first_then_queue_order_and_honours_start_a
     repo = DownloadDatabaseRepo()
     collection = await a_collection()
     member = await repo.create_site(
-        {**site_fields(), "collection_id": collection.id, "position": 1}, site_detail("m"), "001_", None
+        {**site_fields(), "parent_id": collection.id, "position": 1}, site_detail(), "001_", None
     )
     later = await repo.create_site(
-        {**site_fields(), "start_at": now() + timedelta(hours=1)}, site_detail("s"), "s", None
+        {**site_fields(), "start_at": now() + timedelta(hours=1)}, site_detail(), "s", None
     )
     retrying = await repo.create_site(
-        {**site_fields(), "next_attempt_at": now() + timedelta(hours=1)}, site_detail("r"), "r", None
+        {**site_fields(), "next_attempt_at": now() + timedelta(hours=1)}, site_detail(), "r", None
     )
-    ready = await repo.create_site(site_fields(), site_detail("x"), "x", None)
+    ready = await repo.create_site(site_fields(), site_detail(), "x", None)
 
     first = await repo.claim_next()
     assert first is not None and first.id == ready.id and first.status == DownloadStatus.DOWNLOADING
@@ -103,12 +115,12 @@ async def test_recover_orphans_requeues_the_mid_flight() -> None:
 @pytest.mark.asyncio
 async def test_list_items_tags_pages_filters_and_sorts_by_live_speed() -> None:
     repo = DownloadDatabaseRepo()
-    slow = await repo.create_site(site_fields("slow"), site_detail("1"), "1", None)
-    fast = await repo.create_site(site_fields("fast"), site_detail("2"), "2", None)
+    slow = await repo.create_site(site_fields("slow"), site_detail(), "1", None)
+    fast = await repo.create_site(site_fields("fast"), site_detail(), "2", None)
     collection = await a_collection()
     await repo.create_site(
-        {**site_fields(), "collection_id": collection.id, "status": DownloadStatus.PAUSED},
-        site_detail("3"),
+        {**site_fields(), "parent_id": collection.id, "status": DownloadStatus.PAUSED},
+        site_detail(),
         "3",
         None,
     )
@@ -126,8 +138,9 @@ async def test_list_items_tags_pages_filters_and_sorts_by_live_speed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_statuses_by_video_reports_the_furthest_along() -> None:
+async def test_statuses_by_ref_reports_the_furthest_along() -> None:
     repo = DownloadDatabaseRepo()
-    await repo.create_site({**site_fields(), "status": DownloadStatus.FAILED}, site_detail("v"), "a", None)
-    await repo.create_site({**site_fields(), "status": DownloadStatus.COMPLETE}, site_detail("v"), "b", None)
-    assert await repo.statuses_by_video("Youtube", ["v", "none"]) == {"v": DownloadStatus.COMPLETE}
+    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.FAILED}, site_detail(), "a", None)
+    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.COMPLETE}, site_detail(), "b", None)
+    assert await repo.statuses_by_ref("Youtube", ["v", "none"]) == {"v": DownloadStatus.COMPLETE}
+    assert await repo.statuses_by_ref("Vimeo", ["v"]) == {}  # another provider's id is another video

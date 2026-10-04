@@ -8,7 +8,7 @@ from tortoise import fields
 from src.core.base import LinkBase
 
 if TYPE_CHECKING:
-    from src.data.db.model.file.playback_position import PlaybackPosition
+    from src.data.db.model.library.playback_position import PlaybackPosition
 
 
 class DownloadFile(LinkBase):
@@ -25,11 +25,11 @@ class DownloadFile(LinkBase):
     download = fields.ForeignKeyField("model.Download", related_name="download_files", on_delete=fields.CASCADE)
     index: int = fields.IntField()
     path: str = fields.CharField(max_length=1024)
+    mime_type: str | None = fields.CharField(max_length=128, null=True)
+    selected: bool = fields.BooleanField(default=True)
     size_bytes: int = fields.BigIntField(default=0)
     #: Bytes on disk for this file.
     downloaded_bytes: int = fields.BigIntField(default=0)
-    selected: bool = fields.BooleanField(default=True)
-    mime_type: str | None = fields.CharField(max_length=128, null=True)
 
     if TYPE_CHECKING:
         download_id: UUID

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
-from uuid import UUID
+from typing import ClassVar
 
 from tortoise import fields
 
@@ -9,16 +8,19 @@ from src.core.base import LinkBase
 
 
 class Mirror(LinkBase):
-    """Another address for a direct download, tried in ``position`` order when one fails."""
+    """One alternate address for one download, tried in ``position`` order.
+
+    The worker moves to the next mirror when the current one fails for good,
+    recording ``last_error`` on the one it left.
+    """
 
     download = fields.ForeignKeyField("model.Download", related_name="mirrors", on_delete=fields.CASCADE)
-    url: str = fields.TextField()
-    position: int = fields.IntField()
-    #: Why this address failed the last time it was tried.
+    url = fields.ForeignKeyField("model.Url", related_name="+", on_delete=fields.CASCADE)
+    position: int = fields.IntField(default=0)
     last_error: str | None = fields.TextField(null=True)
 
-    if TYPE_CHECKING:
-        download_id: UUID
+    def __str__(self) -> str:
+        return f"[Mirror: download {self.download_id}, position {self.position}]"
 
     class Meta:
         table: ClassVar[str] = "mirror"

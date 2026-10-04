@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from src.core.error import Error
 from src.data.type import MediaKind, Preset
-from src.lib.site.entry_plan import is_unplanned, number_of, plan_fields, plan_for
+from src.lib.site.entry_plan import is_unplanned, leading_number, plan_fields, plan_for
 from src.lib.site.format import select_plan
 
 from tests.sites import site_info
@@ -32,15 +32,15 @@ def test_mp3_with_no_audio_still_fails() -> None:
 
 
 def test_the_number_is_what_survives_a_re_plan() -> None:
-    assert number_of("07_Title_720p.mp4", 7) == "07_"
-    assert number_of("007_", 7) == "007_"
-    assert number_of("Title_720p.mp4", 7) == ""
-    assert number_of("anything", None) == ""
+    assert leading_number("07_Title_720p.mp4") == "07_"
+    assert leading_number("007_") == "007_"
+    assert leading_number("Title_720p.mp4") == ""
+    assert leading_number("") == ""
 
 
-def test_a_title_starting_with_digits_is_not_a_number() -> None:
-    # A channel's tab isn't numbered; "2001_" is the title, at position 5.
-    assert number_of("2001_A_Space_Odyssey_720p.mp4", 5) == ""
+def test_an_unnumbered_title_keeps_no_prefix() -> None:
+    # A channel's tab isn't numbered; its file row holds "" until planning.
+    assert leading_number("") == ""
 
 
 def test_plan_fields_keeps_the_number_and_names_the_file() -> None:

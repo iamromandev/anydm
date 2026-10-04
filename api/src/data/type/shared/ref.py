@@ -13,4 +13,3 @@ class RefType(StrEnum):
     """Which table a ``ref_id`` belongs to. A new taggable model adds a value here and nothing else."""
 
     DOWNLOAD = "download"
-    COLLECTION = "collection"

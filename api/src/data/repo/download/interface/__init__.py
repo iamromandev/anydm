@@ -5,9 +5,6 @@ from .download import RELATED as RELATED
 from .download import DownloadRepo as DownloadRepo
 from .file import FileRepo as FileRepo
 from .file import FileRow as FileRow
-from .folder import FolderRepo as FolderRepo
-from .folder import FolderRow as FolderRow
-from .mirror import MirrorRepo as MirrorRepo
 from .position import PositionRepo as PositionRepo
 from .queue import QueueRepo as QueueRepo
 from .queue import QueueRow as QueueRow

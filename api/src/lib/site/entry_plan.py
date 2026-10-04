@@ -50,15 +50,15 @@ def plan_for(formats: list[Format], preset: Preset) -> Plan:
         return select_plan(smallest, Preset.BEST)
 
 
-def number_of(filename: str, position: int | None) -> str:
+def leading_number(filename: str) -> str:
     """The ``007_`` a numbered video's name starts with, or ``""``.
 
-    Matched against the video's own position, so a channel's video titled
-    "2001_…" (whose files aren't numbered) keeps its title.
+    The number is assigned when the video is added (its file row holds just
+    the prefix until planning), so planning trusts the name it finds: a
+    playlist's video keeps its number across re-plans, and a channel's
+    unnumbered video keeps its title.
     """
-    if position is None:
-        return ""
-    found = re.match(rf"0*{position}_", filename)
+    found = re.match(r"\d+_", filename)
     return found.group(0) if found else ""
 
 
