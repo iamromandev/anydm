@@ -91,6 +91,15 @@ which is what lets Safari's native player authenticate. A key in a URL is
 redacted from uvicorn's access log and the error handlers' lines. In the UI,
 the first 401 opens Settings on the key field.
 
+Search sources are rows of `catalog.provider`: a provider with a `parser`
+(`apibay`, `nyaa`, `eztv` or `torznab`) is one, its address is the
+`shared.url` its `base_url` points at, its key is `api_key`, and it is
+enabled while its `status` is active. Providers without a parser (`http`,
+`torrent`, a site's extractor) only say whose id a download carries. The
+`/source` routes reach them through `SourceRepo`, so nothing above the repo
+knows which table holds them. A provider that downloads' sources point at
+cannot be deleted (`RESTRICT`).
+
 ## What runs in the background
 
 Five loops start with the app and stop with it, in

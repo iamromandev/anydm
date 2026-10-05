@@ -14,7 +14,8 @@ class Source(LinkBase):
     provider = fields.ForeignKeyField(
         to="model.Provider",
         related_name="sources",
-        on_delete=fields.CASCADE
+        # A provider that downloads point at is not deleted out from under them.
+        on_delete=fields.RESTRICT
     )
     url = fields.ForeignKeyField(
         to="model.Url",
