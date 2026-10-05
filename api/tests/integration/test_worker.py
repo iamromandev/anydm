@@ -11,7 +11,7 @@ from src.data.repo import (
     PositionDatabaseRepo,
     SegmentDatabaseRepo,
 )
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset, SegmentPart
+from src.data.type import DownloadStatus, MediaKind, Preset, SegmentPart
 from src.lib.event import EventHub
 from src.lib.site.client import Resolved
 from src.service.download.collection_service import CollectionService
@@ -87,19 +87,12 @@ async def _site(*, attempts: int = 0, total_bytes: int | None = None, **site: An
     detail: dict[str, Any] = {"preset": Preset.P720, "video_format": "22"}
     detail.update(site)
     row = await DownloadDatabaseRepo().create_site(
-        {
-            "source_url": "https://youtu.be/x",
-            "provider": "Youtube",
-            "ref_id": "x",
-            "platform": Platform.SITE,
-            "media_kind": MediaKind.VIDEO,
-            "status": DownloadStatus.PENDING,
-            "title": "clip",
-            "total_bytes": total_bytes,
-        },
-        detail,
-        "clip.mp4",
-        "video/mp4",
+        url="https://www.youtube.com/watch?v=xxxxxxxxxxx",
+        provider="Youtube",
+        download={"status": DownloadStatus.PENDING, "total_size": total_bytes},
+        media={"title": "clip", "kind": MediaKind.VIDEO, **detail},
+        filename="clip.mp4",
+        mime_type="video/mp4",
     )
     if attempts:
         await Download.filter(id=row.id).update(attempts=attempts)
@@ -108,16 +101,7 @@ async def _site(*, attempts: int = 0, total_bytes: int | None = None, **site: An
 
 async def _direct(filename: str = "f.bin") -> Download:
     return await DownloadDatabaseRepo().create_direct(
-        {
-            "source_url": f"https://cdn.test/{filename}",
-            "provider": "http",
-            "ref_id": filename,
-            "platform": Platform.DIRECT,
-            "media_kind": MediaKind.FILE,
-            "status": DownloadStatus.PENDING,
-            "title": filename,
-        },
-        filename,
+        url=f"https://cdn.test/{filename}", download={"status": DownloadStatus.PENDING}, filename=filename
     )
 
 

@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from urllib.parse import urlsplit
 
-from src.core.url import normalize_url, url_hash
-from src.data.db.model import Provider, Url
+from src.data.db.model import Provider
+from src.data.repo.catalog import url_row
 from src.data.repo.search.interface.source import SourceRepo, SourceRow
 from src.data.type import ProviderStatus
 
@@ -22,26 +21,6 @@ def _row(provider: Provider) -> SourceRow:
     base_url = provider.base_url.value if provider.base_url else ""
     enabled = provider.status == ProviderStatus.ACTIVE
     return SourceRow(provider.slug, provider.parser or "", enabled, base_url, provider.api_key, provider.id)
-
-
-async def _url(address: str) -> Url:
-    """The one Url row for this address, made the first time it is seen."""
-    normalized = normalize_url(address)
-    parts = urlsplit(address)
-    url, _ = await Url.get_or_create(
-        normalized_hash=url_hash(normalized),
-        defaults={
-            "value": address,
-            "normalized": normalized,
-            "scheme": parts.scheme,
-            "host": parts.hostname,
-            "port": parts.port,
-            "path": parts.path or None,
-            "query": parts.query or None,
-            "fragment": parts.fragment or None,
-        },
-    )
-    return url
 
 
 def _search_sources():
@@ -61,7 +40,7 @@ class SourceDatabaseRepo(SourceRepo):
             name=name,
             slug=name,
             parser=kind,
-            base_url=await _url(base_url),
+            base_url=await url_row(base_url),
             api_key=api_key,
             status=_status(enabled),
         )
@@ -79,7 +58,7 @@ class SourceDatabaseRepo(SourceRepo):
                         name=row.name,
                         slug=row.name,
                         parser=row.kind,
-                        base_url=await _url(row.base_url),
+                        base_url=await url_row(row.base_url),
                         api_key=row.api_key,
                         status=_status(row.enabled),
                     )
@@ -103,7 +82,7 @@ class SourceDatabaseRepo(SourceRepo):
         if enabled is not None:
             provider.status = _status(enabled)
         if base_url is not None:
-            provider.base_url = await _url(base_url)
+            provider.base_url = await url_row(base_url)
         if clear_api_key:
             provider.api_key = None
         elif api_key is not None:

@@ -10,12 +10,13 @@ from tortoise.transactions import in_transaction
 
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, File, Media, PlaybackPosition
+from src.data.db.model import Download, File, Media, Mirror, PlaybackPosition, Provider
+from src.data.repo.catalog import address_hash, provider_row, source_row, source_rows, url_row, url_rows
 from src.data.repo.download import transitions
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface.collection import CollectionRepo, EntryRow, MemberRow
 from src.data.repo.download.interface.download import RELATED
-from src.data.type import CONTAINER_KINDS, DownloadStatus
+from src.data.type import CONTAINER_KINDS, DownloadStatus, SourceKind
 
 
 class CollectionDatabaseRepo(CollectionRepo):
@@ -28,8 +29,8 @@ class CollectionDatabaseRepo(CollectionRepo):
             *RELATED
         )
 
-    async def find(self, provider: str, ref_id: str) -> Download | None:
-        return await self._containers().filter(provider=provider, ref_id=ref_id).first()
+    async def find(self, url: str) -> Download | None:
+        return await self._containers().filter(mirrors__source__url__normalized_hash=address_hash(url)).first()
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Download | None:
         return await self._containers().filter(id=collection_id).first()
@@ -40,35 +41,60 @@ class CollectionDatabaseRepo(CollectionRepo):
         found = {row.id: row for row in await self._containers().filter(id__in=list(ids))}
         return [found[collection_id] for collection_id in ids if collection_id in found]
 
-    async def create_with_entries(self, collection: dict[str, Any], entries: Sequence[EntryRow]) -> Download:
-        """``collection`` is the container's ``Download`` fields, and its ``preset``, which goes in its ``Media``."""
-        fields = dict(collection)
-        preset = fields.pop("preset")
+    async def create_with_entries(
+        self,
+        *,
+        url: str,
+        provider: str,
+        collection: dict[str, Any],
+        media: dict[str, Any],
+        entries: Sequence[EntryRow],
+    ) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **fields)
-            await Media.create(using_db=conn, download_id=row.id, preset=preset)
-            await self._insert(row.id, entries, conn)
+            owner = await provider_row(provider, conn)
+            source = await source_row(owner, await url_row(url, conn), SourceKind.CONTENT, conn)
+            row = await Download.create(using_db=conn, **collection)
+            await Mirror.create(using_db=conn, download=row, source=source)
+            await Media.create(using_db=conn, download=row, **media)
+            await self._insert(row.id, owner, entries, conn)
         return await self._containers().get(id=row.id)
 
-    async def add_entries(self, collection: Download, entries: Sequence[EntryRow]) -> None:
+    async def add_entries(self, collection: Download, provider: str, entries: Sequence[EntryRow]) -> None:
         async with in_transaction() as conn:
-            await self._insert(collection.id, entries, conn)
+            await self._insert(collection.id, await provider_row(provider, conn), entries, conn)
 
     @staticmethod
-    async def _insert(collection_id: uuid.UUID, entries: Sequence[EntryRow], conn: BaseDBAsyncClient) -> None:
-        """Three bulk inserts however long the listing: 5,000 videos must not be 15,000 statements."""
+    async def _insert(
+        collection_id: uuid.UUID, provider: Provider, entries: Sequence[EntryRow], conn: BaseDBAsyncClient
+    ) -> None:
+        """A fixed number of bulk statements however long the listing: 5,000 videos must not be 30,000 statements.
+
+        Addresses and sources are upserted (a video can already be held
+        elsewhere), then each video's download, mirror, media and file.
+        """
         if not entries:
             return
+        urls = await url_rows((entry.url for entry in entries), conn)
+        hashes = [address_hash(entry.url) for entry in entries]
+        sources = await source_rows(
+            provider, list({urls[h].id: urls[h] for h in hashes}.values()), SourceKind.CONTENT, conn
+        )
         downloads = [Download(**entry.download, parent_id=collection_id) for entry in entries]
         await Download.bulk_create(downloads, batch_size=500, using_db=conn)
+        # By id: Tortoise will not relate a row to an instance bulk_create made.
+        await Mirror.bulk_create(
+            [Mirror(download_id=row.id, source=sources[urls[h].id]) for row, h in zip(downloads, hashes, strict=True)],
+            batch_size=500,
+            using_db=conn,
+        )
         await Media.bulk_create(
-            [Media(download_id=row.id, **entry.site) for row, entry in zip(downloads, entries, strict=True)],
+            [Media(download_id=row.id, **entry.media) for row, entry in zip(downloads, entries, strict=True)],
             batch_size=500,
             using_db=conn,
         )
         await File.bulk_create(
             [
-                File(download_id=row.id, index=0, path=entry.filename)
+                File(download_id=row.id, index=0, filename=entry.filename, path=entry.filename)
                 for row, entry in zip(downloads, entries, strict=True)
             ],
             batch_size=500,
@@ -79,9 +105,7 @@ class CollectionDatabaseRepo(CollectionRepo):
     def _members(collection_id: uuid.UUID) -> Any:
         return Download.filter(parent_id=collection_id, deleted_at__isnull=True)
 
-    async def downloads_page(
-        self, collection_id: uuid.UUID, page: int, page_size: int
-    ) -> tuple[list[Download], Meta]:
+    async def downloads_page(self, collection_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Download], Meta]:
         # Listing order; created_at only breaks ties, and ties within one bulk insert.
         query = self._members(collection_id).order_by("media__playlist_index", "created_at")
         total = await query.count()

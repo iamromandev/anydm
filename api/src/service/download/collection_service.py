@@ -17,7 +17,8 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import CollectionRepo, EntryRow, SegmentRepo
 from src.data.schema.download import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Preset
+from src.lib.identity import site_ref
 from src.lib.site import error as site_error
 from src.lib.site.filename import number_prefix
 from src.service.download.collection_totals import CollectionTotals
@@ -77,24 +78,24 @@ class CollectionService(BaseService):
             self._disk.require(0)
         # A listing's extractor is "YoutubeTab"; its videos, and so its container, are "Youtube".
         provider = request.extractor.removesuffix("Tab")
-        existing = await self._repo.find(provider, request.external_id)
+        existing = await self._repo.find(request.url)
         if existing is not None:
             return await self._join(existing, request)
-        path = collection_relpath(None, request.title, request.external_id)
+        # Named by the id read off its address, as every later read of its folder does
+        # (a channel tab's address gives its handle, where the listing gives its UC id).
+        path = collection_relpath(None, request.title, site_ref(provider, request.url))
         inside(self._root, path).mkdir(parents=True, exist_ok=True)
         largest = max(entry.index for entry in request.entries)
         collection = await self._repo.create_with_entries(
-            {
-                "source_url": request.url,
-                "provider": provider,
-                "ref_id": request.external_id,
-                "platform": Platform.SITE,
-                "media_kind": MediaKind.CHANNEL if request.channel_tab else MediaKind.PLAYLIST,
+            url=request.url,
+            provider=provider,
+            collection={"status": DownloadStatus.PENDING},
+            media={
+                "kind": MediaKind.CHANNEL if request.channel_tab else MediaKind.PLAYLIST,
                 "title": request.title,
-                "status": DownloadStatus.PENDING,
                 "preset": request.preset,
             },
-            [self._entry(entry, request, largest=largest) for entry in request.entries],
+            entries=[self._entry(entry, request, largest=largest) for entry in request.entries],
         )
         self._control.wake()
         return await self._changed(collection)
@@ -108,18 +109,16 @@ class CollectionService(BaseService):
         # A re-add numbers by arrival (``number``), so no two files share a prefix.
         prefix = "" if request.channel_tab else number_prefix(number if number is not None else entry.index, largest)
         return EntryRow(
-            download={
-                "source_url": entry.url,
-                "provider": request.extractor.removesuffix("Tab"),
-                "ref_id": entry.id,
-                "platform": Platform.SITE,
-                "media_kind": MediaKind.AUDIO if request.preset == Preset.MP3 else MediaKind.VIDEO,
+            # The listing's own address for the video, its canonical page: what a
+            # single download of it is stored under too.
+            url=entry.url,
+            download={"status": DownloadStatus.PENDING},
+            media={
                 "title": entry.title or "",
-                "status": DownloadStatus.PENDING,
+                "kind": MediaKind.AUDIO if request.preset == Preset.MP3 else MediaKind.VIDEO,
+                "preset": request.preset,
+                "playlist_index": entry.index,
             },
-            # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
-            # name single downloads and the picker's "already have it" use: the provider above.
-            site={"preset": request.preset},
             filename=prefix,
         )
 
@@ -148,6 +147,7 @@ class CollectionService(BaseService):
         if fresh:
             await self._repo.add_entries(
                 collection,
+                request.extractor.removesuffix("Tab"),
                 [
                     self._entry(entry, request, largest=largest, number=top + offset)
                     for offset, entry in enumerate(fresh, start=1)

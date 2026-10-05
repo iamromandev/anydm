@@ -24,16 +24,45 @@ RELATED = ("media", "mirrors__source__url", "mirrors__source__provider", "mirror
 class DownloadRepo(CrudRepo[Download]):
     @abstractmethod
     async def create_site(
-        self, download: dict[str, Any], site: dict[str, Any], filename: str, mime_type: str | None
+        self,
+        *,
+        url: str,
+        provider: str,
+        download: dict[str, Any],
+        media: dict[str, Any],
+        filename: str,
+        mime_type: str | None,
     ) -> Download:
-        """A site download, its ``SiteDetail`` and its one file, in one transaction."""
+        """A site download from the page at ``url``, in one transaction.
+
+        Its ``Url``, ``Provider`` (the extractor key) and content ``Source`` are
+        found or made; then the ``Download`` (``download`` is its fields), its
+        ``Mirror``, its ``Media`` (``media``) and its one ``File``.
+        """
         ...
 
     @abstractmethod
-    async def create_direct(self, download: dict[str, Any], filename: str) -> Download: ...
+    async def create_direct(self, *, url: str, download: dict[str, Any], filename: str) -> Download:
+        """A direct download of ``url``: its catalog rows, the ``Download``, its ``Mirror`` and its one ``File``."""
+        ...
 
     @abstractmethod
-    async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download: ...
+    async def create_torrent(
+        self,
+        *,
+        url: str,
+        info_hash: str,
+        name: str,
+        total_size: int | None,
+        download: dict[str, Any],
+        files: Sequence[FileRow],
+    ) -> Download:
+        """A download of the torrent ``info_hash``, added from ``url`` (a magnet).
+
+        The ``Torrent`` and its files are recorded once: a known hash reuses its
+        row and its source, so a removed torrent added again is one torrent.
+        """
+        ...
 
     @abstractmethod
     async def claim_next(self) -> Download | None:
@@ -82,12 +111,13 @@ class DownloadRepo(CrudRepo[Download]):
     async def get_active_by_id(self, download_id: uuid.UUID) -> Download | None: ...
 
     @abstractmethod
-    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        """Each of ``ref_ids`` that a download not removed holds, with that download's status.
+    async def statuses_by_url(self, urls: Sequence[str]) -> dict[str, DownloadStatus]:
+        """Each of ``urls`` that a download not removed was added from, with that download's status.
 
-        For the picker's "already have it". Canceled downloads hold nothing. A
-        video held twice reports the one furthest along: complete, then queued,
-        then failed.
+        For the picker's "already have it", matched by normalized address. A
+        container is not a video, and canceled downloads hold nothing. An
+        address held twice reports the one furthest along: complete, then
+        queued, then failed.
         """
         ...
 
@@ -97,4 +127,6 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def by_ref(self, provider: str, ref_id: str) -> Download | None: ...
+    async def by_info_hash(self, info_hash: str) -> Download | None:
+        """The download not removed of the torrent ``info_hash``, if any."""
+        ...

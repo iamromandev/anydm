@@ -86,13 +86,24 @@ class FakeDownloadRepo:
         self.created: list[dict[str, Any]] = []
         self.files: MemoryFiles | None = None
 
-    async def create_torrent(self, download: dict[str, Any], files: list[Any]) -> Any:
-        self.created.append({"download": download, "files": list(files)})
-        row = download_row(**download)
+    async def create_torrent(self, **added: Any) -> Any:
+        self.created.append({**added, "files": list(added["files"])})
+        row = download_row(
+            source_url=added["url"],
+            provider="torrent",
+            ref_id=added["info_hash"],
+            platform=Platform.TORRENT,
+            title=added["name"],
+            total_bytes=added["total_size"],
+            **added["download"],
+        )
         self.rows[row.id] = row
         if self.files is not None:
-            await self.files.replace(row.id, files)
+            await self.files.replace(row.id, added["files"])
         return row
+
+    async def by_info_hash(self, info_hash: str) -> Any:
+        return next((row for row in self.rows.values() if row.ref_id == info_hash and row.deleted_at is None), None)
 
     async def get_active_by_id(self, download_id: uuid.UUID) -> Any:
         return self.rows.get(download_id)
@@ -227,18 +238,12 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     # Its own folder, derived from the same rule rqbit is told (#107), relative to DOWNLOAD_DIR.
     assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release [abc123]")
     created = repo.created[0]
-    download = created["download"]
-    assert "path" not in download
     assert schema.folder == "torrent/Some Release [abc123]"
-    assert (download["platform"], download["media_kind"], download["status"]) == (
-        Platform.TORRENT,
-        MediaKind.FILE,
-        DownloadStatus.PENDING,
-    )
-    assert (download["title"], download["source_url"]) == ("Some Release", MAGNET)
+    assert created["download"] == {"status": DownloadStatus.PENDING}
+    assert (created["name"], created["url"], created["info_hash"]) == ("Some Release", MAGNET, "abc123")
     # Only the selected file counts towards the size the UI shows.
-    assert download["total_bytes"] == 900
-    assert (download["provider"], download["ref_id"]) == ("torrent", "abc123")
+    assert created["total_size"] == 900
+    assert (schema.platform, schema.media_kind) == (Platform.TORRENT, MediaKind.FILE)
     assert schema.type == "download"
     assert schema.torrent is not None and schema.torrent.info_hash == "abc123"
 
@@ -272,6 +277,18 @@ async def test_a_selection_naming_no_real_file_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_adding_a_torrent_already_held_returns_that_download(tmp_path: Path) -> None:
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
+    service = _service(client, repo=repo, root=tmp_path)
+
+    first = await service.enqueue(MAGNET, [0])
+    again = await service.enqueue(MAGNET, [])
+
+    assert again.id == first.id
+    assert len(repo.created) == 1 and len(client.added) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None:
     """A base64 .torrent must not be written into source_url: reconciliation re-adds from it."""
     repo = FakeDownloadRepo()
@@ -279,7 +296,7 @@ async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None
 
     await _service(repo=repo).enqueue(encoded, [0])
 
-    assert repo.created[0]["download"]["source_url"] == "magnet:?xt=urn:btih:abc123"
+    assert repo.created[0]["url"] == "magnet:?xt=urn:btih:abc123"
 
 
 @pytest.mark.asyncio

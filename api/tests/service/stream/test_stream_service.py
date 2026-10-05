@@ -387,8 +387,8 @@ class FakeDownloadRepo:
     def __init__(self, *, existing_info_hash: str | None = None) -> None:
         self._existing_info_hash = existing_info_hash
 
-    async def by_ref(self, provider: str, ref_id: str) -> object | None:
-        if ref_id == self._existing_info_hash and self._existing_info_hash is not None:
+    async def by_info_hash(self, info_hash: str) -> object | None:
+        if info_hash == self._existing_info_hash and self._existing_info_hash is not None:
             return object()  # any truthy row stands in for a real Download
         return None
 

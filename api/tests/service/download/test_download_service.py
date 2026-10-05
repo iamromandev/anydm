@@ -8,6 +8,7 @@ import pytest
 from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
+from src.data.repo.catalog import address_hash
 from src.data.type import BulkAction, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.lib.identity import url_ref
 from src.lib.site import error as site_error
@@ -47,13 +48,25 @@ class FakeDownloadRepo:
         self.rows[row.id] = row
         return row
 
-    async def create_site(self, download: dict[str, Any], site: dict[str, Any], filename: str, mime_type: Any) -> Any:
-        self.created.append({"download": download, "site": site, "filename": filename, "mime_type": mime_type})
-        return self._add(download_row(**download, site_detail=site_detail(**site)))
+    async def create_site(self, **added: Any) -> Any:
+        self.created.append(added)
+        media = dict(added["media"])
+        return self._add(
+            download_row(
+                source_url=added["url"],
+                provider=added["provider"],
+                platform=Platform.SITE,
+                media_kind=media.pop("kind"),
+                title=media.pop("title"),
+                status=added["download"]["status"],
+                total_bytes=added["download"].get("total_size"),
+                site_detail=site_detail(**media),
+            )
+        )
 
-    async def create_direct(self, download: dict[str, Any], filename: str) -> Any:
-        self.created.append({"download": download, "filename": filename})
-        return self._add(download_row(**download))
+    async def create_direct(self, **added: Any) -> Any:
+        self.created.append(added)
+        return self._add(download_row(source_url=added["url"], title=added["filename"], **added["download"]))
 
     async def list_items(
         self, page: int, page_size: int, statuses: Any, sort: str, speeds: Any
@@ -231,14 +244,15 @@ async def test_enqueue_media_writes_a_pending_site_download() -> None:
 
     assert schema.site is not None and schema.site.extractor == "Youtube"  # the site reaches the UI too
     created = h.repo.created[0]
-    download, site = created["download"], created["site"]
-    assert (download["status"], download["platform"], download["media_kind"]) == (
+    media = created["media"]
+    assert (created["download"]["status"], media["kind"], media["preset"]) == (
         DownloadStatus.PENDING,
-        Platform.SITE,
         MediaKind.VIDEO,
+        Preset.P1080,
     )
-    assert (download["provider"], download["ref_id"], site["preset"]) == ("Youtube", "dQw4w9WgXcQ", Preset.P1080)
-    assert download["source_url"] == YOUTUBE
+    assert created["provider"] == "Youtube"
+    # Stored under the site's own page for the video, not the link as pasted.
+    assert created["url"] == site_info("youtube").webpage_url
     assert h.hub.named("download")[0]["id"] == str(schema.id)
 
 
@@ -248,11 +262,11 @@ async def test_enqueue_media_stores_the_plan_s_format_ids_and_names_the_file() -
     await h.service.enqueue_media(YOUTUBE, Preset.P1080)
 
     created = h.repo.created[0]
-    assert (created["site"]["video_format"], created["site"]["audio_format"]) == ("137", "140")
-    assert created["download"]["title"] == site_info("youtube").title
+    assert (created["media"]["video_format"], created["media"]["audio_format"]) == ("137", "140")
+    assert created["media"]["title"] == site_info("youtube").title
     assert created["filename"].endswith("_1080p.mp4")
     assert created["mime_type"] == "video/mp4"
-    assert created["download"]["total_bytes"] == 80_911_999 + 3_449_447
+    assert created["download"]["total_size"] == 80_911_999 + 3_449_447
 
 
 @pytest.mark.asyncio
@@ -261,12 +275,12 @@ async def test_a_combined_format_is_one_part() -> None:
     await h.service.enqueue_media("http://vimeo.com/75629013", Preset.BEST)
 
     created = h.repo.created[0]
-    assert (created["site"]["video_format"], created["site"]["audio_format"], created["download"]["provider"]) == (
+    assert (created["media"]["video_format"], created["media"]["audio_format"], created["provider"]) == (
         "http-1080p",
         None,
         "Vimeo",
     )
-    assert created["download"]["total_bytes"] is None
+    assert created["download"]["total_size"] is None
 
 
 @pytest.mark.asyncio
@@ -276,7 +290,7 @@ async def test_an_estimated_size_is_not_stored_as_the_total() -> None:
     h = _service(client=FakeSiteClient(site_info("twitter")))
     await h.service.enqueue_media("https://twitter.com/x/status/1", Preset.BEST)
 
-    assert h.repo.created[0]["download"]["total_bytes"] is None
+    assert h.repo.created[0]["download"]["total_size"] is None
 
 
 @pytest.mark.asyncio
@@ -285,7 +299,7 @@ async def test_an_mp3_from_an_audio_site() -> None:
     await h.service.enqueue_media("http://soundcloud.com/x/y", Preset.MP3)
 
     created = h.repo.created[0]
-    assert (created["download"]["media_kind"], created["site"]["video_format"], created["site"]["audio_format"]) == (
+    assert (created["media"]["kind"], created["media"]["video_format"], created["media"]["audio_format"]) == (
         MediaKind.AUDIO,
         None,
         "http_mp3_0_0",
@@ -298,7 +312,7 @@ async def test_a_taller_preset_than_available_falls_back_to_the_tallest() -> Non
     h = _service(client=FakeSiteClient(site_info("twitter")))
     await h.service.enqueue_media("https://twitter.com/x/status/1", Preset.P2160)
 
-    assert h.repo.created[0]["site"]["video_format"] == "http-2176"
+    assert h.repo.created[0]["media"]["video_format"] == "http-2176"
 
 
 @pytest.mark.asyncio
@@ -308,7 +322,7 @@ async def test_a_site_with_only_streaming_formats_is_queued_for_the_fragment_pat
     await h.service.enqueue_media("https://dailymotion.com/video/x", Preset.BEST)
 
     created = h.repo.created[0]
-    assert created["site"]["video_format"] == "hls-1080"
+    assert created["media"]["video_format"] == "hls-1080"
     assert created["filename"].endswith(".mp4")
 
 
@@ -318,7 +332,7 @@ async def test_the_tallest_format_wins_even_when_it_is_streaming_only() -> None:
     h = _service(client=FakeSiteClient(site_info("reddit")))
     await h.service.enqueue_media("https://reddit.com/r/x", Preset.BEST)
 
-    site = h.repo.created[0]["site"]
+    site = h.repo.created[0]["media"]
     assert (site["video_format"], site["audio_format"]) == ("hls-1875", "dash-AUDIO-1")
 
 
@@ -362,10 +376,9 @@ async def test_enqueue_url_writes_a_direct_download_with_its_one_file() -> None:
     schema = await h.service.enqueue_url("https://cdn.test/files/report.pdf")
 
     created = h.repo.created[0]
-    assert (created["download"]["platform"], created["download"]["media_kind"]) == (Platform.DIRECT, MediaKind.FILE)
-    assert created["download"]["status"] == DownloadStatus.PENDING
+    assert (created["url"], created["download"]["status"]) == ("https://cdn.test/files/report.pdf", DownloadStatus.PENDING)
     assert created["filename"] == "report.pdf"
-    assert schema.site is None
+    assert schema.site is None and schema.media_kind == MediaKind.FILE
 
 
 @pytest.mark.asyncio
@@ -375,9 +388,8 @@ async def test_a_direct_download_is_identified_by_its_normalized_address() -> No
     await h.service.enqueue_url("https://CDN.test/files/report.pdf?utm_source=mail")
     await h.service.enqueue_url("https://cdn.test/files/report.pdf")
 
-    first, second = (created["download"] for created in h.repo.created)
-    assert (first["provider"], second["provider"]) == ("http", "http")
-    assert first["ref_id"] == second["ref_id"] == url_ref("https://cdn.test/files/report.pdf")
+    first, second = (created["url"] for created in h.repo.created)
+    assert address_hash(first) == address_hash(second) == url_ref("https://cdn.test/files/report.pdf")
 
 
 @pytest.mark.asyncio
@@ -430,7 +442,7 @@ async def test_enqueue_media_accepts_a_plan_that_fits() -> None:
 
     await h.service.enqueue_media(YOUTUBE, Preset.P1080)
 
-    assert h.repo.created[0]["download"]["total_bytes"] == 4 * GIB
+    assert h.repo.created[0]["download"]["total_size"] == 4 * GIB
 
 
 @pytest.mark.asyncio

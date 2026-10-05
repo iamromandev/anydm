@@ -5,51 +5,38 @@ not benchmarks.
 """
 
 import time
-from typing import Any
 
 import pytest
 from src.data.db.model import Download
 from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo
 from src.data.repo.download.interface.collection import EntryRow
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Preset
 from src.service.download.collection_totals import counts_of
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 SIZE = 5_000
 
-COLLECTION: dict[str, Any] = {
-    "source_url": "https://www.youtube.com/@TED/videos",
-    "provider": "Youtube",
-    "ref_id": "UCAuUUnT6oDeKwE6v1NGQxug",
-    "platform": Platform.SITE,
-    "media_kind": MediaKind.CHANNEL,
-    "title": "TED · Videos",
-    "path": "TED_Videos [UCAuUUnT6oDeKwE6v1NGQxug]",
-    "status": DownloadStatus.PENDING,
-    "preset": Preset.P720,
-}
+CHANNEL = "https://www.youtube.com/@TED/videos"
 
 
 def _entry(n: int) -> EntryRow:
     return EntryRow(
-        download={
-            "source_url": f"https://www.youtube.com/watch?v=v{n:05d}",
-            "provider": "Youtube",
-            "ref_id": f"v{n:05d}",
-            "platform": Platform.SITE,
-            "media_kind": MediaKind.VIDEO,
-            "status": DownloadStatus.PENDING,
-            "title": f"Talk {n}",
-            "position": n,
-        },
-        site={"preset": Preset.P720},
+        url=f"https://www.youtube.com/watch?v=v{n:010d}",
+        download={"status": DownloadStatus.PENDING},
+        media={"title": f"Talk {n}", "kind": MediaKind.VIDEO, "preset": Preset.P720, "playlist_index": n},
         filename="",
     )
 
 
 async def _big_collection() -> Download:
-    return await CollectionDatabaseRepo().create_with_entries(COLLECTION, [_entry(n) for n in range(1, SIZE + 1)])
+    return await CollectionDatabaseRepo().create_with_entries(
+        url=CHANNEL,
+        provider="Youtube",
+        collection={"status": DownloadStatus.PENDING},
+        media={"kind": MediaKind.CHANNEL, "title": "TED · Videos", "preset": Preset.P720},
+        entries=[_entry(n) for n in range(1, SIZE + 1)],
+    )
 
 
 async def test_adding_five_thousand_videos_is_one_quick_insert(db: None) -> None:
@@ -69,7 +56,7 @@ async def test_claim_takes_the_collection_in_order_without_scanning_slowly(db: N
     claimed = [await repo.claim_next() for _ in range(3)]
     elapsed = time.monotonic() - started
 
-    assert [row and row.position for row in claimed] == [1, 2, 3]
+    assert [row.media.playlist_index if row and row.media else None for row in claimed] == [1, 2, 3]
     assert elapsed < 2, f"{elapsed:.2f}s for three claims"
 
 
@@ -80,14 +67,17 @@ async def test_the_last_page_of_videos_is_as_quick_as_the_first(db: None) -> Non
     rows, meta = await CollectionDatabaseRepo().downloads_page(collection.id, page=100, page_size=50)
     elapsed = time.monotonic() - started
 
-    assert [rows[0].position, rows[-1].position] == [4_951, 5_000]
+    assert [row.media.playlist_index if row.media else None for row in (rows[0], rows[-1])] == [4_951, 5_000]
     assert meta.total_pages == 100
     assert elapsed < 1, f"{elapsed:.2f}s for the last page"
 
 
 async def test_the_totals_count_five_thousand_videos(db: None) -> None:
     collection = await _big_collection()
-    await Download.filter(parent_id=collection.id, position__lte=1_000).update(status=DownloadStatus.COMPLETED)
+    first = await Download.filter(parent_id=collection.id, media__playlist_index__lte=1_000).values_list(
+        "id", flat=True
+    )
+    await Download.filter(id__in=list(first)).update(status=DownloadStatus.COMPLETED)
 
     started = time.monotonic()
     counts = counts_of(await CollectionDatabaseRepo().member_rows(collection.id))
@@ -115,7 +105,7 @@ async def test_joining_a_big_collection_is_quick(db: None) -> None:
 
     started = time.monotonic()
     held = await repo.held(collection.id)
-    await repo.add_entries(collection, [_entry(n) for n in range(SIZE + 1, SIZE + 51)])
+    await repo.add_entries(collection, "Youtube", [_entry(n) for n in range(SIZE + 1, SIZE + 51)])
     elapsed = time.monotonic() - started
 
     assert len(held) == SIZE

@@ -145,12 +145,12 @@ class FakeSiteClient:
 
 
 class HeldVideos:
-    """A task repo that knows only which videos are held: ``(extractor, video_id) -> status``."""
+    """A task repo that knows only which videos are held, by their page's address: ``url -> status``."""
 
-    def __init__(self, held: dict[tuple[str, str], DownloadStatus] | None = None) -> None:
+    def __init__(self, held: dict[str, DownloadStatus] | None = None) -> None:
         self.held = held or {}
-        self.asked: list[tuple[str, list[str]]] = []
+        self.asked: list[list[str]] = []
 
-    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        self.asked.append((provider, list(ref_ids)))
-        return {v: s for (e, v), s in self.held.items() if e == provider and v in ref_ids}
+    async def statuses_by_url(self, urls: Sequence[str]) -> dict[str, DownloadStatus]:
+        self.asked.append(list(urls))
+        return {url: self.held[url] for url in urls if url in self.held}

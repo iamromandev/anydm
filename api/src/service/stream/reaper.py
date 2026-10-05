@@ -14,7 +14,6 @@ import contextlib
 from loguru import logger
 
 from src.data.repo.download.interface import DownloadRepo
-from src.lib.identity import TORRENT_PROVIDER
 from src.lib.torrent.protocol import TorrentClient
 from src.service.stream.session import StreamSessionStore
 
@@ -64,6 +63,6 @@ class TorrentReaper:
         for progress in await self._client.list_progress():
             if progress.info_hash in live_hashes:
                 continue
-            owner = await self._downloads.by_ref(TORRENT_PROVIDER, progress.info_hash)
+            owner = await self._downloads.by_info_hash(progress.info_hash)
             if owner is None:
                 await self._client.delete(progress.info_hash)

@@ -43,7 +43,7 @@ Frame = tuple[str, Any]
 class HeldLookup(Protocol):
     """The one thing a listing asks of the downloads. ``DownloadDatabaseRepo`` answers it."""
 
-    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]: ...
+    async def statuses_by_url(self, urls: Sequence[str]) -> dict[str, DownloadStatus]: ...
 
 
 class _End:
@@ -128,10 +128,6 @@ class ListingService(BaseService):
             stop.set()
 
     async def _described(self, batch: list[PlaylistEntry]) -> list[dict[str, Any]]:
-        """The batch as JSON, each video marked with what a download already holds."""
-        held: dict[tuple[str, str], DownloadStatus] = {}
-        for extractor in {entry.extractor for entry in batch if entry.extractor}:
-            ids = [entry.id for entry in batch if entry.extractor == extractor]
-            for video_id, status in (await self._repo.statuses_by_ref(extractor, ids)).items():
-                held[(extractor, video_id)] = status
-        return [_entry_json(entry, held.get((entry.extractor, entry.id))) for entry in batch]
+        """The batch as JSON, each video marked with what a download already holds, matched by its page's address."""
+        held = await self._repo.statuses_by_url([entry.url for entry in batch])
+        return [_entry_json(entry, held.get(entry.url)) for entry in batch]
