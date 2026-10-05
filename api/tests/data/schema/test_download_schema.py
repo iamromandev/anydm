@@ -1,12 +1,12 @@
 import uuid
 
-from src.data.schema.download import (
+from src.data.schema.play import PlaybackSchema
+from src.data.schema.transfer import (
     CollectionCountsSchema,
     CollectionSchema,
     DownloadFileSchema,
     DownloadSchema,
     LiveSchema,
-    PlaybackSchema,
 )
 from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 

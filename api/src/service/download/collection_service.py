@@ -16,7 +16,7 @@ from src.core.base import BaseService
 from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import CollectionRepo, EntryRow, SegmentRepo
-from src.data.schema.download import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
+from src.data.schema.transfer import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.lib.identity import site_ref
 from src.lib.site import error as site_error

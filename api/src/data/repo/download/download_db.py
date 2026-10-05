@@ -19,7 +19,7 @@ from src.data.repo.catalog import address_hash, provider_row, source_row, url_ro
 from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
-from src.data.schema.download import DownloadSummarySchema
+from src.data.schema.transfer import DownloadSummarySchema
 from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, DownloadStatus, SourceKind
 from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER
 

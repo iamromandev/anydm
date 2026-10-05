@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
-from src.data.schema.search import SearchResultSchema
+from src.data.schema.catalog import SearchResultSchema
 
 
 def _result(**fields: Any) -> SearchResultSchema:

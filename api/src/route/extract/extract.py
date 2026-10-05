@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from sse_starlette import EventSourceResponse
 
 from src.core.success import Success
-from src.data.schema.extract import ExtractRequest, ExtractSchema, PlaylistSchema
+from src.data.schema.catalog import ExtractRequest, ExtractSchema, PlaylistSchema
 from src.service import ExtractService, ListingService, get_extract_service, get_listing_service
 from src.service.extract.listing_service import LISTING_LIMIT
 

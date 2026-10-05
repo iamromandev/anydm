@@ -1,11 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from src.data.schema.download import (
-    FileSchema,
-    TorrentDownloadRequest,
-    TorrentResolveRequest,
-    TorrentResolveResponse,
-)
+from src.data.schema.torrent import FileSchema, TorrentDownloadRequest, TorrentResolveRequest, TorrentResolveResponse
 
 
 def test_resolve_request_rejects_an_empty_torrent() -> None:

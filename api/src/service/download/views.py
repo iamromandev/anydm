@@ -15,12 +15,12 @@ from typing import Any
 
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import FileRepo, PositionRepo
-from src.data.schema.download import (
+from src.data.schema.play import PlaybackSchema
+from src.data.schema.transfer import (
     DownloadFileSchema,
     DownloadSchema,
     LimitsSchema,
     LiveSchema,
-    PlaybackSchema,
     SiteSchema,
     TorrentInfoSchema,
 )

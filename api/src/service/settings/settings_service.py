@@ -5,7 +5,7 @@ from __future__ import annotations
 from src.config import get_settings
 from src.core.base import BaseService
 from src.core.common import get_app_version
-from src.data.schema.settings import ServerSettingsSchema
+from src.data.schema.config import ServerSettingsSchema
 from src.lib.site.client import ytdlp_version
 
 

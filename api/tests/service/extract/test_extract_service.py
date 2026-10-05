@@ -3,7 +3,7 @@
 import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.schema.extract import ExtractSchema, PlaylistSchema
+from src.data.schema.catalog import ExtractSchema, PlaylistSchema
 from src.data.type import Preset
 from src.lib.site import error as site_error
 from src.lib.site.client import PlaylistInfo, Tab

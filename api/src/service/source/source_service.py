@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import httpx
 
 from src.data.repo.search.interface.source import SourceRepo, SourceRow
-from src.data.schema.source import SourceListSchema, SourceSchema, SourceTestSchema
+from src.data.schema.catalog import SourceListSchema, SourceSchema, SourceTestSchema
 from src.lib.sources.registry import (
     BUILTINS,
     KINDS,

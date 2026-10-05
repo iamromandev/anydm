@@ -6,7 +6,7 @@ from tortoise.fields.db_defaults import Now
 from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
 
-from src.data.type.shared.ref import RefType
+from src.data.type.shared.tag import RefType
 
 
 class Migration(migrations.Migration):

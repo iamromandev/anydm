@@ -12,7 +12,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from src.config import get_settings
-from src.data.schema.download import PlaybackSchema
+from src.data.schema.play import PlaybackSchema
 from src.lib.media.audio import AudioTrack
 from src.lib.media.subtitle import SubtitleTrack
 from src.lib.torrent.protocol import FileInfo

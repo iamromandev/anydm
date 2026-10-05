@@ -6,7 +6,7 @@ from typing import Annotated
 from pydantic import Field, computed_field, model_validator
 
 from src.core.base import BaseSchema
-from src.data.schema.download import FileSchema
+from src.data.schema.torrent import FileSchema
 from src.lib.media.subtitle import TEXT_CODECS
 
 

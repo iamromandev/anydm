@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.health import HealthSchema
+from src.data.schema.shared import HealthSchema
 from src.service import HealthService, get_health_service
 
 router = APIRouter()

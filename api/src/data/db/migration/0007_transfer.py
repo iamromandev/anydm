@@ -7,16 +7,11 @@ from tortoise.fields.db_defaults import Now
 from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
 
-from src.data.type.download.download import (
-    AttemptStatus,
-    DownloadStatus,
-    Folder,
-    MediaKind,
-    MirrorStatus,
-    Preset,
-    SegmentPart,
-    SegmentStatus,
-)
+from src.data.type.transfer.attempt import AttemptStatus
+from src.data.type.transfer.download import DownloadStatus, Folder
+from src.data.type.transfer.media import MediaKind, Preset
+from src.data.type.transfer.mirror import MirrorStatus
+from src.data.type.transfer.segment import SegmentPart, SegmentStatus
 
 #: Standalone downloads and collections as one list, a collection's status and
 #: totals computed from its videos. A download's title is its media's, its

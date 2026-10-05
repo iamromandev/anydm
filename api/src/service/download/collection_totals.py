@@ -13,7 +13,7 @@ from typing import Any
 
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, MemberRow
-from src.data.schema.download import CollectionCountsSchema, CollectionSchema
+from src.data.schema.transfer import CollectionCountsSchema, CollectionSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind
 from src.lib.event import EventHub
 from src.service.download.live import LiveStats

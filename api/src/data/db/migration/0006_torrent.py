@@ -6,7 +6,9 @@ from tortoise.fields.base import OnDelete
 from tortoise.fields.db_defaults import Now
 from tortoise.migrations import operations as ops
 
-from src.data.type.download.download import PeerStatus, PieceStatus, TrackerStatus
+from src.data.type.torrent.peer import PeerStatus
+from src.data.type.torrent.piece import PieceStatus
+from src.data.type.torrent.tracker import TrackerStatus
 
 
 class Migration(migrations.Migration):

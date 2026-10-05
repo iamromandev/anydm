@@ -22,7 +22,8 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import DownloadRepo, FileRepo
-from src.data.schema.download import DownloadSchema, FileSchema, TorrentResolveResponse
+from src.data.schema.torrent import FileSchema, TorrentResolveResponse
+from src.data.schema.transfer import DownloadSchema
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
