@@ -1,11 +1,11 @@
-"""The account models build a schema and relate the way the repositories read them.
+"""The account model builds a schema and relates the way the repositories read it.
 
 In-memory SQLite: no Postgres needed, so this runs with the unit suite.
 """
 
 import pytest
-from src.data.db.model import Session, Share, User, UserSetting
-from src.data.type import RefType, SessionKind, ShareRole, UserRole
+from src.data.db.model import User
+from src.data.type import UserRole
 from tortoise.exceptions import IntegrityError
 
 
@@ -35,82 +35,34 @@ async def test_a_username_is_unique(sqlite: None) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_session_belongs_to_its_user_and_goes_with_it(sqlite: None) -> None:
+async def test_a_user_has_no_locale_or_time_zone_until_set(sqlite: None) -> None:
     user = await a_user("ada")
-    await Session.create(user=user, kind=SessionKind.API, name="cli", token_hash="h" * 64, user_agent="")
 
-    assert await Session.filter(user=user).count() == 1
-    await user.delete()
-    assert await Session.all().count() == 0
+    assert (await User.get(id=user.id)).locale is None
+    assert (await User.get(id=user.id)).timezone is None
 
 
 @pytest.mark.asyncio
-async def test_a_token_hash_is_unique(sqlite: None) -> None:
+async def test_a_user_keeps_a_locale_and_a_time_zone(sqlite: None) -> None:
+    """A BCP 47 tag and an IANA zone, the two things a client formats every date and number by."""
     user = await a_user("ada")
-    await Session.create(user=user, kind=SessionKind.SESSION, token_hash="h" * 64, user_agent="")
+    user.locale, user.timezone = "bn-BD", "Asia/Dhaka"
+    await user.save()
 
-    with pytest.raises(IntegrityError):
-        await Session.create(user=user, kind=SessionKind.SESSION, token_hash="h" * 64, user_agent="")
-
-
-@pytest.mark.asyncio
-async def test_a_share_names_who_granted_it_and_to_whom(sqlite: None) -> None:
-    owner, friend = await a_user("owner"), await a_user("friend")
-    ref = owner.id  # any uuid: a share carries no foreign key to its target
-
-    share = await Share.create(
-        ref_type=RefType.DOWNLOAD, ref_id=ref, user=friend, role=ShareRole.VIEW, created_by=owner
-    )
-
-    assert share.user_id == friend.id
-    assert share.created_by_id == owner.id
-    assert await Share.filter(created_by=owner).count() == 1
+    found = await User.get(id=user.id)
+    assert (found.locale, found.timezone) == ("bn-BD", "Asia/Dhaka")
 
 
-@pytest.mark.asyncio
-async def test_one_share_per_ref_and_user(sqlite: None) -> None:
-    owner, friend = await a_user("owner"), await a_user("friend")
-    await Share.create(
-        ref_type=RefType.DOWNLOAD, ref_id=owner.id, user=friend, role=ShareRole.VIEW, created_by=owner
-    )
+def test_there_is_no_server_side_settings_table() -> None:
+    """UI preferences live in the browser; only the account's locale and time zone are stored."""
+    from src.data.db import model
 
-    with pytest.raises(IntegrityError):
-        await Share.create(
-            ref_type=RefType.DOWNLOAD,
-            ref_id=owner.id,
-            user=friend,
-            role=ShareRole.MANAGE,
-            created_by=owner,
-        )
+    assert not hasattr(model, "UserSetting")
 
 
-@pytest.mark.asyncio
-async def test_a_share_to_everyone_has_no_user(sqlite: None) -> None:
-    owner = await a_user("owner")
+def test_logins_and_sharing_are_not_modelled_until_they_are_built() -> None:
+    """A table nothing uses is a guess about how it will be queried; phase 2 designs both with their users."""
+    from src.data.db import model
 
-    share = await Share.create(
-        ref_type=RefType.COLLECTION, ref_id=owner.id, user=None, role=ShareRole.VIEW, created_by=owner
-    )
-
-    assert share.user_id is None
-
-
-@pytest.mark.asyncio
-async def test_a_setting_is_one_value_per_user_and_key(sqlite: None) -> None:
-    user = await a_user("ada")
-    await UserSetting.create(user=user, key="theme", value={"mode": "dark"})
-
-    assert (await UserSetting.get(user=user, key="theme")).value == {"mode": "dark"}
-    with pytest.raises(IntegrityError):
-        await UserSetting.create(user=user, key="theme", value={"mode": "light"})
-
-
-@pytest.mark.asyncio
-async def test_a_user_with_a_grant_cannot_be_deleted(sqlite: None) -> None:
-    owner, friend = await a_user("owner"), await a_user("friend")
-    await Share.create(
-        ref_type=RefType.DOWNLOAD, ref_id=owner.id, user=friend, role=ShareRole.VIEW, created_by=owner
-    )
-
-    with pytest.raises(IntegrityError):
-        await owner.delete()
+    assert not hasattr(model, "Session")
+    assert not hasattr(model, "Share")

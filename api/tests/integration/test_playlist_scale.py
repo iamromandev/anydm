@@ -8,10 +8,10 @@ import time
 from typing import Any
 
 import pytest
-from src.data.db.model import Collection, Download
+from src.data.db.model import Download
 from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo
 from src.data.repo.download.interface.collection import EntryRow
-from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 from src.service.download.collection_totals import counts_of
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -19,10 +19,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 SIZE = 5_000
 
 COLLECTION: dict[str, Any] = {
-    "kind": CollectionKind.CHANNEL,
-    "extractor": "YoutubeTab",
+    "source_url": "https://www.youtube.com/@TED/videos",
+    "provider": "Youtube",
     "ref_id": "UCAuUUnT6oDeKwE6v1NGQxug",
+    "platform": Platform.SITE,
+    "media_kind": MediaKind.CHANNEL,
     "title": "TED · Videos",
+    "path": "TED_Videos [UCAuUUnT6oDeKwE6v1NGQxug]",
+    "status": DownloadStatus.PENDING,
     "preset": Preset.P720,
 }
 
@@ -31,18 +35,20 @@ def _entry(n: int) -> EntryRow:
     return EntryRow(
         download={
             "source_url": f"https://www.youtube.com/watch?v=v{n:05d}",
+            "provider": "Youtube",
+            "ref_id": f"v{n:05d}",
             "platform": Platform.SITE,
             "media_kind": MediaKind.VIDEO,
             "status": DownloadStatus.PENDING,
             "title": f"Talk {n}",
             "position": n,
         },
-        site={"extractor": "Youtube", "video_id": f"v{n:05d}", "preset": Preset.P720},
+        site={"preset": Preset.P720},
         filename="",
     )
 
 
-async def _big_collection() -> Collection:
+async def _big_collection() -> Download:
     return await CollectionDatabaseRepo().create_with_entries(COLLECTION, [_entry(n) for n in range(1, SIZE + 1)])
 
 
@@ -51,7 +57,7 @@ async def test_adding_five_thousand_videos_is_one_quick_insert(db: None) -> None
     collection = await _big_collection()
     elapsed = time.monotonic() - started
 
-    assert await Download.filter(collection_id=collection.id).count() == SIZE
+    assert await Download.filter(parent_id=collection.id).count() == SIZE
     assert elapsed < 10, f"{elapsed:.1f}s for {SIZE} videos"
 
 
@@ -81,7 +87,7 @@ async def test_the_last_page_of_videos_is_as_quick_as_the_first(db: None) -> Non
 
 async def test_the_totals_count_five_thousand_videos(db: None) -> None:
     collection = await _big_collection()
-    await Download.filter(collection_id=collection.id, position__lte=1_000).update(status=DownloadStatus.COMPLETE)
+    await Download.filter(parent_id=collection.id, position__lte=1_000).update(status=DownloadStatus.COMPLETE)
 
     started = time.monotonic()
     counts = counts_of(await CollectionDatabaseRepo().member_rows(collection.id))
@@ -113,5 +119,5 @@ async def test_joining_a_big_collection_is_quick(db: None) -> None:
     elapsed = time.monotonic() - started
 
     assert len(held) == SIZE
-    assert await Download.filter(collection_id=collection.id).count() == SIZE + 50
+    assert await Download.filter(parent_id=collection.id).count() == SIZE + 50
     assert elapsed < 3, f"{elapsed:.2f}s to join"

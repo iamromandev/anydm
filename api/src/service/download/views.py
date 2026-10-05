@@ -12,21 +12,21 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
-from src.data.repo.download.interface import FileRepo, MirrorRepo, PositionRepo
+from src.data.repo.download.interface import FileRepo, PositionRepo
 from src.data.schema.download import (
-    ChecksumSchema,
     DownloadFileSchema,
     DownloadSchema,
-    FolderRef,
     LimitsSchema,
     LiveSchema,
-    MirrorSchema,
     PlaybackSchema,
     QueueRef,
     SiteSchema,
     TorrentInfoSchema,
 )
+from src.data.type import CONTAINER_KINDS, DownloadStatus, Platform
+from src.lib.identity import TORRENT_PROVIDER
 from src.service.download.live import Live, LiveStats
+from src.service.download.paths import collection_folder, standalone_folder
 
 
 def percent(downloaded: int, total: int | None) -> int:
@@ -49,12 +49,18 @@ def download_schema(
     *,
     files: Sequence[Any],
     playback: Mapping[uuid.UUID, Any],
-    mirrors: Sequence[Any],
     live: Live,
     max_attempts: int,
+    folder: str | None = None,
 ) -> DownloadSchema:
-    site, torrent = row.site_detail, row.torrent_detail
-    folder, queue = row.folder, row.queue
+    site = row.site_detail
+    queue = row.queue
+    if folder is None and row.status == DownloadStatus.COMPLETE and row.parent_id is None:
+        if row.media_kind in CONTAINER_KINDS:
+            folder = collection_folder(row.title, row.ref_id)
+        elif row.platform != Platform.TORRENT:
+            folder = standalone_folder(row.id)
+        # Torrents resolve via their service, which knows the download root.
     return DownloadSchema(
         id=row.id,
         source_url=row.source_url,
@@ -63,26 +69,19 @@ def download_schema(
         title=row.title,
         status=row.status,
         progress=percent(row.downloaded_bytes, row.total_bytes),
-        category=FolderRef(id=folder.id, name=folder.name) if folder else None,
-        collection_id=row.collection_id,
-        position=row.position,
+        collection_id=row.parent_id,
         queue=QueueRef(id=queue.id, name=queue.name) if queue else None,
         queue_position=row.queue_position,
         start_at=row.start_at,
-        folder=row.path,
+        folder=folder,
         limits=LimitsSchema(download_bps=row.download_limit_bps),
-        checksum=(
-            ChecksumSchema(algo=row.checksum_algo, expected=row.checksum_expected or "", ok=row.checksum_ok)
-            if row.checksum_algo
-            else None
-        ),
         total_bytes=row.total_bytes,
         downloaded_bytes=row.downloaded_bytes,
         live=LiveSchema(**asdict(live)),
         site=(
             SiteSchema(
-                extractor=site.extractor,
-                video_id=site.video_id,
+                extractor=row.provider,
+                video_id=row.ref_id,
                 preset=site.preset,
                 video_format=site.video_format,
                 audio_format=site.audio_format,
@@ -91,7 +90,9 @@ def download_schema(
             else None
         ),
         torrent=(
-            TorrentInfoSchema(info_hash=torrent.info_hash, uploaded_bytes=torrent.uploaded_bytes) if torrent else None
+            TorrentInfoSchema(info_hash=row.ref_id, uploaded_bytes=row.uploaded_bytes)
+            if row.provider == TORRENT_PROVIDER
+            else None
         ),
         files=[
             DownloadFileSchema(
@@ -105,7 +106,6 @@ def download_schema(
             )
             for file in files
         ],
-        mirrors=[MirrorSchema(url=m.url, position=m.position, last_error=m.last_error) for m in mirrors],
         error=row.error,
         error_code=row.error_code,
         attempts=row.attempts,
@@ -164,32 +164,30 @@ def progress_frame(
 class DownloadViews:
     """Schemas for one download or a page of them, with every related read batched."""
 
-    def __init__(
-        self, files: FileRepo, positions: PositionRepo, mirrors: MirrorRepo, live: LiveStats, max_attempts: int
-    ) -> None:
+    def __init__(self, files: FileRepo, positions: PositionRepo, live: LiveStats, max_attempts: int) -> None:
         self._files = files
         self._positions = positions
-        self._mirrors = mirrors
         self._live = live
         self._max_attempts = max_attempts
 
-    async def one(self, row: Any) -> DownloadSchema:
-        (schema,) = await self.many([row])
+    async def one(self, row: Any, *, folder: str | None = None) -> DownloadSchema:
+        (schema,) = await self.many([row], folders={row.id: folder} if folder is not None else None)
         return schema
 
-    async def many(self, rows: Sequence[Any]) -> list[DownloadSchema]:
+    async def many(
+        self, rows: Sequence[Any], *, folders: Mapping[uuid.UUID, str | None] | None = None
+    ) -> list[DownloadSchema]:
         ids = [row.id for row in rows]
         files = await self._files.list_for_downloads(ids)
         playback = await self._positions.by_files([file.id for group in files.values() for file in group])
-        mirrors = await self._mirrors.list_for_downloads(ids)
         return [
             download_schema(
                 row,
                 files=files.get(row.id, []),
                 playback=playback,
-                mirrors=mirrors.get(row.id, []),
                 live=self._live.get(row.id),
                 max_attempts=self._max_attempts,
+                folder=(folders or {}).get(row.id),
             )
             for row in rows
         ]

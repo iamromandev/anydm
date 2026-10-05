@@ -387,8 +387,8 @@ class FakeDownloadRepo:
     def __init__(self, *, existing_info_hash: str | None = None) -> None:
         self._existing_info_hash = existing_info_hash
 
-    async def by_info_hash(self, info_hash: str) -> object | None:
-        if info_hash == self._existing_info_hash and self._existing_info_hash is not None:
+    async def by_ref(self, provider: str, ref_id: str) -> object | None:
+        if ref_id == self._existing_info_hash and self._existing_info_hash is not None:
             return object()  # any truthy row stands in for a real Download
         return None
 
@@ -453,7 +453,7 @@ async def test_start_torrent_session_resolves_picks_and_adds(tmp_path: Path) -> 
     # Its own folder: a streamed file must not overwrite a download's (#107),
     # with the film's subtitle file beside it (#101).
     assert torrent_client.added == [
-        {"only_files": [1, 0], "output_folder": str(tmp_path / "torrent" / "Some Release")}
+        {"only_files": [1, 0], "output_folder": str(tmp_path / "torrent" / "Some Release [deadbeef]")}
     ]
 
 

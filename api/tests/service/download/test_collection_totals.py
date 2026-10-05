@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from src.data.type import CollectionKind, Preset
 from src.data.type import DownloadStatus as S
+from src.data.type import MediaKind, Preset
 from src.lib.event import EventHub
 from src.service.download.collection_totals import CollectionTotals, collection_status, counts_of
 from src.service.download.live import Live, LiveStats
@@ -48,11 +48,12 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     member = uuid.uuid4()
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        kind=CollectionKind.PLAYLIST,
-        extractor="YoutubeTab",
+        media_kind=MediaKind.PLAYLIST,
+        provider="Youtube",
         ref_id="PL",
         title="Talks",
-        preset=Preset.BEST,
+        path="Talks [PL]",
+        site_detail=SimpleNamespace(preset=Preset.BEST),
         created_at=None,
     )
     hub, live = EventHub(), LiveStats()
@@ -72,11 +73,12 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
 async def test_schemas_carry_the_watched_count() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        kind=CollectionKind.CHANNEL,
-        extractor="YoutubeTab",
+        media_kind=MediaKind.CHANNEL,
+        provider="Youtube",
         ref_id="UC",
         title="",
-        preset=Preset.BEST,
+        path="UC",
+        site_detail=SimpleNamespace(preset=Preset.BEST),
         created_at=None,
     )
     totals = CollectionTotals(Repo(collection, []), EventHub(), LiveStats())  # ty: ignore[invalid-argument-type]

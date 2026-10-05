@@ -41,23 +41,23 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         platform=Platform.DIRECT,
         media_kind=MediaKind.FILE,
         title="a.bin",
+        provider="http",
+        ref_id="x",
         status=DownloadStatus.PENDING,
         folder=None,
         folder_id=None,
-        collection_id=None,
-        position=None,
+        parent_id=None,
         queue=MAIN,
         queue_id=MAIN.id,
         queue_position=0,
         start_at=None,
-        save_dir=None,
-        path=None,
         download_limit_bps=None,
         checksum_algo=None,
         checksum_expected=None,
         checksum_ok=None,
         total_bytes=None,
         downloaded_bytes=0,
+        uploaded_bytes=0,
         error=None,
         error_code=None,
         attempts=0,
@@ -67,22 +67,15 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         completed_at=None,
         deleted_at=None,
         site_detail=None,
-        torrent_detail=None,
     )
     fields.update(overrides)
     return _saving(SimpleNamespace(**fields))
 
 
-def site_detail(video_id: str = "x", **overrides: Any) -> SimpleNamespace:
-    fields: dict[str, Any] = dict(
-        extractor="Youtube", video_id=video_id, preset=Preset.BEST, video_format=None, audio_format=None
-    )
+def site_detail(**overrides: Any) -> SimpleNamespace:
+    fields: dict[str, Any] = dict(preset=Preset.BEST, video_format=None, audio_format=None)
     fields.update(overrides)
     return _saving(SimpleNamespace(**fields))
-
-
-def torrent_detail(info_hash: str = "a" * 40, uploaded_bytes: int = 0) -> SimpleNamespace:
-    return _saving(SimpleNamespace(info_hash=info_hash, uploaded_bytes=uploaded_bytes))
 
 
 def file_row(index: int = 0, path: str = "a.bin", **overrides: Any) -> SimpleNamespace:
@@ -157,30 +150,6 @@ class MemoryPositions:
         return {i: self.by_file[i] for i in file_ids if i in self.by_file}
 
 
-class MemoryMirrors:
-    def __init__(self, urls: dict[uuid.UUID, list[str]] | None = None) -> None:
-        self.rows: dict[uuid.UUID, list[SimpleNamespace]] = {
-            download_id: [
-                SimpleNamespace(id=uuid.uuid4(), url=url, position=n, last_error=None) for n, url in enumerate(given)
-            ]
-            for download_id, given in (urls or {}).items()
-        }
-
-    async def list_for_downloads(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[SimpleNamespace]]:
-        return {i: list(self.rows.get(i, [])) for i in ids}
-
-    async def replace(self, download_id: uuid.UUID, urls: Sequence[str]) -> None:
-        self.rows[download_id] = [
-            SimpleNamespace(id=uuid.uuid4(), url=url, position=n, last_error=None) for n, url in enumerate(urls)
-        ]
-
-    async def record_error(self, mirror_id: uuid.UUID, message: str) -> None:
-        for rows in self.rows.values():
-            for row in rows:
-                if row.id == mirror_id:
-                    row.last_error = message
-
-
 class RecordingHub:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any]]] = []
@@ -196,13 +165,11 @@ def memory_views(
     *,
     files: MemoryFiles | None = None,
     positions: MemoryPositions | None = None,
-    mirrors: MemoryMirrors | None = None,
     live: LiveStats | None = None,
 ) -> DownloadViews:
     return DownloadViews(
         files=files or MemoryFiles(),  # ty: ignore[invalid-argument-type]
         positions=positions or MemoryPositions(),  # ty: ignore[invalid-argument-type]
-        mirrors=mirrors or MemoryMirrors(),  # ty: ignore[invalid-argument-type]
         live=live or LiveStats(),
         max_attempts=3,
     )

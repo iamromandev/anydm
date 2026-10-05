@@ -21,6 +21,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.interface import DownloadRepo
 from src.lib.event import EventHub
+from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.audio import AudioTrack, pick_audio_track
 from src.lib.media.ffmpeg import run as ffmpeg_run
 from src.lib.media.ffmpeg import segment_args, subtitle_args, subtitle_file_args
@@ -1117,7 +1118,7 @@ class StreamService(BaseService):
         # one still playing needs it.
         shared = any(other.info_hash == session.info_hash for other in self._sessions.all())
         if session.info_hash and not shared and self._torrent_client is not None and self._download_repo is not None:
-            existing = await self._download_repo.by_info_hash(session.info_hash)
+            existing = await self._download_repo.by_ref(TORRENT_PROVIDER, session.info_hash)
             if existing is None:
                 try:
                     await self._torrent_client.delete(session.info_hash)

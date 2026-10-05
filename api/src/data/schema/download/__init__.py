@@ -1,6 +1,5 @@
 from .download import BulkActionRequest as BulkActionRequest
 from .download import BulkResultSchema as BulkResultSchema
-from .download import ChecksumSchema as ChecksumSchema
 from .download import CollectionCountsSchema as CollectionCountsSchema
 from .download import CollectionEntryRequest as CollectionEntryRequest
 from .download import CollectionRequest as CollectionRequest
@@ -13,7 +12,6 @@ from .download import LimitsSchema as LimitsSchema
 from .download import ListItem as ListItem
 from .download import LiveSchema as LiveSchema
 from .download import MediaDownloadRequest as MediaDownloadRequest
-from .download import MirrorSchema as MirrorSchema
 from .download import PlaybackRequest as PlaybackRequest
 from .download import PlaybackSchema as PlaybackSchema
 from .download import QueueRef as QueueRef

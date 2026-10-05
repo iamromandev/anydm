@@ -12,7 +12,7 @@ from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
-from src.data.repo import DownloadDatabaseRepo, FolderDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
+from src.data.repo import DownloadDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
 from src.route import router as _router
 from src.service import (
     build_worker_pool,
@@ -58,14 +58,12 @@ async def lifespan(_app: FastAPI):
         logger.exception("lifespan|couldn't seed the search sources")
 
     try:
-        folders, queues = await seed_organization(
-            FolderDatabaseRepo(), QueueDatabaseRepo(), workers=settings.download_workers
-        )
-        if folders or queues:
-            logger.info("lifespan|seeded {} folder(s) and {} queue(s)", folders, queues)
+        queues = await seed_organization(QueueDatabaseRepo(), workers=settings.download_workers)
+        if queues:
+            logger.info("lifespan|seeded {} queue(s)", queues)
     except Exception:
         # Without Main nothing can be queued; say so loudly, but keep search and play up.
-        logger.exception("lifespan|couldn't seed the folders and queues")
+        logger.exception("lifespan|couldn't seed the queues")
 
     recovered = await DownloadDatabaseRepo().recover_orphans()
     if recovered:
@@ -120,9 +118,7 @@ def create_app() -> FastAPI:
     # Whether a key is required, never the key itself.
     logger.info("create_app|API key {}", "required" if expected_key() else "not set; every route is open")
 
-    _routers = [
-        _router
-    ]
+    _routers = [_router]
     for router in _routers:
         app.include_router(router)
 

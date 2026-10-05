@@ -17,14 +17,14 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import CollectionRepo, EntryRow, SegmentRepo
 from src.data.schema.download import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
-from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 from src.lib.site import error as site_error
 from src.lib.site.filename import number_prefix
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
 from src.service.download.folders import inside
-from src.service.download.paths import collection_path, collection_relpath, remove_work_files
+from src.service.download.paths import collection_folder, collection_relpath, remove_work_files
 from src.service.download.views import DownloadViews
 
 #: The most videos one add takes; the picker stops there too.
@@ -75,48 +75,59 @@ class CollectionService(BaseService):
             raise site_error.playlist_too_large(len(request.entries))
         if self._disk is not None:
             self._disk.require(0)
-        existing = await self._repo.find(request.extractor, request.external_id)
+        # A listing's extractor is "YoutubeTab"; its videos, and so its container, are "Youtube".
+        provider = request.extractor.removesuffix("Tab")
+        existing = await self._repo.find(provider, request.external_id)
         if existing is not None:
             return await self._join(existing, request)
-        inside(self._root, collection_relpath(None, request.title, request.external_id)).mkdir(parents=True, exist_ok=True)
+        path = collection_relpath(None, request.title, request.external_id)
+        inside(self._root, path).mkdir(parents=True, exist_ok=True)
         largest = max(entry.index for entry in request.entries)
         collection = await self._repo.create_with_entries(
             {
-                "kind": CollectionKind.CHANNEL if request.channel_tab else CollectionKind.PLAYLIST,
-                "extractor": request.extractor,
+                "source_url": request.url,
+                "provider": provider,
                 "ref_id": request.external_id,
+                "platform": Platform.SITE,
+                "media_kind": MediaKind.CHANNEL if request.channel_tab else MediaKind.PLAYLIST,
                 "title": request.title,
+                "status": DownloadStatus.PENDING,
                 "preset": request.preset,
             },
-            [self._entry(entry, request, position=entry.index, largest=largest) for entry in request.entries],
+            [self._entry(entry, request, largest=largest) for entry in request.entries],
         )
         self._control.wake()
         return await self._changed(collection)
 
     @staticmethod
-    def _entry(entry: CollectionEntryRequest, request: CollectionRequest, *, position: int, largest: int) -> EntryRow:
+    def _entry(
+        entry: CollectionEntryRequest, request: CollectionRequest, *, largest: int, number: int | None = None
+    ) -> EntryRow:
         """One video's rows, unplanned: its formats and name are chosen when it starts."""
+        # The number now; planning appends the name. Channel tabs aren't numbered.
+        # A re-add numbers by arrival (``number``), so no two files share a prefix.
+        prefix = "" if request.channel_tab else number_prefix(number if number is not None else entry.index, largest)
         return EntryRow(
             download={
                 "source_url": entry.url,
+                "provider": request.extractor.removesuffix("Tab"),
+                "ref_id": entry.id,
                 "platform": Platform.SITE,
                 "media_kind": MediaKind.AUDIO if request.preset == Preset.MP3 else MediaKind.VIDEO,
                 "title": entry.title or "",
                 "status": DownloadStatus.PENDING,
-                "position": position,
             },
             # A listing's extractor is "YoutubeTab"; its videos are "Youtube", the
-            # name single downloads and the picker's "already have it" use.
-            site={"extractor": request.extractor.removesuffix("Tab"), "video_id": entry.id, "preset": request.preset},
-            # The number now; planning appends the name.
-            filename="" if request.channel_tab else number_prefix(position, largest),
+            # name single downloads and the picker's "already have it" use: the provider above.
+            site={"preset": request.preset},
+            filename=prefix,
         )
 
     async def _join(self, collection: Any, request: CollectionRequest) -> CollectionSchema:
         """The same list added again: its new videos join, in its folder (part 3).
 
-        New videos go after the highest position, in this listing's order: a
-        channel's tab lists newest first, so its numbers shift with every upload.
+        New videos take the next numbers in this listing's order: a channel's
+        tab lists newest first, so its numbers shift with every upload.
         A video already held isn't added twice; ticked while paused or failed,
         it goes back in the queue.
         """
@@ -129,15 +140,16 @@ class CollectionService(BaseService):
             for entry in request.entries
             if entry.id in held and held[entry.id][1] in (DownloadStatus.PAUSED, DownloadStatus.FAILED)
         ]
-        top = max((position or 0 for _, _, position in held.values()), default=0)
+        # Numbered by arrival: the next videos take the next numbers, so no two files share a prefix.
+        top = len(held)
         largest = top + len(fresh)
         # Removed by hand since the first add: the videos still finish into it.
-        inside(self._root, await collection_path(collection)).mkdir(parents=True, exist_ok=True)
+        inside(self._root, collection_folder(collection.title, collection.ref_id)).mkdir(parents=True, exist_ok=True)
         if fresh:
             await self._repo.add_entries(
                 collection,
                 [
-                    self._entry(entry, request, position=top + offset, largest=largest)
+                    self._entry(entry, request, largest=largest, number=top + offset)
                     for offset, entry in enumerate(fresh, start=1)
                 ],
             )
@@ -152,10 +164,11 @@ class CollectionService(BaseService):
     async def downloads_page(
         self, collection_id: uuid.UUID, page: int, page_size: int
     ) -> tuple[list[DownloadSchema], Meta]:
-        """One page of a collection's videos, in listing order."""
-        await self._require(collection_id)
+        """One page of a collection's videos, in the order they were added."""
+        collection = await self._require(collection_id)
         rows, meta = await self._repo.downloads_page(collection_id, page, page_size)
-        return await self._views.many(rows), meta
+        folder = collection_folder(collection.title, collection.ref_id)
+        return await self._views.many(rows, folders={row.id: folder for row in rows}), meta
 
     async def pause(self, collection_id: uuid.UUID) -> CollectionSchema:
         collection = await self._require(collection_id)
@@ -181,7 +194,8 @@ class CollectionService(BaseService):
             remove_work_files(self._root, video)
         if delete_files:
             # A folder of 5,000 files shouldn't hold up the API.
-            await asyncio.to_thread(shutil.rmtree, inside(self._root, await collection_path(collection)), ignore_errors=True)
+            folder = collection_folder(collection.title, collection.ref_id)
+            await asyncio.to_thread(shutil.rmtree, inside(self._root, folder), ignore_errors=True)
         await self._repo.soft_delete(collection)
 
     async def _changed(self, collection: Any) -> CollectionSchema:

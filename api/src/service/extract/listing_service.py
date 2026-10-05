@@ -43,7 +43,7 @@ Frame = tuple[str, Any]
 class HeldLookup(Protocol):
     """The one thing a listing asks of the downloads. ``DownloadDatabaseRepo`` answers it."""
 
-    async def statuses_by_video(self, extractor: str, video_ids: Sequence[str]) -> dict[str, DownloadStatus]: ...
+    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]: ...
 
 
 class _End:
@@ -132,6 +132,6 @@ class ListingService(BaseService):
         held: dict[tuple[str, str], DownloadStatus] = {}
         for extractor in {entry.extractor for entry in batch if entry.extractor}:
             ids = [entry.id for entry in batch if entry.extractor == extractor]
-            for video_id, status in (await self._repo.statuses_by_video(extractor, ids)).items():
+            for video_id, status in (await self._repo.statuses_by_ref(extractor, ids)).items():
                 held[(extractor, video_id)] = status
         return [_entry_json(entry, held.get((entry.extractor, entry.id))) for entry in batch]

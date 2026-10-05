@@ -12,27 +12,22 @@ def row(**overrides: Any) -> SimpleNamespace:
     base: dict[str, Any] = dict(
         id=uuid.uuid4(),
         source_url="https://youtu.be/x",
+        provider="Youtube",
+        ref_id="x",
+        uploaded_bytes=0,
         platform=Platform.SITE,
         media_kind=MediaKind.VIDEO,
         title="Talk",
         status=DownloadStatus.DOWNLOADING,
         folder=None,
-        collection_id=None,
-        position=None,
+        parent_id=None,
         queue=SimpleNamespace(id=uuid.uuid4(), name="Main"),
         queue_position=3,
         start_at=None,
-        path=None,
         download_limit_bps=None,
-        checksum_algo=None,
-        checksum_expected=None,
-        checksum_ok=None,
         total_bytes=200,
         downloaded_bytes=50,
-        site_detail=SimpleNamespace(
-            extractor="Youtube", video_id="x", preset=Preset.BEST, video_format="137", audio_format="140"
-        ),
-        torrent_detail=None,
+        site_detail=SimpleNamespace(preset=Preset.BEST, video_format="137", audio_format="140"),
         error=None,
         error_code=None,
         attempts=1,
@@ -63,7 +58,6 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
         row(),
         files=[one],
         playback={one.id: SimpleNamespace(position_seconds=4.0, duration_seconds=9.0, watched=False)},
-        mirrors=[],
         live=Live(speed_bps=7, eta_seconds=3),
         max_attempts=3,
     )
@@ -74,7 +68,6 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
     assert schema.live.speed_bps == 7
     assert schema.files[0].playback is not None and schema.files[0].playback.position_seconds == 4.0
     assert schema.max_attempts == 3
-    assert schema.checksum is None
 
 
 def test_a_torrent_reports_its_hash_and_no_site() -> None:
@@ -82,11 +75,12 @@ def test_a_torrent_reports_its_hash_and_no_site() -> None:
         row(
             platform=Platform.TORRENT,
             site_detail=None,
-            torrent_detail=SimpleNamespace(info_hash="a" * 40, uploaded_bytes=9),
+            provider="torrent",
+            ref_id="a" * 40,
+            uploaded_bytes=9,
         ),
         files=[],
         playback={},
-        mirrors=[],
         live=Live(),
         max_attempts=3,
     )
@@ -122,18 +116,13 @@ class Repos:
         return {}
 
 
-class NoMirrors:
-    async def list_for_downloads(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, list[Any]]:
-        return {i: [] for i in ids}
-
-
 @pytest.mark.asyncio
 async def test_many_batches_and_reads_live_numbers() -> None:
     first, second = row(), row()
     live = LiveStats()
     live.set(second.id, Live(speed_bps=99))
     repos = Repos({first.id: [file()]})
-    views = DownloadViews(files=repos, positions=repos, mirrors=NoMirrors(), live=live, max_attempts=3)  # ty: ignore[invalid-argument-type]
+    views = DownloadViews(files=repos, positions=repos, live=live, max_attempts=3)  # ty: ignore[invalid-argument-type]
     schemas = await views.many([first, second])
     assert [len(s.files) for s in schemas] == [1, 0]
     assert schemas[1].live.speed_bps == 99

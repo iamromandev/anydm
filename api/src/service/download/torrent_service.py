@@ -24,12 +24,12 @@ from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.schema.download import DownloadSchema, FileSchema, TorrentResolveResponse
 from src.data.type import DownloadStatus, MediaKind, Platform
 from src.lib.event import EventHub
+from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
-from src.service.download.folders import inside
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
@@ -109,8 +109,9 @@ class TorrentService(BaseService):
         if self._disk is not None:
             self._disk.require(total_bytes)
 
-        # A folder of its own, recorded below as it is given: rqbit writes into
-        # exactly this folder, not one named after the torrent inside it (#107).
+        # A folder of its own: rqbit writes into exactly this folder, not one
+        # named after the torrent inside it (#107). Derived on read from the
+        # same rule, never stored.
         folder = torrent_folder(self._root, details.name, details.info_hash)
         await self._client.add(
             source,
@@ -122,15 +123,14 @@ class TorrentService(BaseService):
                 # A base64 .torrent must never land here: reconciliation re-adds
                 # from it, and an info-hash magnet is both small and re-addable.
                 "source_url": raw.strip() if not source.is_blob else f"magnet:?xt=urn:btih:{details.info_hash}",
+                "provider": TORRENT_PROVIDER,
+                "ref_id": details.info_hash,
                 "platform": Platform.TORRENT,
                 "media_kind": MediaKind.FILE,
                 "title": details.name,
                 "status": DownloadStatus.PENDING,
                 "total_bytes": total_bytes,
-                # Relative to DOWNLOAD_DIR, like every folder (TORRENT_DIR lives under it).
-                "path": str(folder.resolve().relative_to(self._downloads)),
             },
-            details.info_hash,
             [(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
         return await self._published(download)
@@ -156,13 +156,13 @@ class TorrentService(BaseService):
         Publishing here is what makes a torrent appear in every open browser
         the moment it is added, rather than on the monitor's next tick.
         """
-        schema = await self._views.one(download)
+        schema = await self._views.one(download, folder=self._relative_folder(download))
         self._hub.publish("download", schema.to_json())
         return schema
 
     @staticmethod
     def _hash(download: Any) -> str:
-        return download.torrent_detail.info_hash if download.torrent_detail else ""
+        return download.ref_id if download.provider == TORRENT_PROVIDER else ""
 
     async def pause(self, download_id: uuid.UUID) -> DownloadSchema:
         download = await self._require(download_id)
@@ -231,7 +231,12 @@ class TorrentService(BaseService):
         await self._published(download)
 
     def _folder(self, download: Any) -> Path:
-        return inside(self._downloads, download.path or "")
+        """The torrent's folder on disk, derived from the same rule as at add time."""
+        return torrent_folder(self._root, download.title, download.ref_id)
+
+    def _relative_folder(self, download: Any) -> str:
+        """The torrent's folder relative to the download root, for its schema."""
+        return str(self._folder(download).resolve().relative_to(self._downloads))
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.

@@ -12,10 +12,55 @@ from tortoise.fields.base import StrEnum
 
 
 class Platform(StrEnum):
-    #: Any page yt-dlp extracts, YouTube included; ``SiteDetail.extractor`` says which.
+    #: Any page yt-dlp extracts, YouTube included; ``Download.provider`` says which.
     SITE = "site"
     DIRECT = "direct"
     TORRENT = "torrent"
+
+
+class UrlKind(StrEnum):
+    """The protocol an url speaks: what kind of address it is."""
+
+    HTTP = "http"
+    HTTPS = "https"
+    FTP = "ftp"
+    FTPS = "ftps"
+    SFTP = "sftp"
+    FILE = "file"
+    MAGNET = "magnet"
+
+
+class ProviderStatus(StrEnum):
+    """Whether a provider answers."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class SourceKind(StrEnum):
+    """One way a Source uses its URL: the file itself, the page around it, or a torrent."""
+
+    DIRECT = "direct"
+    CONTENT = "content"
+    TORRENT = "torrent"
+
+
+class Folder(StrEnum):
+    DOWNLOADS = "downloads"
+    VIDEOS = "videos"
+    MOVIES = "movies"
+    TV_SHOWS = "tv_shows"
+    MUSIC = "music"
+    AUDIOBOOKS = "audiobooks"
+    PODCASTS = "podcasts"
+    DOCUMENTS = "documents"
+    EBOOKS = "ebooks"
+    IMAGES = "images"
+    PHOTOS = "photos"
+    SOFTWARE = "software"
+    GAMES = "games"
+    ARCHIVES = "archives"
+    OTHER = "other"
 
 
 class Preset(StrEnum):
@@ -36,28 +81,77 @@ class Preset(StrEnum):
 
 
 class MediaKind(StrEnum):
-    """What the bytes are. How they arrive is ``Platform``; a playlist is a ``Collection``."""
+    """What a download is. How its bytes arrive is ``Platform``.
+
+    A playlist or a channel's tab is a download too, one with children: it has no
+    bytes of its own, and its state is computed from its children.
+    """
 
     VIDEO = "video"
     AUDIO = "audio"
     FILE = "file"
+    PLAYLIST = "playlist"
+    #: A channel's own uploads: its videos aren't numbered.
+    CHANNEL = "channel"
+
+    @property
+    def is_container(self) -> bool:
+        return self in (MediaKind.PLAYLIST, MediaKind.CHANNEL)
+
+
+#: The kinds that hold other downloads: never claimed, never run, their state computed from their children.
+CONTAINER_KINDS = (MediaKind.PLAYLIST, MediaKind.CHANNEL)
 
 
 class DownloadStatus(StrEnum):
     PENDING = "pending"
+    QUEUED = "queued"
     DOWNLOADING = "downloading"
-    MUXING = "muxing"
     PAUSED = "paused"
-    #: Every selected byte has landed and the torrent is still sharing. Not
-    #: terminal: the user can stop seeding, which is what moves it to COMPLETE.
-    SEEDING = "seeding"
-    COMPLETE = "complete"
+    COMPLETED = "completed"
     FAILED = "failed"
-    CANCELED = "canceled"
+    CANCELLED = "cancelled"
 
-    @property
-    def is_terminal(self) -> bool:
-        return self in (DownloadStatus.COMPLETE, DownloadStatus.FAILED, DownloadStatus.CANCELED)
+
+class TrackerStatus(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    FAILED = "failed"
+
+
+class PeerStatus(StrEnum):
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+
+
+class PieceStatus(StrEnum):
+    PENDING = "pending"
+    DOWNLOADING = "downloading"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SegmentStatus(StrEnum):
+    PENDING = "pending"
+    DOWNLOADING = "downloading"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AttemptStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class MirrorStatus(StrEnum):
+    AVAILABLE = "available"
+    ACTIVE = "active"
+    FAILED = "failed"
+    EXHAUSTED = "exhausted"
+    DISABLED = "disabled"
 
 
 class SegmentPart(StrEnum):
@@ -86,7 +180,7 @@ OTHER_FOLDER = "Other"
 #: Statuses that mean "a worker was mid-flight". Every row in one of these at
 #: startup is an orphan by definition — this process is the only one that runs
 #: workers, and it has just started.
-ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
+ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING})
 
 #: How the list may be ordered. Spelled out both ways rather than as a field
 #: plus a direction, so an unknown value is a 422 from the route rather than
@@ -109,13 +203,12 @@ DownloadSort = Literal[
 BulkAction = Literal["pause_all", "resume_all", "clear_finished"]
 
 #: The filter names the API accepts, which are the sidebar's own.
-DownloadGroup = Literal["all", "downloading", "seeding", "completed"]
+DownloadGroup = Literal["all", "downloading", "completed"]
 
 #: What each of the sidebar's filters means. Deliberately not ``ACTIVE_STATUSES``:
 #: that answers "was a worker mid-flight", which excludes ``PENDING`` because a
 #: queued row is not an orphan. To someone reading the list, a queued row is active.
 DOWNLOAD_GROUPS: dict[str, frozenset[DownloadStatus]] = {
-    "downloading": frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING}),
-    "seeding": frozenset({DownloadStatus.SEEDING}),
-    "completed": frozenset({DownloadStatus.COMPLETE}),
+    "downloading": frozenset({DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING}),
+    "completed": frozenset({DownloadStatus.COMPLETED}),
 }

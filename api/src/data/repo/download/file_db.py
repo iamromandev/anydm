@@ -5,6 +5,7 @@ from collections.abc import Sequence
 
 from src.data.db.model import DownloadFile
 from src.data.repo.download.interface.file import FileRepo, FileRow
+from src.data.repo.download.mime import mime_of
 
 
 class FileDatabaseRepo(FileRepo):
@@ -16,7 +17,14 @@ class FileDatabaseRepo(FileRepo):
         if files:
             await DownloadFile.bulk_create(
                 [
-                    DownloadFile(download_id=download_id, index=index, path=path, size_bytes=size, selected=selected)
+                    DownloadFile(
+                        download_id=download_id,
+                        index=index,
+                        path=path,
+                        size_bytes=size,
+                        selected=selected,
+                        mime_type=mime_of(path),
+                    )
                     for index, path, size, selected in files
                 ]
             )

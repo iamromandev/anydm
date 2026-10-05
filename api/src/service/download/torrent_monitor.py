@@ -23,10 +23,11 @@ from src.core.error import Error
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
+from src.lib.identity import TORRENT_PROVIDER
+from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.mapping import status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
-from src.service.download.folders import inside
 from src.service.download.live import Live, LiveStats
 from src.service.download.views import DownloadViews, progress_frame
 
@@ -45,6 +46,7 @@ class TorrentMonitor:
         enabled: bool,
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
+        torrent_root: Path | None = None,
     ) -> None:
         self._repo = repo
         self._file_repo = file_repo
@@ -54,6 +56,7 @@ class TorrentMonitor:
         self._views = views
         self._poll_s = poll_ms / 1000
         self._downloads = downloads_root.resolve()
+        self._torrents = (torrent_root or downloads_root).resolve()
         self._enabled = enabled
         self._task: asyncio.Task[None] | None = None
         #: Reconciliation is a startup job, but the engine may not be up yet at
@@ -140,11 +143,13 @@ class TorrentMonitor:
         """
         self._limits_pushed = True
         try:
-            await self._client.set_rate_limits(
-                download_bps=self._download_limit, upload_bps=self._upload_limit
-            )
+            await self._client.set_rate_limits(download_bps=self._download_limit, upload_bps=self._upload_limit)
         except Error as error:
             logger.warning("{}|engine refused the rate limits: {}", self._tag, error.message)
+
+    def _folder(self, row: Any) -> Path:
+        """The torrent's folder on disk, derived from the same rule as at add time."""
+        return torrent_folder(self._torrents, row.title, row.ref_id)
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.
@@ -162,7 +167,7 @@ class TorrentMonitor:
                 await self._client.add(
                     parse_source(row.source_url),
                     only_files=await self._file_repo.selected_indexes(row.id),
-                    output_folder=str(inside(self._downloads, row.path or "")),
+                    output_folder=str(self._folder(row)),
                 )
                 logger.info("{}|re-added lost torrent {}", self._tag, _hash(row))
             except Error as error:
@@ -178,6 +183,7 @@ class TorrentMonitor:
             "status": status,
             "downloaded_bytes": sample.progress_bytes,
             "total_bytes": sample.total_bytes or None,
+            "uploaded_bytes": sample.uploaded_bytes,
         }
         if status == DownloadStatus.FAILED and sample.error:
             fields["error"] = sample.error
@@ -193,11 +199,6 @@ class TorrentMonitor:
         if changed:
             await row.save(update_fields=list(changed))
 
-        detail = row.torrent_detail
-        if detail.uploaded_bytes != sample.uploaded_bytes:
-            detail.uploaded_bytes = sample.uploaded_bytes
-            await detail.save(update_fields=["uploaded_bytes"])
-
         live = Live(
             speed_bps=sample.download_bps,
             eta_seconds=sample.eta_seconds,
@@ -209,7 +210,8 @@ class TorrentMonitor:
 
         # The full snapshot only when the status moved; every tick, the light frame.
         if "status" in changed:
-            self._hub.publish("download", (await self._views.one(row)).to_json())
+            folder = str(self._folder(row).resolve().relative_to(self._downloads))
+            self._hub.publish("download", (await self._views.one(row, folder=folder)).to_json())
         self._hub.publish(
             "progress",
             progress_frame(
@@ -224,4 +226,4 @@ class TorrentMonitor:
 
 
 def _hash(row: Any) -> str:
-    return row.torrent_detail.info_hash if row.torrent_detail else ""
+    return row.ref_id if row.provider == TORRENT_PROVIDER else ""

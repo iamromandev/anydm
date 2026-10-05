@@ -10,7 +10,7 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
 from src.data.schema.download import CollectionEntryRequest, CollectionRequest
-from src.data.type import CollectionKind, DownloadStatus, MediaKind, Preset
+from src.data.type import DownloadStatus, MediaKind, Preset
 from src.service.download.collection_service import CollectionService
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -25,8 +25,8 @@ class FakeCollections:
         self.created: dict[str, Any] | None = None
         self.entries: list[Any] = []
         self.added: list[Any] = []
-        #: What ``held`` answers: video id -> (download id, status, position).
-        self.held_rows: dict[str, tuple[uuid.UUID, DownloadStatus, int | None]] = {}
+        #: What ``held`` answers: video id -> (download id, status).
+        self.held_rows: dict[str, tuple[uuid.UUID, DownloadStatus]] = {}
         self.requeued: list[uuid.UUID] = []
         self.calls: list[tuple[str, uuid.UUID]] = []
         #: What ``pause`` and ``remove`` answer: the downloads that were running.
@@ -34,7 +34,7 @@ class FakeCollections:
         self.page: list[Any] = []
         self.deleted = False
 
-    async def find(self, extractor: str, ref_id: str) -> Any:
+    async def find(self, provider: str, ref_id: str) -> Any:
         return self.collection
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
@@ -44,13 +44,16 @@ class FakeCollections:
 
     async def create_with_entries(self, collection: dict[str, Any], entries: list[Any]) -> Any:
         self.created, self.entries = collection, list(entries)
-        self.collection = SimpleNamespace(id=uuid.uuid4(), created_at=None, **collection)
+        fields = {name: value for name, value in collection.items() if name != "preset"}
+        self.collection = SimpleNamespace(
+            id=uuid.uuid4(), created_at=None, site_detail=SimpleNamespace(preset=collection["preset"]), **fields
+        )
         return self.collection
 
     async def add_entries(self, collection: Any, entries: list[Any]) -> None:
         self.added += entries
 
-    async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus, int | None]]:
+    async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus]]:
         return self.held_rows
 
     async def requeue(self, ids: list[uuid.UUID]) -> int:
@@ -112,12 +115,11 @@ def service(repo: FakeCollections, root: Path) -> CollectionService:
 def held_collection(repo: FakeCollections, root: Path) -> Any:
     repo.collection = SimpleNamespace(
         id=uuid.uuid4(),
-        kind=CollectionKind.PLAYLIST,
-        extractor="YoutubeTab",
+        media_kind=MediaKind.PLAYLIST,
+        provider="Youtube",
         ref_id="PL1",
         title="29C3: Not my department",
-        folder_id=None,
-        preset=Preset.P1080,
+        site_detail=SimpleNamespace(preset=Preset.P1080),
         created_at=None,
     )
     (root / "29C3_ Not my department [PL1]").mkdir()
@@ -131,16 +133,18 @@ async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp
     schema = await service(repo, tmp_path).add(request(12))
 
     assert repo.created is not None
-    assert (repo.created["kind"], repo.created["ref_id"]) == (CollectionKind.PLAYLIST, "PL1")
-    assert "path" not in repo.created
+    assert (repo.created["media_kind"], repo.created["provider"], repo.created["ref_id"]) == (
+        MediaKind.PLAYLIST,
+        "Youtube",
+        "PL1",
+    )
+    assert "path" not in repo.created  # the folder is derived, never stored
+    assert schema.folder == "29C3_ Not my department [PL1]"
     assert (tmp_path / "29C3_ Not my department [PL1]").is_dir()
     first = repo.entries[0]
-    assert (first.download["position"], first.download["media_kind"], first.download["title"]) == (
-        1,
-        MediaKind.VIDEO,
-        "Talk 1",
-    )
-    assert first.site == {"extractor": "Youtube", "video_id": "v1", "preset": Preset.P1080}
+    assert (first.download["media_kind"], first.download["title"]) == (MediaKind.VIDEO, "Talk 1")
+    assert first.site == {"preset": Preset.P1080}
+    assert (first.download["provider"], first.download["ref_id"]) == ("Youtube", "v1")
     assert [e.filename for e in repo.entries[:2]] == ["01_", "02_"]
     assert schema.type == "collection"
     assert schema.counts.total == 12
@@ -152,7 +156,7 @@ async def test_a_channel_tab_is_a_channel_and_is_not_numbered(tmp_path: Path) ->
 
     await service(repo, tmp_path).add(request(2, channel_tab=True))
 
-    assert repo.created is not None and repo.created["kind"] == CollectionKind.CHANNEL
+    assert repo.created is not None and repo.created["media_kind"] == MediaKind.CHANNEL
     assert repo.entries[0].filename == ""
 
 
@@ -181,32 +185,32 @@ async def test_adding_a_list_again_joins_its_collection(tmp_path: Path) -> None:
     repo = FakeCollections()
     collection = held_collection(repo, tmp_path)
     repo.held_rows = {
-        "v1": (uuid.uuid4(), DownloadStatus.COMPLETE, 1),
-        "v2": (uuid.uuid4(), DownloadStatus.COMPLETE, 2),
+        "v1": (uuid.uuid4(), DownloadStatus.COMPLETE),
+        "v2": (uuid.uuid4(), DownloadStatus.COMPLETE),
     }
 
     joined = await service(repo, tmp_path).add(request(4))
 
     assert joined.id == collection.id
     assert repo.created is None  # no second collection
-    assert [(e.site["video_id"], e.download["position"], e.filename) for e in repo.added] == [
-        ("v3", 3, "03_"),
-        ("v4", 4, "04_"),
+    assert [(e.download["ref_id"], e.filename) for e in repo.added] == [
+        ("v3", "03_"),
+        ("v4", "04_"),
     ]
 
 
 @pytest.mark.asyncio
-async def test_joining_appends_after_the_highest_position(tmp_path: Path) -> None:
+async def test_joining_numbers_by_arrival(tmp_path: Path) -> None:
     """A tab lists newest first, so a later listing's numbers would collide."""
     repo = FakeCollections()
     held_collection(repo, tmp_path)
-    repo.held_rows = {"v3": (uuid.uuid4(), DownloadStatus.COMPLETE, 7)}
+    repo.held_rows = {"v3": (uuid.uuid4(), DownloadStatus.COMPLETE)}
 
     await service(repo, tmp_path).add(request(3, channel_tab=True))
 
-    assert [(e.site["video_id"], e.download["position"], e.filename) for e in repo.added] == [
-        ("v1", 8, ""),
-        ("v2", 9, ""),
+    assert [(e.download["ref_id"], e.filename) for e in repo.added] == [
+        ("v1", ""),
+        ("v2", ""),
     ]
 
 
@@ -216,9 +220,9 @@ async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Pa
     held_collection(repo, tmp_path)
     failed, paused, done = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     repo.held_rows = {
-        "v1": (failed, DownloadStatus.FAILED, 1),
-        "v2": (paused, DownloadStatus.PAUSED, 2),
-        "v3": (done, DownloadStatus.COMPLETE, 3),
+        "v1": (failed, DownloadStatus.FAILED),
+        "v2": (paused, DownloadStatus.PAUSED),
+        "v3": (done, DownloadStatus.COMPLETE),
     }
 
     await service(repo, tmp_path).add(request(3))
@@ -231,7 +235,7 @@ async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Pa
 async def test_a_join_past_ten_thousand_is_refused(tmp_path: Path) -> None:
     repo = FakeCollections()
     held_collection(repo, tmp_path)
-    repo.held_rows = {f"x{n}": (uuid.uuid4(), DownloadStatus.COMPLETE, n) for n in range(1, 9_999)}
+    repo.held_rows = {f"x{n}": (uuid.uuid4(), DownloadStatus.COMPLETE) for n in range(1, 9_999)}
 
     with pytest.raises(Error) as caught:
         await service(repo, tmp_path).add(request(3))
@@ -244,7 +248,7 @@ async def test_a_join_past_ten_thousand_is_refused(tmp_path: Path) -> None:
 async def test_a_collection_lists_its_videos(tmp_path: Path) -> None:
     repo = FakeCollections()
     collection = held_collection(repo, tmp_path)
-    video = download_row(collection_id=collection.id, position=1)
+    video = download_row(parent_id=collection.id)
     repo.page = [video]
 
     rows, meta = await service(repo, tmp_path).downloads_page(collection.id, 1, 50)

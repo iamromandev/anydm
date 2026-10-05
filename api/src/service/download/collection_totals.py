@@ -13,10 +13,10 @@ from typing import Any
 
 from src.data.repo.download.interface import CollectionRepo, MemberRow
 from src.data.schema.download import CollectionCountsSchema, CollectionSchema
-from src.data.type import DownloadStatus
+from src.data.type import CollectionKind, DownloadStatus, MediaKind
 from src.lib.event import EventHub
 from src.service.download.live import LiveStats
-from src.service.download.paths import collection_path
+from src.service.download.paths import collection_folder
 
 #: Statuses that mean "still to do": queued or downloading.
 _ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
@@ -59,12 +59,12 @@ class CollectionTotals:
         known = [total for _, _, _, total in rows if total is not None]
         return CollectionSchema(
             id=collection.id,
-            kind=collection.kind,
-            extractor=collection.extractor,
+            kind=CollectionKind.CHANNEL if collection.media_kind == MediaKind.CHANNEL else CollectionKind.PLAYLIST,
+            extractor=collection.provider,
             external_id=collection.ref_id,
             title=collection.title,
-            folder=await collection_path(collection),
-            preset=collection.preset,
+            folder=collection_folder(collection.title, collection.ref_id),
+            preset=collection.site_detail.preset,
             status=collection_status(row[1] for row in rows),
             # Videos done over videos: sizes aren't known until each starts.
             progress=counts.complete * 100 // counts.total if counts.total else 0,

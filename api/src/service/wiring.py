@@ -8,7 +8,6 @@ from src.data.repo import (
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
-    MirrorDatabaseRepo,
     PositionDatabaseRepo,
     SegmentDatabaseRepo,
     SourceDatabaseRepo,
@@ -116,7 +115,6 @@ def get_download_views() -> DownloadViews:
     return DownloadViews(
         files=FileDatabaseRepo(),
         positions=PositionDatabaseRepo(),
-        mirrors=MirrorDatabaseRepo(),
         live=get_live_stats(),
         max_attempts=get_settings().download_max_attempts,
     )
@@ -212,6 +210,7 @@ def get_torrent_monitor() -> TorrentMonitor:
         enabled=settings.torrent_enabled,
         download_limit_bps=settings.torrent_download_limit_bps,
         upload_limit_bps=settings.torrent_upload_limit_bps,
+        torrent_root=Path(settings.torrent_dir).resolve(),
     )
 
 
