@@ -68,9 +68,11 @@ class FlushRecordingRepo:
     def __init__(self, *, person_got_there_first: bool = False) -> None:
         self.flushed: list[dict[str, Any]] = []
         self.ended: list[dict[str, Any]] = []
+        self.over: list[frozenset[DownloadStatus]] = []
         self._refuse = person_got_there_first
 
     async def end_try(self, download_id: uuid.UUID, fields: Any, *, over: Any = None) -> bool:
+        self.over.append(frozenset(over or ()))
         if self._refuse:
             return False
         self.ended.append(dict(fields))

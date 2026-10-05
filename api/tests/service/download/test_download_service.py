@@ -775,6 +775,20 @@ async def test_resume_requeues_a_paused_download() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resuming_a_download_a_worker_still_holds_lets_that_worker_stop_first() -> None:
+    h = _service()
+    row = _row(h, status=DownloadStatus.PAUSED)
+    h.service._control.hold(row.id)
+    h.service._control.request_stop(row.id)
+
+    result = await h.service.resume(row.id)
+
+    # Pending for the next claim, which skips it until the holder has stopped and let go.
+    assert result.status == DownloadStatus.PENDING
+    assert h.service._control.is_stopping(row.id) is True
+
+
+@pytest.mark.asyncio
 async def test_resume_clears_the_failure_state() -> None:
     h = _service()
     row = _row(h, status=DownloadStatus.FAILED, error="boom", error_code="dependency_failure", attempts=3)

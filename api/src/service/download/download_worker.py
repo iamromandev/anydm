@@ -52,6 +52,8 @@ from src.service.download.views import DownloadViews, progress_frame
 _IDLE_POLL_SECONDS = 5.0
 #: How long a download waits before checking the disk again.
 _SPACE_RECHECK_SECONDS = 30
+#: What a finished file is recorded over: anything but removed.
+_FINISHABLE = ACTIVE_STATUSES | {DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.PAUSED}
 
 
 class DownloadWorker:
@@ -103,7 +105,7 @@ class DownloadWorker:
     async def run_forever(self) -> None:
         while True:
             try:
-                download = await self._repo.claim_next()
+                download = await self._repo.claim_next(exclude=self._control.held())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -118,6 +120,13 @@ class DownloadWorker:
             await self.run_task(download)
 
     async def run_task(self, download: Any) -> None:
+        self._control.hold(download.id)
+        try:
+            await self._run(download)
+        finally:
+            self._control.release(download.id)
+
+    async def _run(self, download: Any) -> None:
         # Checked before the attempt is counted: a download that never started
         # has not used any of its retries.
         if self._disk is not None:
@@ -471,8 +480,9 @@ class DownloadWorker:
             "error": None,
             "error_code": None,
         }
-        # A pause that landed as the last bytes did loses to them: the file is whole.
-        if not await self._ended(download, fields, over=ACTIVE_STATUSES | {DownloadStatus.PAUSED}):
+        # A pause (or a pause and a resume) that landed as the last bytes did loses
+        # to them: the file is whole. Only a remove refuses it.
+        if not await self._ended(download, fields, over=_FINISHABLE):
             return False
         await self._files.finish_single(download.id, path=destination.name, size_bytes=size)
         self._live.clear(download.id)

@@ -16,6 +16,7 @@ class DownloadControl:
     def __init__(self) -> None:
         self._work = asyncio.Event()
         self._stopping: set[uuid.UUID] = set()
+        self._held: set[uuid.UUID] = set()
 
     def wake(self) -> None:
         """Tell an idle worker there is something to claim."""
@@ -40,3 +41,21 @@ class DownloadControl:
 
     def is_stopping(self, download_id: uuid.UUID) -> bool:
         return download_id in self._stopping
+
+    def hold(self, download_id: uuid.UUID) -> None:
+        """A worker has the download, from its claim to its last write."""
+        self._held.add(download_id)
+
+    def release(self, download_id: uuid.UUID) -> None:
+        """The worker is done with it: no stop is left to deliver, and it may be claimed again."""
+        self._held.discard(download_id)
+        self._stopping.discard(download_id)
+        # A resume while it was held left it pending for whichever worker is free.
+        self.wake()
+
+    def holds(self, download_id: uuid.UUID) -> bool:
+        return download_id in self._held
+
+    def held(self) -> frozenset[uuid.UUID]:
+        """What no other worker may claim, however its row reads."""
+        return frozenset(self._held)

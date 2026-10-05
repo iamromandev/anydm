@@ -65,10 +65,11 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def claim_next(self) -> Download | None:
+    async def claim_next(self, exclude: Collection[uuid.UUID] = ()) -> Download | None:
         """Take the first runnable pending HTTP download and mark it ``downloading``.
 
-        Runnable: not deleted, not a torrent or a container, and ``next_attempt_at`` unset or past.
+        Runnable: not deleted, not a torrent or a container, ``next_attempt_at`` unset or past,
+        and not in ``exclude``: a download a worker still holds, though a resume made it pending.
         """
         ...
 

@@ -7,6 +7,7 @@ import pytest
 from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.type import AttemptStatus, DownloadStatus, MirrorStatus
+from src.service.download.control import DownloadControl
 from src.service.download.downloader import Stopped
 
 from tests.service.download.memory import MemoryFiles, RecordingHub
@@ -127,3 +128,30 @@ async def test_a_failure_still_in_the_worker_s_hands_is_written(tmp_path: Path) 
 
     (ended,) = repo.ended
     assert (ended["status"], ended["error_code"]) == (DownloadStatus.FAILED, "does_not_exist")
+
+
+class HoldCheckingEngine:
+    """Fails its fetch, noting whether the worker held the download while fetching."""
+
+    def __init__(self) -> None:
+        self.control: DownloadControl | None = None
+        self.held_while_fetching: bool | None = None
+
+    async def fetch(self, source: Any, dest: Path, **kwargs: Any) -> int:
+        assert self.control is not None
+        self.held_while_fetching = self.control.held() != frozenset()
+        raise _refused()
+
+
+@pytest.mark.asyncio
+async def test_a_worker_holds_its_download_for_the_whole_try_and_lets_go_after(tmp_path: Path) -> None:
+    files = MemoryFiles()
+    row = await direct_row(files)
+    engine = HoldCheckingEngine()
+    runner = worker(tmp_path, files=files, engine=engine, hub=RecordingHub())
+    engine.control = runner._control
+
+    await runner.run_task(row)
+
+    assert engine.held_while_fetching is True
+    assert runner._control.held() == frozenset()

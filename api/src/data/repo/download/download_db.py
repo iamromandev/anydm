@@ -160,7 +160,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
                 )
         return await self._loaded(row.id)
 
-    async def claim_next(self) -> Download | None:
+    async def claim_next(self, exclude: Collection[uuid.UUID] = ()) -> Download | None:
         """Postgres arbitrates the queue.
 
         ``FOR UPDATE SKIP LOCKED`` inside a transaction lets several worker
@@ -171,6 +171,8 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             runnable = Download.filter(
                 _not_torrent(), NOT_CONTAINER, status=DownloadStatus.PENDING, deleted_at__isnull=True
             ).filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
+            if exclude:
+                runnable = runnable.exclude(id__in=list(exclude))
             # Standalone first, so a pasted link never waits behind a channel
             # archive; then creation order.
             row = None

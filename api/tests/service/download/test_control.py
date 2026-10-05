@@ -46,3 +46,18 @@ async def test_the_wake_flag_is_consumed() -> None:
     started = loop.time()
     await control.wait_for_work(timeout=0.1)
     assert loop.time() - started >= 0.05
+
+
+@pytest.mark.asyncio
+async def test_a_held_download_is_kept_from_other_claims_until_released() -> None:
+    control = DownloadControl()
+    download_id = uuid.uuid4()
+
+    control.hold(download_id)
+    control.request_stop(download_id)
+    assert (control.holds(download_id), control.held()) == (True, frozenset({download_id}))
+
+    control.release(download_id)
+    # Released: claimable again, no stop left to deliver, and a free worker is woken to claim it.
+    assert (control.holds(download_id), control.held(), control.is_stopping(download_id)) == (False, frozenset(), False)
+    await asyncio.wait_for(control.wait_for_work(timeout=5), timeout=1)
