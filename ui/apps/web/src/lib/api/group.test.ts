@@ -58,7 +58,7 @@ describe("placeRows", () => {
                 row("c"),
             ],
             [
-                row("b", "complete"),
+                row("b", "completed"),
             ],
         );
         expect(
@@ -73,7 +73,7 @@ describe("placeRows", () => {
             ],
             [
                 "b",
-                "complete",
+                "completed",
             ],
             [
                 "c",
@@ -121,7 +121,7 @@ describe("placeRows", () => {
                 row("b"),
             ],
             [
-                row("a", "canceled"),
+                row("a", "cancelled"),
             ],
         );
         expect(placed.map((t) => t.id)).toEqual([
@@ -171,7 +171,7 @@ describe("entries lists", () => {
         const held = {
             ...open.g,
             rows: [
-                row("v1", "complete"),
+                row("v1", "completed"),
                 row("v2"),
             ],
         };
@@ -192,7 +192,7 @@ describe("entries lists", () => {
         ).toEqual([
             [
                 "v1",
-                "complete",
+                "completed",
             ],
             [
                 "v2",
@@ -217,8 +217,8 @@ describe("entries lists", () => {
     it("swaps a video's row in place, and takes a canceled one out", () => {
         const next = applyVideoRows(open, [
             row("v1", "downloading", { parentId: "g" }),
-            row("v2", "canceled", { parentId: "g" }),
-            row("x", "complete", { parentId: "shut" }),
+            row("v2", "cancelled", { parentId: "g" }),
+            row("x", "completed", { parentId: "shut" }),
         ]);
         expect(
             next.g.rows.map((t) => [
@@ -334,14 +334,14 @@ describe("groupToast", () => {
             downloading: 0,
             failed: 0,
         };
-        expect(groupToast("downloading", ended("complete", done))).toEqual({
+        expect(groupToast("downloading", ended("completed", done))).toEqual({
             tone: "success",
             message: "Finished: 29C3, 96 of 96",
         });
     });
 
     it("stays quiet on first sight, on pausing, and while it runs", () => {
-        expect(groupToast(undefined, ended("complete", COUNTS))).toBeNull();
+        expect(groupToast(undefined, ended("completed", COUNTS))).toBeNull();
         expect(groupToast("downloading", ended("paused", COUNTS))).toBeNull();
         expect(groupToast("pending", ended("downloading", COUNTS))).toBeNull();
     });

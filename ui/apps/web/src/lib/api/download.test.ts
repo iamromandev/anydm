@@ -125,9 +125,8 @@ describe("normalizeApiTask on the new wire shape", () => {
         platform: "direct",
         media_kind: "file",
         title: "",
-        status: "complete",
+        status: "completed",
         progress: 100,
-        queue: { id: "q", name: "Main" },
         total_size: 10,
         downloaded_size: 10,
         live: {
@@ -297,12 +296,14 @@ describe("normalizeApiTask on the new wire shape", () => {
 describe("statusView", () => {
     it("labels every status the API can emit", () => {
         expect(statusView("pending").label).toBe("Queued");
+        expect(statusView("queued").label).toBe("Queued");
         expect(statusView("downloading").label).toBe("Downloading");
         expect(statusView("muxing").label).toBe("Processing");
         expect(statusView("paused").label).toBe("Paused");
-        expect(statusView("complete").label).toBe("Complete");
+        expect(statusView("seeding").label).toBe("Seeding");
+        expect(statusView("completed").label).toBe("Completed");
         expect(statusView("failed").label).toBe("Failed");
-        expect(statusView("canceled").label).toBe("Canceled");
+        expect(statusView("cancelled").label).toBe("Cancelled");
     });
 
     // A cancelled task arrives over SSE. Returning undefined here is what
@@ -321,10 +322,12 @@ describe("canPause", () => {
     });
 
     it("refuses to pause a task that is no longer running", () => {
+        // The API's pause takes pending and downloading only; queued is reserved.
+        expect(canPause("queued")).toBe(false);
         expect(canPause("paused")).toBe(false);
-        expect(canPause("complete")).toBe(false);
+        expect(canPause("completed")).toBe(false);
         expect(canPause("failed")).toBe(false);
-        expect(canPause("canceled")).toBe(false);
+        expect(canPause("cancelled")).toBe(false);
     });
 
     it("refuses to pause a muxing task, which cannot be interrupted", () => {
@@ -343,21 +346,22 @@ describe("canResume", () => {
 
     it("refuses to resume a task that is already running", () => {
         expect(canResume("downloading")).toBe(false);
-        expect(canResume("complete")).toBe(false);
+        expect(canResume("completed")).toBe(false);
     });
 });
 
 describe("isActive", () => {
     it("counts everything still on its way to a file", () => {
         expect(isActive("pending")).toBe(true);
+        expect(isActive("queued")).toBe(true);
         expect(isActive("downloading")).toBe(true);
         expect(isActive("muxing")).toBe(true);
     });
 
     it("excludes settled and paused tasks", () => {
         expect(isActive("paused")).toBe(false);
-        expect(isActive("complete")).toBe(false);
-        expect(isActive("canceled")).toBe(false);
+        expect(isActive("completed")).toBe(false);
+        expect(isActive("cancelled")).toBe(false);
     });
 });
 
@@ -522,13 +526,13 @@ describe("seeding status", () => {
     it("can be stopped", () => {
         expect(canStopSeeding("seeding")).toBe(true);
         expect(canStopSeeding("downloading")).toBe(false);
-        expect(canStopSeeding("complete")).toBe(false);
+        expect(canStopSeeding("completed")).toBe(false);
     });
 
     it("is not counted as active, because nothing is still arriving", () => {
         expect(isActive("seeding")).toBe(false);
         expect(isSeeding("seeding")).toBe(true);
-        expect(isSeeding("complete")).toBe(false);
+        expect(isSeeding("completed")).toBe(false);
         expect(isSeeding("downloading")).toBe(false);
     });
 });
@@ -586,12 +590,12 @@ describe("aggregateStats", () => {
         const stats = aggregateStats([
             task({
                 id: "a",
-                status: "complete",
+                status: "completed",
                 downloadSpeed: 8000,
                 peersConnected: 3,
             }),
             task({ id: "b", status: "failed", downloadSpeed: 4000 }),
-            task({ id: "c", status: "canceled", uploadSpeed: 2000 }),
+            task({ id: "c", status: "cancelled", uploadSpeed: 2000 }),
         ]);
 
         expect(stats.downloadSpeed).toBe(0);
@@ -602,7 +606,7 @@ describe("aggregateStats", () => {
     it("counts the bytes of every row, finished ones included", () => {
         const stats = aggregateStats([
             task({ id: "a", status: "downloading", downloadedBytes: 120 }),
-            task({ id: "b", status: "complete", downloadedBytes: 300 }),
+            task({ id: "b", status: "completed", downloadedBytes: 300 }),
             task({ id: "c", status: "failed", downloadedBytes: 80 }),
         ]);
 
@@ -816,7 +820,7 @@ describe("appendPage", () => {
         title: id,
         url: "",
         kind: "file",
-        status: "complete",
+        status: "completed",
         progress: 100,
         eta: 0,
         attempts: 0,
@@ -951,7 +955,7 @@ describe("settlePage", () => {
                 row("a", "downloading"),
             ],
             [
-                row("a", "complete"),
+                row("a", "completed"),
             ],
             new Set([
                 "a",
@@ -959,7 +963,7 @@ describe("settlePage", () => {
         );
 
         expect(settled.map((t) => t.status)).toEqual([
-            "complete",
+            "completed",
         ]);
     });
 
@@ -977,7 +981,7 @@ describe("settlePage", () => {
             [
                 row("new"),
                 row("g", "paused"),
-                row("a", "complete"),
+                row("a", "completed"),
             ],
             new Set([
                 "new",
@@ -1003,7 +1007,7 @@ describe("settlePage", () => {
             ],
             [
                 "a",
-                "complete",
+                "completed",
             ],
             [
                 "b",
@@ -1016,7 +1020,7 @@ describe("settlePage", () => {
         const settled = settlePage(
             [
                 { ...row("a"), progress: 60 },
-                row("b", "complete"),
+                row("b", "completed"),
             ],
             [
                 { ...row("a"), progress: 20 },
@@ -1039,7 +1043,7 @@ describe("settlePage", () => {
             ],
             [
                 "b",
-                "complete",
+                "completed",
                 0,
             ],
         ]);
@@ -1116,8 +1120,8 @@ describe("playing a finished task (#94)", () => {
     });
 
     it("plays a finished video or audio download", () => {
-        expect(canPlayTask({ status: "complete", kind: "video" })).toBe(true);
-        expect(canPlayTask({ status: "complete", kind: "audio" })).toBe(true);
+        expect(canPlayTask({ status: "completed", kind: "video" })).toBe(true);
+        expect(canPlayTask({ status: "completed", kind: "audio" })).toBe(true);
     });
 
     it("waits for it to finish", () => {
@@ -1155,14 +1159,14 @@ describe("playing a finished task (#94)", () => {
     it("plays a direct download only when it's a media file", () => {
         expect(
             canPlayTask({
-                status: "complete",
+                status: "completed",
                 kind: "file",
                 filename: "a.MKV",
             }),
         ).toBe(true);
         expect(
             canPlayTask({
-                status: "complete",
+                status: "completed",
                 kind: "file",
                 filename: "a.zip",
             }),
@@ -1182,7 +1186,7 @@ describe("playing a finished task (#94)", () => {
         ).toBe(true);
         expect(
             canPlayTask({
-                status: "complete",
+                status: "completed",
                 kind: "torrent",
                 files: [
                     file("Movie.mkv", false),
@@ -1190,7 +1194,7 @@ describe("playing a finished task (#94)", () => {
                 ],
             }),
         ).toBe(false);
-        expect(canPlayTask({ status: "complete", kind: "torrent" })).toBe(
+        expect(canPlayTask({ status: "completed", kind: "torrent" })).toBe(
             false,
         );
     });
@@ -1218,7 +1222,7 @@ describe("downloading a finished task's file (#107)", () => {
     });
 
     it("downloads the one file of a direct task or a single-file torrent", () => {
-        expect(downloadAction({ status: "complete" })).toBe("file");
+        expect(downloadAction({ status: "completed" })).toBe("file");
         expect(
             downloadAction({
                 status: "seeding",
@@ -1244,9 +1248,9 @@ describe("downloading a finished task's file (#107)", () => {
 
     it("links a torrent's own files once it is finished, but only selected ones", () => {
         expect(canDownloadTorrentFile("seeding", file(0))).toBe(true);
-        expect(canDownloadTorrentFile("complete", file(0))).toBe(true);
+        expect(canDownloadTorrentFile("completed", file(0))).toBe(true);
         expect(canDownloadTorrentFile("downloading", file(0))).toBe(false);
-        expect(canDownloadTorrentFile("complete", file(1, false))).toBe(false);
+        expect(canDownloadTorrentFile("completed", file(1, false))).toBe(false);
     });
 });
 

@@ -3,6 +3,7 @@ import "../style/global.css";
 import { AppShell } from "@/component/layouts/app-shell";
 import {
     addTorrent,
+    heldTorrentNotice,
     apiUrl,
     deleteApi,
     appendPage,
@@ -1052,7 +1053,12 @@ export default component$(() => {
                         input.preset || store.prefs.defaultPreset,
                     );
                 } else {
-                    await addTorrent(input.value, input.files ?? []);
+                    const known = new Set(store.tasks.map((task) => task.id));
+                    const notice = heldTorrentNotice(
+                        await addTorrent(input.value, input.files ?? []),
+                        known,
+                    );
+                    if (notice) notify("info", notice);
                 }
             } catch (err) {
                 notify("error", errorMessage(err));

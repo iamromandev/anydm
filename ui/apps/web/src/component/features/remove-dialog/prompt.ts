@@ -17,7 +17,7 @@ export type RemovePrompt = {
 
 /** The two statuses whose files are complete enough to be worth keeping. */
 const FINISHED = new Set([
-    "complete",
+    "completed",
     "seeding",
 ]);
 

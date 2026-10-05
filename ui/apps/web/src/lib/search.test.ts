@@ -8,7 +8,7 @@ const task = (overrides: Partial<UiTask> = {}): UiTask => ({
     title: "Big Buck Bunny",
     url: "https://example.com/bunny.mkv",
     kind: "file",
-    status: "complete",
+    status: "completed",
     progress: 100,
     eta: 0,
     attempts: 0,

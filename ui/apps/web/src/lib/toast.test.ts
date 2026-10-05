@@ -98,14 +98,14 @@ describe("dismiss", () => {
 });
 
 describe("transitionToast", () => {
-    const task = { status: "complete", title: "Big Buck Bunny", kind: "file" };
+    const task = { status: "completed", title: "Big Buck Bunny", kind: "file" };
 
     it("says nothing about a row it is seeing for the first time", () => {
         expect(transitionToast(undefined, task)).toBeNull();
     });
 
     it("says nothing when the status did not move", () => {
-        expect(transitionToast("complete", task)).toBeNull();
+        expect(transitionToast("completed", task)).toBeNull();
     });
 
     it("celebrates a finished download", () => {
@@ -142,7 +142,7 @@ describe("transitionToast", () => {
 
     it("stays quiet about a removal the user asked for", () => {
         expect(
-            transitionToast("downloading", { ...task, status: "canceled" }),
+            transitionToast("downloading", { ...task, status: "cancelled" }),
         ).toBeNull();
     });
 

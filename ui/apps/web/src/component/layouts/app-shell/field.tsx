@@ -388,7 +388,7 @@ export const AppShell = component$<AppShellProps>(
             pausable: tasks.filter((t) => canPause(t.status)).length,
             resumable: tasks.filter((t) => canResume(t.status)).length,
             finished: tasks.filter(
-                (t) => t.status === "complete" || t.status === "failed",
+                (t) => t.status === "completed" || t.status === "failed",
             ).length,
         };
 
@@ -396,7 +396,7 @@ export const AppShell = component$<AppShellProps>(
             all: tasks.length,
             downloading: tasks.filter((t) => isActive(t.status)).length,
             seeding: tasks.filter((t) => isSeeding(t.status)).length,
-            completed: tasks.filter((t) => t.status === "complete").length,
+            completed: tasks.filter((t) => t.status === "completed").length,
         };
 
         return (

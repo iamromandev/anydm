@@ -30,11 +30,11 @@ const count = (n: number) => n.toLocaleString("en-US");
 export function placeRows(held: UiTask[], rows: UiTask[]): UiTask[] {
     const top = rows.filter((row) => row.parentId === undefined);
     const removed = new Set(
-        top.filter((row) => row.status === "canceled").map((row) => row.id),
+        top.filter((row) => row.status === "cancelled").map((row) => row.id),
     );
     const live = new Map(
         top
-            .filter((row) => row.status !== "canceled")
+            .filter((row) => row.status !== "cancelled")
             .map((row) => [
                 row.id,
                 row,
@@ -141,7 +141,7 @@ export function applyVideoRows(
         const view = groupId === undefined ? undefined : next[groupId];
         if (groupId === undefined || !view) continue;
         const rows =
-            video.status === "canceled"
+            video.status === "cancelled"
                 ? view.rows.filter((row) => row.id !== video.id)
                 : view.rows.map((row) => (row.id === video.id ? video : row));
         next = { ...next, [groupId]: { ...view, rows } };
@@ -289,11 +289,11 @@ export function groupToast(
     task: Pick<UiTask, "status" | "title" | "entryCounts">,
 ): { tone: ToastTone; message: string } | null {
     if (previous === undefined || previous === task.status) return null;
-    if (task.status !== "complete" && task.status !== "failed") return null;
+    if (task.status !== "completed" && task.status !== "failed") return null;
     const counts = task.entryCounts;
     if (!counts) {
         return {
-            tone: task.status === "complete" ? "success" : "error",
+            tone: task.status === "completed" ? "success" : "error",
             message: `Finished: ${task.title}`,
         };
     }

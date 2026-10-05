@@ -140,10 +140,10 @@ describe("building a queue", () => {
             downloadSpeed: 0,
             uploadSpeed: 0,
             peersConnected: 0,
-            positions: status === "complete" ? watched() : undefined,
+            positions: status === "completed" ? watched() : undefined,
         });
         const queue = queueFromVideos([
-            video("done", "complete"),
+            video("done", "completed"),
             video("next", "pending"),
             video("bad", "failed"),
         ]);

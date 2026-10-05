@@ -77,10 +77,10 @@ export function queueFromVideos(videos: readonly UiTask[]): QueueItem[] {
         key: video.id,
         title: video.title,
         source:
-            video.status === "complete"
+            video.status === "completed"
                 ? { taskId: video.id }
                 : { url: video.url },
-        playable: video.status !== "failed" && video.status !== "canceled",
+        playable: video.status !== "failed" && video.status !== "cancelled",
         positions: video.positions,
     }));
 }
