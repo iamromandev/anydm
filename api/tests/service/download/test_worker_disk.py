@@ -8,12 +8,12 @@ from typing import Any
 
 import pytest
 from src.core.common import now
-from src.data.type import DownloadStatus
+from src.data.type import AttemptStatus, DownloadStatus
 from src.service.download.disk import DiskGuard
 from src.service.download.paths import part_path
 
 from tests.service.download.memory import MemoryFiles, RecordingHub
-from tests.service.download.workers import FlushRecordingRepo, direct_row, worker
+from tests.service.download.workers import FakeAttempts, FlushRecordingRepo, direct_row, worker
 
 GIB = 1024**3
 _Usage = namedtuple("_Usage", ["total", "used", "free"])
@@ -39,6 +39,13 @@ class FakeEngine:
         if self.fail is not None:
             raise self.fail
         return 10
+
+
+class FinishingPostProcessor:
+    """Turns the part into the finished file, as the real one does for a plain download."""
+
+    async def run(self, download: Any, parts: dict[str, Path], destination: Path, **_: Any) -> None:
+        parts["file"].replace(destination)
 
 
 def _assert_waiting_for_space(row: Any) -> None:
@@ -120,9 +127,34 @@ async def test_a_download_paused_as_the_disk_fills_stays_paused_and_keeps_the_pa
 async def test_a_download_removed_as_it_finishes_leaves_no_file_behind(tmp_path: Path) -> None:
     files = MemoryFiles()
     row = await direct_row(files, status=DownloadStatus.CANCELLED, deleted_at=now())
-    repo = FlushRecordingRepo(person_got_there_first=True)
+    repo, attempts = FlushRecordingRepo(person_got_there_first=True), FakeAttempts()
 
-    await worker(tmp_path, files=files, repo=repo, engine=FakeEngine(total=10), hub=RecordingHub()).run_task(row)
+    await worker(
+        tmp_path,
+        files=files,
+        repo=repo,
+        attempts=attempts,
+        engine=FakeEngine(total=10),
+        post=FinishingPostProcessor(),
+        hub=RecordingHub(),
+    ).run_task(row)
 
-    assert row.status == DownloadStatus.CANCELLED
+    # Refused at completion, not on the way to a failure.
+    assert (row.status, attempts.closed) == (DownloadStatus.CANCELLED, [AttemptStatus.CANCELLED])
+    assert {DownloadStatus.PENDING, DownloadStatus.PAUSED} <= repo.over[-1]
     assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+@pytest.mark.asyncio
+async def test_a_finished_file_is_recorded_over_a_pause_and_resume_but_not_over_a_remove(tmp_path: Path) -> None:
+    files, repo = MemoryFiles(), FlushRecordingRepo()
+    row = await direct_row(files)
+
+    await worker(
+        tmp_path, files=files, repo=repo, engine=FakeEngine(total=10), post=FinishingPostProcessor(), hub=RecordingHub()
+    ).run_task(row)
+
+    (over,) = repo.over
+    assert {DownloadStatus.PENDING, DownloadStatus.PAUSED, DownloadStatus.DOWNLOADING} <= over
+    assert DownloadStatus.CANCELLED not in over
+    assert row.status == DownloadStatus.COMPLETED

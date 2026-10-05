@@ -377,7 +377,10 @@ class DownloadService(BaseService):
         if download.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED):
             raise Error.conflict(message=f"Cannot resume a download that is {download.status.value}")
 
-        self._control.clear_stop(download_id)
+        # A worker still holding it stops at its next chunk, as the pause asked, and
+        # the download is claimed afresh once it lets go: two workers never share a try.
+        if not self._control.holds(download_id):
+            self._control.clear_stop(download_id)
         download.status = DownloadStatus.PENDING
         download.error = None
         download.error_code = None

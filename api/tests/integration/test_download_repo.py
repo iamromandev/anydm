@@ -183,3 +183,17 @@ async def test_a_try_s_outcome_is_written_only_over_a_row_still_in_the_worker_s_
     # Completion may also land over a pause: the file is whole.
     done = {"status": DownloadStatus.COMPLETED}
     assert await repo.end_try(paused.id, done, over={DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED}) is True
+
+
+@pytest.mark.asyncio
+async def test_claim_skips_a_download_a_worker_still_holds() -> None:
+    repo = DownloadDatabaseRepo()
+    held = await add_site(repo)
+    free = await add_site(repo)
+
+    claimed = await repo.claim_next(exclude={held.id})
+    assert claimed is not None and claimed.id == free.id
+    assert await repo.claim_next(exclude={held.id}) is None
+    # Let go of: claimable again.
+    again = await repo.claim_next()
+    assert again is not None and again.id == held.id
