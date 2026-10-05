@@ -157,8 +157,9 @@ class DownloadWorker:
                 None,
             )
             return
-        # Claimed: its collection now has one more video downloading.
-        await self._refresh_collection(download)
+        # Claimed: clients still show it queued, and its collection now has one more
+        # video downloading. Progress frames carry no status, so this is what says so.
+        await self._changed(download)
 
         try:
             platform = describe(download).platform
