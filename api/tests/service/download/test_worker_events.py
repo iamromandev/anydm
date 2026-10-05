@@ -102,7 +102,7 @@ async def test_the_offset_of_an_earlier_part_still_shifts_the_totals(tmp_path: P
     )
 
     frame = hub.named("progress")[0]
-    assert frame["downloaded_bytes"] == 2300
+    assert frame["downloaded_size"] == 2300
     assert frame["progress"] == 76
 
 

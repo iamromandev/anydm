@@ -62,7 +62,7 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     totals = CollectionTotals(Repo(collection, [(member, S.DOWNLOADING, 5, 10)]), hub, live)  # ty: ignore[invalid-argument-type]
     schema = await totals.refresh(collection.id)
     assert schema is not None
-    assert (schema.speed_bps, schema.status, schema.total_bytes) == (40, S.DOWNLOADING, 10)
+    assert (schema.speed_bps, schema.status, schema.total_size) == (40, S.DOWNLOADING, 10)
     event, data = await anext(aiter(subscription))
     assert event == "collection"
     assert data["id"] == str(collection.id)

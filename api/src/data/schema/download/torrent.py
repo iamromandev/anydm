@@ -32,7 +32,7 @@ class TorrentResolveResponse(BaseSchema):
 
     info_hash: str
     title: str = ""
-    total_bytes: int = 0
+    total_size: int = 0
     files: list[FileSchema] = Field(default_factory=list)
 
 

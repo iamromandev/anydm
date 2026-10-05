@@ -161,7 +161,7 @@ export function segmentLayout(
 /** An API list item (a download or a collection), flattened into the shape the components read. */
 export function normalizeApiTask(raw: any): UiTask {
     if (raw?.type === "collection") return normalizeCollection(raw);
-    const downloadedBytes = raw.downloaded_bytes ?? 0;
+    const downloadedBytes = raw.downloaded_size ?? 0;
     const uploadedBytes = raw.torrent?.uploaded_bytes ?? 0;
     const isTorrent = raw.platform === "torrent";
     const files: any[] = Array.isArray(raw.files) ? raw.files : [];
@@ -180,7 +180,7 @@ export function normalizeApiTask(raw: any): UiTask {
         eta: raw.live?.eta_seconds ?? 0,
         error: raw.error ?? undefined,
         downloadedBytes,
-        totalBytes: raw.total_bytes ?? 0,
+        totalBytes: raw.total_size ?? 0,
         downloadSpeed: raw.live?.speed_bps ?? 0,
         // Torrent-only: the engine reports an upload rate. Every other
         // platform's is 0.
@@ -228,8 +228,8 @@ export function normalizeCollection(raw: any): UiTask {
         status: raw.status,
         progress: raw.progress ?? 0,
         eta: 0,
-        downloadedBytes: raw.downloaded_bytes ?? 0,
-        totalBytes: raw.total_bytes ?? 0,
+        downloadedBytes: raw.downloaded_size ?? 0,
+        totalBytes: raw.total_size ?? 0,
         // The sum of its videos' live speeds, as the API last computed it.
         downloadSpeed: raw.speed_bps ?? 0,
         uploadSpeed: 0,
@@ -261,8 +261,8 @@ export function applyProgressFrame(task: UiTask, data: any): UiTask {
         ...task,
         progress: data.progress ?? task.progress,
         eta: data.live?.eta_seconds ?? task.eta,
-        downloadedBytes: data.downloaded_bytes ?? task.downloadedBytes,
-        totalBytes: data.total_bytes ?? task.totalBytes,
+        downloadedBytes: data.downloaded_size ?? task.downloadedBytes,
+        totalBytes: data.total_size ?? task.totalBytes,
         downloadSpeed: data.live?.speed_bps ?? task.downloadSpeed,
         uploadSpeed: data.live?.upload_speed_bps ?? task.uploadSpeed,
         peersConnected: data.live?.peers ?? task.peersConnected,

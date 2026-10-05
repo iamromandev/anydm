@@ -37,7 +37,7 @@ _ORDER = {
     "created_at": "item.created_at",
     "title": "lower(item.title)",
     # NULL means "the size is unknown"; it sorts as 0, not ahead of everything.
-    "total_bytes": "COALESCE(item.total_bytes, 0)",
+    "total_size": "COALESCE(item.total_bytes, 0)",
     "progress": "item.progress",
     "speed_bps": "COALESCE(live.speed, 0)",
 }

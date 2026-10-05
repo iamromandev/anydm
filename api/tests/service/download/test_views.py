@@ -93,7 +93,7 @@ def test_progress_frame_leaves_out_what_does_not_apply() -> None:
     frame = progress_frame(download_id, collection_id=None, downloaded_bytes=5, total_bytes=None, live=Live(speed_bps=1))
     assert frame == {
         "id": str(download_id),
-        "downloaded_bytes": 5,
+        "downloaded_size": 5,
         "progress": 0,
         "live": {"speed_bps": 1, "eta_seconds": None, "upload_speed_bps": 0, "peers": 0},
     }

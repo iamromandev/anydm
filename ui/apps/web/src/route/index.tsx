@@ -354,7 +354,7 @@ export default component$(() => {
      * Patch the numbers on one row in place, without a refetch.
      *
      * Every field falls back to what the row already holds. The API serialises
-     * progress frames with `exclude_none`, so an absent `total_bytes` means
+     * progress frames with `exclude_none`, so an absent `total_size` means
      * "unchanged", not "zero" — defaulting to 0 blanked the size mid-download.
      */
     const applyProgress = $((data: any) => {

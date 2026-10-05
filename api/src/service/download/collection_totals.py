@@ -69,8 +69,8 @@ class CollectionTotals:
             # Videos done over videos: sizes aren't known until each starts.
             progress=counts.complete * 100 // counts.total if counts.total else 0,
             counts=counts,
-            total_bytes=sum(known) if known else None,
-            downloaded_bytes=sum(done for _, _, done, _ in rows),
+            total_size=sum(known) if known else None,
+            downloaded_size=sum(done for _, _, done, _ in rows),
             speed_bps=sum(self._live.get(member).speed_bps for member, _, _, _ in rows),
             created_at=collection.created_at,
         )

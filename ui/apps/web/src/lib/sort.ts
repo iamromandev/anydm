@@ -9,7 +9,7 @@ export type SortValue =
     | "-created_at"
     | "created_at"
     | "title"
-    | "-total_bytes"
+    | "-total_size"
     | "-progress"
     | "-speed_bps";
 
@@ -22,7 +22,7 @@ export const SORT_OPTIONS: { value: SortValue; label: string }[] = [
     { value: "-created_at", label: "Newest first" },
     { value: "created_at", label: "Oldest first" },
     { value: "title", label: "Name" },
-    { value: "-total_bytes", label: "Largest first" },
+    { value: "-total_size", label: "Largest first" },
     { value: "-progress", label: "Most complete" },
     { value: "-speed_bps", label: "Fastest first" },
 ];

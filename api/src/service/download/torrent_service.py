@@ -74,7 +74,7 @@ class TorrentService(BaseService):
         return TorrentResolveResponse(
             info_hash=details.info_hash,
             title=details.name,
-            total_bytes=sum(file.size_bytes for file in details.files),
+            total_size=sum(file.size_bytes for file in details.files),
             files=[
                 FileSchema(
                     index=file.index,

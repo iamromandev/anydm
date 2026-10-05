@@ -75,7 +75,7 @@ val SORT_OPTIONS =
         "-created_at" to "Newest first",
         "created_at" to "Oldest first",
         "title" to "Name",
-        "-total_bytes" to "Largest first",
+        "-total_size" to "Largest first",
         "-progress" to "Most complete",
         "-speed_bps" to "Fastest first",
     )

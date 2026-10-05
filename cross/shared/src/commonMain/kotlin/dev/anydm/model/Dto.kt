@@ -18,8 +18,8 @@ data class TaskDto(
     val progress: Int = 0,
     @SerialName("collection_id") val collectionId: String? = null,
     val position: Int? = null,
-    @SerialName("downloaded_bytes") val downloadedBytes: Long = 0,
-    @SerialName("total_bytes") val totalBytes: Long? = null,
+    @SerialName("downloaded_size") val downloadedBytes: Long = 0,
+    @SerialName("total_size") val totalBytes: Long? = null,
     val live: LiveDto = LiveDto(),
     val site: SiteDto? = null,
     val torrent: TorrentDto? = null,
@@ -117,8 +117,8 @@ data class ProgressDto(
     /** A collection's video: its collection. */
     @SerialName("collection_id") val collectionId: String? = null,
     val progress: Int? = null,
-    @SerialName("downloaded_bytes") val downloadedBytes: Long? = null,
-    @SerialName("total_bytes") val totalBytes: Long? = null,
+    @SerialName("downloaded_size") val downloadedBytes: Long? = null,
+    @SerialName("total_size") val totalBytes: Long? = null,
     val live: LiveDto? = null,
     /** A torrent's files that moved: index and bytes. */
     val files: List<FileProgressDto>? = null,

@@ -75,8 +75,8 @@ def download_schema(
         start_at=row.start_at,
         folder=folder,
         limits=LimitsSchema(download_bps=row.download_limit_bps),
-        total_bytes=row.total_bytes,
-        downloaded_bytes=row.downloaded_bytes,
+        total_size=row.total_size,
+        downloaded_size=row.downloaded_size,
         live=LiveSchema(**asdict(live)),
         site=(
             SiteSchema(
@@ -134,12 +134,12 @@ def progress_frame(
     """
     frame: dict[str, Any] = {
         "id": str(download_id),
-        "downloaded_bytes": downloaded_bytes,
+        "downloaded_size": downloaded_bytes,
         "progress": percent(downloaded_bytes, total_bytes),
         "live": asdict(live),
     }
     if total_bytes is not None:
-        frame["total_bytes"] = total_bytes
+        frame["total_size"] = total_bytes
     # A collection's video: the browser folds it into the collection's row.
     if collection_id is not None:
         frame["collection_id"] = str(collection_id)
