@@ -81,25 +81,6 @@ class Migration(migrations.Migration):
             bases=['LinkBase'],
         ),
         ops.CreateModel(
-            name='Queue',
-            fields=[
-                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
-                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
-                ('name', fields.CharField(unique=True, max_length=64)),
-                ('slug', fields.CharField(unique=True, description='The name made URL- and comparison-safe; what code and the API refer to.', max_length=64)),
-                ('is_default', fields.BooleanField(default=False, description='The queue a new download joins when none is named.')),
-                ('is_paused', fields.BooleanField(default=False, description='Stops the whole queue without touching its downloads.')),
-                ('max_concurrent', fields.IntField(default=1)),
-                ('start_time', fields.TimeField(null=True, description='Both null: always open. ``stop_time`` before ``start_time`` crosses midnight.', auto_now=False, auto_now_add=False)),
-                ('stop_time', fields.TimeField(null=True, auto_now=False, auto_now_add=False)),
-                ('days', fields.JSONField(null=True, description='ISO weekdays, 1 (Monday) to 7; null means every day.', encoder=JSON_DUMPS, decoder=loads)),
-                ('position', fields.IntField(default=0)),
-            ],
-            options={'table': 'queue', 'schema': 'transfer', 'app': 'model', 'constraints': [UniqueConstraint(fields=('is_default',), name='uidx_queue_default', condition='"is_default" IS TRUE')], 'pk_attr': 'id', 'table_description': 'Queue'},
-            bases=['LinkBase'],
-        ),
-        ops.CreateModel(
             name='Segment',
             fields=[
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
@@ -114,19 +95,4 @@ class Migration(migrations.Migration):
             options={'table': 'segment', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Segment'},
             bases=['LinkBase'],
         ),
-        ops.CreateModel(
-            name='SiteDetail',
-            fields=[
-                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
-                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
-                ('download', fields.OneToOneField('model.Download', source_field='download_id', db_constraint=True, to_field='id', related_name='site_detail', on_delete=OnDelete.CASCADE)),
-                ('preset', fields.CharEnumField(description='BEST: best\nP2160: 2160\nP1440: 1440\nP1080: 1080\nP720: 720\nP480: 480\nMP3: mp3', enum_type=Preset, max_length=8)),
-                ('video_format', fields.CharField(null=True, max_length=64)),
-                ('audio_format', fields.CharField(null=True, max_length=64)),
-            ],
-            options={'table': 'site_detail', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'SiteDetail'},
-            bases=['LinkBase'],
-        ),
-        ops.AddConstraint(model_name='Queue', constraint=UniqueConstraint(fields=('is_default',), name='uidx_queue_default', condition='"is_default" IS TRUE')),
     ]
