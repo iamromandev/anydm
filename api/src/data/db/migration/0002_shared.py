@@ -38,6 +38,7 @@ class Migration(migrations.Migration):
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('value', fields.TextField(unique=False)),
                 ('normalized', fields.TextField(unique=False)),
+                ('normalized_hash', fields.CharField(unique=True, max_length=64)),
                 ('scheme', fields.CharField(max_length=16)),
                 ('host', fields.CharField(null=True, max_length=255)),
                 ('port', fields.SmallIntField(null=True)),

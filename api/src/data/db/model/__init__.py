@@ -13,6 +13,4 @@ from .transfer import Attempt as Attempt
 from .transfer import Download as Download
 from .transfer import File as File
 from .transfer import Mirror as Mirror
-from .transfer import Queue as Queue
 from .transfer import Segment as Segment
-from .transfer import SiteDetail as SiteDetail

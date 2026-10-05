@@ -9,6 +9,7 @@ def test_url_has_the_schema_columns() -> None:
     assert {
         "value",
         "normalized",
+        "normalized_hash",
         "scheme",
         "host",
         "port",
@@ -31,6 +32,7 @@ def test_url_required_vs_nullable() -> None:
     fields_map = Url._meta.fields_map
     assert fields_map["value"].null is False
     assert fields_map["normalized"].null is False
+    assert fields_map["normalized_hash"].null is False
     assert fields_map["scheme"].null is False
     for name in ("host", "port", "path", "query", "fragment"):
         assert fields_map[name].null is True, name
@@ -51,3 +53,10 @@ def test_url_column_types() -> None:
 
 def test_url_str_shows_the_value() -> None:
     assert str(Url(value="https://example.com")) == "[Url: https://example.com]"
+
+
+def test_url_normalized_hash_is_a_unique_sha256() -> None:
+    field = Url._meta.fields_map["normalized_hash"]
+    assert isinstance(field, fields.CharField)
+    assert field.max_length == 64
+    assert field.unique is True

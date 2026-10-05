@@ -41,3 +41,7 @@ def test_provider_dropped_the_old_fields() -> None:
     assert "url" not in names
     assert "key" not in names
     assert "api_key" not in names
+
+
+def test_provider_schema_is_catalog() -> None:
+    assert Provider.Meta.schema == "catalog"
