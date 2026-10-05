@@ -30,10 +30,12 @@ class AttemptDatabaseRepo(AttemptRepo):
             status=status, completed_at=now(), downloaded_bytes=max(0, size - opened.started_size)
         )
 
-    async def retire(self, opened: Opened, status: MirrorStatus) -> bool:
-        await Mirror.filter(id=opened.mirror_id).update(status=status)
+    async def spare(self, opened: Opened) -> bool:
         return (
             await Mirror.filter(download_id=opened.download_id, status__in=list(USABLE_MIRRORS))
             .exclude(id=opened.mirror_id)
             .exists()
         )
+
+    async def retire(self, opened: Opened, status: MirrorStatus) -> None:
+        await Mirror.filter(id=opened.mirror_id).update(status=status)

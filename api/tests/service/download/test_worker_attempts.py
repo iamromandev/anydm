@@ -10,7 +10,7 @@ from src.data.type import AttemptStatus, DownloadStatus, MirrorStatus
 from src.service.download.downloader import Stopped
 
 from tests.service.download.memory import MemoryFiles, RecordingHub
-from tests.service.download.workers import FakeAttempts, direct_row, worker
+from tests.service.download.workers import FakeAttempts, FlushRecordingRepo, direct_row, worker
 
 
 class FailingEngine:
@@ -79,3 +79,51 @@ async def test_a_refusal_on_the_last_mirror_fails_for_good(tmp_path: Path) -> No
 
     assert (attempts.closed, attempts.retired) == ([AttemptStatus.FAILED], [MirrorStatus.FAILED])
     assert row.status == DownloadStatus.FAILED
+
+
+# A pause or remove made while the try ran stands: the try's outcome is not written over it.
+
+
+@pytest.mark.asyncio
+async def test_a_download_paused_while_its_try_fails_stays_paused(tmp_path: Path) -> None:
+    files, attempts, hub = MemoryFiles(), FakeAttempts(), RecordingHub()
+    # The row as the database now holds it: the person paused it mid-try.
+    row = await direct_row(files, status=DownloadStatus.PAUSED)
+    repo = FlushRecordingRepo(person_got_there_first=True)
+
+    await worker(
+        tmp_path, files=files, repo=repo, attempts=attempts, engine=FailingEngine(_refused()), hub=hub
+    ).run_task(row)
+
+    assert (row.status, row.next_attempt_at, row.error) == (DownloadStatus.PAUSED, None, None)
+    # The person ended the try, not the source: no failure on the mirror, no retry spent.
+    assert (attempts.closed, attempts.retired, row.attempts) == ([AttemptStatus.CANCELLED], [], 0)
+    assert hub.named("download")[-1]["status"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_download_is_not_failed_over_to_its_next_mirror(tmp_path: Path) -> None:
+    files, attempts = MemoryFiles(), FakeAttempts(spare_mirror=True)
+    row = await direct_row(files, status=DownloadStatus.PAUSED)
+
+    await worker(
+        tmp_path,
+        files=files,
+        repo=FlushRecordingRepo(person_got_there_first=True),
+        attempts=attempts,
+        engine=FailingEngine(_refused()),
+        hub=RecordingHub(),
+    ).run_task(row)
+
+    assert (row.status, attempts.retired) == (DownloadStatus.PAUSED, [])
+
+
+@pytest.mark.asyncio
+async def test_a_failure_still_in_the_worker_s_hands_is_written(tmp_path: Path) -> None:
+    files, repo = MemoryFiles(), FlushRecordingRepo()
+    row = await direct_row(files)
+
+    await worker(tmp_path, files=files, repo=repo, engine=FailingEngine(_refused()), hub=RecordingHub()).run_task(row)
+
+    (ended,) = repo.ended
+    assert (ended["status"], ended["error_code"]) == (DownloadStatus.FAILED, "does_not_exist")

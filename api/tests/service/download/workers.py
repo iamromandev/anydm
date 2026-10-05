@@ -54,14 +54,27 @@ class FakeAttempts:
     async def close(self, opened: Opened, status: AttemptStatus) -> None:
         self.closed.append(status)
 
-    async def retire(self, opened: Opened, status: MirrorStatus) -> bool:
-        self.retired.append(status)
+    async def spare(self, opened: Opened) -> bool:
         return self._spare
+
+    async def retire(self, opened: Opened, status: MirrorStatus) -> None:
+        self.retired.append(status)
 
 
 class FlushRecordingRepo:
-    def __init__(self) -> None:
+    """Records progress flushes. ``person_got_there_first`` refuses every try's outcome, as a
+    pause or remove made while the try ran makes ``DownloadDatabaseRepo.end_try`` do."""
+
+    def __init__(self, *, person_got_there_first: bool = False) -> None:
         self.flushed: list[dict[str, Any]] = []
+        self.ended: list[dict[str, Any]] = []
+        self._refuse = person_got_there_first
+
+    async def end_try(self, download_id: uuid.UUID, fields: Any, *, over: Any = None) -> bool:
+        if self._refuse:
+            return False
+        self.ended.append(dict(fields))
+        return True
 
     async def flush_progress(self, download_id: uuid.UUID, **fields: Any) -> None:
         self.flushed.append(fields)
