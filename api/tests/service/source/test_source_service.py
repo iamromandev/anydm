@@ -9,7 +9,7 @@ import httpx
 import pytest
 from src.core.error import Error
 from src.core.type import ErrorType
-from src.data.schema.source import SourceSchema
+from src.data.schema.catalog import SourceSchema
 from src.lib.sources.eztv import Eztv
 from src.lib.sources.registry import BUILTINS
 from src.lib.sources.torznab_source import TorznabSource

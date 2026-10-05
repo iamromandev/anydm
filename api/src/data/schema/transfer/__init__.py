@@ -11,12 +11,6 @@ from .download import LimitsSchema as LimitsSchema
 from .download import ListItem as ListItem
 from .download import LiveSchema as LiveSchema
 from .download import MediaDownloadRequest as MediaDownloadRequest
-from .download import PlaybackRequest as PlaybackRequest
-from .download import PlaybackSchema as PlaybackSchema
 from .download import SiteSchema as SiteSchema
 from .download import TorrentInfoSchema as TorrentInfoSchema
 from .download import UrlDownloadRequest as UrlDownloadRequest
-from .torrent import FileSchema as FileSchema
-from .torrent import TorrentDownloadRequest as TorrentDownloadRequest
-from .torrent import TorrentResolveRequest as TorrentResolveRequest
-from .torrent import TorrentResolveResponse as TorrentResolveResponse

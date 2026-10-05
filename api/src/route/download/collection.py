@@ -6,7 +6,7 @@ from fastapi.responses import Response
 
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.download import CollectionRequest, CollectionSchema, DownloadSchema
+from src.data.schema.transfer import CollectionRequest, CollectionSchema, DownloadSchema
 from src.service import CollectionService, get_collection_service
 
 router = APIRouter()

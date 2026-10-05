@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import httpx
 from loguru import logger
 
-from src.data.schema.search import (
+from src.data.schema.catalog import (
     IndexerErrorSchema,
     SearchResultSchema,
     SearchSchema,

@@ -10,18 +10,16 @@ from sse_starlette import EventSourceResponse
 
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.download import (
+from src.data.schema.play import MediaInfoSchema, PlaybackRequest, PlaybackSchema
+from src.data.schema.transfer import (
     BulkActionRequest,
     BulkResultSchema,
     CollectionSchema,
     DownloadSchema,
     DownloadSummarySchema,
     MediaDownloadRequest,
-    PlaybackRequest,
-    PlaybackSchema,
     UrlDownloadRequest,
 )
-from src.data.schema.stream import MediaInfoSchema
 from src.data.type import DownloadGroup, DownloadSort
 from src.lib.event import EventHub, get_event_hub
 from src.service import (

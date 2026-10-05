@@ -14,7 +14,8 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
-from src.data.schema.download import CollectionSchema, DownloadSchema, DownloadSummarySchema, PlaybackSchema
+from src.data.schema.play import PlaybackSchema
+from src.data.schema.transfer import CollectionSchema, DownloadSchema, DownloadSummarySchema
 from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, Platform, Preset
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars

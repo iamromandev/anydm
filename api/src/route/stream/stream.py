@@ -11,8 +11,7 @@ from src.core.auth import query_key, with_segment_key
 from src.core.error import Error
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.download import FileSchema
-from src.data.schema.stream import (
+from src.data.schema.play import (
     AudioSwitchRequest,
     AudioTrackSchema,
     QualitySwitchRequest,
@@ -20,6 +19,7 @@ from src.data.schema.stream import (
     StreamStartRequest,
     SubtitleTrackSchema,
 )
+from src.data.schema.torrent import FileSchema
 from src.lib.event import EventHub, get_event_hub
 from src.service import StreamService, get_stream_service
 from src.service.stream.session import StreamSession

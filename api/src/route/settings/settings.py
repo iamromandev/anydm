@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.settings import ServerSettingsSchema
+from src.data.schema.config import ServerSettingsSchema
 from src.service import SettingsService, get_settings_service
 
 router = APIRouter()

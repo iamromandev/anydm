@@ -1,6 +1,6 @@
 from src.core.error import Error, ErrorDetail
 from src.core.type import Code, ErrorType
-from src.data.schema.search import IndexerErrorSchema
+from src.data.schema.catalog import IndexerErrorSchema
 
 
 def disabled() -> Error:

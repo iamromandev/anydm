@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.search import (
+from src.data.schema.catalog import (
     SearchSchema,
     SearchTorrentRequest,
     SearchTorrentSchema,

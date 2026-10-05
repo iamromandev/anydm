@@ -5,12 +5,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.download import (
-    DownloadSchema,
-    TorrentDownloadRequest,
-    TorrentResolveRequest,
-    TorrentResolveResponse,
-)
+from src.data.schema.torrent import TorrentDownloadRequest, TorrentResolveRequest, TorrentResolveResponse
+from src.data.schema.transfer import DownloadSchema
 from src.service import TorrentService, get_torrent_service
 
 router = APIRouter()

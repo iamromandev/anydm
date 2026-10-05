@@ -6,7 +6,7 @@ from fastapi.responses import Response
 
 from src.core.error import Error
 from src.core.success import Success
-from src.data.schema.system import DiskSchema
+from src.data.schema.shared import DiskSchema
 from src.service import DiskGuard, get_disk_guard
 
 router = APIRouter()

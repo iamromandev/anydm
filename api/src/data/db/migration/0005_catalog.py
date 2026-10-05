@@ -6,7 +6,8 @@ from tortoise.fields.base import OnDelete
 from tortoise.fields.db_defaults import Now
 from tortoise.migrations import operations as ops
 
-from src.data.type.download.download import ProviderStatus, SourceKind
+from src.data.type.catalog.provider import ProviderStatus
+from src.data.type.catalog.source import SourceKind
 
 
 class Migration(migrations.Migration):

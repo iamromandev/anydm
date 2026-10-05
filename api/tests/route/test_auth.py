@@ -15,7 +15,7 @@ import pytest_asyncio
 from pydantic import SecretStr
 from src.config import get_settings
 from src.core.auth import RedactApiKey, key_matches, redact
-from src.data.schema.health import HealthSchema
+from src.data.schema.shared import HealthSchema
 from src.main import app
 from src.service import get_health_service, get_stream_service
 

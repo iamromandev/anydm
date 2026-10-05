@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import parse_qs, urlsplit
 
 from src.core.base import BaseService
-from src.data.schema.extract import ExtractSchema, FormatSchema, PlaylistSchema, TabSchema
+from src.data.schema.catalog import ExtractSchema, FormatSchema, PlaylistSchema, TabSchema
 from src.data.type import Preset
 from src.lib.site import error as site_error
 from src.lib.site.client import PlaylistInfo, SiteClient

@@ -8,7 +8,7 @@ import pytest
 from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
-from src.data.schema.download import CollectionEntryRequest, CollectionRequest
+from src.data.schema.transfer import CollectionEntryRequest, CollectionRequest
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.service.download.collection_service import CollectionService
 from src.service.download.collection_totals import CollectionTotals

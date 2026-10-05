@@ -4,7 +4,7 @@ from src.core.common import get_app_version
 from src.core.runtime import format_uptime, get_listen_addr, get_uptime
 from src.core.type import Status
 from src.data.db import get_db_health, get_db_version
-from src.data.schema.health import DatabaseSchema, HealthSchema
+from src.data.schema.shared import DatabaseSchema, HealthSchema
 
 
 class HealthService(BaseService):

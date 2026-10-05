@@ -1,3 +1,5 @@
+from .playback import PlaybackRequest as PlaybackRequest
+from .playback import PlaybackSchema as PlaybackSchema
 from .stream import AudioSwitchRequest as AudioSwitchRequest
 from .stream import AudioTrackSchema as AudioTrackSchema
 from .stream import MediaInfoSchema as MediaInfoSchema

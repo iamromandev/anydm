@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 from src.config import get_settings
 from src.core.success import Meta
-from src.data.schema.download import CollectionSchema, DownloadSchema
+from src.data.schema.transfer import CollectionSchema, DownloadSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 from src.main import app
 from src.service import get_collection_service

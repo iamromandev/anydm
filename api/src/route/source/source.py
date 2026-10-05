@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from src.core.success import Success
-from src.data.schema.source import (
+from src.data.schema.catalog import (
     SourceCreate,
     SourceListSchema,
     SourcePatch,

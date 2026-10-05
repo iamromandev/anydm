@@ -11,7 +11,7 @@ from src.core.base import CrudRepo
 from src.core.success import Meta
 from src.data.db.model import Download
 from src.data.repo.download.interface.file import FileRow
-from src.data.schema.download import DownloadSummarySchema
+from src.data.schema.transfer import DownloadSummarySchema
 from src.data.type import CONTAINER_KINDS, DownloadStatus
 
 #: Not a playlist or channel container: a download with no media, or media of another kind.

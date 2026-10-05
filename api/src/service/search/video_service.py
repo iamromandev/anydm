@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from src.data.schema.search import SearchVideosSchema, VideoSchema
+from src.data.schema.catalog import SearchVideosSchema, VideoSchema
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient, VideoHit
 
