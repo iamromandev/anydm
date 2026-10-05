@@ -41,7 +41,7 @@ describe("normalizeApiTask", () => {
     const raw = {
         type: "download",
         id: "abc",
-        source_url: "https://youtu.be/x",
+        url: "https://youtu.be/x",
         platform: "site",
         media_kind: "video",
         title: "clip",
@@ -122,7 +122,7 @@ describe("normalizeApiTask on the new wire shape", () => {
     const directWire = {
         type: "download",
         id: "d1",
-        source_url: "https://e.com/a.mp4",
+        url: "https://e.com/a.mp4",
         platform: "direct",
         media_kind: "file",
         title: "",
@@ -184,7 +184,7 @@ describe("normalizeApiTask on the new wire shape", () => {
         type: "collection",
         id: "c1",
         kind: "playlist",
-        source_url: "https://youtube.com/playlist?list=PL",
+        url: "https://youtube.com/playlist?list=PL",
         extractor: "YoutubeTab",
         external_id: "PL",
         title: "Talks",
@@ -428,7 +428,7 @@ describe("torrent fields", () => {
     const rawTorrent = {
         type: "download",
         id: "t1",
-        source_url: "magnet:?xt=urn:btih:abc",
+        url: "magnet:?xt=urn:btih:abc",
         platform: "torrent",
         media_kind: "file",
         title: "Some Release",
@@ -760,7 +760,7 @@ describe("retryLabel", () => {
 describe("normalizeApiTask, for a retry in progress", () => {
     const raw = {
         id: "a",
-        source_url: "https://example.com/a.mkv",
+        url: "https://example.com/a.mkv",
         platform: "direct",
         media_kind: "file",
         status: "pending",
@@ -1503,7 +1503,7 @@ describe("normalizeApiTask for collections", () => {
             id: "g",
             kind: "playlist",
             status: "downloading",
-            source_url: "https://y.test/list",
+            url: "https://y.test/list",
             title: "29C3",
             folder: "29C3",
             counts: {
@@ -1544,7 +1544,7 @@ describe("normalizeApiTask for collections", () => {
             platform: "site",
             media_kind: "video",
             status: "pending",
-            source_url: "https://y.test/v",
+            url: "https://y.test/v",
             collection_id: "g",
             position: 2,
         });
@@ -1561,7 +1561,7 @@ describe("normalizeApiTask for collections", () => {
             id: "t",
             media_kind: "video",
             status: "pending",
-            source_url: "https://y.test/t",
+            url: "https://y.test/t",
             collection_id: null,
         });
 

@@ -61,6 +61,7 @@ class CollectionTotals:
         described = describe(collection)
         return CollectionSchema(
             id=collection.id,
+            url=described.url,
             kind=CollectionKind.CHANNEL if described.media_kind == MediaKind.CHANNEL else CollectionKind.PLAYLIST,
             extractor=described.provider,
             external_id=described.ref,

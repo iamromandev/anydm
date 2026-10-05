@@ -5,7 +5,7 @@ async ``save``/``refresh_from_db``/``fetch_related``; ``save`` records the
 fields it was asked to write in ``row.saved``.
 
 A row also carries what ``describe`` reads (``mirrors``, ``media``), derived
-from the older flat fields (``source_url``, ``platform``, ``provider``,
+from the older flat fields (``url``, ``platform``, ``provider``,
 ``site_detail``) that services not yet moved onto ``describe`` still read; its
 ``media`` is its ``site_detail``, one object, so a re-plan shows in both.
 """
@@ -44,7 +44,7 @@ def _saving(row: SimpleNamespace) -> SimpleNamespace:
 def download_row(**overrides: Any) -> SimpleNamespace:
     fields: dict[str, Any] = dict(
         id=uuid.uuid4(),
-        source_url="https://example.com/a.bin",
+        url="https://example.com/a.bin",
         platform=Platform.DIRECT,
         media_kind=MediaKind.FILE,
         title="a.bin",
@@ -75,7 +75,7 @@ def download_row(**overrides: Any) -> SimpleNamespace:
     fields.update(overrides)
     torrents = [a_torrent(fields["ref_id"], fields["title"])] if fields["platform"] == Platform.TORRENT else []
     fields.setdefault(
-        "mirrors", [a_mirror(fields["source_url"], _KIND[fields["platform"]], fields["provider"], torrents=torrents)]
+        "mirrors", [a_mirror(fields["url"], _KIND[fields["platform"]], fields["provider"], torrents=torrents)]
     )
     media = fields["site_detail"]
     if media is not None and "media" not in fields:

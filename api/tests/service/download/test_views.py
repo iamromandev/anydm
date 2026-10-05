@@ -59,7 +59,7 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
     )
     assert schema.progress == 25
     assert schema.site is not None and (schema.site.video_format, schema.site.video_id) == ("137", "dQw4w9WgXcQ")
-    assert (schema.title, schema.source_url) == ("Talk", "https://youtu.be/dQw4w9WgXcQ")
+    assert (schema.title, schema.url) == ("Talk", "https://youtu.be/dQw4w9WgXcQ")
     assert schema.torrent is None
     assert schema.live.speed_bps == 7
     assert schema.files[0].playback is not None and schema.files[0].playback.position_seconds == 4.0

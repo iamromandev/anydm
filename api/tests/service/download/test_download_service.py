@@ -53,7 +53,7 @@ class FakeDownloadRepo:
         media = dict(added["media"])
         return self._add(
             download_row(
-                source_url=added["url"],
+                url=added["url"],
                 provider=added["provider"],
                 platform=Platform.SITE,
                 media_kind=media.pop("kind"),
@@ -66,7 +66,7 @@ class FakeDownloadRepo:
 
     async def create_direct(self, **added: Any) -> Any:
         self.created.append(added)
-        return self._add(download_row(source_url=added["url"], title=added["filename"], **added["download"]))
+        return self._add(download_row(url=added["url"], title=added["filename"], **added["download"]))
 
     async def list_items(
         self, page: int, page_size: int, statuses: Any, sort: str, speeds: Any
@@ -211,7 +211,7 @@ def _row(h: SimpleNamespace, **overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "platform": Platform.SITE,
         "media_kind": MediaKind.VIDEO,
-        "source_url": "https://youtu.be/x",
+        "url": "https://youtu.be/x",
         "title": "clip",
         "provider": "Youtube",
         "ref_id": "x",

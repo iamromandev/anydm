@@ -289,10 +289,9 @@ class DownloadWorker:
         """
         if platform == Platform.DIRECT:
             destination = part_path(self._root, download.id, SegmentPart.FILE.value)
-            source_url = url
 
             async def direct() -> str:
-                return source_url
+                return url
 
             await self._fetch(download, SegmentPart.FILE, direct, destination, offset=0)
             return {SegmentPart.FILE.value: destination}, frozenset()
@@ -310,9 +309,8 @@ class DownloadWorker:
         # URLs expire within hours and bind to the requesting IP, so a stored
         # one is worthless on a resume, and one extraction per part would double
         # what the site sees (and what trips YouTube's bot check).
-        source_url = url
         if batch is None:
-            batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
+            batch = await self._client.resolve(url, [format_id for _, format_id in wanted])
 
         parts: dict[str, Path] = {}
         fragmented: set[str] = set()
@@ -324,7 +322,7 @@ class DownloadWorker:
             if batch[format_id].fragmented:
                 # HLS, DASH and the like: only yt-dlp's downloader fetches these,
                 # and it extracts the page itself, so the batch URL goes unused.
-                await self._fetch_fragments(download, part, source_url, format_id, destination, offset=offset)
+                await self._fetch_fragments(download, part, url, format_id, destination, offset=offset)
                 fragmented.add(part.value)
             else:
                 handed = [batch[format_id]]
@@ -333,9 +331,7 @@ class DownloadWorker:
                 # is resolved again, for this part alone. Bound as defaults because
                 # the loop variables would otherwise be read at call time.
                 async def provider(format_id: str = format_id, handed: list[Resolved] = handed) -> Target:
-                    resolved = (
-                        handed.pop() if handed else (await self._client.resolve(source_url, [format_id]))[format_id]
-                    )
+                    resolved = handed.pop() if handed else (await self._client.resolve(url, [format_id]))[format_id]
                     return Target(resolved.url, resolved.headers)
 
                 await self._fetch(download, part, provider, destination, offset=offset)

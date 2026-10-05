@@ -23,6 +23,7 @@ COLLECTION = uuid.uuid4()
 def _collection(**fields: Any) -> CollectionSchema:
     base: dict[str, Any] = {
         "id": COLLECTION,
+        "url": "https://www.youtube.com/playlist?list=PL1",
         "kind": CollectionKind.PLAYLIST,
         "extractor": "YoutubeTab",
         "external_id": "PL1",
@@ -51,7 +52,7 @@ class _FakeCollections:
     ) -> tuple[list[DownloadSchema], Meta]:
         video = DownloadSchema(
             id=uuid.uuid4(),
-            source_url="https://youtu.be/v1",
+            url="https://youtu.be/v1",
             platform=Platform.SITE,
             media_kind=MediaKind.VIDEO,
             status=DownloadStatus.PENDING,
@@ -110,6 +111,7 @@ async def test_a_playlist_is_added_as_a_collection(http: httpx.AsyncClient, coll
     assert response.status_code == 201
     data = response.json()["data"]
     assert (data["type"], data["kind"]) == ("collection", "playlist")
+    assert data["url"] == "https://www.youtube.com/playlist?list=PL1"
     assert collections.added[0].preset == Preset.P720
 
 

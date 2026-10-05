@@ -89,7 +89,7 @@ class FakeDownloadRepo:
     async def create_torrent(self, **added: Any) -> Any:
         self.created.append({**added, "files": list(added["files"])})
         row = download_row(
-            source_url=added["url"],
+            url=added["url"],
             provider="torrent",
             ref_id=added["info_hash"],
             platform=Platform.TORRENT,
@@ -148,7 +148,7 @@ def _disk(free: int, min_free: int = 50) -> DiskGuard:
 
 def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
     fields: dict[str, Any] = {
-        "source_url": MAGNET,
+        "url": MAGNET,
         "platform": Platform.TORRENT,
         "title": "Some Release",
         "status": DownloadStatus.DOWNLOADING,
@@ -290,7 +290,7 @@ async def test_adding_a_torrent_already_held_returns_that_download(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None:
-    """A base64 .torrent must not be written into source_url: reconciliation re-adds from it."""
+    """A base64 .torrent must not be written into url: reconciliation re-adds from it."""
     repo = FakeDownloadRepo()
     encoded = base64.b64encode(b"d8:announce1:xe").decode()
 

@@ -52,7 +52,8 @@ class DownloadFileSchema(BaseSchema):
 class DownloadSchema(BaseSchema):
     type: Literal["download"] = "download"
     id: uuid.UUID
-    source_url: str
+    #: Where it is fetched from: the page, the file's address, or the magnet.
+    url: str
     platform: Platform
     media_kind: MediaKind
     title: str = ""
@@ -98,6 +99,8 @@ class CollectionCountsSchema(BaseSchema):
 class CollectionSchema(BaseSchema):
     type: Literal["collection"] = "collection"
     id: uuid.UUID
+    #: The playlist or channel page it was added from.
+    url: str
     kind: CollectionKind
     extractor: str
     external_id: str

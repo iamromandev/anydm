@@ -28,6 +28,7 @@ class FixtureTest {
         assertNotNull(task.completedAt)
         assertEquals(task.filename, task.title)
         assertNotNull(task.fileSize)
+        assertTrue(task.url.endsWith("/README"))
     }
 
     @Test
@@ -38,6 +39,8 @@ class FixtureTest {
         assertEquals(2, counts.total)
         assertEquals(2, counts.paused)
         assertNotNull(group.folder)
+        // The page it was added from, which "Copy link" copies.
+        assertEquals("https://www.youtube.com/playlist?list=PLwP_SiAcdui0KVebT0mU9Apz359a4ubsC", group.url)
     }
 
     @Test

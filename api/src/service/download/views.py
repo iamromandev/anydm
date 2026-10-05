@@ -63,7 +63,7 @@ def download_schema(
         # Torrents resolve via their service, which knows the download root.
     return DownloadSchema(
         id=row.id,
-        source_url=described.source_url,
+        url=described.url,
         platform=described.platform,
         media_kind=described.media_kind,
         title=described.title,

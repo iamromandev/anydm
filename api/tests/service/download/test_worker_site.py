@@ -112,7 +112,7 @@ async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path)
     row = await site_row(
         files,
         filename="03_",
-        source_url="http://vimeo.com/75629013",
+        url="http://vimeo.com/75629013",
         extractor="Vimeo",
         video_format=None,
         audio_format=None,
@@ -137,7 +137,7 @@ async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
     row = await site_row(
         files,
         filename="Key_9999p.mp4",
-        source_url="http://vimeo.com/75629013",
+        url="http://vimeo.com/75629013",
         extractor="Vimeo",
         video_format="http-9999p",
         audio_format=None,
@@ -221,7 +221,7 @@ async def test_each_part_gets_its_own_url_and_the_format_s_headers(tmp_path: Pat
 async def test_a_combined_format_is_a_single_video_part(tmp_path: Path) -> None:
     files, client, post = MemoryFiles(), FakeSiteClient(site_info("vimeo")), TouchingPostProcessor()
     row = await site_row(
-        files, source_url="http://vimeo.com/75629013", extractor="Vimeo", video_format="http-1080p", audio_format=None
+        files, url="http://vimeo.com/75629013", extractor="Vimeo", video_format="http-1080p", audio_format=None
     )
 
     await _worker(tmp_path, files, client, post=post).run_task(row)
@@ -251,7 +251,7 @@ async def _dailymotion(files: MemoryFiles) -> Any:
     return await site_row(
         files,
         filename="Clip_1080p.mp4",
-        source_url="https://www.dailymotion.com/video/x8",
+        url="https://www.dailymotion.com/video/x8",
         extractor="Dailymotion",
         video_format="hls-1080",
         audio_format=None,
@@ -280,7 +280,7 @@ async def test_a_mixed_plan_sends_each_part_down_its_own_path(tmp_path: Path) ->
     engine, fragments = RecordingEngine(report=True), RecordingFragments(report=True)
     row = await site_row(
         files,
-        source_url="https://www.reddit.com/r/videos/comments/6rrwyj/x/",
+        url="https://www.reddit.com/r/videos/comments/6rrwyj/x/",
         extractor="Reddit",
         video_format="hls-1875",
         audio_format="dash-AUDIO-1",

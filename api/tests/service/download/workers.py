@@ -124,7 +124,7 @@ async def site_row(files: MemoryFiles, *, filename: str = "Rick_1080p.mp4", **ov
         if key in overrides:
             detail[key] = overrides.pop(key)
     fields: dict[str, Any] = {
-        "source_url": "https://youtu.be/dQw4w9WgXcQ",
+        "url": "https://youtu.be/dQw4w9WgXcQ",
         "provider": overrides.pop("extractor", "Youtube"),
         "ref_id": overrides.pop("video_id", "dQw4w9WgXcQ"),
         "platform": Platform.SITE,
@@ -141,7 +141,7 @@ async def site_row(files: MemoryFiles, *, filename: str = "Rick_1080p.mp4", **ov
 
 async def direct_row(files: MemoryFiles, *, filename: str = "big.iso", **overrides: Any) -> Any:
     fields: dict[str, Any] = {
-        "source_url": "https://cdn.test/big.iso",
+        "url": "https://cdn.test/big.iso",
         "platform": Platform.DIRECT,
         "media_kind": MediaKind.FILE,
         "status": DownloadStatus.DOWNLOADING,

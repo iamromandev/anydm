@@ -38,7 +38,7 @@ async def test_a_site_download_is_its_media_and_its_page(sqlite: None) -> None:
     assert described.platform == Platform.SITE
     assert (described.provider, described.ref) == ("Youtube", "dQw4w9WgXcQ")
     assert (described.title, described.media_kind) == ("Never", MediaKind.VIDEO)
-    assert described.source_url == "https://youtu.be/dQw4w9WgXcQ"
+    assert described.url == "https://youtu.be/dQw4w9WgXcQ"
     assert described.media.preset == Preset.P1080 and described.info_hash is None
 
 
@@ -82,7 +82,7 @@ async def test_the_primary_mirror_is_the_lowest_priority(sqlite: None) -> None:
     row = await a_download("http", "https://b.example/x.bin", SourceKind.DIRECT, priority=1)
     await Mirror.create(download=row, source=await a_source("http", "https://a.example/x.bin", SourceKind.DIRECT))
 
-    assert describe(await loaded(row)).source_url == "https://a.example/x.bin"
+    assert describe(await loaded(row)).url == "https://a.example/x.bin"
 
 
 @pytest.mark.asyncio

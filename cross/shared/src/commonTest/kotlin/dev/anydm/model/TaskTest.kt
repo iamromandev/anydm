@@ -17,9 +17,9 @@ class TaskTest {
     fun `the title falls back to the file name, then the link`() {
         assertEquals(
             "a.mp4",
-            dto("""{"id":"t","source_url":"https://x/a","files":[{"index":0,"path":"a.mp4"}]}""").toTask().title,
+            dto("""{"id":"t","url":"https://x/a","files":[{"index":0,"path":"a.mp4"}]}""").toTask().title,
         )
-        assertEquals("https://x/a", dto("""{"id":"t","source_url":"https://x/a"}""").toTask().title)
+        assertEquals("https://x/a", dto("""{"id":"t","url":"https://x/a"}""").toTask().title)
     }
 
     @Test
@@ -38,7 +38,7 @@ class TaskTest {
     fun `a direct download reads its one file`() {
         val task =
             dto(
-                """{"type":"download","id":"d1","source_url":"https://e.com/a.mp4","platform":"direct",
+                """{"type":"download","id":"d1","url":"https://e.com/a.mp4","platform":"direct",
                    "media_kind":"file","status":"completed","downloaded_size":10,"total_size":10,
                    "live":{"speed_bps":0},"files":[{"index":0,"path":"a.mp4","size":10,
                    "playback":{"position_seconds":4.0,"duration_seconds":60.0,"watched":false}}]}""",
