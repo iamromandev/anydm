@@ -192,8 +192,7 @@ export function normalizeApiTask(raw: any): UiTask {
         preset: raw.site?.preset ?? undefined,
         filename: single?.path || undefined,
         // Zero until it finishes: the size is the finished file's.
-        fileSize:
-            single && single.size_bytes > 0 ? single.size_bytes : undefined,
+        fileSize: single && single.size > 0 ? single.size : undefined,
         createdAt: raw.created_at ? Date.parse(raw.created_at) : undefined,
         startedAt: raw.started_at ? Date.parse(raw.started_at) : undefined,
         completedAt: raw.completed_at
@@ -302,7 +301,7 @@ export function normalizeFiles(raw: any): FileView[] | undefined {
     return raw.files.map((file: any) => ({
         index: file.index ?? 0,
         path: file.path ?? "",
-        sizeBytes: file.size_bytes ?? 0,
+        sizeBytes: file.size ?? 0,
         selected: file.selected ?? true,
         downloadedBytes: file.downloaded_bytes ?? 0,
     }));

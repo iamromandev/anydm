@@ -59,7 +59,7 @@ describe("normalizeApiTask", () => {
             {
                 index: 0,
                 path: "clip.mp4",
-                size_bytes: 0,
+                size: 0,
                 downloaded_bytes: 4200,
                 selected: true,
             },
@@ -140,7 +140,7 @@ describe("normalizeApiTask on the new wire shape", () => {
             {
                 index: 0,
                 path: "a.mp4",
-                size_bytes: 10,
+                size: 10,
                 downloaded_bytes: 10,
                 selected: true,
                 mime_type: "video/mp4",
@@ -173,7 +173,7 @@ describe("normalizeApiTask on the new wire shape", () => {
             {
                 index: 1,
                 path: "bbb.mp4",
-                size_bytes: 100,
+                size: 100,
                 downloaded_bytes: 10,
                 selected: true,
             },
@@ -442,14 +442,14 @@ describe("torrent fields", () => {
             {
                 index: 0,
                 path: "video.mkv",
-                size_bytes: 900,
+                size: 900,
                 selected: true,
                 downloaded_bytes: 900,
             },
             {
                 index: 1,
                 path: "readme.txt",
-                size_bytes: 100,
+                size: 100,
                 selected: false,
                 downloaded_bytes: 0,
             },

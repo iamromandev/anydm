@@ -67,7 +67,7 @@ data class TorrentDto(
 data class FileDto(
     val index: Int = 0,
     val path: String = "",
-    @SerialName("size_bytes") val sizeBytes: Long = 0,
+    @SerialName("size") val sizeBytes: Long = 0,
     val selected: Boolean = true,
     @SerialName("downloaded_bytes") val downloadedBytes: Long = 0,
     @SerialName("mime_type") val mimeType: String? = null,

@@ -19,8 +19,8 @@ def test_resolve_response_carries_the_file_list() -> None:
         title="Some Release",
         total_bytes=1000,
         files=[
-            FileSchema(index=0, path="video.mkv", size_bytes=900, selected=True),
-            FileSchema(index=1, path="readme.txt", size_bytes=100, selected=False),
+            FileSchema(index=0, path="video.mkv", size=900, selected=True),
+            FileSchema(index=1, path="readme.txt", size=100, selected=False),
         ],
     )
     assert [f.index for f in response.files] == [0, 1]

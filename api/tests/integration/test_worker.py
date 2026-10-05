@@ -141,7 +141,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
         500,
     )
     single = await FileDatabaseRepo().single(row.id)
-    assert single is not None and (single.path, single.size_bytes) == ("clip.mp4", 500)
+    assert single is not None and (single.path, single.size) == ("clip.mp4", 500)
     assert (tmp_path / str(row.id) / "clip.mp4").read_bytes() == BODY
 
 

@@ -98,7 +98,7 @@ def download_schema(
             DownloadFileSchema(
                 index=file.index,
                 path=file.path,
-                size_bytes=file.size_bytes,
+                size=file.size or 0,
                 downloaded_bytes=file.downloaded_bytes,
                 selected=file.selected,
                 mime_type=file.mime_type,

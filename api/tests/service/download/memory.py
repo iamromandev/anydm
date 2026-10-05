@@ -80,7 +80,7 @@ def site_detail(**overrides: Any) -> SimpleNamespace:
 
 def file_row(index: int = 0, path: str = "a.bin", **overrides: Any) -> SimpleNamespace:
     fields: dict[str, Any] = dict(
-        id=uuid.uuid4(), index=index, path=path, size_bytes=0, downloaded_bytes=0, selected=True, mime_type=None
+        id=uuid.uuid4(), index=index, path=path, size=0, downloaded_bytes=0, selected=True, mime_type=None
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -93,7 +93,7 @@ class MemoryFiles:
 
     async def replace(self, download_id: uuid.UUID, files: Sequence[tuple[int, str, int, bool]]) -> None:
         self.by_download[download_id] = [
-            file_row(index, path, size_bytes=size, selected=selected) for index, path, size, selected in files
+            file_row(index, path, size=size, selected=selected) for index, path, size, selected in files
         ]
 
     async def single(self, download_id: uuid.UUID) -> SimpleNamespace | None:
@@ -112,7 +112,7 @@ class MemoryFiles:
         if found is None:
             found = file_row(0, path)
             self.by_download.setdefault(download_id, []).append(found)
-        found.path, found.size_bytes, found.downloaded_bytes = path, size_bytes, size_bytes
+        found.path, found.size, found.downloaded_bytes = path, size_bytes, size_bytes
 
     async def get(self, download_id: uuid.UUID, index: int) -> SimpleNamespace | None:
         return next((f for f in self.by_download.get(download_id, []) if f.index == index), None)

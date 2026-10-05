@@ -12,7 +12,7 @@ class FileSchema(BaseSchema):
 
     index: int
     path: str
-    size_bytes: int = 0
+    size: int = 0
     selected: bool = True
     downloaded_bytes: int = 0
 

@@ -255,21 +255,21 @@ describe("normalizeStreamSession", () => {
                 {
                     index: 1,
                     path: "Show.S01E10.mkv",
-                    size_bytes: 900,
+                    size: 900,
                     selected: true,
                     downloaded_bytes: 0,
                 },
                 {
                     index: 0,
                     path: "Show.S01E2.mkv",
-                    size_bytes: 800,
+                    size: 800,
                     selected: true,
                     downloaded_bytes: 0,
                 },
                 {
                     index: 2,
                     path: "Show.S01E2.en.srt",
-                    size_bytes: 10,
+                    size: 10,
                     selected: true,
                     downloaded_bytes: 0,
                 },
@@ -287,7 +287,7 @@ describe("normalizeStreamSession", () => {
         const session = normalizeStreamSession({
             session_id: "s1",
             files: [
-                { index: "0", path: 7, size_bytes: "big" },
+                { index: "0", path: 7, size: "big" },
             ],
         });
 

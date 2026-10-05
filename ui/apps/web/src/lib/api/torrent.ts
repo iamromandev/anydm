@@ -31,7 +31,7 @@ export function normalizeResolvedTorrent(raw: any): ResolvedTorrent {
             ? raw.files.map((file: any) => ({
                   index: file.index ?? 0,
                   path: file.path ?? "",
-                  sizeBytes: file.size_bytes ?? 0,
+                  sizeBytes: file.size ?? 0,
               }))
             : [],
     };

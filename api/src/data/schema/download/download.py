@@ -65,7 +65,7 @@ class TorrentInfoSchema(BaseSchema):
 class DownloadFileSchema(BaseSchema):
     index: int
     path: str
-    size_bytes: int = 0
+    size: int = 0
     downloaded_bytes: int = 0
     selected: bool = True
     mime_type: str | None = None

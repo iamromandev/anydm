@@ -45,7 +45,7 @@ def file(index: int = 0, path: str = "Talk.mp4") -> SimpleNamespace:
         id=uuid.uuid4(),
         index=index,
         path=path,
-        size_bytes=0,
+        size=0,
         downloaded_bytes=0,
         selected=True,
         mime_type="video/mp4",
