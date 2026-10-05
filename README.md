@@ -238,11 +238,12 @@ Sites change how they serve media, and yt-dlp releases to keep up, sometimes sev
 
 ## CI
 
-GitHub Actions runs on pushes to `main` and on pull requests, in three parallel jobs:
+GitHub Actions runs on pushes to `main` and on pull requests, in two parallel jobs:
 
 - **api** — `uv sync`, then ruff, ty, and the unit suite.
-- **api-integration** — brings up Postgres as a service, applies the migrations with `python -m scripts.migrate`, and runs the tests marked `integration`. The schema comes from the migrations rather than from `generate_schemas`, so a migration that does not do what it claims fails here.
 - **ui** — a frozen Bun lockfile, then the format check, typecheck, unit tests, and production build.
+
+The database suite (`make api-test-all`, against `make api-up`) and the cross client (`make cross-check`) are not in CI: run them locally before a change that touches them.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
