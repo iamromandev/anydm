@@ -1,17 +1,17 @@
 """Provider: one upstream; its key is unique, its base_url is the Url, and deleting the Url takes the Provider."""
 
-from src.data.db.model.transfer.provider import Provider
+from src.data.db.model.catalog.provider import Provider
 from src.data.type import ProviderStatus
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
-def test_provider_base_url_is_a_required_fk_to_url() -> None:
+def test_provider_base_url_is_a_nullable_one_to_one_to_url() -> None:
     field = Provider._meta.fields_map["base_url"]
     assert isinstance(field, ForeignKeyFieldInstance)
-    assert field.null is False
+    assert field.null is True
     assert field.model_name == "model.Url"
-    assert field.related_name == "provider"
-    assert getattr(field, "on_delete", None) == "CASCADE"
+    assert field.related_name == "providers"
+    assert getattr(field, "on_delete", None) == "SET NULL"
 
 
 def test_provider_slug_is_unique_varchar_64() -> None:

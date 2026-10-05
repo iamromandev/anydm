@@ -5,26 +5,22 @@ from typing import ClassVar
 from tortoise import fields
 
 from src.core.base import LinkBase
+from src.data.type import MirrorStatus
 
 
 class Mirror(LinkBase):
-    """One alternate address for one download, tried in ``position`` order.
+    """One source for one download: retried in priority order until one works."""
 
-    The worker moves to the next mirror when the current one fails for good,
-    recording ``last_error`` on the one it left.
-    """
-
-    download = fields.ForeignKeyField("model.Download", related_name="mirrors", on_delete=fields.CASCADE)
-    url = fields.ForeignKeyField("model.Url", related_name="+", on_delete=fields.CASCADE)
-    position: int = fields.IntField(default=0)
-    last_error: str | None = fields.TextField(null=True)
+    source = fields.ForeignKeyField(to="model.Source", related_name="mirrors", on_delete=fields.CASCADE)
+    download = fields.ForeignKeyField(to="model.Download", related_name="mirrors", on_delete=fields.CASCADE)
+    priority: int = fields.IntField(default=0)
+    status: MirrorStatus = fields.CharEnumField(MirrorStatus, default=MirrorStatus.AVAILABLE)
 
     def __str__(self) -> str:
-        return f"[Mirror: download {self.download_id}, position {self.position}]"
+        return f"[Mirror: status {self.status}, download {self.download.id}]"
 
     class Meta:
         table: ClassVar[str] = "mirror"
         table_description: ClassVar[str] = "Mirror"
         schema: ClassVar[str] = "transfer"
-        ordering: ClassVar[list[str]] = ["position"]
-        unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("download", "position"),)
+        unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("source", "download"),)

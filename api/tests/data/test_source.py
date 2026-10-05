@@ -1,6 +1,6 @@
 """The Source table: a URL used one way, and how it is read: DIRECT, CONTENT, or TORRENT."""
 
-from src.data.db.model.transfer.source import Source
+from src.data.db.model.catalog.source import Source
 from src.data.type import SourceKind
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
@@ -53,4 +53,4 @@ def test_source_schema_is_transfer() -> None:
 
 
 def test_source_url_provider_kind_is_unique() -> None:
-    assert ("url", "provider", "kind") in set(Source.Meta.unique_together)
+    assert {frozenset(cols) for cols in Source.Meta.unique_together} >= {frozenset({"url", "provider", "kind"})}

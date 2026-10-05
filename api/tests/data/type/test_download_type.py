@@ -26,24 +26,21 @@ def test_segment_parts_are_the_workers_part_names() -> None:
     assert [p.value for p in SegmentPart] == ["file", "video", "audio"]
 
 
-def test_terminal_statuses() -> None:
-    assert {s for s in DownloadStatus if s.is_terminal} == {
-        DownloadStatus.COMPLETE,
-        DownloadStatus.FAILED,
-        DownloadStatus.CANCELED,
-    }
+def test_status_members() -> None:
+    assert [s.value for s in DownloadStatus] == ["pending", "queued", "downloading", "paused", "completed", "failed", "cancelled"]
 
 
 def test_active_statuses_are_a_worker_mid_flight() -> None:
-    assert {DownloadStatus.DOWNLOADING, DownloadStatus.MUXING} == ACTIVE_STATUSES
+    assert {DownloadStatus.DOWNLOADING} == ACTIVE_STATUSES
 
 
 def test_groups() -> None:
     assert DOWNLOAD_GROUPS["downloading"] == {
         DownloadStatus.PENDING,
+        DownloadStatus.QUEUED,
         DownloadStatus.DOWNLOADING,
-        DownloadStatus.MUXING,
     }
+    assert DOWNLOAD_GROUPS["completed"] == {DownloadStatus.COMPLETED}
 
 
 def test_new_enums_and_names() -> None:

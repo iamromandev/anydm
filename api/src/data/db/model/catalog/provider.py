@@ -11,14 +11,14 @@ from src.data.type import ProviderStatus
 class Provider(LinkBase):
     """Who a source talks to: one row per upstream, holding its key."""
 
-    base_url = fields.ForeignKeyField(
-        "models.URL",
+    base_url = fields.OneToOneField(
+        to="model.Url",
         related_name="providers",
         null=True,
         on_delete=fields.SET_NULL,
     )
-    name: str = fields.CharField(max_length=64)
-    slug: str = fields.CharField(max_length=64, unique=True)
+    name = fields.CharField(max_length=64)
+    slug = fields.CharField(max_length=64, unique=True)
     status: ProviderStatus = fields.CharEnumField(ProviderStatus, default=ProviderStatus.ACTIVE)
 
     def __str__(self) -> str:

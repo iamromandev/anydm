@@ -12,8 +12,8 @@ class Url(LinkBase):
 
     value: str = fields.TextField()
     normalized: str = fields.TextField()
-    scheme: str = fields.CharField(max_length=16)
-    host: str | None = fields.CharField(max_length=255, null=True)
+    scheme = fields.CharField(max_length=16)
+    host = fields.CharField(max_length=255, null=True)
     port: int | None = fields.SmallIntField(null=True)
     path: str | None = fields.TextField(null=True)
     query: str | None = fields.TextField(null=True)
