@@ -10,6 +10,10 @@ from tortoise.fields.base import StrEnum
 
 
 class UserRole(StrEnum):
-    #: Manages queues, global limits and other users.
     ADMIN = "admin"
     USER = "user"
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"

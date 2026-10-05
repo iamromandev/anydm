@@ -21,7 +21,7 @@ class Torrent(LinkBase):
     class Meta:
         table: ClassVar[str] = "torrent"
         table_description: ClassVar[str] = "Torrent"
-        schema: ClassVar[str] = "transfer"
+        schema: ClassVar[str] = "torrent"
 
 
 class TorrentFile(LinkBase):
@@ -37,4 +37,4 @@ class TorrentFile(LinkBase):
     class Meta:
         table: ClassVar[str] = "torrent_file"
         table_description: ClassVar[str] = "TorrentFile"
-        schema: ClassVar[str] = "transfer"
+        schema: ClassVar[str] = "torrent"

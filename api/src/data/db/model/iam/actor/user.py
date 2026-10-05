@@ -6,7 +6,7 @@ from typing import ClassVar
 from tortoise import fields
 
 from src.core.base import Base
-from src.data.type import UserRole
+from src.data.type import UserRole, UserStatus
 
 
 class User(Base):
@@ -17,13 +17,17 @@ class User(Base):
     finished download's files stay where its row says they are.
     """
 
-    username: str = fields.CharField(max_length=64, unique=True)
-    display_name: str = fields.CharField(max_length=128, default="")
     role: UserRole = fields.CharEnumField(
         enum_type=UserRole,
         default=UserRole.USER
     )
-    is_active: bool = fields.BooleanField(default=True)
+    status: UserStatus = fields.CharEnumField(
+        enum_type=UserStatus,
+        default=UserStatus.ACTIVE
+    )
+    username: str = fields.CharField(max_length=64, unique=True)
+    display_name: str = fields.CharField(max_length=128, default="")
+
     password_hash: str = fields.CharField(max_length=255)
     locale: str | None = fields.CharField(max_length=35, null=True)
     timezone: str | None = fields.CharField(max_length=64, null=True)

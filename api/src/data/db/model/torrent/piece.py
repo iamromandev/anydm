@@ -24,5 +24,5 @@ class Piece(LinkBase):
     class Meta:
         table: ClassVar[str] = "piece"
         table_description: ClassVar[str] = "Piece"
-        schema: ClassVar[str] = "transfer"
+        schema: ClassVar[str] = "torrent"
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("torrent", "index"),)
