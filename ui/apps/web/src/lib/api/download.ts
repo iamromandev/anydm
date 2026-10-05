@@ -562,6 +562,42 @@ export function normalizeSummary(raw: any): TaskSummary {
 }
 
 /**
+ * Which of the sidebar's counts a status falls in, besides All.
+ *
+ * The API's own grouping: queued work counts as downloading, a cancelled
+ * row leaves every count, and paused or failed counts only towards All.
+ */
+function countedAs(status: TaskStatus): string {
+    switch (status) {
+        case "pending":
+        case "queued":
+        case "downloading":
+        case "muxing":
+            return "downloading";
+        case "seeding":
+        case "completed":
+            return status;
+        case "cancelled":
+            return "gone";
+        default:
+            return "all";
+    }
+}
+
+/**
+ * Whether a row's new status moves the sidebar's counts, so they need asking
+ * again. A row new to the list says nothing: a page brings rows that were
+ * always counted, and adding one asks for the counts itself. Neither does a
+ * frame that changes nothing, which the torrent monitor sends every tick.
+ */
+export function countsMoved(
+    previous: TaskStatus | undefined,
+    next: TaskStatus,
+): boolean {
+    return previous !== undefined && countedAs(previous) !== countedAs(next);
+}
+
+/**
  * A freshly fetched page, added to what is already on screen.
  *
  * Rows already loaded keep their position, so the list never reshuffles under

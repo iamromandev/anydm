@@ -24,6 +24,7 @@ import {
     playsFromTorrent,
     settlePage,
     type ResolvedTorrent,
+    countsMoved,
     normalizeSummary,
     onUnauthorized,
     type TaskSummary,
@@ -106,6 +107,8 @@ export default component$(() => {
         // Counts for every filter, from the database rather than from the
         // rows that happen to be loaded.
         summary: null as TaskSummary | null,
+        summaryLoading: false,
+        summaryAgain: false,
         toasts: [] as Toast[],
         // The task the remove dialog is asking about, or null when it is shut.
         removing: null as {
@@ -190,6 +193,33 @@ export default component$(() => {
     });
 
     /**
+     * Ask for the counts again. A burst of frames (a playlist paused, a bulk
+     * action) costs at most two requests: while one is in flight, later asks
+     * only mark that it should run once more when it lands.
+     *
+     * Declared before `noteTransitions`, which calls it: a `$` closure is
+     * captured where it is declared, so one declared below is not defined yet.
+     */
+    const loadSummary = $(async () => {
+        if (store.summaryLoading) {
+            store.summaryAgain = true;
+            return;
+        }
+        store.summaryLoading = true;
+        try {
+            do {
+                store.summaryAgain = false;
+                const summary = await getApi<any>("/download/summary").catch(
+                    () => null,
+                );
+                if (summary) store.summary = normalizeSummary(summary);
+            } while (store.summaryAgain);
+        } finally {
+            store.summaryLoading = false;
+        }
+    });
+
+    /**
      * Announce any row whose status moved since `before`, the list as it was
      * just before the write that brought `rows` in.
      *
@@ -206,15 +236,15 @@ export default component$(() => {
             ]),
         );
         let next = store.toasts;
-        let announced = false;
+        let moved = false;
 
         for (const row of rows) {
+            if (countsMoved(previous.get(row.id), row.status)) moved = true;
             const announcement =
                 row.kind === "playlist"
                     ? groupToast(previous.get(row.id), row)
                     : transitionToast(previous.get(row.id), row);
             if (announcement) {
-                announced = true;
                 next = raise(
                     next,
                     createToast(
@@ -228,18 +258,12 @@ export default component$(() => {
 
         store.toasts = next;
 
-        // A status moved, so the counts beside the filters are now wrong.
-        // Only a real transition triggers this: the torrent monitor publishes
+        // A row moved between the sidebar's counts, so they are now wrong.
+        // Pause, resume and remove raise no toast, but move them all the
+        // same. Only a real move triggers this: the torrent monitor publishes
         // a task frame every tick whether or not anything changed, and
         // refetching on each of those would be a poll by another name.
-        if (announced) loadSummary();
-    });
-
-    const loadSummary = $(async () => {
-        const summary = await getApi<any>("/download/summary").catch(
-            () => null,
-        );
-        if (summary) store.summary = normalizeSummary(summary);
+        if (moved) loadSummary();
     });
 
     /**
@@ -731,6 +755,9 @@ export default component$(() => {
             // A video leaves its Entries list; a group's own list shuts.
             const { [taskId]: _shut, ...open } = store.entries;
             store.entries = dropVideo(open, taskId);
+            // The row leaves before its frame lands, so the frame finds nothing
+            // to compare with: the counts are asked for here, as the desktop does.
+            loadSummary();
         },
     );
 

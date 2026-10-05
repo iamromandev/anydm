@@ -14,9 +14,11 @@ import dev.anydm.model.TaskStatus.CANCELLED
 import dev.anydm.model.TaskStatus.COMPLETED
 import dev.anydm.model.TaskStatus.DOWNLOADING
 import dev.anydm.model.TaskStatus.PAUSED
+import dev.anydm.model.TaskStatus.PENDING
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -90,6 +92,30 @@ class TaskStoreTest {
                     .map { it.id to it.status },
             )
             assertTrue(said("Finished: b"))
+        }
+
+    @Test
+    fun `a pause or remove asks for the counts again, and a claim does not`() =
+        runTest {
+            val frames = Channel<ServerEvent>(Channel.UNLIMITED)
+            api.stream = { for (frame in frames) emit(frame) }
+            val store = store()
+            store.start()
+            frames.send(ServerEvent.Snapshot(listOf(task("a", PENDING), task("b"))))
+            runCurrent()
+            val asked = api.summaryCalls
+
+            frames.send(ServerEvent.TaskChanged(task("a", DOWNLOADING)))
+            runCurrent()
+            assertEquals(asked, api.summaryCalls)
+
+            frames.send(ServerEvent.TaskChanged(task("a", PAUSED)))
+            runCurrent()
+            assertEquals(asked + 1, api.summaryCalls)
+
+            frames.send(ServerEvent.TaskChanged(task("b", CANCELLED)))
+            runCurrent()
+            assertEquals(asked + 2, api.summaryCalls)
         }
 
     @Test

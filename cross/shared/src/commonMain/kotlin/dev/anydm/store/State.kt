@@ -40,6 +40,25 @@ fun ListFilter.matches(task: Task): Boolean =
         ListFilter.COMPLETED -> task.status == TaskStatus.COMPLETED
     }
 
+/** Which of the sidebar's counts a status falls in besides All, as the API groups them. */
+private fun countedAs(status: TaskStatus): String =
+    when (status) {
+        TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.DOWNLOADING, TaskStatus.MUXING -> "downloading"
+        TaskStatus.SEEDING -> "seeding"
+        TaskStatus.COMPLETED -> "completed"
+        TaskStatus.CANCELLED -> "gone"
+        else -> "all"
+    }
+
+/**
+ * Whether a row's new status moves the sidebar's counts (web: `countsMoved`). A row new
+ * to the list says nothing, and neither does a frame that changes nothing.
+ */
+fun countsMoved(
+    previous: TaskStatus?,
+    next: TaskStatus,
+): Boolean = previous != null && countedAs(previous) != countedAs(next)
+
 /** Whether live updates are arriving. `Offline` is a refused key: nothing retries until it's changed. */
 sealed interface Connection {
     data object Connecting : Connection
