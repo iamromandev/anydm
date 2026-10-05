@@ -46,10 +46,33 @@ export async function resolveTorrent(
     );
 }
 
-/** Start downloading the chosen files. An empty list means every file. */
+/**
+ * Start downloading the chosen files. An empty list means every file.
+ *
+ * Resolves to the download's id. A torrent already held is not added again:
+ * the API answers with the download that has it.
+ */
 export async function addTorrent(
     torrent: string,
     files: number[],
-): Promise<void> {
-    await postApi<unknown>("/download/torrent", { torrent, files });
+): Promise<string> {
+    const download = await postApi<{ id: string }>("/download/torrent", {
+        torrent,
+        files,
+    });
+    return download.id;
+}
+
+/**
+ * What to tell someone whose torrent was already in the list.
+ *
+ * `known` is the list's ids from before the request: a new download's own
+ * event can arrive before the answer, so checking the list afterwards would
+ * call every new torrent a repeat.
+ */
+export function heldTorrentNotice(
+    id: string,
+    known: ReadonlySet<string>,
+): string | null {
+    return known.has(id) ? "Already in your downloads" : null;
 }

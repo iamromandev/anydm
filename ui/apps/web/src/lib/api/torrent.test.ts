@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { normalizeResolvedTorrent } from "./torrent";
+import { heldTorrentNotice, normalizeResolvedTorrent } from "./torrent";
 
 describe("normalizeResolvedTorrent", () => {
     const raw = {
@@ -35,5 +35,32 @@ describe("normalizeResolvedTorrent", () => {
         expect(resolved.files).toEqual([]);
         expect(resolved.title).toBe("");
         expect(resolved.totalBytes).toBe(0);
+    });
+});
+
+describe("heldTorrentNotice", () => {
+    it("says so when the answer is a download the list already had", () => {
+        expect(
+            heldTorrentNotice(
+                "a",
+                new Set([
+                    "a",
+                    "b",
+                ]),
+            ),
+        ).toBe("Already in your downloads");
+    });
+
+    it("says nothing about a new download, whenever its own event arrived", () => {
+        // `known` is from before the request, so a new row merged meanwhile is not in it.
+        expect(
+            heldTorrentNotice(
+                "c",
+                new Set([
+                    "a",
+                    "b",
+                ]),
+            ),
+        ).toBeNull();
     });
 });

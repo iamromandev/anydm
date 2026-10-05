@@ -13,13 +13,14 @@ import { hasMediaExtension, mediaFiles } from "../media";
 
 export type TaskStatus =
     | "pending"
+    | "queued"
     | "downloading"
     | "muxing"
     | "paused"
     | "seeding"
-    | "complete"
+    | "completed"
     | "failed"
-    | "canceled";
+    | "cancelled";
 
 /** A download's `media_kind`, or `torrent` for its platform. `playlist` is a collection's own row. */
 export type TaskKind = "video" | "audio" | "file" | "torrent" | "playlist";
@@ -316,14 +317,17 @@ export type StatusView = {
 // A total map rather than a switch: adding a member to TaskStatus without a
 // label stops the typecheck, which a switch with no default never did.
 const STATUS_LABELS: Record<TaskStatus, string> = {
+    // The API reserves `queued` and sets `pending` today; to someone reading the
+    // list, both are waiting their turn.
     pending: "Queued",
+    queued: "Queued",
     downloading: "Downloading",
     muxing: "Processing",
     paused: "Paused",
     seeding: "Seeding",
-    complete: "Complete",
+    completed: "Completed",
     failed: "Failed",
-    canceled: "Canceled",
+    cancelled: "Cancelled",
 };
 
 /**
@@ -354,7 +358,10 @@ export function canResume(status: string): boolean {
 /** Still on its way to a file: what the Active filter and its count mean. */
 export function isActive(status: string): boolean {
     return (
-        status === "pending" || status === "downloading" || status === "muxing"
+        status === "pending" ||
+        status === "queued" ||
+        status === "downloading" ||
+        status === "muxing"
     );
 }
 
@@ -370,7 +377,7 @@ export function canStopSeeding(status: string): boolean {
 
 /** Done enough to hand over a file: a seeding torrent is finished, too. */
 function isFinished(status: string): boolean {
-    return status === "complete" || status === "seeding";
+    return status === "completed" || status === "seeding";
 }
 
 /**

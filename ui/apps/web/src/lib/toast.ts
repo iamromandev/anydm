@@ -85,7 +85,7 @@ export function transitionToast(
     if (previous === undefined || previous === task.status) return null;
 
     switch (task.status) {
-        case "complete":
+        case "completed":
             return { tone: "success", message: `Finished: ${task.title}` };
         case "seeding":
             return { tone: "info", message: `Seeding: ${task.title}` };

@@ -4,7 +4,7 @@ import { removePrompt } from "./prompt";
 
 describe("removePrompt", () => {
     it("offers to keep the files of a finished download", () => {
-        const prompt = removePrompt("complete");
+        const prompt = removePrompt("completed");
 
         expect(prompt.canKeepFiles).toBe(true);
         expect(prompt.confirmLabel).toBe("Remove");
@@ -56,6 +56,6 @@ describe("removePrompt for a group", () => {
         const prompt = removePrompt("downloading", 96);
         expect(prompt.heading).toBe("Remove 96 videos?");
         expect(prompt.canKeepFiles).toBe(true);
-        expect(removePrompt("complete", 1).heading).toBe("Remove 1 video?");
+        expect(removePrompt("completed", 1).heading).toBe("Remove 1 video?");
     });
 });

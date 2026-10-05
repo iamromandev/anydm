@@ -10,7 +10,7 @@ const task = (overrides: Partial<UiTask> = {}): UiTask => ({
     title: "clip",
     url: "https://example.com/clip.mp4",
     kind: "file",
-    status: "complete",
+    status: "completed",
     progress: 100,
     eta: 0,
     attempts: 0,

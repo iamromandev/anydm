@@ -90,7 +90,7 @@ export const TorrentList = component$<TorrentListProps>(
                 case "seeding":
                     return isSeeding(task.status);
                 case "completed":
-                    return task.status === "complete";
+                    return task.status === "completed";
                 case "all":
                 default:
                     return true;

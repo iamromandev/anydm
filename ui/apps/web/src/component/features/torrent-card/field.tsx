@@ -115,13 +115,14 @@ const PLATFORM_ICONS: Record<TaskKind, typeof LuMagnet> = {
 
 const STATUS_ICONS: Record<StatusView["key"], typeof LuMagnet> = {
     pending: LuCheckCircle,
+    queued: LuCheckCircle,
     downloading: LuLoader2,
     muxing: LuLoader2,
     paused: LuPause,
     seeding: LuUpload,
-    complete: LuCheckCircle,
+    completed: LuCheckCircle,
     failed: LuAlertTriangle,
-    canceled: LuXCircle,
+    cancelled: LuXCircle,
     unknown: LuXCircle,
 };
 

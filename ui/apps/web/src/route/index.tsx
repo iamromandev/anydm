@@ -3,6 +3,7 @@ import "../style/global.css";
 import { AppShell } from "@/component/layouts/app-shell";
 import {
     addTorrent,
+    heldTorrentNotice,
     apiUrl,
     deleteApi,
     appendPage,
@@ -377,6 +378,22 @@ export default component$(() => {
         );
     });
 
+    // Declared before the visible task that calls it: a `$` closure is captured
+    // where the task is declared, so one declared below it is not defined yet.
+    /** Search shows when the API has torrent sources or can search YouTube; a failure here just hides it. */
+    const refreshSearchAvailability = $(async () => {
+        try {
+            const sources = await searchSources();
+            store.searchTorrents = sources.enabled;
+            store.searchYoutube = sources.youtube;
+            store.searchEnabled = sources.enabled || sources.youtube;
+        } catch {
+            store.searchTorrents = false;
+            store.searchYoutube = false;
+            store.searchEnabled = false;
+        }
+    });
+
     useVisibleTask$(
         ({ cleanup }) => {
             // The remembered order, applied before the first fetch so the
@@ -606,20 +623,6 @@ export default component$(() => {
 
     const handleSearchChange = $((query: string) => {
         store.searchQuery = query;
-    });
-
-    /** Search shows when the API has torrent sources or can search YouTube; a failure here just hides it. */
-    const refreshSearchAvailability = $(async () => {
-        try {
-            const sources = await searchSources();
-            store.searchTorrents = sources.enabled;
-            store.searchYoutube = sources.youtube;
-            store.searchEnabled = sources.enabled || sources.youtube;
-        } catch {
-            store.searchTorrents = false;
-            store.searchYoutube = false;
-            store.searchEnabled = false;
-        }
     });
 
     const handleAddClick = $(() => {
@@ -1050,7 +1053,12 @@ export default component$(() => {
                         input.preset || store.prefs.defaultPreset,
                     );
                 } else {
-                    await addTorrent(input.value, input.files ?? []);
+                    const known = new Set(store.tasks.map((task) => task.id));
+                    const notice = heldTorrentNotice(
+                        await addTorrent(input.value, input.files ?? []),
+                        known,
+                    );
+                    if (notice) notify("info", notice);
                 }
             } catch (err) {
                 notify("error", errorMessage(err));
