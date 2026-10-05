@@ -3,6 +3,11 @@
 Rows are ``SimpleNamespace`` objects carrying every ``Download`` attribute and
 async ``save``/``refresh_from_db``/``fetch_related``; ``save`` records the
 fields it was asked to write in ``row.saved``.
+
+A row also carries what ``describe`` reads (``mirrors``, ``media``), derived
+from the older flat fields (``source_url``, ``platform``, ``provider``,
+``site_detail``) that services not yet moved onto ``describe`` still read; its
+``media`` is its ``site_detail``, one object, so a re-plan shows in both.
 """
 
 from __future__ import annotations
@@ -12,9 +17,13 @@ from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
+
+from tests.service.download.described_rows import a_mirror, a_torrent
+
+_KIND = {Platform.SITE: SourceKind.CONTENT, Platform.DIRECT: SourceKind.DIRECT, Platform.TORRENT: SourceKind.TORRENT}
 
 
 def _saving(row: SimpleNamespace) -> SimpleNamespace:
@@ -64,6 +73,19 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         site_detail=None,
     )
     fields.update(overrides)
+    torrents = [a_torrent(fields["ref_id"], fields["title"])] if fields["platform"] == Platform.TORRENT else []
+    fields.setdefault(
+        "mirrors", [a_mirror(fields["source_url"], _KIND[fields["platform"]], fields["provider"], torrents=torrents)]
+    )
+    media = fields["site_detail"]
+    if media is not None and "media" not in fields:
+        media.title, media.kind = fields["title"], fields["media_kind"]
+        media.playlist_index = getattr(media, "playlist_index", None)
+    fields.setdefault("media", media)
+    fields.setdefault("total_size", fields["total_bytes"])
+    fields.setdefault("downloaded_size", fields["downloaded_bytes"])
+    fields.setdefault("uploaded_size", fields["uploaded_bytes"])
+    fields.setdefault("speed_limit", fields["download_limit_bps"])
     return _saving(SimpleNamespace(**fields))
 
 
@@ -75,7 +97,14 @@ def site_detail(**overrides: Any) -> SimpleNamespace:
 
 def file_row(index: int = 0, path: str = "a.bin", **overrides: Any) -> SimpleNamespace:
     fields: dict[str, Any] = dict(
-        id=uuid.uuid4(), index=index, path=path, size=0, downloaded_bytes=0, selected=True, mime_type=None
+        id=uuid.uuid4(),
+        index=index,
+        path=path,
+        filename=path.rsplit("/", 1)[-1],
+        size=0,
+        downloaded_bytes=0,
+        selected=True,
+        mime_type=None,
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)

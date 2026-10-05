@@ -2,7 +2,6 @@
 
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,6 +15,7 @@ from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.live import LiveStats
 
+from tests.service.download.described_rows import a_site_row
 from tests.service.download.memory import RecordingHub, download_row, memory_views
 
 
@@ -44,9 +44,14 @@ class FakeCollections:
 
     async def create_with_entries(self, collection: dict[str, Any], entries: list[Any]) -> Any:
         self.created, self.entries = collection, list(entries)
-        fields = {name: value for name, value in collection.items() if name != "preset"}
-        self.collection = SimpleNamespace(
-            id=uuid.uuid4(), created_at=None, site_detail=SimpleNamespace(preset=collection["preset"]), **fields
+        self.collection = a_site_row(
+            collection["source_url"],
+            provider=collection["provider"],
+            title=collection["title"],
+            kind=collection["media_kind"],
+            preset=collection["preset"],
+            id=uuid.uuid4(),
+            created_at=None,
         )
         return self.collection
 
@@ -113,13 +118,13 @@ def service(repo: FakeCollections, root: Path) -> CollectionService:
 
 
 def held_collection(repo: FakeCollections, root: Path) -> Any:
-    repo.collection = SimpleNamespace(
-        id=uuid.uuid4(),
-        media_kind=MediaKind.PLAYLIST,
+    repo.collection = a_site_row(
+        "https://www.youtube.com/playlist?list=PL1",
         provider="Youtube",
-        ref_id="PL1",
         title="29C3: Not my department",
-        site_detail=SimpleNamespace(preset=Preset.P1080),
+        kind=MediaKind.PLAYLIST,
+        preset=Preset.P1080,
+        id=uuid.uuid4(),
         created_at=None,
     )
     (root / "29C3_ Not my department [PL1]").mkdir()

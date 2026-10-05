@@ -24,11 +24,6 @@ class PlaybackRequest(BaseSchema):
     duration_seconds: Annotated[float, Field(ge=0)]
 
 
-class FolderRef(BaseSchema):
-    id: uuid.UUID
-    name: str
-
-
 class LimitsSchema(BaseSchema):
     #: Null: the global limit alone.
     download_bps: int | None = None
@@ -76,11 +71,8 @@ class DownloadSchema(BaseSchema):
     title: str = ""
     status: DownloadStatus
     progress: int = 0
-    #: The key stays ``category``: the clients read it, and the contract is not part of this change.
-    category: FolderRef | None = None
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
-    start_at: datetime | None = None
     folder: str | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)
     total_size: int | None = None

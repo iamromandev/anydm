@@ -10,8 +10,9 @@ from tortoise.transactions import in_transaction
 
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, DownloadFile, PlaybackPosition, SiteDetail
+from src.data.db.model import Download, File, Media, PlaybackPosition
 from src.data.repo.download import transitions
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface.collection import CollectionRepo, EntryRow, MemberRow
 from src.data.repo.download.interface.download import RELATED
 from src.data.type import CONTAINER_KINDS, DownloadStatus
@@ -22,8 +23,10 @@ class CollectionDatabaseRepo(CollectionRepo):
 
     @staticmethod
     def _containers() -> Any:
-        """Containers not removed, with the ``SiteDetail`` that holds their quality ceiling."""
-        return Download.filter(media_kind__in=CONTAINER_KINDS, deleted_at__isnull=True).prefetch_related("site_detail")
+        """Containers not removed, with the ``Media`` that holds their kind and quality ceiling."""
+        return Download.filter(media__kind__in=list(CONTAINER_KINDS), deleted_at__isnull=True).prefetch_related(
+            *RELATED
+        )
 
     async def find(self, provider: str, ref_id: str) -> Download | None:
         return await self._containers().filter(provider=provider, ref_id=ref_id).first()
@@ -38,12 +41,12 @@ class CollectionDatabaseRepo(CollectionRepo):
         return [found[collection_id] for collection_id in ids if collection_id in found]
 
     async def create_with_entries(self, collection: dict[str, Any], entries: Sequence[EntryRow]) -> Download:
-        """``collection`` is the container's ``Download`` fields, and its ``preset``, which goes in its ``SiteDetail``."""
+        """``collection`` is the container's ``Download`` fields, and its ``preset``, which goes in its ``Media``."""
         fields = dict(collection)
         preset = fields.pop("preset")
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **fields)
-            await SiteDetail.create(using_db=conn, download_id=row.id, preset=preset)
+            await Media.create(using_db=conn, download_id=row.id, preset=preset)
             await self._insert(row.id, entries, conn)
         return await self._containers().get(id=row.id)
 
@@ -58,14 +61,14 @@ class CollectionDatabaseRepo(CollectionRepo):
             return
         downloads = [Download(**entry.download, parent_id=collection_id) for entry in entries]
         await Download.bulk_create(downloads, batch_size=500, using_db=conn)
-        await SiteDetail.bulk_create(
-            [SiteDetail(download_id=row.id, **entry.site) for row, entry in zip(downloads, entries, strict=True)],
+        await Media.bulk_create(
+            [Media(download_id=row.id, **entry.site) for row, entry in zip(downloads, entries, strict=True)],
             batch_size=500,
             using_db=conn,
         )
-        await DownloadFile.bulk_create(
+        await File.bulk_create(
             [
-                DownloadFile(download_id=row.id, index=0, path=entry.filename)
+                File(download_id=row.id, index=0, path=entry.filename)
                 for row, entry in zip(downloads, entries, strict=True)
             ],
             batch_size=500,
@@ -79,22 +82,21 @@ class CollectionDatabaseRepo(CollectionRepo):
     async def downloads_page(
         self, collection_id: uuid.UUID, page: int, page_size: int
     ) -> tuple[list[Download], Meta]:
-        query = self._members(collection_id).order_by("created_at")
+        # Listing order; created_at only breaks ties, and ties within one bulk insert.
+        query = self._members(collection_id).order_by("media__playlist_index", "created_at")
         total = await query.count()
         rows = await query.offset((page - 1) * page_size).limit(page_size).prefetch_related(*RELATED)
         meta = Meta(page=page, page_size=page_size, total=total, total_pages=max(1, math.ceil(total / page_size)))
         return rows, meta
 
     async def member_rows(self, collection_id: uuid.UUID) -> list[MemberRow]:
-        rows = await self._members(collection_id).values_list("id", "status", "downloaded_bytes", "total_bytes")
+        rows = await self._members(collection_id).values_list("id", "status", "downloaded_size", "total_size")
         return [(row_id, DownloadStatus(status), done, total) for row_id, status, done, total in rows]
 
     async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus]]:
-        rows = cast(
-            list[tuple[str, uuid.UUID, str]],
-            await self._members(collection_id).values_list("ref_id", "id", "status"),
-        )
-        return {video_id: (row_id, DownloadStatus(status)) for video_id, row_id, status in rows}
+        """Each member by its video's id, read off its address."""
+        rows = await self._members(collection_id).prefetch_related(*RELATED)
+        return {describe(row).ref: (row.id, row.status) for row in rows}
 
     async def pause(self, collection_id: uuid.UUID) -> list[uuid.UUID]:
         return await transitions.pause_rows(self._members(collection_id))

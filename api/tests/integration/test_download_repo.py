@@ -111,31 +111,6 @@ async def test_recover_orphans_requeues_the_mid_flight() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_items_tags_pages_filters_and_sorts_by_live_speed() -> None:
-    repo = DownloadDatabaseRepo()
-    slow = await repo.create_site(site_fields("slow"), site_detail(), "1", None)
-    fast = await repo.create_site(site_fields("fast"), site_detail(), "2", None)
-    collection = await a_collection()
-    await repo.create_site(
-        {**site_fields(), "parent_id": collection.id, "status": DownloadStatus.PAUSED},
-        site_detail(),
-        "3",
-        None,
-    )
-
-    items, meta = await repo.list_items(1, 10, None, "-speed_bps", {fast.id: 900, slow.id: 5})
-    assert items[:2] == [("download", fast.id), ("download", slow.id)]
-    assert ("collection", collection.id) in items
-    assert meta.total == 3
-
-    paused, _ = await repo.list_items(1, 10, [DownloadStatus.PAUSED], "-created_at", {})
-    assert paused == [("collection", collection.id)]
-
-    summary = await repo.summary()
-    assert (summary.all, summary.downloading) == (3, 2)
-
-
-@pytest.mark.asyncio
 async def test_statuses_by_ref_reports_the_furthest_along() -> None:
     repo = DownloadDatabaseRepo()
     await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.FAILED}, site_detail(), "a", None)

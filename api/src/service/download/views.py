@@ -1,8 +1,9 @@
 """Downloads as the API reports them, built in one place.
 
 Built field by field rather than with ``model_validate``: a download's schema
-reads five tables and the live registry, and a relation named like a schema
-field once broke every task's validation (see ``DownloadFile``).
+reads its row, what ``describe`` derives from its mirror, source and media, its
+files and the live registry, and a relation named like a schema field once
+broke every task's validation.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface import FileRepo, PositionRepo
 from src.data.schema.download import (
     DownloadFileSchema,
@@ -23,7 +25,6 @@ from src.data.schema.download import (
     TorrentInfoSchema,
 )
 from src.data.type import CONTAINER_KINDS, DownloadStatus, Platform
-from src.lib.identity import TORRENT_PROVIDER
 from src.service.download.live import Live, LiveStats
 from src.service.download.paths import collection_folder, standalone_folder
 
@@ -52,42 +53,42 @@ def download_schema(
     max_attempts: int,
     folder: str | None = None,
 ) -> DownloadSchema:
-    site = row.site_detail
+    described = describe(row, files)
+    media = described.media
     if folder is None and row.status == DownloadStatus.COMPLETED and row.parent_id is None:
-        if row.media_kind in CONTAINER_KINDS:
-            folder = collection_folder(row.title, row.ref_id)
-        elif row.platform != Platform.TORRENT:
+        if described.media_kind in CONTAINER_KINDS:
+            folder = collection_folder(described.title, described.ref)
+        elif described.platform != Platform.TORRENT:
             folder = standalone_folder(row.id)
         # Torrents resolve via their service, which knows the download root.
     return DownloadSchema(
         id=row.id,
-        source_url=row.source_url,
-        platform=row.platform,
-        media_kind=row.media_kind,
-        title=row.title,
+        source_url=described.source_url,
+        platform=described.platform,
+        media_kind=described.media_kind,
+        title=described.title,
         status=row.status,
-        progress=percent(row.downloaded_bytes, row.total_bytes),
+        progress=percent(row.downloaded_size, row.total_size),
         collection_id=row.parent_id,
-        start_at=row.start_at,
         folder=folder,
-        limits=LimitsSchema(download_bps=row.download_limit_bps),
+        limits=LimitsSchema(download_bps=row.speed_limit),
         total_size=row.total_size,
         downloaded_size=row.downloaded_size,
         live=LiveSchema(**asdict(live)),
         site=(
             SiteSchema(
-                extractor=row.provider,
-                video_id=row.ref_id,
-                preset=site.preset,
-                video_format=site.video_format,
-                audio_format=site.audio_format,
+                extractor=described.provider,
+                video_id=described.ref,
+                preset=media.preset,
+                video_format=media.video_format,
+                audio_format=media.audio_format,
             )
-            if site
+            if media is not None
             else None
         ),
         torrent=(
-            TorrentInfoSchema(info_hash=row.ref_id, uploaded_bytes=row.uploaded_bytes)
-            if row.provider == TORRENT_PROVIDER
+            TorrentInfoSchema(info_hash=described.info_hash, uploaded_bytes=row.uploaded_size)
+            if described.info_hash is not None
             else None
         ),
         files=[

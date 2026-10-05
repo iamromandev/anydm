@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, MemberRow
 from src.data.schema.download import CollectionCountsSchema, CollectionSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind
@@ -18,8 +19,8 @@ from src.lib.event import EventHub
 from src.service.download.live import LiveStats
 from src.service.download.paths import collection_folder
 
-#: Statuses that mean "still to do": queued or downloading.
-_ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
+#: Statuses that mean "still to do": waiting, queued or downloading.
+_ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
 
 
 def collection_status(statuses: Iterable[DownloadStatus]) -> DownloadStatus:
@@ -57,14 +58,15 @@ class CollectionTotals:
         counts = counts_of(rows)
         counts.watched = watched
         known = [total for _, _, _, total in rows if total is not None]
+        described = describe(collection)
         return CollectionSchema(
             id=collection.id,
-            kind=CollectionKind.CHANNEL if collection.media_kind == MediaKind.CHANNEL else CollectionKind.PLAYLIST,
-            extractor=collection.provider,
-            external_id=collection.ref_id,
-            title=collection.title,
-            folder=collection_folder(collection.title, collection.ref_id),
-            preset=collection.site_detail.preset,
+            kind=CollectionKind.CHANNEL if described.media_kind == MediaKind.CHANNEL else CollectionKind.PLAYLIST,
+            extractor=described.provider,
+            external_id=described.ref,
+            title=described.title,
+            folder=collection_folder(described.title, described.ref),
+            preset=described.media.preset,
             status=collection_status(row[1] for row in rows),
             # Videos done over videos: sizes aren't known until each starts.
             progress=counts.complete * 100 // counts.total if counts.total else 0,

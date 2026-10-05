@@ -29,7 +29,7 @@ from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
-from src.service.download.paths import collection_folder, remove_work_files, standalone_folder
+from src.service.download.paths import container_folder, remove_work_files, standalone_folder
 from src.service.download.torrent_service import TorrentService
 from src.service.download.views import DownloadViews
 
@@ -443,7 +443,7 @@ class DownloadService(BaseService):
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
                 return None
-            return collection_folder(collection.title, collection.ref_id)
+            return container_folder(collection)
         return standalone_folder(download.id)
 
     async def _disk_path(self, download: Any, filename: str) -> Path:
@@ -452,7 +452,7 @@ class DownloadService(BaseService):
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
                 raise Error.not_found(message="Collection not found")
-            return inside(self._root, collection_folder(collection.title, collection.ref_id)) / Path(filename).name
+            return inside(self._root, container_folder(collection)) / Path(filename).name
         return inside(self._root, standalone_folder(download.id)) / Path(filename).name
 
     async def _published(self, download: Any) -> DownloadSchema:
