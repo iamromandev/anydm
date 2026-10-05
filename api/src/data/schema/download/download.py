@@ -29,11 +29,6 @@ class FolderRef(BaseSchema):
     name: str
 
 
-class QueueRef(BaseSchema):
-    id: uuid.UUID
-    name: str
-
-
 class LimitsSchema(BaseSchema):
     #: Null: the global limit alone.
     download_bps: int | None = None
@@ -85,8 +80,6 @@ class DownloadSchema(BaseSchema):
     category: FolderRef | None = None
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
-    queue: QueueRef | None = None
-    queue_position: int = 0
     start_at: datetime | None = None
     folder: str | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)

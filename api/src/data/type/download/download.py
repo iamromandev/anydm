@@ -179,8 +179,7 @@ class CollectionKind(StrEnum):
     CHANNEL = "channel"
 
 
-#: The queue every download starts in, and the folder nothing else claims.
-MAIN_QUEUE = "Main"
+#: The folder nothing else claims.
 OTHER_FOLDER = "Other"
 
 #: Statuses that mean "a worker was mid-flight". Every row in one of these at

@@ -21,8 +21,6 @@ def row(**overrides: Any) -> SimpleNamespace:
         status=DownloadStatus.DOWNLOADING,
         folder=None,
         parent_id=None,
-        queue=SimpleNamespace(id=uuid.uuid4(), name="Main"),
-        queue_position=3,
         start_at=None,
         download_limit_bps=None,
         total_bytes=200,
@@ -64,7 +62,6 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
     assert schema.progress == 25
     assert schema.site is not None and schema.site.video_format == "137"
     assert schema.torrent is None
-    assert schema.queue is not None and schema.queue.name == "Main"
     assert schema.live.speed_bps == 7
     assert schema.files[0].playback is not None and schema.files[0].playback.position_seconds == 4.0
     assert schema.max_attempts == 3

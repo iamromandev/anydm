@@ -10,7 +10,7 @@ from tortoise.transactions import in_transaction
 
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, DownloadFile, PlaybackPosition, Queue, SiteDetail
+from src.data.db.model import Download, DownloadFile, PlaybackPosition, SiteDetail
 from src.data.repo.download import transitions
 from src.data.repo.download.interface.collection import CollectionRepo, EntryRow, MemberRow
 from src.data.repo.download.interface.download import RELATED
@@ -42,8 +42,7 @@ class CollectionDatabaseRepo(CollectionRepo):
         fields = dict(collection)
         preset = fields.pop("preset")
         async with in_transaction() as conn:
-            main = await Queue.get(is_default=True, using_db=conn)
-            row = await Download.create(using_db=conn, **{"queue_id": main.id, **fields})
+            row = await Download.create(using_db=conn, **fields)
             await SiteDetail.create(using_db=conn, download_id=row.id, preset=preset)
             await self._insert(row.id, entries, conn)
         return await self._containers().get(id=row.id)
@@ -57,16 +56,7 @@ class CollectionDatabaseRepo(CollectionRepo):
         """Three bulk inserts however long the listing: 5,000 videos must not be 15,000 statements."""
         if not entries:
             return
-        main = await Queue.get(is_default=True, using_db=conn)
-        start = await transitions.next_queue_position(main.id, conn)
-        downloads = [
-            Download(
-                **{"queue_id": main.id, **entry.download},
-                parent_id=collection_id,
-                queue_position=start + offset,
-            )
-            for offset, entry in enumerate(entries)
-        ]
+        downloads = [Download(**entry.download, parent_id=collection_id) for entry in entries]
         await Download.bulk_create(downloads, batch_size=500, using_db=conn)
         await SiteDetail.bulk_create(
             [SiteDetail(download_id=row.id, **entry.site) for row, entry in zip(downloads, entries, strict=True)],

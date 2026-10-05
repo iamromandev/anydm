@@ -3,7 +3,7 @@
 import uuid
 from typing import Any
 
-from src.data.db.model import Download, Queue
+from src.data.db.model import Download
 from src.data.type import DownloadStatus, MediaKind, Platform
 
 
@@ -15,7 +15,6 @@ async def a_download(**overrides: Any) -> Download:
         "platform": Platform.DIRECT,
         "media_kind": MediaKind.FILE,
         "status": DownloadStatus.PENDING,
-        "queue": await Queue.get(is_default=True),
     }
     fields.update(overrides)
     return await Download.create(**fields)

@@ -19,7 +19,6 @@ from src.data.schema.download import (
     LimitsSchema,
     LiveSchema,
     PlaybackSchema,
-    QueueRef,
     SiteSchema,
     TorrentInfoSchema,
 )
@@ -54,7 +53,6 @@ def download_schema(
     folder: str | None = None,
 ) -> DownloadSchema:
     site = row.site_detail
-    queue = row.queue
     if folder is None and row.status == DownloadStatus.COMPLETED and row.parent_id is None:
         if row.media_kind in CONTAINER_KINDS:
             folder = collection_folder(row.title, row.ref_id)
@@ -70,8 +68,6 @@ def download_schema(
         status=row.status,
         progress=percent(row.downloaded_bytes, row.total_bytes),
         collection_id=row.parent_id,
-        queue=QueueRef(id=queue.id, name=queue.name) if queue else None,
-        queue_position=row.queue_position,
         start_at=row.start_at,
         folder=folder,
         limits=LimitsSchema(download_bps=row.download_limit_bps),
