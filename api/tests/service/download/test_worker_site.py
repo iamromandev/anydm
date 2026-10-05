@@ -101,7 +101,7 @@ async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
     await _worker(tmp_path, files, client).run_task(row)
 
     assert client.resolved == [("https://youtu.be/dQw4w9WgXcQ", ["137", "140"])]
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / str(row.id) / (await _path(files, row))).is_file()
 
 
@@ -128,7 +128,7 @@ async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path)
     assert (await _path(files, row)).startswith("03_")
     assert row.site_detail.video_format
     assert row.title == site_info("vimeo").title
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_a_stale_format_is_re_planned_once(tmp_path: Path) -> None:
 
     assert row.site_detail.video_format != "http-9999p"
     assert client.opened == ["http://vimeo.com/75629013"]
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
 
 
 def _collection(tmp_path: Path) -> FakeCollections:
@@ -270,7 +270,7 @@ async def test_a_fragmented_part_goes_to_yt_dlp_with_the_page_and_its_format(tmp
     assert fragments.calls == [("https://www.dailymotion.com/video/x8", "hls-1080", "video.part")]
     assert engine.parts == []
     assert post.fragmented == frozenset({"video"})
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -372,7 +372,7 @@ async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: P
     await _subtitled_worker(tmp_path, files, server).run_task(row)
 
     folder = tmp_path / str(row.id)
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert sorted(p.name for p in folder.iterdir() if p.suffix != ".part") == [
         "Rick_1080p.en.auto.vtt",
         "Rick_1080p.en.vtt",
@@ -401,7 +401,7 @@ async def test_a_subtitle_that_fails_is_skipped_and_the_download_still_completes
 
     await _subtitled_worker(tmp_path, files, FakeSubtitleServer(failing={"https://yt.test/es.srt"})).run_task(row)
 
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert sorted(p.name for p in (tmp_path / str(row.id)).iterdir() if p.suffix != ".part") == [
         "Rick_1080p.en.auto.vtt",
         "Rick_1080p.en.vtt",
@@ -421,7 +421,7 @@ async def test_an_extraction_that_fails_leaves_the_download_complete(tmp_path: P
     w._client.extract = broken  # ty: ignore[invalid-assignment]
     await w.run_task(row)
 
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
 
 
 @pytest.mark.asyncio

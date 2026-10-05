@@ -104,7 +104,7 @@ def status_for(progress: TorrentProgress, current: DownloadStatus) -> DownloadSt
     never produces it, because a finished torrent that is still sharing is
     ``seeding``, which is not terminal.
     """
-    if current in (DownloadStatus.COMPLETE, DownloadStatus.CANCELED):
+    if current in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED):
         return current
     if progress.state == "error":
         return DownloadStatus.FAILED

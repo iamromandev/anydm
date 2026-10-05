@@ -31,14 +31,14 @@ def collection_status(statuses: Iterable[DownloadStatus]) -> DownloadStatus:
         return DownloadStatus.PAUSED
     if DownloadStatus.FAILED in seen:
         return DownloadStatus.FAILED
-    return DownloadStatus.COMPLETE
+    return DownloadStatus.COMPLETED
 
 
 def counts_of(rows: Sequence[MemberRow]) -> CollectionCountsSchema:
     statuses = [row[1] for row in rows]
     return CollectionCountsSchema(
         total=len(statuses),
-        complete=sum(s in (DownloadStatus.COMPLETE, DownloadStatus.SEEDING) for s in statuses),
+        complete=sum(s in (DownloadStatus.COMPLETED, DownloadStatus.SEEDING) for s in statuses),
         active=sum(s in _ACTIVE for s in statuses),
         downloading=sum(s in (DownloadStatus.DOWNLOADING, DownloadStatus.MUXING) for s in statuses),
         paused=statuses.count(DownloadStatus.PAUSED),

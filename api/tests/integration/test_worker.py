@@ -135,7 +135,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
 
     await row.refresh_from_db()
     assert (row.status, row.path, row.downloaded_bytes, row.total_bytes) == (
-        DownloadStatus.COMPLETE,
+        DownloadStatus.COMPLETED,
         str(row.id),
         500,
         500,
@@ -203,7 +203,7 @@ async def test_a_resumed_download_continues_from_the_partial_file(db: None, tmp_
     # transfer itself still resumes from the partial file rather than restarting.
     assert seen == ["bytes=0-0", "bytes=100-"]
     await row.refresh_from_db()
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / str(row.id) / "clip.mp4").read_bytes() == BODY
 
 
@@ -220,7 +220,7 @@ async def test_a_direct_download_fetches_from_its_source_url(db: None, tmp_path:
     # Every transfer is preceded by a one-byte range probe; both go to the source URL.
     assert requested == ["https://cdn.test/file.bin", "https://cdn.test/file.bin"]
     await row.refresh_from_db()
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
 
 
 BIG = bytes(range(256)) * 64  # 16384 bytes
@@ -252,7 +252,7 @@ async def test_a_segmented_download_records_its_plan_and_clears_it_when_done(db:
     await _run(tmp_path, DownloadControl(), httpx.MockTransport(_ranged()), segments=4)
 
     await row.refresh_from_db()
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / str(row.id) / "f.bin").read_bytes() == BIG
     # Transient state: gone once the file exists.
     assert await Segment.filter(download_id=row.id).count() == 0
@@ -301,7 +301,7 @@ async def test_an_interrupted_download_finishes_from_the_database_alone(db: None
     await _run(tmp_path, DownloadControl(), httpx.MockTransport(_ranged(seen=seen)), segments=4)
 
     await row.refresh_from_db()
-    assert row.status == DownloadStatus.COMPLETE
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / str(row.id) / "f.bin").read_bytes() == BIG
 
     # And it genuinely resumed: the bytes already on disk were not re-fetched.
@@ -388,7 +388,7 @@ async def test_cancelling_mid_download_leaves_no_files_behind(db: None, tmp_path
         claimed = await DownloadDatabaseRepo().claim_next()
         assert claimed is not None
         # Cancel wins the race: the row is CANCELED before the worker unwinds.
-        await Download.filter(id=claimed.id).update(status=DownloadStatus.CANCELED)
+        await Download.filter(id=claimed.id).update(status=DownloadStatus.CANCELLED)
         await _worker(tmp_path, control, client).run_task(claimed)
 
     assert not (tmp_path / str(row.id)).exists()

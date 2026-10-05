@@ -55,7 +55,7 @@ def download_schema(
 ) -> DownloadSchema:
     site = row.site_detail
     queue = row.queue
-    if folder is None and row.status == DownloadStatus.COMPLETE and row.parent_id is None:
+    if folder is None and row.status == DownloadStatus.COMPLETED and row.parent_id is None:
         if row.media_kind in CONTAINER_KINDS:
             folder = collection_folder(row.title, row.ref_id)
         elif row.platform != Platform.TORRENT:

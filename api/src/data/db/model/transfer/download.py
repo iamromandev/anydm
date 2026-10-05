@@ -4,16 +4,27 @@ from datetime import datetime
 from typing import ClassVar
 
 from tortoise import fields
+from tortoise.indexes import Index
 
-from src.core.base import LinkBase
+from src.core.base import Base
 from src.data.type import DownloadStatus, Folder
 
 
-class Download(LinkBase):
-    """One download, from the request that created it to the files it produced."""
+class Download(Base):
+    """One download, from the request that created it to the files it produced.
+
+    Removing one is a soft delete: ``status`` becomes ``CANCELLED`` and
+    ``deleted_at`` is set, and the row drops out of every list. Its title,
+    platform and media kind are not stored here; they come from what it was
+    added from (its source, its torrent, its site detail).
+
+    ``error``, ``error_code``, ``attempts`` and ``next_attempt_at`` are the
+    current retry state, which the worker and the list read. Each try via a
+    mirror is an ``Attempt``.
+    """
 
     folder: Folder = fields.CharEnumField(enum_type=Folder, default=Folder.DOWNLOADS)
-    status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING)
+    status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
     downloaded_size: int = fields.BigIntField(default=0)
     uploaded_size: int = fields.BigIntField(default=0)
@@ -21,6 +32,11 @@ class Download(LinkBase):
     speed_limit: int | None = fields.BigIntField(null=True)
     started_at: datetime | None = fields.DatetimeField(null=True)
     completed_at: datetime | None = fields.DatetimeField(null=True)
+    error: str | None = fields.TextField(null=True)
+    error_code: str | None = fields.CharField(max_length=64, null=True)
+    attempts: int = fields.IntField(default=0)
+    #: When a retryable failure may run again; the row waits in ``PENDING`` until then.
+    next_attempt_at: datetime | None = fields.DatetimeField(null=True)
 
     def __str__(self) -> str:
         return f"[Download: id {self.id}, status {self.status}]"
@@ -29,3 +45,6 @@ class Download(LinkBase):
         table: ClassVar[str] = "download"
         table_description: ClassVar[str] = "Download"
         schema: ClassVar[str] = "transfer"
+        indexes: ClassVar[tuple[Index, ...]] = (
+            Index(fields=["status", "created_at"], name="idx_download_status_created"),
+        )

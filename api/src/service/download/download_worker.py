@@ -164,7 +164,7 @@ class DownloadWorker:
             self._control.clear_stop(download.id)
             self._live.clear(download.id)
             await download.refresh_from_db()
-            if download.status == DownloadStatus.CANCELED:
+            if download.status == DownloadStatus.CANCELLED:
                 remove_work_files(self._root, download.id)
             await self._changed(download)
         except Error as error:
@@ -430,7 +430,7 @@ class DownloadWorker:
 
     async def _mark_complete(self, download: Any, destination: Path, folder: str | None = None) -> None:
         size = destination.stat().st_size
-        download.status = DownloadStatus.COMPLETE
+        download.status = DownloadStatus.COMPLETED
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
         download.downloaded_bytes = size

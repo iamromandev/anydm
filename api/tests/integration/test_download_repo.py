@@ -141,6 +141,6 @@ async def test_list_items_tags_pages_filters_and_sorts_by_live_speed() -> None:
 async def test_statuses_by_ref_reports_the_furthest_along() -> None:
     repo = DownloadDatabaseRepo()
     await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.FAILED}, site_detail(), "a", None)
-    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.COMPLETE}, site_detail(), "b", None)
-    assert await repo.statuses_by_ref("Youtube", ["v", "none"]) == {"v": DownloadStatus.COMPLETE}
+    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.COMPLETED}, site_detail(), "b", None)
+    assert await repo.statuses_by_ref("Youtube", ["v", "none"]) == {"v": DownloadStatus.COMPLETED}
     assert await repo.statuses_by_ref("Vimeo", ["v"]) == {}  # another provider's id is another video

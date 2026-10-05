@@ -202,7 +202,7 @@ class TorrentService(BaseService):
             raise Error.conflict(message=f"Download is {download.status.value}, not seeding")
 
         await self._client.pause(self._hash(download))
-        download.status = DownloadStatus.COMPLETE
+        download.status = DownloadStatus.COMPLETED
         await download.save(update_fields=["status"])
         self._live.clear(download.id)
         return await self._published(download)
@@ -224,7 +224,7 @@ class TorrentService(BaseService):
         except Error as error:
             logger.warning("{}|engine delete failed for {}: {}", self._tag, download.id, error.message)
 
-        download.status = DownloadStatus.CANCELED
+        download.status = DownloadStatus.CANCELLED
         download.deleted_at = now()
         await download.save(update_fields=["status", "deleted_at"])
         self._live.clear(download.id)
@@ -245,7 +245,7 @@ class TorrentService(BaseService):
         will exist, just not yet, and a polling client has to tell "wait" from "never".
         """
         download = await self._require(download_id)
-        if download.status not in (DownloadStatus.SEEDING, DownloadStatus.COMPLETE):
+        if download.status not in (DownloadStatus.SEEDING, DownloadStatus.COMPLETED):
             raise Error.conflict(message=f"Download is {download.status.value}, not complete")
 
         row = await self._file_repo.get(download_id, index)

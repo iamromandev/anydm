@@ -164,11 +164,11 @@ def test_status_for(state: str, finished: bool, expected: DownloadStatus) -> Non
 
 def test_a_stopped_seed_stays_complete() -> None:
     """Stopping seeding pauses the engine. That pause must not un-complete the row."""
-    assert status_for(_progress("paused", finished=True), DownloadStatus.COMPLETE) == DownloadStatus.COMPLETE
+    assert status_for(_progress("paused", finished=True), DownloadStatus.COMPLETED) == DownloadStatus.COMPLETED
 
 
 def test_a_canceled_row_is_never_revived() -> None:
-    assert status_for(_progress("live"), DownloadStatus.CANCELED) == DownloadStatus.CANCELED
+    assert status_for(_progress("live"), DownloadStatus.CANCELLED) == DownloadStatus.CANCELLED
 
 
 def test_a_failed_torrent_recovers_when_the_engine_does() -> None:

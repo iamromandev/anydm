@@ -87,7 +87,7 @@ async def test_the_last_page_of_videos_is_as_quick_as_the_first(db: None) -> Non
 
 async def test_the_totals_count_five_thousand_videos(db: None) -> None:
     collection = await _big_collection()
-    await Download.filter(parent_id=collection.id, position__lte=1_000).update(status=DownloadStatus.COMPLETE)
+    await Download.filter(parent_id=collection.id, position__lte=1_000).update(status=DownloadStatus.COMPLETED)
 
     started = time.monotonic()
     counts = counts_of(await CollectionDatabaseRepo().member_rows(collection.id))

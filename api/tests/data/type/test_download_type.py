@@ -27,11 +27,22 @@ def test_segment_parts_are_the_workers_part_names() -> None:
 
 
 def test_status_members() -> None:
-    assert [s.value for s in DownloadStatus] == ["pending", "queued", "downloading", "paused", "completed", "failed", "cancelled"]
+    # SEEDING and MUXING are back (#460); QUEUED stays for named queues (#234).
+    assert [s.value for s in DownloadStatus] == [
+        "pending",
+        "queued",
+        "downloading",
+        "muxing",
+        "paused",
+        "seeding",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
 
 
 def test_active_statuses_are_a_worker_mid_flight() -> None:
-    assert {DownloadStatus.DOWNLOADING} == ACTIVE_STATUSES
+    assert {DownloadStatus.DOWNLOADING, DownloadStatus.MUXING} == ACTIVE_STATUSES
 
 
 def test_groups() -> None:
@@ -39,7 +50,9 @@ def test_groups() -> None:
         DownloadStatus.PENDING,
         DownloadStatus.QUEUED,
         DownloadStatus.DOWNLOADING,
+        DownloadStatus.MUXING,
     }
+    assert DOWNLOAD_GROUPS["seeding"] == {DownloadStatus.SEEDING}
     assert DOWNLOAD_GROUPS["completed"] == {DownloadStatus.COMPLETED}
 
 

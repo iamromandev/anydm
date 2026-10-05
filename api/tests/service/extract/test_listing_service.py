@@ -76,7 +76,7 @@ async def test_the_limit_reaches_the_client() -> None:
 async def test_have_says_what_is_already_held() -> None:
     held = HeldVideos(
         {
-            ("Youtube", "v1"): DownloadStatus.COMPLETE,
+            ("Youtube", "v1"): DownloadStatus.COMPLETED,
             ("Youtube", "v2"): DownloadStatus.PAUSED,
             ("Youtube", "v3"): DownloadStatus.FAILED,
         }

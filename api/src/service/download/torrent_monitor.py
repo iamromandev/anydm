@@ -187,7 +187,7 @@ class TorrentMonitor:
         }
         if status == DownloadStatus.FAILED and sample.error:
             fields["error"] = sample.error
-        if status in (DownloadStatus.SEEDING, DownloadStatus.COMPLETE) and row.completed_at is None:
+        if status in (DownloadStatus.SEEDING, DownloadStatus.COMPLETED) and row.completed_at is None:
             fields["completed_at"] = now()
 
         # Only what moved is written. The frame below goes out every tick

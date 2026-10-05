@@ -121,7 +121,7 @@ async def test_completing_a_collection_video_moves_it_and_records_the_folder(tmp
 
     assert (tmp_path / "Talks [PL]" / "01_Talk.mp4").read_bytes() == b"12345"
     assert not work.exists()
-    assert (row.status, row.total_bytes) == (DownloadStatus.COMPLETE, 5)
+    assert (row.status, row.total_bytes) == (DownloadStatus.COMPLETED, 5)
     assert not hasattr(row, "path")
     single = await files.single(row.id)
     assert single is not None and (single.path, single.size_bytes) == ("01_Talk.mp4", 5)

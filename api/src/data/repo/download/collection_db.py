@@ -115,7 +115,7 @@ class CollectionDatabaseRepo(CollectionRepo):
     async def remove(self, collection_id: uuid.UUID) -> list[uuid.UUID]:
         members = self._members(collection_id)
         ids = await transitions.ids_of(members, "id")
-        await members.update(status=DownloadStatus.CANCELED, deleted_at=now())
+        await members.update(status=DownloadStatus.CANCELLED, deleted_at=now())
         return ids
 
     @staticmethod
