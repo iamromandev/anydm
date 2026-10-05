@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -204,6 +204,17 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         return await Download.filter(_not_torrent(), status__in=list(ACTIVE_STATUSES), deleted_at__isnull=True).update(
             status=DownloadStatus.PENDING
         )
+
+    async def end_try(
+        self,
+        download_id: uuid.UUID,
+        fields: Mapping[str, Any],
+        *,
+        over: Collection[DownloadStatus] = ACTIVE_STATUSES,
+    ) -> bool:
+        # One conditional UPDATE: nothing can land between a read and the write.
+        written = await Download.filter(id=download_id, status__in=list(over), deleted_at__isnull=True).update(**fields)
+        return written > 0
 
     async def flush_progress(self, download_id: uuid.UUID, *, downloaded_size: int, total_size: int | None) -> None:
         await Download.filter(id=download_id).update(downloaded_size=downloaded_size, total_size=total_size)

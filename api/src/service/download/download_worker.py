@@ -21,7 +21,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import AttemptRepo, CollectionRepo, DownloadRepo, FileRepo, Opened, SegmentRepo
-from src.data.type import AttemptStatus, DownloadStatus, MediaKind, MirrorStatus, Platform, SegmentPart
+from src.data.type import ACTIVE_STATUSES, AttemptStatus, DownloadStatus, MediaKind, MirrorStatus, Platform, SegmentPart
 from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
@@ -172,7 +172,11 @@ class DownloadWorker:
             destination = final_path(self._root, download.id, file.path if file else "download")
             await self._post_processor.run(download, parts, destination, fragmented=fragmented)
             destination, folder = await self._into_folder(download, destination)
-            await self._mark_complete(download, destination, folder)
+            if not await self._mark_complete(download, destination, folder):
+                # Removed while it finished: the finished file goes with the rest.
+                destination.unlink(missing_ok=True)
+                await self._yielded(download, opened, counted=True)
+                return
             await self._attempts.close(opened, AttemptStatus.COMPLETED)
             await self._save_subtitles(download, opened.url, destination)
         except Stopped:
@@ -454,19 +458,22 @@ class DownloadWorker:
         if saved:
             logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), download.id)
 
-    async def _mark_complete(self, download: Any, destination: Path, folder: str | None = None) -> None:
+    async def _mark_complete(self, download: Any, destination: Path, folder: str | None = None) -> bool:
+        """Record the finished file. False when the download was removed while it finished."""
         size = destination.stat().st_size
-        download.status = DownloadStatus.COMPLETED
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
-        download.downloaded_size = size
-        download.total_size = size
-        download.completed_at = now()
-        download.error = None
-        download.error_code = None
-        await download.save(
-            update_fields=["status", "downloaded_size", "total_size", "completed_at", "error", "error_code"]
-        )
+        fields = {
+            "status": DownloadStatus.COMPLETED,
+            "downloaded_size": size,
+            "total_size": size,
+            "completed_at": now(),
+            "error": None,
+            "error_code": None,
+        }
+        # A pause that landed as the last bytes did loses to them: the file is whole.
+        if not await self._ended(download, fields, over=ACTIVE_STATUSES | {DownloadStatus.PAUSED}):
+            return False
         await self._files.finish_single(download.id, path=destination.name, size_bytes=size)
         self._live.clear(download.id)
         # Transient state: the file exists now, so the plan that built it is
@@ -476,6 +483,7 @@ class DownloadWorker:
         await self._segment_repo.clear(download.id)
         await self._changed(download, folder=folder)
         logger.success("{}|completed {} -> {}/{}", self._name, download.id, folder or download.id, destination.name)
+        return True
 
     async def _wait_for_space(
         self, download: Any, error: Error, *, refund: bool = False, opened: Opened | None = None
@@ -487,16 +495,19 @@ class DownloadWorker:
         ``refund`` hands back the attempt ``run_task`` counted, when the check
         tripped after it.
         """
-        if refund:
-            download.attempts = max(0, download.attempts - 1)
+        fields = {
+            "status": DownloadStatus.PENDING,
+            "error": error.message,
+            "error_code": error.type.value if error.type else None,
+            "next_attempt_at": now() + timedelta(seconds=_SPACE_RECHECK_SECONDS),
+            "attempts": max(0, download.attempts - 1) if refund else download.attempts,
+        }
+        if not await self._ended(download, fields):
+            await self._yielded(download, opened, counted=refund)
+            return
         if opened is not None:
             # Not the source's doing: the try ends without counting against its mirror.
             await self._attempts.close(opened, AttemptStatus.CANCELLED)
-        download.status = DownloadStatus.PENDING
-        download.error = error.message
-        download.error_code = error.type.value if error.type else None
-        download.next_attempt_at = now() + timedelta(seconds=_SPACE_RECHECK_SECONDS)
-        await download.save(update_fields=["status", "error", "error_code", "next_attempt_at", "attempts"])
         logger.warning("{}|waiting for disk space for {}: {}", self._name, download.id, error.message)
         self._live.clear(download.id)
         await self._changed(download)
@@ -504,15 +515,34 @@ class DownloadWorker:
     async def _mark_failed(self, download: Any, error: Error, opened: Opened | None) -> None:
         """Retry on the same mirror while the policy allows; then fail over to the next one, or fail for good."""
         decision = retry_policy.decide(error, attempts=download.attempts, max_attempts=self._max_attempts)
-        download.error = error.message
-        download.error_code = error.type.value if error.type else None
+        spent = MirrorStatus.EXHAUSTED if download.attempts >= self._max_attempts else MirrorStatus.FAILED
+        # Asked, not acted on: the mirror is retired only once this outcome is written.
+        failover = not decision.retry and opened is not None and await self._attempts.spare(opened)
+        fields: dict[str, Any] = {
+            "error": error.message,
+            "error_code": error.type.value if error.type else None,
+            "attempts": download.attempts,
+        }
+        if decision.retry:
+            fields |= {
+                "status": DownloadStatus.PENDING,
+                "next_attempt_at": now() + timedelta(seconds=decision.delay_seconds),
+            }
+        elif failover:
+            # This mirror is spent and another is left: start over on it, with a
+            # fresh retry budget, since its failures were the other source's.
+            fields |= {"status": DownloadStatus.PENDING, "attempts": 0, "next_attempt_at": None}
+        else:
+            fields |= {"status": DownloadStatus.FAILED, "next_attempt_at": None}
+        if not await self._ended(download, fields):
+            await self._yielded(download, opened, counted=True)
+            return
         if opened is not None:
             await self._attempts.close(opened, AttemptStatus.FAILED)
-        spent = MirrorStatus.EXHAUSTED if download.attempts >= self._max_attempts else MirrorStatus.FAILED
+            if not decision.retry:
+                await self._attempts.retire(opened, spent)
 
         if decision.retry:
-            download.status = DownloadStatus.PENDING
-            download.next_attempt_at = now() + timedelta(seconds=decision.delay_seconds)
             logger.warning(
                 "{}|retrying {} in {}s (attempt {}): {}",
                 self._name,
@@ -521,20 +551,41 @@ class DownloadWorker:
                 download.attempts,
                 error.message,
             )
-        elif opened is not None and await self._attempts.retire(opened, spent):
-            # This mirror is spent and another is left: start over on it, with a
-            # fresh retry budget, since its failures were the other source's.
-            download.status = DownloadStatus.PENDING
-            download.attempts = 0
-            download.next_attempt_at = None
+        elif failover:
             logger.warning("{}|failing over {} to its next mirror: {}", self._name, download.id, error.message)
         else:
-            download.status = DownloadStatus.FAILED
-            download.next_attempt_at = None
             logger.error("{}|failed {}: {}", self._name, download.id, error.message)
-
-        await download.save(update_fields=["status", "error", "error_code", "next_attempt_at", "attempts"])
         self._live.clear(download.id)
+        await self._changed(download)
+
+    async def _ended(
+        self, download: Any, fields: dict[str, Any], *, over: frozenset[DownloadStatus] = ACTIVE_STATUSES
+    ) -> bool:
+        """Write how the try ended onto the row and onto ``download``, unless a person got there first."""
+        if not await self._repo.end_try(download.id, fields, over=over):
+            return False
+        for name, value in fields.items():
+            setattr(download, name, value)
+        return True
+
+    async def _yielded(self, download: Any, opened: Opened | None, *, counted: bool) -> None:
+        """The person paused or removed the download while its try ran, and their status stands.
+
+        The try closes as cancelled, as a clean stop would close it, and costs
+        neither its mirror nor the retry budget: the person ended it, not the source.
+        """
+        logger.info("{}|{} was paused or removed during its try; leaving it as it is", self._name, download.id)
+        if opened is not None:
+            await self._attempts.close(opened, AttemptStatus.CANCELLED)
+        self._control.clear_stop(download.id)
+        self._live.clear(download.id)
+        # Read first: a resume since then has already reset the count.
+        await download.refresh_from_db()
+        if counted and download.attempts > 0:
+            download.attempts -= 1
+            await download.save(update_fields=["attempts"])
+        if download.status == DownloadStatus.CANCELLED or download.deleted_at is not None:
+            remove_work_files(self._root, download.id)
         await self._changed(download)
 
 

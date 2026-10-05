@@ -161,3 +161,25 @@ async def test_recover_orphans_requeues_the_mid_flight() -> None:
     assert await repo.recover_orphans() == 1
     recovered = await repo.get_active_by_id(row.id)
     assert recovered is not None and recovered.status == DownloadStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_a_try_s_outcome_is_written_only_over_a_row_still_in_the_worker_s_hands() -> None:
+    repo = DownloadDatabaseRepo()
+    running = await add_site(repo, status=DownloadStatus.DOWNLOADING)
+    paused = await add_site(repo, status=DownloadStatus.PAUSED)
+    removed = await add_site(repo, status=DownloadStatus.DOWNLOADING)
+    await Download.filter(id=removed.id).update(deleted_at=now())
+    failed = {"status": DownloadStatus.PENDING, "error": "refused", "attempts": 1}
+
+    assert await repo.end_try(running.id, failed) is True
+    assert await repo.end_try(paused.id, failed) is False
+    assert await repo.end_try(removed.id, failed) is False
+
+    rows = {row.id: row for row in await Download.filter(id__in=[running.id, paused.id, removed.id])}
+    assert (rows[running.id].status, rows[running.id].error) == (DownloadStatus.PENDING, "refused")
+    assert (rows[paused.id].status, rows[paused.id].error) == (DownloadStatus.PAUSED, None)
+    assert rows[removed.id].status == DownloadStatus.DOWNLOADING
+    # Completion may also land over a pause: the file is whole.
+    done = {"status": DownloadStatus.COMPLETED}
+    assert await repo.end_try(paused.id, done, over={DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED}) is True

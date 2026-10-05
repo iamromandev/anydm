@@ -13,7 +13,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.paths import part_path
 
 from tests.service.download.memory import MemoryFiles, RecordingHub
-from tests.service.download.workers import direct_row, worker
+from tests.service.download.workers import FlushRecordingRepo, direct_row, worker
 
 GIB = 1024**3
 _Usage = namedtuple("_Usage", ["total", "used", "free"])
@@ -99,3 +99,30 @@ async def test_other_write_errors_still_fail_the_download(tmp_path: Path) -> Non
     assert row.status == DownloadStatus.FAILED
     assert row.error_code == "server_error"
     assert row.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_a_download_paused_as_the_disk_fills_stays_paused_and_keeps_the_part(tmp_path: Path) -> None:
+    files = MemoryFiles()
+    engine = FakeEngine(total=GIB, fail=OSError(errno.ENOSPC, "No space left on device"))
+    row = await direct_row(files, status=DownloadStatus.PAUSED)
+    repo = FlushRecordingRepo(person_got_there_first=True)
+
+    await worker(
+        tmp_path, files=files, repo=repo, disk=_disk(free=10 * GIB), engine=engine, hub=RecordingHub()
+    ).run_task(row)
+
+    assert (row.status, row.next_attempt_at, row.error, row.attempts) == (DownloadStatus.PAUSED, None, None, 0)
+    assert part_path(tmp_path, row.id, "file").stat().st_size == 10
+
+
+@pytest.mark.asyncio
+async def test_a_download_removed_as_it_finishes_leaves_no_file_behind(tmp_path: Path) -> None:
+    files = MemoryFiles()
+    row = await direct_row(files, status=DownloadStatus.CANCELLED, deleted_at=now())
+    repo = FlushRecordingRepo(person_got_there_first=True)
+
+    await worker(tmp_path, files=files, repo=repo, engine=FakeEngine(total=10), hub=RecordingHub()).run_task(row)
+
+    assert row.status == DownloadStatus.CANCELLED
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []

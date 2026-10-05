@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from abc import abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from tortoise.expressions import Q
@@ -12,7 +12,7 @@ from src.core.success import Meta
 from src.data.db.model import Download
 from src.data.repo.download.interface.file import FileRow
 from src.data.schema.transfer import DownloadSummarySchema
-from src.data.type import CONTAINER_KINDS, DownloadStatus
+from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DownloadStatus
 
 #: Not a playlist or channel container: a download with no media, or media of another kind.
 NOT_CONTAINER = Q(media__id__isnull=True) | Q(media__kind__not_in=list(CONTAINER_KINDS))
@@ -75,6 +75,21 @@ class DownloadRepo(CrudRepo[Download]):
     @abstractmethod
     async def recover_orphans(self) -> int:
         """Requeue every HTTP download left mid-flight by a dead process. Returns the count."""
+        ...
+
+    @abstractmethod
+    async def end_try(
+        self,
+        download_id: uuid.UUID,
+        fields: Mapping[str, Any],
+        *,
+        over: Collection[DownloadStatus] = ACTIVE_STATUSES,
+    ) -> bool:
+        """Write how a worker's try ended, only over a row still in ``over`` and not removed.
+
+        A person's pause or remove made while the try ran stands: the try's
+        outcome is not theirs to overwrite. True when it wrote.
+        """
         ...
 
     @abstractmethod

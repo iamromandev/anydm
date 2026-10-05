@@ -38,6 +38,11 @@ class AttemptRepo(ABC):
         ...
 
     @abstractmethod
-    async def retire(self, opened: Opened, status: MirrorStatus) -> bool:
-        """Mark the try's mirror ``failed`` or ``exhausted``. True when the download has another usable mirror."""
+    async def spare(self, opened: Opened) -> bool:
+        """Whether the download has a usable mirror besides the try's."""
+        ...
+
+    @abstractmethod
+    async def retire(self, opened: Opened, status: MirrorStatus) -> None:
+        """Mark the try's mirror ``failed`` or ``exhausted``."""
         ...
