@@ -76,9 +76,9 @@ async def test_the_limit_reaches_the_client() -> None:
 async def test_have_says_what_is_already_held() -> None:
     held = HeldVideos(
         {
-            ("Youtube", "v1"): DownloadStatus.COMPLETED,
-            ("Youtube", "v2"): DownloadStatus.PAUSED,
-            ("Youtube", "v3"): DownloadStatus.FAILED,
+            "https://youtu.be/v1": DownloadStatus.COMPLETED,
+            "https://youtu.be/v2": DownloadStatus.PAUSED,
+            "https://youtu.be/v3": DownloadStatus.FAILED,
         }
     )
     client = FakeSiteClient(site_info("youtube"), listing=[_entry(n) for n in range(1, 5)])

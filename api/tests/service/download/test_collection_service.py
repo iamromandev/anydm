@@ -34,7 +34,7 @@ class FakeCollections:
         self.page: list[Any] = []
         self.deleted = False
 
-    async def find(self, provider: str, ref_id: str) -> Any:
+    async def find(self, url: str) -> Any:
         return self.collection
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
@@ -42,20 +42,21 @@ class FakeCollections:
             return None
         return self.collection
 
-    async def create_with_entries(self, collection: dict[str, Any], entries: list[Any]) -> Any:
-        self.created, self.entries = collection, list(entries)
+    async def create_with_entries(self, **created: Any) -> Any:
+        self.created, self.entries = created, list(created["entries"])
+        media = created["media"]
         self.collection = a_site_row(
-            collection["source_url"],
-            provider=collection["provider"],
-            title=collection["title"],
-            kind=collection["media_kind"],
-            preset=collection["preset"],
+            created["url"],
+            provider=created["provider"],
+            title=media["title"],
+            kind=media["kind"],
+            preset=media["preset"],
             id=uuid.uuid4(),
             created_at=None,
         )
         return self.collection
 
-    async def add_entries(self, collection: Any, entries: list[Any]) -> None:
+    async def add_entries(self, collection: Any, provider: str, entries: list[Any]) -> None:
         self.added += entries
 
     async def held(self, collection_id: uuid.UUID) -> dict[str, tuple[uuid.UUID, DownloadStatus]]:
@@ -138,18 +139,17 @@ async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp
     schema = await service(repo, tmp_path).add(request(12))
 
     assert repo.created is not None
-    assert (repo.created["media_kind"], repo.created["provider"], repo.created["ref_id"]) == (
+    assert (repo.created["media"]["kind"], repo.created["provider"], repo.created["url"]) == (
         MediaKind.PLAYLIST,
         "Youtube",
-        "PL1",
+        "https://www.youtube.com/playlist?list=PL1",
     )
-    assert "path" not in repo.created  # the folder is derived, never stored
+    assert repo.created["collection"] == {"status": DownloadStatus.PENDING}  # the folder is derived, never stored
     assert schema.folder == "29C3_ Not my department [PL1]"
     assert (tmp_path / "29C3_ Not my department [PL1]").is_dir()
     first = repo.entries[0]
-    assert (first.download["media_kind"], first.download["title"]) == (MediaKind.VIDEO, "Talk 1")
-    assert first.site == {"preset": Preset.P1080}
-    assert (first.download["provider"], first.download["ref_id"]) == ("Youtube", "v1")
+    assert first.url == "https://youtu.be/v1"
+    assert first.media == {"title": "Talk 1", "kind": MediaKind.VIDEO, "preset": Preset.P1080, "playlist_index": 1}
     assert [e.filename for e in repo.entries[:2]] == ["01_", "02_"]
     assert schema.type == "collection"
     assert schema.counts.total == 12
@@ -161,7 +161,7 @@ async def test_a_channel_tab_is_a_channel_and_is_not_numbered(tmp_path: Path) ->
 
     await service(repo, tmp_path).add(request(2, channel_tab=True))
 
-    assert repo.created is not None and repo.created["media_kind"] == MediaKind.CHANNEL
+    assert repo.created is not None and repo.created["media"]["kind"] == MediaKind.CHANNEL
     assert repo.entries[0].filename == ""
 
 
@@ -171,7 +171,7 @@ async def test_mp3_videos_are_audio(tmp_path: Path) -> None:
 
     await service(repo, tmp_path).add(request(1, preset=Preset.MP3))
 
-    assert repo.entries[0].download["media_kind"] == MediaKind.AUDIO
+    assert repo.entries[0].media["kind"] == MediaKind.AUDIO
 
 
 @pytest.mark.asyncio
@@ -198,7 +198,7 @@ async def test_adding_a_list_again_joins_its_collection(tmp_path: Path) -> None:
 
     assert joined.id == collection.id
     assert repo.created is None  # no second collection
-    assert [(e.download["ref_id"], e.filename) for e in repo.added] == [
+    assert [(e.url.rsplit("/", 1)[-1], e.filename) for e in repo.added] == [
         ("v3", "03_"),
         ("v4", "04_"),
     ]
@@ -213,7 +213,7 @@ async def test_joining_numbers_by_arrival(tmp_path: Path) -> None:
 
     await service(repo, tmp_path).add(request(3, channel_tab=True))
 
-    assert [(e.download["ref_id"], e.filename) for e in repo.added] == [
+    assert [(e.url.rsplit("/", 1)[-1], e.filename) for e in repo.added] == [
         ("v1", ""),
         ("v2", ""),
     ]
@@ -320,3 +320,17 @@ async def test_removing_a_collection_can_keep_what_finished_even_mid_download(tm
 
     assert (tmp_path / "29C3_ Not my department [PL1]" / "01_done.mp4").exists()
     assert repo.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_channel_tab_s_folder_is_the_one_every_read_names(tmp_path: Path) -> None:
+    """The listing gives a tab its channel's UC id; its address gives its handle, which reads use."""
+    repo = FakeCollections()
+    tab = request(1, channel_tab=True).model_copy(
+        update={"url": "https://www.youtube.com/@TED/videos", "external_id": "UCAuUUnT6oDeKwE6v1NGQxug", "title": "TED"}
+    )
+
+    schema = await service(repo, tmp_path).add(tab)
+
+    assert schema.folder == "TED [@TED]"
+    assert (tmp_path / schema.folder).is_dir()

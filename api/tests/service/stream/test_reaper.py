@@ -38,8 +38,8 @@ class _FakeDownloads:
     def __init__(self, owned_hashes: set[str]) -> None:
         self._owned_hashes = owned_hashes
 
-    async def by_ref(self, provider: str, ref_id: str) -> object | None:
-        return object() if ref_id in self._owned_hashes else None
+    async def by_info_hash(self, info_hash: str) -> object | None:
+        return object() if info_hash in self._owned_hashes else None
 
 
 @pytest.mark.asyncio

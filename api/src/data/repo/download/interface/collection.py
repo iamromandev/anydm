@@ -10,7 +10,7 @@ from src.core.success import Meta
 from src.data.db.model import Download
 from src.data.type import DownloadStatus
 
-#: ``(download id, status, downloaded_bytes, total_bytes)`` of one member.
+#: ``(download id, status, downloaded_size, total_size)`` of one member.
 MemberRow = tuple[uuid.UUID, DownloadStatus, int, int | None]
 
 
@@ -18,15 +18,19 @@ MemberRow = tuple[uuid.UUID, DownloadStatus, int, int | None]
 class EntryRow:
     """One video of a collection, unplanned: its formats and name are chosen when it starts."""
 
+    #: Its page, as the listing gives it: the address it is added, and found again, by.
+    url: str
+    #: Its ``Download`` fields.
     download: dict[str, Any]
-    site: dict[str, Any]
+    #: Its ``Media`` fields: title, kind, preset and its place in the listing.
+    media: dict[str, Any]
     filename: str
 
 
 class CollectionRepo(ABC):
     @abstractmethod
-    async def find(self, provider: str, ref_id: str) -> Download | None:
-        """The collection not removed that was added from this listing, if any."""
+    async def find(self, url: str) -> Download | None:
+        """The collection not removed that was added from the listing at ``url``, if any."""
         ...
 
     @abstractmethod
@@ -38,20 +42,31 @@ class CollectionRepo(ABC):
         ...
 
     @abstractmethod
-    async def create_with_entries(self, collection: dict[str, Any], entries: Sequence[EntryRow]) -> Download:
-        """The collection and its videos in one transaction, queued at Main's end in listing order."""
+    async def create_with_entries(
+        self,
+        *,
+        url: str,
+        provider: str,
+        collection: dict[str, Any],
+        media: dict[str, Any],
+        entries: Sequence[EntryRow],
+    ) -> Download:
+        """The container added from the listing at ``url`` and its videos, in one transaction.
+
+        ``collection`` is the container's ``Download`` fields and ``media`` its
+        ``Media`` (kind, title, preset); each video is one ``EntryRow``, all of
+        ``provider``.
+        """
         ...
 
     @abstractmethod
-    async def add_entries(self, collection: Download, entries: Sequence[EntryRow]) -> None:
-        """More videos under an existing collection."""
+    async def add_entries(self, collection: Download, provider: str, entries: Sequence[EntryRow]) -> None:
+        """More videos of ``provider`` under an existing collection."""
         ...
 
     @abstractmethod
-    async def downloads_page(
-        self, collection_id: uuid.UUID, page: int, page_size: int
-    ) -> tuple[list[Download], Meta]:
-        """One page of its videos not removed, in the order they were added."""
+    async def downloads_page(self, collection_id: uuid.UUID, page: int, page_size: int) -> tuple[list[Download], Meta]:
+        """One page of its videos not removed, in listing order."""
         ...
 
     @abstractmethod

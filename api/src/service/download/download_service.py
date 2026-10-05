@@ -14,9 +14,9 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
 from src.data.schema.download import CollectionSchema, DownloadSchema, DownloadSummarySchema, PlaybackSchema
-from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, Platform, Preset
 from src.lib.event import EventHub
-from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER, url_ref
+from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
@@ -113,23 +113,20 @@ class DownloadService(BaseService):
         self._require_space(plan.expected_bytes)
         planned = plan_fields(info, plan, preset=preset, title=info.title, number="")
         download = await self._repo.create_site(
-            {
-                "source_url": url,
-                "provider": info.extractor,
-                "ref_id": info.id,
-                "platform": Platform.SITE,
-                "media_kind": planned.media_kind,
+            # The site's own page for the video, not the link as pasted: a short
+            # link and a playlist's entry for the same video are then one address.
+            url=info.webpage_url or url,
+            provider=info.extractor,
+            download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes},
+            media={
                 "title": planned.title,
-                "status": DownloadStatus.PENDING,
-                "total_bytes": planned.total_bytes,
-            },
-            {
+                "kind": planned.media_kind,
                 "preset": preset,
                 "video_format": planned.video_format,
                 "audio_format": planned.audio_format,
             },
-            planned.filename,
-            planned.mime_type,
+            filename=planned.filename,
+            mime_type=planned.mime_type,
         )
         # Workers share this process, so a queued download starts in
         # milliseconds rather than on the next poll tick.
@@ -143,18 +140,7 @@ class DownloadService(BaseService):
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
-        download = await self._repo.create_direct(
-            {
-                "source_url": url,
-                "provider": HTTP_PROVIDER,
-                "ref_id": url_ref(url),
-                "platform": Platform.DIRECT,
-                "media_kind": MediaKind.FILE,
-                "title": name,
-                "status": DownloadStatus.PENDING,
-            },
-            name,
-        )
+        download = await self._repo.create_direct(url=url, download={"status": DownloadStatus.PENDING}, filename=name)
         self._control.wake()
         return await self._published(download)
 

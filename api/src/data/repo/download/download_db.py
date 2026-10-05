@@ -3,21 +3,31 @@ from __future__ import annotations
 import math
 import uuid
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 from typing import Any
 
 from tortoise import Tortoise
+from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.expressions import Q
 from tortoise.transactions import in_transaction
 
 from src.core.base import BaseRepo
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, File, Media
+from src.data.db.model import Download, File, Media, Mirror, Source, Torrent, TorrentFile
+from src.data.repo.catalog import address_hash, provider_row, source_row, url_row
 from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
 from src.data.schema.download import DownloadSummarySchema
-from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DOWNLOAD_GROUPS, DownloadStatus, Platform
+from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DOWNLOAD_GROUPS, DownloadStatus, Platform, SourceKind
+from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER
+
+
+def _name(path: str) -> str:
+    """A file's name: the last part of its path."""
+    return PurePosixPath(path).name
+
 
 #: Which of two downloads holding one video speaks for it: the one furthest along.
 _HELD_RANK = {
@@ -50,32 +60,84 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def _loaded(download_id: uuid.UUID) -> Download:
         return await Download.get(id=download_id).prefetch_related(*RELATED)
 
+    @staticmethod
+    async def _added(source: Source, download: dict[str, Any], conn: BaseDBAsyncClient) -> Download:
+        """The ``Download`` and its one ``Mirror`` onto ``source``, the primary one."""
+        row = await Download.create(using_db=conn, **download)
+        await Mirror.create(using_db=conn, download=row, source=source)
+        return row
+
     async def create_site(
-        self, download: dict[str, Any], site: dict[str, Any], filename: str, mime_type: str | None
+        self,
+        *,
+        url: str,
+        provider: str,
+        download: dict[str, Any],
+        media: dict[str, Any],
+        filename: str,
+        mime_type: str | None,
     ) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **download)
-            await Media.create(using_db=conn, download_id=row.id, **site)
-            await File.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_type)
+            source = await source_row(
+                await provider_row(provider, conn), await url_row(url, conn), SourceKind.CONTENT, conn
+            )
+            row = await self._added(source, download, conn)
+            await Media.create(using_db=conn, download=row, **media)
+            await File.create(
+                using_db=conn, download=row, index=0, filename=_name(filename), path=filename, mime_type=mime_type
+            )
         return await self._loaded(row.id)
 
-    async def create_direct(self, download: dict[str, Any], filename: str) -> Download:
+    async def create_direct(self, *, url: str, download: dict[str, Any], filename: str) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **download)
-            await File.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_of(filename))
+            source = await source_row(
+                await provider_row(HTTP_PROVIDER, conn), await url_row(url, conn), SourceKind.DIRECT, conn
+            )
+            row = await self._added(source, download, conn)
+            await File.create(
+                using_db=conn,
+                download=row,
+                index=0,
+                filename=_name(filename),
+                path=filename,
+                mime_type=mime_of(filename),
+            )
         return await self._loaded(row.id)
 
-    async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download:
+    async def create_torrent(
+        self,
+        *,
+        url: str,
+        info_hash: str,
+        name: str,
+        total_size: int | None,
+        download: dict[str, Any],
+        files: Sequence[FileRow],
+    ) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **download)
+            known = await Torrent.filter(info_hash=info_hash).using_db(conn).prefetch_related("source").first()
+            if known is not None:
+                source = known.source
+            else:
+                source = await source_row(
+                    await provider_row(TORRENT_PROVIDER, conn), await url_row(url, conn), SourceKind.TORRENT, conn
+                )
+                torrent = await Torrent.create(
+                    using_db=conn, source=source, name=name, info_hash=info_hash, total_bytes=total_size
+                )
+                await TorrentFile.bulk_create(
+                    [TorrentFile(torrent=torrent, path=path, size=size) for _, path, size, _ in files], using_db=conn
+                )
+            row = await self._added(source, {**download, "total_size": total_size}, conn)
             if files:
                 await File.bulk_create(
                     [
                         File(
-                            download_id=row.id,
+                            download=row,
                             index=index,
+                            filename=_name(path),
                             path=path,
-                            size_bytes=size,
+                            size=size,
                             selected=selected,
                             mime_type=mime_of(path),
                         )
@@ -208,22 +270,28 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             Download.filter(NOT_CONTAINER, id=download_id, deleted_at__isnull=True).prefetch_related(*RELATED).first()
         )
 
-    async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:
-        if not ref_ids:
+    async def statuses_by_url(self, urls: Sequence[str]) -> dict[str, DownloadStatus]:
+        if not urls:
             return {}
+        by_hash: dict[str, list[str]] = {}
+        for url in urls:
+            by_hash.setdefault(address_hash(url), []).append(url)
         rows = (
-            await Download.filter(provider=provider, ref_id__in=list(ref_ids), deleted_at__isnull=True)
+            await Download.filter(
+                NOT_CONTAINER,
+                mirrors__source__url__normalized_hash__in=list(by_hash),
+                deleted_at__isnull=True,
+            )
             .exclude(status=DownloadStatus.CANCELLED)
-            .exclude(media_kind__in=CONTAINER_KINDS)
-            .values_list("ref_id", "status")
+            .values_list("mirrors__source__url__normalized_hash", "status")
         )
-        found: dict[str, DownloadStatus] = {}
-        for ref_id, raw in rows:
+        best: dict[str, DownloadStatus] = {}
+        for hashed, raw in rows:
             status = DownloadStatus(raw)
-            current = found.get(ref_id)
+            current = best.get(hashed)
             if current is None or _HELD_RANK.get(status, 0) > _HELD_RANK.get(current, 0):
-                found[ref_id] = status
-        return found
+                best[hashed] = status
+        return {url: status for hashed, status in best.items() for url in by_hash[hashed]}
 
     async def torrents_to_watch(self) -> list[Download]:
         return await (
@@ -232,10 +300,9 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             .prefetch_related(*RELATED)
         )
 
-    async def by_ref(self, provider: str, ref_id: str) -> Download | None:
+    async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (
-            Download.filter(provider=provider, ref_id=ref_id, deleted_at__isnull=True)
-            .exclude(media_kind__in=CONTAINER_KINDS)
+            Download.filter(mirrors__source__torrents__info_hash=info_hash, deleted_at__isnull=True)
             .prefetch_related(*RELATED)
             .first()
         )

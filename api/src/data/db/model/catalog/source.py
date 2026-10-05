@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+from uuid import UUID
 
 from tortoise import fields
 
@@ -26,6 +27,10 @@ class Source(LinkBase):
     kind: SourceKind = fields.CharEnumField(
         enum_type=SourceKind, default=SourceKind.DIRECT
     )
+
+    if TYPE_CHECKING:
+        provider_id: UUID
+        url_id: UUID
 
     def __str__(self) -> str:
         return f"[Source: {self.kind} {self.url.id}]"

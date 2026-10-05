@@ -1,119 +1,163 @@
 import uuid
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from src.core.common import now
-from src.data.db.model import Download
+from src.data.db.model import Download, File, Media, Mirror, Provider, Source, Torrent, TorrentFile, Url
 from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Preset, SourceKind
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("db")]
 
 
-def site_fields(title: str = "Talk", video_id: str | None = None) -> dict:
-    return {
-        "source_url": f"https://youtu.be/{uuid.uuid4().hex[:8]}",
-        "provider": "Youtube",
-        "ref_id": video_id or uuid.uuid4().hex[:8],
-        "platform": Platform.SITE,
-        "media_kind": MediaKind.VIDEO,
-        "title": title,
-        "status": DownloadStatus.PENDING,
-    }
-
-
-def site_detail() -> dict:
-    return {"preset": Preset.BEST}
+async def add_site(
+    repo: DownloadDatabaseRepo, video_id: str | None = None, *, url: str | None = None, **download: Any
+) -> Download:
+    return await repo.create_site(
+        url=url or f"https://www.youtube.com/watch?v={video_id or uuid.uuid4().hex[:11]}",
+        provider="Youtube",
+        download={"status": DownloadStatus.PENDING, **download},
+        media={"title": "Talk", "kind": MediaKind.VIDEO, "preset": Preset.BEST},
+        filename="Talk_1080p.mp4",
+        mime_type="video/mp4",
+    )
 
 
 async def a_collection() -> Download:
     return await CollectionDatabaseRepo().create_with_entries(
-        {
-            "source_url": "https://www.youtube.com/playlist?list=PL",
-            "provider": "Youtube",
-            "ref_id": uuid.uuid4().hex,
-            "platform": Platform.SITE,
-            "media_kind": MediaKind.PLAYLIST,
-            "path": "Talks",
-            "status": DownloadStatus.PENDING,
-            "preset": Preset.BEST,
-        },
-        [],
+        url=f"https://www.youtube.com/playlist?list=PL{uuid.uuid4().hex[:8]}",
+        provider="Youtube",
+        collection={"status": DownloadStatus.PENDING},
+        media={"kind": MediaKind.PLAYLIST, "title": "Talks", "preset": Preset.BEST},
+        entries=[],
     )
 
 
 @pytest.mark.asyncio
-async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
+async def test_a_site_download_is_its_page_s_catalog_rows_and_its_own() -> None:
+    row = await add_site(DownloadDatabaseRepo(), "dQw4w9WgXcQ", total_size=900)
+
+    mirror = await Mirror.get(download_id=row.id).prefetch_related("source__url", "source__provider")
+    assert (mirror.source.kind, mirror.source.provider.name, mirror.source.provider.slug) == (
+        SourceKind.CONTENT,
+        "Youtube",
+        "youtube",
+    )
+    assert mirror.source.url.value == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    media = await Media.get(download_id=row.id)
+    assert (media.title, media.kind, media.preset) == ("Talk", MediaKind.VIDEO, Preset.BEST)
+    file = await File.get(download_id=row.id)
+    assert (file.index, file.filename, file.mime_type) == (0, "Talk_1080p.mp4", "video/mp4")
+    assert row.total_size == 900 and row.media is not None
+
+
+@pytest.mark.asyncio
+async def test_one_address_is_one_url_and_one_source_however_often_it_is_added() -> None:
     repo = DownloadDatabaseRepo()
-    site = await repo.create_site(site_fields(), site_detail(), "Talk_1080p.mp4", "video/mp4")
-    await repo.create_direct(
-        {
-            "source_url": "https://e.com/a.iso",
-            "provider": "http",
-            "ref_id": "iso",
-            "platform": Platform.DIRECT,
-            "media_kind": MediaKind.FILE,
-            "title": "a.iso",
-            "status": DownloadStatus.PENDING,
-        },
-        "a.iso",
-    )
-    torrent = await repo.create_torrent(
-        {
-            "source_url": "magnet:?xt=urn:btih:" + "a" * 40,
-            "provider": "torrent",
-            "ref_id": "a" * 40,
-            "platform": Platform.TORRENT,
-            "media_kind": MediaKind.FILE,
-            "title": "T",
-            "status": DownloadStatus.PENDING,
-            "path": "torrent/T",
-        },
-        [(0, "x.mkv", 10, True)],
-    )
-    assert site.site_detail is not None and site.site_detail.preset == Preset.BEST
-    assert (torrent.provider, torrent.ref_id) == ("torrent", "a" * 40)
-    found = await repo.by_ref("torrent", "a" * 40)
-    assert found is not None and found.id == torrent.id
+    await add_site(repo, url="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    await add_site(repo, url="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    assert (await Url.all().count(), await Source.all().count(), await Provider.all().count()) == (1, 1, 1)
+    assert await Mirror.all().count() == 2
 
 
 @pytest.mark.asyncio
-async def test_claim_takes_standalone_first_then_queue_order_and_honours_start_and_retry() -> None:
+async def test_a_direct_download_is_its_address_under_http() -> None:
+    row = await DownloadDatabaseRepo().create_direct(
+        url="https://e.com/a.iso", download={"status": DownloadStatus.PENDING}, filename="a.iso"
+    )
+
+    mirror = await Mirror.get(download_id=row.id).prefetch_related("source__url", "source__provider")
+    assert (mirror.source.kind, mirror.source.provider.slug, mirror.source.url.value) == (
+        SourceKind.DIRECT,
+        "http",
+        "https://e.com/a.iso",
+    )
+    assert (await File.get(download_id=row.id)).mime_type is not None
+    assert row.media is None
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
+    repo = DownloadDatabaseRepo()
+    first = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "a" * 40,
+        info_hash="a" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True), (1, "T/x.nfo", 1, False)],
+    )
+
+    assert await repo.by_info_hash("a" * 40) is not None
+    torrent = await Torrent.get(info_hash="a" * 40)
+    assert (torrent.name, torrent.total_bytes) == ("T", 10)
+    assert sorted(await TorrentFile.filter(torrent=torrent).values_list("path", flat=True)) == ["T/x.mkv", "T/x.nfo"]
+    assert [(f.index, f.filename, f.selected) for f in await File.filter(download_id=first.id).order_by("index")] == [
+        (0, "x.mkv", True),
+        (1, "x.nfo", False),
+    ]
+    assert first.total_size == 10
+
+    # Removed, then added again from another magnet: the same torrent, one row.
+    await Download.filter(id=first.id).update(deleted_at=now())
+    assert await repo.by_info_hash("a" * 40) is None
+    again = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "a" * 40 + "&tr=udp://tracker.example:80",
+        info_hash="a" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+    assert await Torrent.all().count() == 1
+    found = await repo.by_info_hash("a" * 40)
+    assert found is not None and found.id == again.id
+
+
+@pytest.mark.asyncio
+async def test_statuses_by_url_match_any_spelling_of_the_address_and_report_the_furthest_along() -> None:
+    repo = DownloadDatabaseRepo()
+    await add_site(repo, url="https://www.youtube.com/watch?v=aaaaaaaaaaa", status=DownloadStatus.FAILED)
+    await add_site(repo, url="https://www.youtube.com/watch?v=aaaaaaaaaaa", status=DownloadStatus.COMPLETED)
+    gone = await add_site(repo, url="https://www.youtube.com/watch?v=bbbbbbbbbbb")
+    await Download.filter(id=gone.id).update(deleted_at=now())
+
+    asked = ["HTTPS://WWW.YOUTUBE.COM/watch?v=aaaaaaaaaaa", "https://www.youtube.com/watch?v=bbbbbbbbbbb"]
+    assert await repo.statuses_by_url(asked) == {asked[0]: DownloadStatus.COMPLETED}
+    assert await repo.statuses_by_url([]) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_container_holds_no_video() -> None:
+    collection = await a_collection()
+    url = (await Mirror.get(download_id=collection.id).prefetch_related("source__url")).source.url.value
+
+    assert await DownloadDatabaseRepo().statuses_by_url([url]) == {}
+
+
+@pytest.mark.asyncio
+async def test_claim_takes_standalone_first_then_creation_order_and_honours_retry() -> None:
     repo = DownloadDatabaseRepo()
     collection = await a_collection()
-    member = await repo.create_site(
-        {**site_fields(), "parent_id": collection.id, "position": 1}, site_detail(), "001_", None
-    )
-    later = await repo.create_site(
-        {**site_fields(), "start_at": now() + timedelta(hours=1)}, site_detail(), "s", None
-    )
-    retrying = await repo.create_site(
-        {**site_fields(), "next_attempt_at": now() + timedelta(hours=1)}, site_detail(), "r", None
-    )
-    ready = await repo.create_site(site_fields(), site_detail(), "x", None)
+    member = await add_site(repo, parent_id=collection.id)
+    retrying = await add_site(repo, next_attempt_at=now() + timedelta(hours=1))
+    ready = await add_site(repo)
 
     first = await repo.claim_next()
     assert first is not None and first.id == ready.id and first.status == DownloadStatus.DOWNLOADING
     second = await repo.claim_next()
     assert second is not None and second.id == member.id
     assert await repo.claim_next() is None
-    assert {later.id, retrying.id}.isdisjoint({first.id, second.id})
+    assert retrying.id not in {first.id, second.id}
 
 
 @pytest.mark.asyncio
 async def test_recover_orphans_requeues_the_mid_flight() -> None:
     repo = DownloadDatabaseRepo()
-    row = await repo.create_site(site_fields(), site_detail(), "x", None)
+    row = await add_site(repo)
     await Download.filter(id=row.id).update(status=DownloadStatus.MUXING)
     assert await repo.recover_orphans() == 1
     recovered = await repo.get_active_by_id(row.id)
     assert recovered is not None and recovered.status == DownloadStatus.PENDING
-
-
-@pytest.mark.asyncio
-async def test_statuses_by_ref_reports_the_furthest_along() -> None:
-    repo = DownloadDatabaseRepo()
-    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.FAILED}, site_detail(), "a", None)
-    await repo.create_site({**site_fields(video_id="v"), "status": DownloadStatus.COMPLETED}, site_detail(), "b", None)
-    assert await repo.statuses_by_ref("Youtube", ["v", "none"]) == {"v": DownloadStatus.COMPLETED}
-    assert await repo.statuses_by_ref("Vimeo", ["v"]) == {}  # another provider's id is another video

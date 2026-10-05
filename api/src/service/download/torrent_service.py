@@ -22,7 +22,7 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.schema.download import DownloadSchema, FileSchema, TorrentResolveResponse
-from src.data.type import DownloadStatus, MediaKind, Platform
+from src.data.type import DownloadStatus
 from src.lib.event import EventHub
 from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
@@ -101,6 +101,11 @@ class TorrentService(BaseService):
         # Resolving before adding buys the rejection below: a selection naming a
         # file the torrent does not have would otherwise be a silently empty download.
         details = await self._client.resolve(source)
+        # A torrent already downloading or seeding is that download, not a second
+        # one mirroring the same engine torrent into the same folder.
+        existing = await self._repo.by_info_hash(details.info_hash)
+        if existing is not None:
+            return await self._views.one(existing, folder=self._relative_folder(existing))
         selected = self._validated_selection(details, files)
         total_bytes = sum(file.size_bytes for file in details.files if file.index in selected)
 
@@ -119,19 +124,14 @@ class TorrentService(BaseService):
             output_folder=str(folder),
         )
         download = await self._repo.create_torrent(
-            {
-                # A base64 .torrent must never land here: reconciliation re-adds
-                # from it, and an info-hash magnet is both small and re-addable.
-                "source_url": raw.strip() if not source.is_blob else f"magnet:?xt=urn:btih:{details.info_hash}",
-                "provider": TORRENT_PROVIDER,
-                "ref_id": details.info_hash,
-                "platform": Platform.TORRENT,
-                "media_kind": MediaKind.FILE,
-                "title": details.name,
-                "status": DownloadStatus.PENDING,
-                "total_bytes": total_bytes,
-            },
-            [(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
+            # A base64 .torrent must never land here: reconciliation re-adds
+            # from it, and an info-hash magnet is both small and re-addable.
+            url=raw.strip() if not source.is_blob else f"magnet:?xt=urn:btih:{details.info_hash}",
+            info_hash=details.info_hash,
+            name=details.name,
+            total_size=total_bytes,
+            download={"status": DownloadStatus.PENDING},
+            files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
         return await self._published(download)
 
