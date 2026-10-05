@@ -11,7 +11,7 @@ TABLES = {
     "play": {"playback_position"},
     "shared": {"tag", "url"},
     "torrent": {"torrent", "torrent_file", "peer", "piece", "tracker"},
-    "transfer": {"download", "file", "mirror", "attempt", "segment", "site_detail", "queue"},
+    "transfer": {"download", "file", "mirror", "attempt", "segment", "media", "queue"},
 }
 
 
@@ -52,12 +52,13 @@ async def test_hand_written_sql_is_in_place() -> None:
     indexes = {
         row["indexname"]: row["indexdef"]
         for row in await conn.execute_query_dict(
-            "SELECT indexname, indexdef FROM pg_indexes "
-            "WHERE tablename IN ('download', 'site_detail')"
+            "SELECT indexname, indexdef FROM pg_indexes WHERE tablename IN ('download', 'media')"
         )
     }
     # One container per playlist or channel tab: adding it again joins the one that is there.
-    assert "playlist" in indexes["uniq_download_container"] and "deleted_at IS NULL" in indexes["uniq_download_container"]
+    assert (
+        "playlist" in indexes["uniq_download_container"] and "deleted_at IS NULL" in indexes["uniq_download_container"]
+    )
     # What a download is, looked up by provider and id for the duplicate check and the picker's marks.
     assert "(provider, ref_id)" in indexes["idx_download_identity"]
     assert await conn.execute_query_dict(

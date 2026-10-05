@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from src.data.db import model
-from src.data.db.model import Download, SiteDetail
+from src.data.db.model import Download, Media
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.service.download.paths import collection_folder
 
@@ -32,13 +32,13 @@ async def test_a_collection_holds_its_videos_as_children(sqlite: None) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_collection_keeps_its_quality_ceiling_in_a_site_detail(sqlite: None) -> None:
+async def test_a_collection_keeps_its_quality_ceiling_in_its_media(sqlite: None) -> None:
     collection = await a_download()
 
-    await SiteDetail.create(download=collection, preset=Preset.P1080)
+    await Media.create(download=collection, preset=Preset.P1080)
 
-    detail = await SiteDetail.get(download=collection)
-    assert (detail.preset, detail.video_format, detail.audio_format) == (Preset.P1080, None, None)
+    media = await Media.get(download=collection)
+    assert (media.preset, media.video_format, media.audio_format) == (Preset.P1080, None, None)
 
 
 def test_a_collection_derives_its_directory() -> None:

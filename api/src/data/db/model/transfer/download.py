@@ -16,7 +16,7 @@ class Download(Base):
     Removing one is a soft delete: ``status`` becomes ``CANCELLED`` and
     ``deleted_at`` is set, and the row drops out of every list. Its title,
     platform and media kind are not stored here; they come from what it was
-    added from (its source, its torrent, its site detail).
+    added from (its source, its torrent, its media).
 
     ``error``, ``error_code``, ``attempts`` and ``next_attempt_at`` are the
     current retry state, which the worker and the list read. Each try via a
@@ -24,7 +24,7 @@ class Download(Base):
     """
 
     # A playlist or channel tab is itself a Download (its kind and preset in its
-    # site detail); its videos point at it here.
+    # media); its videos point at it here.
     #: The collection this download belongs to; none for a standalone download.
     parent = fields.ForeignKeyField("model.Download", related_name="children", null=True, on_delete=fields.CASCADE)
     folder: Folder = fields.CharEnumField(enum_type=Folder, default=Folder.DOWNLOADS)

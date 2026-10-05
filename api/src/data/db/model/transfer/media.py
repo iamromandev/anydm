@@ -9,18 +9,19 @@ from src.core.base import LinkBase
 from src.data.type import MediaKind, Preset
 
 
-class SiteDetail(LinkBase):
-    """What only a site download has: what it is called, what it is, and the formats it fetches.
+class Media(LinkBase):
+    """What a site download fetches: what it is called, what kind it is, and the formats it takes.
 
-    Which site, and its id for the video, are the provider and ref of the
-    source its mirror points at, so neither is repeated here. A playlist or
+    Which site it came from is the provider of the source its mirror points
+    at, so it is not repeated here. A playlist or
     channel tab is a download too; its kind and preset live in its own row.
+    A torrent has none: its counterpart is ``Torrent``.
     """
 
-    download = fields.OneToOneField("model.Download", related_name="site_detail", on_delete=fields.CASCADE)
+    download = fields.OneToOneField("model.Download", related_name="media", on_delete=fields.CASCADE)
     #: The title the extract returned.
     title: str = fields.CharField(max_length=512, default="")
-    media_kind: MediaKind = fields.CharEnumField(MediaKind, max_length=8, default=MediaKind.VIDEO)
+    kind: MediaKind = fields.CharEnumField(MediaKind, max_length=8, default=MediaKind.VIDEO)
     preset: Preset = fields.CharEnumField(Preset, max_length=8)
     video_format: str | None = fields.CharField(max_length=64, null=True)
     audio_format: str | None = fields.CharField(max_length=64, null=True)
@@ -31,9 +32,9 @@ class SiteDetail(LinkBase):
         download_id: UUID
 
     def __str__(self) -> str:
-        return f"[SiteDetail: download {self.download_id}, {self.media_kind}]"
+        return f"[Media: download {self.download_id}, {self.kind}]"
 
     class Meta:
-        table: ClassVar[str] = "site_detail"
-        table_description: ClassVar[str] = "SiteDetail"
+        table: ClassVar[str] = "media"
+        table_description: ClassVar[str] = "Media"
         schema: ClassVar[str] = "transfer"

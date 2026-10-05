@@ -18,7 +18,7 @@ from tortoise import Tortoise
 _TABLES = (
     "config.preference, iam.user, "
     "transfer.playback_position, transfer.segment, transfer.download_file, "
-    "transfer.site_detail, transfer.download, "
+    "transfer.media, transfer.download, "
     "transfer.queue, shared.tag"
 )
 
