@@ -20,10 +20,10 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
-from src.lib.identity import TORRENT_PROVIDER
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.mapping import status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
@@ -149,7 +149,8 @@ class TorrentMonitor:
 
     def _folder(self, row: Any) -> Path:
         """The torrent's folder on disk, derived from the same rule as at add time."""
-        return torrent_folder(self._torrents, row.title, row.ref_id)
+        described = describe(row)
+        return torrent_folder(self._torrents, described.title, described.info_hash or "")
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.
@@ -165,7 +166,8 @@ class TorrentMonitor:
                 continue
             try:
                 await self._client.add(
-                    parse_source(row.source_url),
+                    # The stored magnet: re-addable, and small (#479 never stores a .torrent).
+                    parse_source(describe(row).source_url),
                     only_files=await self._file_repo.selected_indexes(row.id),
                     output_folder=str(self._folder(row)),
                 )
@@ -181,9 +183,9 @@ class TorrentMonitor:
         status = status_for(sample, row.status)
         fields: dict[str, Any] = {
             "status": status,
-            "downloaded_bytes": sample.progress_bytes,
-            "total_bytes": sample.total_bytes or None,
-            "uploaded_bytes": sample.uploaded_bytes,
+            "downloaded_size": sample.progress_bytes,
+            "total_size": sample.total_bytes or None,
+            "uploaded_size": sample.uploaded_bytes,
         }
         if status == DownloadStatus.FAILED and sample.error:
             fields["error"] = sample.error
@@ -198,6 +200,9 @@ class TorrentMonitor:
             setattr(row, name, value)
         if changed:
             await row.save(update_fields=list(changed))
+        if "total_size" in changed and row.total_size is not None:
+            # Rare (a magnet's size is known once its metadata arrives), so the torrent's own row follows.
+            await self._repo.set_torrent_total(_hash(row), row.total_size)
 
         live = Live(
             speed_bps=sample.download_bps,
@@ -226,4 +231,4 @@ class TorrentMonitor:
 
 
 def _hash(row: Any) -> str:
-    return row.ref_id if row.provider == TORRENT_PROVIDER else ""
+    return describe(row).info_hash or ""

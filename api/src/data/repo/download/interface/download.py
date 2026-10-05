@@ -127,6 +127,11 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
+    async def set_torrent_total(self, info_hash: str, total: int) -> None:
+        """The size the engine reports for the torrent ``info_hash``, onto its ``Torrent`` row."""
+        ...
+
+    @abstractmethod
     async def by_info_hash(self, info_hash: str) -> Download | None:
         """The download not removed of the torrent ``info_hash``, if any."""
         ...

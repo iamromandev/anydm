@@ -69,7 +69,7 @@ def test_statuses() -> None:
     )
 
 
-def test_meta_is_transfer() -> None:
+def test_meta_is_torrent() -> None:
     for model, table in ((Tracker, "tracker"), (Peer, "peer"), (Piece, "piece")):
         assert model.Meta.table == table
-        assert model.Meta.schema == "transfer"
+        assert model.Meta.schema == "torrent"
