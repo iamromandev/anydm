@@ -46,7 +46,7 @@ async def a_collection() -> Download:
 async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
     repo = DownloadDatabaseRepo()
     site = await repo.create_site(site_fields(), site_detail(), "Talk_1080p.mp4", "video/mp4")
-    direct = await repo.create_direct(
+    await repo.create_direct(
         {
             "source_url": "https://e.com/a.iso",
             "provider": "http",
@@ -71,10 +71,8 @@ async def test_creates_put_each_platform_in_main_with_its_rows() -> None:
         },
         [(0, "x.mkv", 10, True)],
     )
-    assert site.queue.name == "Main"
     assert site.site_detail is not None and site.site_detail.preset == Preset.BEST
     assert (torrent.provider, torrent.ref_id) == ("torrent", "a" * 40)
-    assert [site.queue_position, direct.queue_position, torrent.queue_position] == [0, 1, 2]
     found = await repo.by_ref("torrent", "a" * 40)
     assert found is not None and found.id == torrent.id
 

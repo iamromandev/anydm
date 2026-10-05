@@ -6,14 +6,13 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from tortoise import Tortoise
-from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.expressions import Q
 from tortoise.transactions import in_transaction
 
 from src.core.base import BaseRepo
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, DownloadFile, Queue, SiteDetail
+from src.data.db.model import Download, DownloadFile, SiteDetail
 from src.data.repo.download.interface.download import RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
@@ -48,14 +47,6 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         super().__init__(Download)
 
     @staticmethod
-    async def _placed(download: dict[str, Any], conn: BaseDBAsyncClient) -> dict[str, Any]:
-        """``download`` in a queue (Main unless named). Order is creation order."""
-        row = dict(download)
-        if "queue_id" not in row:
-            row["queue_id"] = (await Queue.get(is_default=True, using_db=conn)).id
-        return row
-
-    @staticmethod
     async def _loaded(download_id: uuid.UUID) -> Download:
         return await Download.get(id=download_id).prefetch_related(*RELATED)
 
@@ -63,14 +54,14 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         self, download: dict[str, Any], site: dict[str, Any], filename: str, mime_type: str | None
     ) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **await self._placed(download, conn))
+            row = await Download.create(using_db=conn, **download)
             await SiteDetail.create(using_db=conn, download_id=row.id, **site)
             await DownloadFile.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_type)
         return await self._loaded(row.id)
 
     async def create_direct(self, download: dict[str, Any], filename: str) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **await self._placed(download, conn))
+            row = await Download.create(using_db=conn, **download)
             await DownloadFile.create(
                 using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_of(filename)
             )
@@ -78,7 +69,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
 
     async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download:
         async with in_transaction() as conn:
-            row = await Download.create(using_db=conn, **await self._placed(download, conn))
+            row = await Download.create(using_db=conn, **download)
             if files:
                 await DownloadFile.bulk_create(
                     [
@@ -96,7 +87,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
                 )
         return await self._loaded(row.id)
 
-    async def claim_next(self, queue_ids: Sequence[uuid.UUID] | None = None) -> Download | None:
+    async def claim_next(self) -> Download | None:
         """Postgres arbitrates the queue.
 
         ``FOR UPDATE SKIP LOCKED`` inside a transaction lets several worker
@@ -111,15 +102,13 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
                 .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
                 .filter(Q(start_at__isnull=True) | Q(start_at__lte=now()))
             )
-            if queue_ids is not None:
-                runnable = runnable.filter(queue_id__in=list(queue_ids))
             # Standalone first, so a pasted link never waits behind a channel
-            # archive (phase-1 parity; the queue slice replaces this with queue order).
+            # archive; then creation order.
             row = None
             for standalone in (True, False):
                 row = await (
                     runnable.filter(parent_id__isnull=standalone)
-                    .order_by("queue_position", "created_at")
+                    .order_by("created_at")
                     .limit(1)
                     .select_for_update(skip_locked=True)
                     .using_db(conn)

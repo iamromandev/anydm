@@ -12,7 +12,7 @@ from src.core.auth import expected_key
 from src.core.common import get_app_version
 from src.core.error import init_global_errors
 from src.data.db import init_db
-from src.data.repo import DownloadDatabaseRepo, QueueDatabaseRepo, SourceDatabaseRepo
+from src.data.repo import DownloadDatabaseRepo, SourceDatabaseRepo
 from src.route import router as _router
 from src.service import (
     build_worker_pool,
@@ -23,7 +23,6 @@ from src.service import (
     get_torrent_monitor,
     get_torrent_reaper,
 )
-from src.service.download.seed import seed_organization
 from src.service.source.seed import seed_missing_sources
 
 
@@ -56,14 +55,6 @@ async def lifespan(_app: FastAPI):
     except Exception:
         # A missing table (migrations not run yet) must not stop the API; search then uses the constants.
         logger.exception("lifespan|couldn't seed the search sources")
-
-    try:
-        queues = await seed_organization(QueueDatabaseRepo(), workers=settings.download_workers)
-        if queues:
-            logger.info("lifespan|seeded {} queue(s)", queues)
-    except Exception:
-        # Without Main nothing can be queued; say so loudly, but keep search and play up.
-        logger.exception("lifespan|couldn't seed the queues")
 
     recovered = await DownloadDatabaseRepo().recover_orphans()
     if recovered:

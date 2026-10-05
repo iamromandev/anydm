@@ -11,15 +11,13 @@ import pytest
 import pytest_asyncio
 from src.config import get_settings
 from src.data.db import DB_CONFIG
-from src.data.repo import QueueDatabaseRepo
-from src.service.download.seed import seed_organization
 from tortoise import Tortoise
 
 _TABLES = (
     "config.preference, iam.user, "
     "transfer.playback_position, transfer.segment, transfer.download_file, "
     "transfer.media, transfer.download, "
-    "transfer.queue, shared.tag"
+    "shared.tag"
 )
 
 
@@ -41,7 +39,6 @@ async def db() -> AsyncIterator[None]:
     _require_test_database()
     await Tortoise.init(config=DB_CONFIG)
     await _wipe()
-    await seed_organization(QueueDatabaseRepo(), workers=2)
     yield
     await _wipe()
     await Tortoise.close_connections()

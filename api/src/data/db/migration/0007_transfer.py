@@ -1,14 +1,11 @@
 from typing import ClassVar
 from uuid import uuid4
 
-from orjson import loads
 from tortoise import fields, migrations
 from tortoise.fields.base import OnDelete
-from tortoise.fields.data import JSON_DUMPS
 from tortoise.fields.db_defaults import Now
 from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
-from tortoise.migrations.constraints import UniqueConstraint
 
 from src.data.type.download.download import (
     AttemptStatus,
@@ -114,30 +111,6 @@ class Migration(migrations.Migration):
             ],
             options={'table': 'segment', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Segment'},
             bases=['LinkBase'],
-        ),
-        ops.CreateModel(
-            name='Queue',
-            fields=[
-                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
-                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
-                ('name', fields.CharField(unique=True, max_length=64)),
-                ('slug', fields.CharField(unique=True, description='The name made URL- and comparison-safe; what code and the API refer to.', max_length=64)),
-                ('is_default', fields.BooleanField(default=False, description='The queue a new download joins when none is named.')),
-                ('is_paused', fields.BooleanField(default=False, description='Stops the whole queue without touching its downloads.')),
-                ('max_concurrent', fields.IntField(default=1)),
-                ('start_time', fields.TimeField(null=True, description='Both null: always open. ``stop_time`` before ``start_time`` crosses midnight.', auto_now=False, auto_now_add=False)),
-                ('stop_time', fields.TimeField(null=True, auto_now=False, auto_now_add=False)),
-                ('days', fields.JSONField(null=True, description='ISO weekdays, 1 (Monday) to 7; null means every day.', encoder=JSON_DUMPS, decoder=loads)),
-                ('position', fields.IntField(default=0)),
-            ],
-            options={'table': 'queue', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Queue'},
-            bases=['LinkBase'],
-        ),
-        # CreateModel renders no Meta.constraints (src/core/base.py), so the partial unique is added here.
-        ops.AddConstraint(
-            model_name='Queue',
-            constraint=UniqueConstraint(fields=('is_default',), name='uniq_queue_default', condition='is_default'),
         ),
         ops.CreateModel(
             name='Media',

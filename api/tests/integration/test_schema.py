@@ -11,7 +11,7 @@ TABLES = {
     "play": {"playback_position"},
     "shared": {"tag", "url"},
     "torrent": {"torrent", "torrent_file", "peer", "piece", "tracker"},
-    "transfer": {"download", "file", "mirror", "attempt", "segment", "media", "queue"},
+    "transfer": {"download", "file", "mirror", "attempt", "segment", "media"},
 }
 
 
@@ -28,20 +28,6 @@ async def test_every_table_is_in_its_domains_schema() -> None:
         found.setdefault(row["schemaname"], set()).add(row["tablename"])
 
     assert found == TABLES
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("db")
-async def test_exactly_one_queue_is_the_default() -> None:
-    conn = Tortoise.get_connection("default")
-    indexes = {
-        row["indexname"]: row["indexdef"]
-        for row in await conn.execute_query_dict(
-            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'transfer' AND tablename = 'queue'"
-        )
-    }
-    # A plain unique cannot say it: any number of queues are not the default.
-    assert "WHERE is_default" in indexes["uniq_queue_default"]
 
 
 @pytest.mark.skip(reason="these read Download.provider and ref_id, which #464 rewires")

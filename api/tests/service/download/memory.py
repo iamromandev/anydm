@@ -16,8 +16,6 @@ from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 
-MAIN = SimpleNamespace(id=uuid.UUID(int=1), name="Main")
-
 
 def _saving(row: SimpleNamespace) -> SimpleNamespace:
     row.saved = []
@@ -47,9 +45,6 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         folder=None,
         folder_id=None,
         parent_id=None,
-        queue=MAIN,
-        queue_id=MAIN.id,
-        queue_position=0,
         start_at=None,
         download_limit_bps=None,
         checksum_algo=None,

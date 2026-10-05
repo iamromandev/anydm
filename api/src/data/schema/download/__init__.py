@@ -14,7 +14,6 @@ from .download import LiveSchema as LiveSchema
 from .download import MediaDownloadRequest as MediaDownloadRequest
 from .download import PlaybackRequest as PlaybackRequest
 from .download import PlaybackSchema as PlaybackSchema
-from .download import QueueRef as QueueRef
 from .download import SiteSchema as SiteSchema
 from .download import TorrentInfoSchema as TorrentInfoSchema
 from .download import UrlDownloadRequest as UrlDownloadRequest

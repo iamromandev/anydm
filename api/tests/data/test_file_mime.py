@@ -1,7 +1,7 @@
 """Every file row records what it is, whichever kind of download it came from."""
 
 import pytest
-from src.data.db.model import DownloadFile, Queue
+from src.data.db.model import DownloadFile
 from src.data.repo import DownloadDatabaseRepo, FileDatabaseRepo
 from src.data.repo.download.mime import mime_of
 from src.data.type import DownloadStatus
@@ -31,10 +31,6 @@ def test_a_path_is_judged_by_its_file_name() -> None:
     assert mime_of("Season 1/E01.mp4") == "video/mp4"
 
 
-async def a_queue() -> None:
-    await Queue.get_or_create(slug="main", defaults={"name": "Main", "is_default": True})
-
-
 def direct_fields(name: str) -> dict:
     return {
         "status": DownloadStatus.PENDING,
@@ -43,7 +39,6 @@ def direct_fields(name: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_a_direct_download_records_its_files_type(sqlite: None) -> None:
-    await a_queue()
 
     download = await DownloadDatabaseRepo().create_direct(direct_fields("report.pdf"), "report.pdf")
 
@@ -53,7 +48,6 @@ async def test_a_direct_download_records_its_files_type(sqlite: None) -> None:
 
 @pytest.mark.asyncio
 async def test_each_file_of_a_torrent_records_its_own_type(sqlite: None) -> None:
-    await a_queue()
     fields = direct_fields("torrent")
 
     download = await DownloadDatabaseRepo().create_torrent(
@@ -66,7 +60,6 @@ async def test_each_file_of_a_torrent_records_its_own_type(sqlite: None) -> None
 
 @pytest.mark.asyncio
 async def test_replacing_a_files_list_records_the_types_too(sqlite: None) -> None:
-    await a_queue()
     download = await DownloadDatabaseRepo().create_direct(direct_fields("a.bin"), "a.bin")
 
     await FileDatabaseRepo().replace(download.id, [(0, "a.mkv", 5, True), (1, "b.pdf", 5, True)])

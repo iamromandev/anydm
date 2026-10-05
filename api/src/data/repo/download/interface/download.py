@@ -13,7 +13,7 @@ from src.data.schema.download import DownloadSummarySchema
 from src.data.type import DownloadStatus
 
 #: The relations every read loads, so a schema can be built without another query.
-RELATED = ("site_detail", "queue")
+RELATED = ("site_detail",)
 
 
 class DownloadRepo(CrudRepo[Download]):
@@ -21,7 +21,7 @@ class DownloadRepo(CrudRepo[Download]):
     async def create_site(
         self, download: dict[str, Any], site: dict[str, Any], filename: str, mime_type: str | None
     ) -> Download:
-        """A site download, its ``SiteDetail`` and its one file, in one transaction, at the end of Main."""
+        """A site download, its ``SiteDetail`` and its one file, in one transaction."""
         ...
 
     @abstractmethod
@@ -31,11 +31,10 @@ class DownloadRepo(CrudRepo[Download]):
     async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download: ...
 
     @abstractmethod
-    async def claim_next(self, queue_ids: Sequence[uuid.UUID] | None = None) -> Download | None:
+    async def claim_next(self) -> Download | None:
         """Take the first runnable pending HTTP download and mark it ``downloading``.
 
-        Runnable: not deleted, ``start_at`` and ``next_attempt_at`` unset or past,
-        and (when ``queue_ids`` is given) in one of those queues.
+        Runnable: not deleted, and ``start_at`` and ``next_attempt_at`` unset or past.
         """
         ...
 

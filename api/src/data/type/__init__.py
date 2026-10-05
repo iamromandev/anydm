@@ -2,7 +2,6 @@ from .config import PreferenceKey as PreferenceKey
 from .download import ACTIVE_STATUSES as ACTIVE_STATUSES
 from .download import CONTAINER_KINDS as CONTAINER_KINDS
 from .download import DOWNLOAD_GROUPS as DOWNLOAD_GROUPS
-from .download import MAIN_QUEUE as MAIN_QUEUE
 from .download import OTHER_FOLDER as OTHER_FOLDER
 from .download import AttemptStatus as AttemptStatus
 from .download import BulkAction as BulkAction

@@ -1,5 +1,5 @@
 import pytest
-from src.data.db.model import Download, PlaybackPosition
+from src.data.db.model import Download, Media, PlaybackPosition
 from src.data.repo import CollectionDatabaseRepo, FileDatabaseRepo
 from src.data.repo.download.interface.collection import EntryRow
 from src.data.type import DownloadStatus, MediaKind, Platform, Preset
@@ -49,9 +49,11 @@ async def test_create_find_page_and_hold() -> None:
     assert meta.total == 3
     held = await repo.held(collection.id)
     assert {video_id: position for video_id, (_, _, position) in held.items()} == {"a": 1, "b": 2, "c": 3}
-    # Queue order follows listing order.
+    # Members order by their place in the listing.
     ordered = (
-        await Download.filter(parent_id=collection.id).order_by("queue_position").values_list("position", flat=True)
+        await Media.filter(download__parent_id=collection.id)
+        .order_by("playlist_index")
+        .values_list("playlist_index", flat=True)
     )
     assert ordered == [1, 2, 3]
 
