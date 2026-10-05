@@ -10,20 +10,16 @@ from tortoise.exceptions import IntegrityError
 
 
 async def a_user(name: str, role: UserRole = UserRole.USER) -> User:
-    user = User(username=name, display_name=name, password_hash="x", role=role)
-    user.path = str(user.id)
-    await user.save()
-    return user
+    return await User.create(username=name, display_name=name, password_hash="x", role=role)
 
 
 @pytest.mark.asyncio
-async def test_a_user_defaults_and_its_folder_is_its_id(sqlite: None) -> None:
+async def test_a_user_defaults(sqlite: None) -> None:
     user = await a_user("ada")
 
     assert user.role == UserRole.USER
     assert user.status is UserStatus.ACTIVE
     assert user.last_login_at is None
-    assert user.path == str(user.id)
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """File: a file belonging to one download: its name and path, size, index, progress, selection and type."""
 
 from src.data.db.model.transfer.file import File
+from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
@@ -32,6 +33,7 @@ def test_file_download_is_a_cascade_fk() -> None:
 
 def test_file_filename_and_path_and_size() -> None:
     fields_map = File._meta.fields_map
+    assert isinstance(fields_map["filename"], CharField)
     assert fields_map["filename"].max_length == 512
     assert fields_map["filename"].null is False
     from tortoise import fields
@@ -57,6 +59,7 @@ def test_file_index_progress_selection_and_type() -> None:
     assert fields_map["downloaded_bytes"].default == 0
     assert isinstance(fields_map["selected"], fields.BooleanField)
     assert fields_map["selected"].default is True
+    assert isinstance(fields_map["mime_type"], CharField)
     assert fields_map["mime_type"].max_length == 128
     assert fields_map["mime_type"].null is True
 

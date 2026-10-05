@@ -2,6 +2,7 @@
 
 from src.data.db.model.catalog.provider import Provider
 from src.data.type import ProviderStatus
+from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance, OneToOneFieldInstance
 
 
@@ -20,11 +21,13 @@ def test_provider_slug_is_unique_varchar_64() -> None:
     field = Provider._meta.fields_map["slug"]
     assert field.null is False
     assert field.unique is True
+    assert isinstance(field, CharField)
     assert field.max_length == 64
 
 
 def test_provider_name_is_varchar_64() -> None:
     field = Provider._meta.fields_map["name"]
+    assert isinstance(field, CharField)
     assert field.max_length == 64
     assert field.null is False
 
@@ -54,10 +57,12 @@ def test_provider_parser_is_a_nullable_varchar_16() -> None:
     # Null: a provider that is not a search source (http, torrent, a site's extractor).
     field = Provider._meta.fields_map["parser"]
     assert field.null is True
+    assert isinstance(field, CharField)
     assert field.max_length == 16
 
 
 def test_provider_api_key_is_a_nullable_varchar_1024() -> None:
     field = Provider._meta.fields_map["api_key"]
     assert field.null is True
+    assert isinstance(field, CharField)
     assert field.max_length == 1024

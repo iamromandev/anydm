@@ -35,12 +35,14 @@ def _added_constraint_names() -> set[str]:
     return names
 
 
+def _model_classes() -> list[type[Model]]:
+    return [attr for attr in vars(model_package).values() if isinstance(attr, type) and issubclass(attr, Model)]
+
+
 def _declared_constraint_names() -> dict[str, str]:
     """Constraint name -> the model that declares it."""
     declared: dict[str, str] = {}
-    for attr in vars(model_package).values():
-        if not (isinstance(attr, type) and issubclass(attr, Model)):
-            continue
+    for attr in _model_classes():
         for constraint in getattr(getattr(attr, "Meta", None), "constraints", ()):
             if name := getattr(constraint, "name", None):
                 declared[name] = attr.__name__
@@ -48,8 +50,10 @@ def _declared_constraint_names() -> dict[str, str]:
 
 
 def test_every_declared_constraint_is_added_by_a_migration() -> None:
+    # The guard is on finding the models, not their constraints: no model may
+    # declare one, and then there is nothing to check, rightly.
+    assert len(_model_classes()) > 10, "the model package was not read: this test is checking nothing"
     declared = _declared_constraint_names()
-    assert declared, "no model constraints found: this test is checking nothing"
 
     added = _added_constraint_names()
     missing = {name: owner for name, owner in declared.items() if name not in added}

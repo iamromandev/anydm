@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
+from uuid import UUID
 
 from tortoise import fields
 
@@ -35,6 +36,7 @@ class File(LinkBase):
     mime_type: str | None = fields.CharField(max_length=128, null=True)
 
     if TYPE_CHECKING:
+        download_id: UUID
         playback_positions: fields.ReverseRelation[PlaybackPosition]
 
     def __str__(self) -> str:

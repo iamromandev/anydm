@@ -1,6 +1,7 @@
 """Torrent: one source's torrent, named, hashed, and measured."""
 
 from src.data.db.model.torrent.torrent import Torrent
+from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
@@ -22,6 +23,7 @@ def test_torrent_source_is_a_cascade_fk() -> None:
 
 def test_torrent_info_hash_is_unique_varchar_64() -> None:
     field = Torrent._meta.fields_map["info_hash"]
+    assert isinstance(field, CharField)
     assert field.max_length == 64
     assert field.unique is True
     assert field.null is False
