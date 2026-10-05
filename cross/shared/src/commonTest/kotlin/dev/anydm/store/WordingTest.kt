@@ -2,7 +2,7 @@ package dev.anydm.store
 
 import dev.anydm.model.EntryCounts
 import dev.anydm.model.TaskKind
-import dev.anydm.model.TaskStatus.COMPLETE
+import dev.anydm.model.TaskStatus.COMPLETED
 import dev.anydm.model.TaskStatus.DOWNLOADING
 import dev.anydm.model.TaskStatus.FAILED
 import dev.anydm.model.TaskStatus.PAUSED
@@ -18,7 +18,7 @@ import kotlin.time.Instant
 class WordingTest {
     @Test
     fun `a task that finishes, fails or seeds says so`() {
-        assertEquals(Notice(Tone.SUCCESS, "Finished: clip"), transition(DOWNLOADING, task("a", COMPLETE, title = "clip")))
+        assertEquals(Notice(Tone.SUCCESS, "Finished: clip"), transition(DOWNLOADING, task("a", COMPLETED, title = "clip")))
         assertEquals(Notice(Tone.INFO, "Seeding: iso"), transition(DOWNLOADING, task("a", SEEDING, title = "iso")))
         assertEquals(
             Notice(Tone.ERROR, "Failed: clip — Connection reset"),
@@ -28,8 +28,8 @@ class WordingTest {
 
     @Test
     fun `first sight, no change and a pause say nothing`() {
-        assertNull(transition(null, task("a", COMPLETE)))
-        assertNull(transition(COMPLETE, task("a", COMPLETE)))
+        assertNull(transition(null, task("a", COMPLETED)))
+        assertNull(transition(COMPLETED, task("a", COMPLETED)))
         assertNull(transition(DOWNLOADING, task("a", PAUSED)))
     }
 
@@ -44,7 +44,7 @@ class WordingTest {
             Notice(Tone.SUCCESS, "Finished: 29C3, 96 of 96"),
             transition(
                 DOWNLOADING,
-                task("g", COMPLETE, kind = TaskKind.PLAYLIST, title = "29C3", entryCounts = counts.copy(complete = 96, failed = 0)),
+                task("g", COMPLETED, kind = TaskKind.PLAYLIST, title = "29C3", entryCounts = counts.copy(complete = 96, failed = 0)),
             ),
         )
         assertNull(transition(DOWNLOADING, task("g", PAUSED, kind = TaskKind.PLAYLIST)))
@@ -77,7 +77,7 @@ class WordingTest {
     fun `remove offers to keep only what is whole`() {
         assertEquals(
             RemovePrompt("Remove from the list?", "The download stays on disk unless you ask for it to go too.", true, "Remove"),
-            removePrompt(COMPLETE),
+            removePrompt(COMPLETED),
         )
         assertEquals("Remove this torrent?", removePrompt(SEEDING).heading)
         assertEquals(
@@ -86,7 +86,7 @@ class WordingTest {
         )
         assertEquals(false, removePrompt(UNKNOWN).canKeepFiles)
         assertEquals("Remove 1,234 videos?", removePrompt(DOWNLOADING, videos = 1234).heading)
-        assertEquals("Remove 1 video?", removePrompt(COMPLETE, videos = 1).heading)
+        assertEquals("Remove 1 video?", removePrompt(COMPLETED, videos = 1).heading)
         assertEquals(true, removePrompt(DOWNLOADING, videos = 3).canKeepFiles)
     }
 

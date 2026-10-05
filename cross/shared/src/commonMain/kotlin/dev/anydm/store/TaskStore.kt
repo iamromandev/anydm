@@ -133,8 +133,17 @@ class TaskStore(
         preferredPreset: String,
     ): Boolean = act { merge(listOf(api.addLink(link, preferredPreset).toTask())) }.also { if (it) loadSummary() }
 
+    /** A torrent already in the list comes back as that same download, and is said to be there. */
     suspend fun addTorrent(torrent: String): Boolean =
-        act { merge(listOf(api.addTorrent(torrent).toTask())) }.also { if (it) loadSummary() }
+        act {
+            val held =
+                state.value.tasks
+                    .map { it.id }
+                    .toSet()
+            val added = api.addTorrent(torrent).toTask()
+            merge(listOf(added))
+            if (added.id in held) say(Notice(Tone.INFO, ALREADY_HELD))
+        }.also { if (it) loadSummary() }
 
     /** A playlist row is a collection, which the API acts on by its own routes. */
     private fun isCollection(id: String): Boolean = state.value.tasks.any { it.id == id && it.kind == TaskKind.PLAYLIST }

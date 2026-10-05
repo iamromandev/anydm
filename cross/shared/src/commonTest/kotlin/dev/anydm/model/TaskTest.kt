@@ -39,7 +39,7 @@ class TaskTest {
         val task =
             dto(
                 """{"type":"download","id":"d1","source_url":"https://e.com/a.mp4","platform":"direct",
-                   "media_kind":"file","status":"complete","downloaded_size":10,"total_size":10,
+                   "media_kind":"file","status":"completed","downloaded_size":10,"total_size":10,
                    "live":{"speed_bps":0},"files":[{"index":0,"path":"a.mp4","size":10,
                    "playback":{"position_seconds":4.0,"duration_seconds":60.0,"watched":false}}]}""",
             ).toTask()

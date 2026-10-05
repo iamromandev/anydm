@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 @OptIn(ExperimentalTestApi::class)
 class DownloadListUiTest {
     private val group = TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading", title = "29C3").toTask()
-    private val video = TaskDto(id = "v1", mediaKind = "video", status = "complete", title = "pointer", collectionId = "g").toTask()
+    private val video = TaskDto(id = "v1", mediaKind = "video", status = "completed", title = "pointer", collectionId = "g").toTask()
 
     @Test
     fun `an empty view says so`() =
@@ -71,7 +71,7 @@ class DownloadListUiTest {
     fun `the list marks what's selected and passes presses up with the row's id`() =
         runComposeUiTest {
             val pressed = mutableListOf<Pair<String, Gesture>>()
-            val file = TaskDto(id = "f", mediaKind = "file", status = "complete", title = "debian.iso").toTask()
+            val file = TaskDto(id = "f", mediaKind = "file", status = "completed", title = "debian.iso").toTask()
             setContent {
                 DesktopTheme(dark = false) {
                     DownloadList(

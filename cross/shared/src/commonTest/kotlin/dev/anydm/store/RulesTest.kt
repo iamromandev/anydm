@@ -8,8 +8,8 @@ import dev.anydm.model.ProgressDto
 import dev.anydm.model.Task
 import dev.anydm.model.TaskFile
 import dev.anydm.model.TaskKind
-import dev.anydm.model.TaskStatus.CANCELED
-import dev.anydm.model.TaskStatus.COMPLETE
+import dev.anydm.model.TaskStatus.CANCELLED
+import dev.anydm.model.TaskStatus.COMPLETED
 import dev.anydm.model.TaskStatus.DOWNLOADING
 import dev.anydm.model.TaskStatus.PAUSED
 import dev.anydm.model.TaskStatus.PENDING
@@ -21,8 +21,8 @@ class RulesTest {
 
     @Test
     fun `placeRows updates a held row where it is`() {
-        val placed = placeRows(listOf(task("a"), task("b"), task("c")), listOf(task("b", COMPLETE)))
-        assertEquals(listOf("a" to DOWNLOADING, "b" to COMPLETE, "c" to DOWNLOADING), placed.map { it.id to it.status })
+        val placed = placeRows(listOf(task("a"), task("b"), task("c")), listOf(task("b", COMPLETED)))
+        assertEquals(listOf("a" to DOWNLOADING, "b" to COMPLETED, "c" to DOWNLOADING), placed.map { it.id to it.status })
     }
 
     @Test
@@ -37,25 +37,25 @@ class RulesTest {
 
     @Test
     fun `placeRows drops a canceled row`() {
-        assertEquals(listOf("b"), ids(placeRows(listOf(task("a"), task("b")), listOf(task("a", CANCELED)))))
+        assertEquals(listOf("b"), ids(placeRows(listOf(task("a"), task("b")), listOf(task("a", CANCELLED)))))
     }
 
     @Test
     fun `settlePage keeps the stream's copy of a row it changed while the page was out`() {
-        val settled = settlePage(listOf(task("a", DOWNLOADING)), listOf(task("a", COMPLETE)), setOf("a"))
-        assertEquals(listOf(COMPLETE), settled.map { it.status })
+        val settled = settlePage(listOf(task("a", DOWNLOADING)), listOf(task("a", COMPLETED)), setOf("a"))
+        assertEquals(listOf(COMPLETED), settled.map { it.status })
     }
 
     @Test
     fun `settlePage takes the page's copy of every row the stream left alone`() {
         val settled =
             settlePage(
-                listOf(task("a", progress = 60), task("b", COMPLETE)),
+                listOf(task("a", progress = 60), task("b", COMPLETED)),
                 listOf(task("a", progress = 20), task("b", DOWNLOADING)),
                 emptySet(),
             )
         assertEquals(
-            listOf(Triple("a", DOWNLOADING, 60), Triple("b", COMPLETE, 0)),
+            listOf(Triple("a", DOWNLOADING, 60), Triple("b", COMPLETED, 0)),
             settled.map { Triple(it.id, it.status, it.progress) },
         )
     }
@@ -65,19 +65,19 @@ class RulesTest {
         val settled =
             settlePage(
                 listOf(task("g"), task("a"), task("gone"), task("b")),
-                listOf(task("new"), task("g", PAUSED), task("a", COMPLETE)),
+                listOf(task("new"), task("g", PAUSED), task("a", COMPLETED)),
                 setOf("new", "g", "a", "gone"),
             )
         assertEquals(
-            listOf("new" to DOWNLOADING, "g" to PAUSED, "a" to COMPLETE, "b" to DOWNLOADING),
+            listOf("new" to DOWNLOADING, "g" to PAUSED, "a" to COMPLETED, "b" to DOWNLOADING),
             settled.map { it.id to it.status },
         )
     }
 
     @Test
     fun `appendPage keeps held rows in place and adds the rest after`() {
-        val appended = appendPage(listOf(task("a"), task("b")), listOf(task("b", COMPLETE), task("c")))
-        assertEquals(listOf("a" to DOWNLOADING, "b" to COMPLETE, "c" to DOWNLOADING), appended.map { it.id to it.status })
+        val appended = appendPage(listOf(task("a"), task("b")), listOf(task("b", COMPLETED), task("c")))
+        assertEquals(listOf("a" to DOWNLOADING, "b" to COMPLETED, "c" to DOWNLOADING), appended.map { it.id to it.status })
     }
 
     @Test
@@ -110,7 +110,7 @@ class RulesTest {
             listOf(
                 task("g", entryCounts = counts.copy(watched = 1), positions = listOf(Position(0, 10.0, 60.0, false))),
             )
-        val kept = keepHeld(listOf(task("g", COMPLETE, entryCounts = counts.copy(complete = 3))), held)
+        val kept = keepHeld(listOf(task("g", COMPLETED, entryCounts = counts.copy(complete = 3))), held)
         assertEquals(1, kept.single().entryCounts?.watched)
         assertEquals(3, kept.single().entryCounts?.complete)
         assertEquals(

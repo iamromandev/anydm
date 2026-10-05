@@ -19,6 +19,7 @@ const val WARN_AFTER_MS = 20_000L
 
 const val LOST_CONTACT = "Lost contact with the API. Still trying, and the list may be out of date."
 const val BACK_IN_CONTACT = "Back in contact"
+const val ALREADY_HELD = "Already in your downloads"
 
 /** The sidebar's four views, as the API names them (`group=`). */
 enum class ListFilter(
@@ -34,9 +35,9 @@ enum class ListFilter(
 fun ListFilter.matches(task: Task): Boolean =
     when (this) {
         ListFilter.ALL -> true
-        ListFilter.ACTIVE -> task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING)
+        ListFilter.ACTIVE -> task.status in setOf(TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.DOWNLOADING, TaskStatus.MUXING)
         ListFilter.SEEDING -> task.status == TaskStatus.SEEDING
-        ListFilter.COMPLETED -> task.status == TaskStatus.COMPLETE
+        ListFilter.COMPLETED -> task.status == TaskStatus.COMPLETED
     }
 
 /** Whether live updates are arriving. `Offline` is a refused key: nothing retries until it's changed. */

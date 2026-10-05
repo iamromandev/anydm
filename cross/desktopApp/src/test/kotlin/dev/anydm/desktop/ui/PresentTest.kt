@@ -33,6 +33,9 @@ class PresentTest {
         assertEquals("Vimeo", siteName("Vimeo"))
         assertEquals("", siteName(null))
         assertEquals("Queued", statusLabel(TaskStatus.PENDING))
+        assertEquals("Queued", statusLabel(TaskStatus.QUEUED))
+        assertEquals("Completed", statusLabel(TaskStatus.COMPLETED))
+        assertEquals("Cancelled", statusLabel(TaskStatus.CANCELLED))
         assertEquals("Processing", statusLabel(TaskStatus.MUXING))
         assertEquals("Unknown", statusLabel(TaskStatus.UNKNOWN))
         assertEquals("Reconnecting…", connectionLabel(Connection.Degraded(0)))
@@ -70,11 +73,11 @@ class PresentTest {
 
     @Test
     fun `a finished media file can be played and saved, anything else only saved`() {
-        val video = task("complete").copy(filename = "clip.mp4")
+        val video = task("completed").copy(filename = "clip.mp4")
         assertEquals(listOf(CardAction.PLAY, CardAction.SAVE, CardAction.REMOVE), cardView(video, 0).actions)
-        val iso = task("complete").copy(filename = "debian.iso")
+        val iso = task("completed").copy(filename = "debian.iso")
         assertEquals(listOf(CardAction.SAVE, CardAction.REMOVE), cardView(iso, 0).actions)
-        val group = TaskDto(type = "collection", id = "g", kind = "playlist", status = "complete", title = "29C3").toTask()
+        val group = TaskDto(type = "collection", id = "g", kind = "playlist", status = "completed", title = "29C3").toTask()
         assertEquals(listOf(CardAction.REMOVE), cardView(group, 0).actions)
     }
 

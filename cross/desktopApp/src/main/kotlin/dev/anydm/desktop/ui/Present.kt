@@ -50,14 +50,14 @@ fun siteName(extractor: String?): String = extractor?.let { SITE_NAMES[it] ?: it
 
 fun statusLabel(status: TaskStatus): String =
     when (status) {
-        TaskStatus.PENDING -> "Queued"
+        TaskStatus.PENDING, TaskStatus.QUEUED -> "Queued"
         TaskStatus.DOWNLOADING -> "Downloading"
         TaskStatus.MUXING -> "Processing"
         TaskStatus.PAUSED -> "Paused"
         TaskStatus.SEEDING -> "Seeding"
-        TaskStatus.COMPLETE -> "Complete"
+        TaskStatus.COMPLETED -> "Completed"
         TaskStatus.FAILED -> "Failed"
-        TaskStatus.CANCELED -> "Canceled"
+        TaskStatus.CANCELLED -> "Cancelled"
         TaskStatus.UNKNOWN -> "Unknown"
     }
 
@@ -109,7 +109,7 @@ private fun countsLine(counts: EntryCounts): String =
 
 private fun actionsOf(task: Task): List<CardAction> =
     buildList {
-        val finished = task.status == TaskStatus.COMPLETE || task.status == TaskStatus.SEEDING
+        val finished = task.status == TaskStatus.COMPLETED || task.status == TaskStatus.SEEDING
         if (task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.SEEDING)) add(CardAction.PAUSE)
         if (task.status == TaskStatus.PAUSED) add(CardAction.RESUME)
         if (task.status == TaskStatus.FAILED) add(CardAction.RETRY)
@@ -153,7 +153,7 @@ fun cardView(
             actions = actionsOf(task),
         )
     }
-    val active = task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.PAUSED)
+    val active = task.status in setOf(TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.PAUSED)
     val size = if (active && task.totalBytes > 0) "${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}" else ""
     val retry = retryLabel(task, nowMillis)
     val detail =
@@ -166,7 +166,7 @@ fun cardView(
                 ).joinToString(" · ")
             }
 
-            TaskStatus.PENDING -> {
+            TaskStatus.PENDING, TaskStatus.QUEUED -> {
                 if (retry == null) "Queued" else ""
             }
 
@@ -239,7 +239,7 @@ fun rowView(
             retry != null || task.status == TaskStatus.FAILED -> Glyph.RETRY
             task.status == TaskStatus.PAUSED -> Glyph.PAUSED
             task.status == TaskStatus.SEEDING -> Glyph.SEEDING
-            task.status == TaskStatus.COMPLETE -> Glyph.DONE
+            task.status == TaskStatus.COMPLETED -> Glyph.DONE
             else -> Glyph.DOWN
         }
     val counts = task.entryCounts
@@ -251,7 +251,7 @@ fun rowView(
             tone = if ((counts?.failed ?: 0) > 0) DetailTone.WARN else DetailTone.NORMAL,
             icon = IconKind.GROUP,
             glyph = glyph,
-            progress = if (total > 0 && task.status != TaskStatus.COMPLETE) (counts?.complete ?: 0).toFloat() / total else null,
+            progress = if (total > 0 && task.status != TaskStatus.COMPLETED) (counts?.complete ?: 0).toFloat() / total else null,
             hover = hover,
             menu = menu,
             expandable = true,
@@ -272,7 +272,7 @@ fun rowView(
                 ).joinToString(" · ")
             }
 
-            task.status == TaskStatus.PENDING -> {
+            task.status == TaskStatus.PENDING || task.status == TaskStatus.QUEUED -> {
                 "Queued"
             }
 
@@ -288,7 +288,7 @@ fun rowView(
                 "Seeding · ↑ ${formatSpeed(task.uploadSpeed)}"
             }
 
-            task.status == TaskStatus.COMPLETE -> {
+            task.status == TaskStatus.COMPLETED -> {
                 if (task.totalBytes > 0) "${formatBytes(task.totalBytes)} · Finished" else "Finished"
             }
 
@@ -312,7 +312,7 @@ fun rowView(
             site.isNotEmpty() || task.kind == TaskKind.VIDEO || task.kind == TaskKind.AUDIO -> IconKind.SITE
             else -> IconKind.FILE
         }
-    val inFlight = task.status in setOf(TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.PAUSED)
+    val inFlight = task.status in setOf(TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.DOWNLOADING, TaskStatus.MUXING, TaskStatus.PAUSED)
     return RowView(
         title = task.title,
         detail = if (site.isNotEmpty() && retry == null) "$site · $body" else body,

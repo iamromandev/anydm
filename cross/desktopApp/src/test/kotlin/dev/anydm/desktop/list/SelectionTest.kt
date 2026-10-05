@@ -59,8 +59,8 @@ class SelectionTest {
         assertEquals(Gesture.CONTEXT, gestureOf(meta = false, ctrl = false, shift = true, secondary = true, mac = true))
 
         val g = TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading", title = "g").toTask()
-        val f = TaskDto(id = "f", mediaKind = "file", status = "complete", title = "f").toTask()
-        val v = TaskDto(id = "v", mediaKind = "video", status = "complete", title = "v", collectionId = "g").toTask()
+        val f = TaskDto(id = "f", mediaKind = "file", status = "completed", title = "f").toTask()
+        val v = TaskDto(id = "v", mediaKind = "video", status = "completed", title = "v", collectionId = "g").toTask()
         assertEquals(listOf("g", "v", "f"), visibleOrder(listOf(g, f), mapOf("g" to listOf(v)), ListFilter.ALL))
         assertEquals(listOf("f"), visibleOrder(listOf(g, f), mapOf("g" to listOf(v)), ListFilter.COMPLETED))
     }
