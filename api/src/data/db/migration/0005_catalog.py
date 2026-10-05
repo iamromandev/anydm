@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
     initial: ClassVar[bool] = False
 
     operations: ClassVar[list[ops.Operation]] = [
-        ops.CreateSchema(schema_name='transfer'),
+        ops.CreateSchema(schema_name='catalog'),
         ops.CreateModel(
             name='Provider',
             fields=[
@@ -27,7 +27,7 @@ class Migration(migrations.Migration):
                 ('slug', fields.CharField(unique=True, max_length=64)),
                 ('status', fields.CharEnumField(default=ProviderStatus.ACTIVE, description='ACTIVE: active\nINACTIVE: inactive', enum_type=ProviderStatus, max_length=8)),
             ],
-            options={'table': 'provider', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Provider'},
+            options={'table': 'provider', 'schema': 'catalog', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Provider'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -40,7 +40,7 @@ class Migration(migrations.Migration):
                 ('url', fields.ForeignKeyField('model.Url', source_field='url_id', db_constraint=True, to_field='id', related_name='sources', on_delete=OnDelete.RESTRICT)),
                 ('kind', fields.CharEnumField(default=SourceKind.DIRECT, description='DIRECT: direct\nCONTENT: content\nTORRENT: torrent', enum_type=SourceKind, max_length=7)),
             ],
-            options={'table': 'source', 'schema': 'transfer', 'app': 'model', 'unique_together': (('provider', 'url', 'kind'),), 'pk_attr': 'id', 'table_description': 'Source'},
+            options={'table': 'source', 'schema': 'catalog', 'app': 'model', 'unique_together': (('provider', 'url', 'kind'),), 'pk_attr': 'id', 'table_description': 'Source'},
             bases=['LinkBase'],
         ),
     ]

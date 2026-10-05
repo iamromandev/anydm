@@ -32,5 +32,5 @@ class Source(LinkBase):
     class Meta:
         table: ClassVar[str] = "source"
         table_description: ClassVar[str] = "Source"
-        schema: ClassVar[str] = "transfer"
+        schema: ClassVar[str] = "catalog"
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("provider", "url", "kind"),)

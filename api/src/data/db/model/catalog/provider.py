@@ -27,4 +27,4 @@ class Provider(LinkBase):
     class Meta:
         table: ClassVar[str] = "provider"
         table_description: ClassVar[str] = "Provider"
-        schema: ClassVar[str] = "transfer"
+        schema: ClassVar[str] = "catalog"

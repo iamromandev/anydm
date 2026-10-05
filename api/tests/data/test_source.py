@@ -48,8 +48,8 @@ def test_source_kind_is_the_three_ways() -> None:
     assert (SourceKind.DIRECT, SourceKind.CONTENT, SourceKind.TORRENT) == ("direct", "content", "torrent")
 
 
-def test_source_schema_is_transfer() -> None:
-    assert Source.Meta.schema == "transfer"
+def test_source_schema_is_catalog() -> None:
+    assert Source.Meta.schema == "catalog"
 
 
 def test_source_url_provider_kind_is_unique() -> None:

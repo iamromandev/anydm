@@ -18,6 +18,7 @@ class Migration(migrations.Migration):
     initial: ClassVar[bool] = False
 
     operations: ClassVar[list[ops.Operation]] = [
+        ops.CreateSchema(schema_name='transfer'),
         ops.CreateModel(
             name='Download',
             fields=[
