@@ -25,4 +25,5 @@ from .download import SourceKind as SourceKind
 from .download import TrackerStatus as TrackerStatus
 from .download import UrlKind as UrlKind
 from .iam import UserRole as UserRole
+from .iam import UserStatus as UserStatus
 from .shared import RefType as RefType

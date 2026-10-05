@@ -4,6 +4,7 @@ from datetime import time
 from typing import ClassVar
 
 from tortoise import fields
+from tortoise.migrations.constraints import UniqueConstraint
 
 from src.core.base import LinkBase
 
@@ -12,8 +13,8 @@ class Queue(LinkBase):
     """A named lane downloads wait in: how many of its downloads run at once, and when it is open.
 
     Exactly one queue is the default, the one a new download joins: a partial
-    unique index on ``is_default`` written by hand in the migration, which
-    ``CreateModel`` would not apply.
+    unique constraint on ``is_default``. ``CreateModel`` does not apply it, so
+    the migration adds it with ``AddConstraint``.
     """
 
     name: str = fields.CharField(max_length=64, unique=True)
@@ -39,3 +40,10 @@ class Queue(LinkBase):
         table_description: ClassVar[str] = "Queue"
         schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["position"]
+        constraints: ClassVar[tuple[UniqueConstraint, ...]] = (
+            UniqueConstraint(
+                fields=("is_default",),
+                name="uidx_queue_default",
+                condition='"is_default" IS TRUE',
+            ),
+        )

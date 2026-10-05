@@ -5,7 +5,7 @@ In-memory SQLite: no Postgres needed, so this runs with the unit suite.
 
 import pytest
 from src.data.db.model import User
-from src.data.type import UserRole
+from src.data.type import UserRole, UserStatus
 from tortoise.exceptions import IntegrityError
 
 
@@ -21,7 +21,7 @@ async def test_a_user_defaults_and_its_folder_is_its_id(sqlite: None) -> None:
     user = await a_user("ada")
 
     assert user.role == UserRole.USER
-    assert user.is_active is True
+    assert user.status is UserStatus.ACTIVE
     assert user.last_login_at is None
     assert user.path == str(user.id)
 
