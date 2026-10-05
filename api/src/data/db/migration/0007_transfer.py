@@ -27,6 +27,7 @@ class Migration(migrations.Migration):
                 ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('deleted_at', fields.DatetimeField(null=True, db_index=True, auto_now=False, auto_now_add=False)),
+                ('parent', fields.ForeignKeyField('model.Download', source_field='parent_id', null=True, description='The collection this download belongs to; none for a standalone download.', db_constraint=True, to_field='id', related_name='children', on_delete=OnDelete.CASCADE)),
                 ('folder', fields.CharEnumField(default=Folder.DOWNLOADS, description='DOWNLOADS: downloads\nVIDEOS: videos\nMOVIES: movies\nTV_SHOWS: tv_shows\nMUSIC: music\nAUDIOBOOKS: audiobooks\nPODCASTS: podcasts\nDOCUMENTS: documents\nEBOOKS: ebooks\nIMAGES: images\nPHOTOS: photos\nSOFTWARE: software\nGAMES: games\nARCHIVES: archives\nOTHER: other', enum_type=Folder, max_length=10)),
                 ('status', fields.CharEnumField(default=DownloadStatus.PENDING, db_index=True, description='PENDING: pending\nQUEUED: queued\nDOWNLOADING: downloading\nMUXING: muxing\nPAUSED: paused\nSEEDING: seeding\nCOMPLETED: completed\nFAILED: failed\nCANCELLED: cancelled', enum_type=DownloadStatus, max_length=11)),
                 ('total_size', fields.BigIntField(null=True)),
@@ -41,7 +42,7 @@ class Migration(migrations.Migration):
                 ('attempts', fields.IntField(default=0)),
                 ('next_attempt_at', fields.DatetimeField(null=True, description='When a retryable failure may run again; the row waits in ``PENDING`` until then.', auto_now=False, auto_now_add=False)),
             ],
-            options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created')], 'pk_attr': 'id', 'table_description': 'Download'},
+            options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created'), Index(fields=['parent_id', 'created_at'], name='idx_download_parent_created')], 'pk_attr': 'id', 'table_description': 'Download'},
             bases=['Base'],
         ),
         ops.CreateModel(

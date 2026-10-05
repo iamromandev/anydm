@@ -8,6 +8,7 @@ TABLES = {
     "catalog": {"provider", "source"},
     "config": {"preference"},
     "iam": {"user"},
+    "play": {"playback_position"},
     "shared": {"tag", "url"},
     "torrent": {"torrent", "torrent_file", "peer", "piece", "tracker"},
     "transfer": {"download", "file", "mirror", "attempt", "segment"},
@@ -20,7 +21,7 @@ async def test_every_table_is_in_its_domains_schema() -> None:
     conn = Tortoise.get_connection("default")
     rows = await conn.execute_query_dict(
         "SELECT schemaname, tablename FROM pg_tables "
-        "WHERE schemaname IN ('catalog', 'config', 'iam', 'shared', 'torrent', 'transfer')"
+        "WHERE schemaname IN ('catalog', 'config', 'iam', 'play', 'shared', 'torrent', 'transfer')"
     )
     found: dict[str, set[str]] = {}
     for row in rows:

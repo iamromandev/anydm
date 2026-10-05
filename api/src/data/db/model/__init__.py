@@ -2,6 +2,7 @@ from .catalog import Provider as Provider
 from .catalog import Source as Source
 from .config import Preference as Preference
 from .iam import User as User
+from .play import PlaybackPosition as PlaybackPosition
 from .shared import Tag as Tag
 from .shared import Url as Url
 from .torrent import Peer as Peer

@@ -23,6 +23,10 @@ class Download(Base):
     mirror is an ``Attempt``.
     """
 
+    # A playlist or channel tab is itself a Download (its kind and preset in its
+    # site detail); its videos point at it here.
+    #: The collection this download belongs to; none for a standalone download.
+    parent = fields.ForeignKeyField("model.Download", related_name="children", null=True, on_delete=fields.CASCADE)
     folder: Folder = fields.CharEnumField(enum_type=Folder, default=Folder.DOWNLOADS)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
@@ -47,4 +51,5 @@ class Download(Base):
         schema: ClassVar[str] = "transfer"
         indexes: ClassVar[tuple[Index, ...]] = (
             Index(fields=["status", "created_at"], name="idx_download_status_created"),
+            Index(fields=["parent_id", "created_at"], name="idx_download_parent_created"),
         )

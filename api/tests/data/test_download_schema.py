@@ -24,14 +24,14 @@ def test_download_has_the_diagram_columns() -> None:
         "attempts",
         "next_attempt_at",
     } <= names
-    assert not Download._meta.fk_fields
+    # Its only relation: the collection it belongs to.
+    assert Download._meta.fk_fields == {"parent"}
 
 
 def test_download_dropped_the_old_columns() -> None:
     names = set(Download._meta.fields_map)
     # Title, platform and media kind come from what the download was added from, not from columns here.
     for gone in (
-        "parent",
         "queue",
         "provider",
         "url",
@@ -102,3 +102,16 @@ def test_download_soft_delete_and_status_are_indexed() -> None:
     assert fields_map["status"].index is True
     assert any(index.name == "idx_download_status_created" for index in Download.Meta.indexes)
 
+
+
+def test_download_parent_is_its_collection() -> None:
+    # A playlist or channel tab is a Download; its videos point at it, and go with it.
+    from tortoise.fields.relational import ForeignKeyFieldInstance
+
+    field = Download._meta.fields_map["parent"]
+    assert isinstance(field, ForeignKeyFieldInstance)
+    assert field.model_name == "model.Download"
+    assert field.null is True
+    assert field.related_name == "children"
+    assert getattr(field, "on_delete", None) == "CASCADE"
+    assert any(index.name == "idx_download_parent_created" for index in Download.Meta.indexes)
