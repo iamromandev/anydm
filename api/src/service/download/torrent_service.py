@@ -20,11 +20,11 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.schema.download import DownloadSchema, FileSchema, TorrentResolveResponse
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
-from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
@@ -162,7 +162,7 @@ class TorrentService(BaseService):
 
     @staticmethod
     def _hash(download: Any) -> str:
-        return download.ref_id if download.provider == TORRENT_PROVIDER else ""
+        return describe(download).info_hash or ""
 
     async def pause(self, download_id: uuid.UUID) -> DownloadSchema:
         download = await self._require(download_id)
@@ -232,7 +232,8 @@ class TorrentService(BaseService):
 
     def _folder(self, download: Any) -> Path:
         """The torrent's folder on disk, derived from the same rule as at add time."""
-        return torrent_folder(self._root, download.title, download.ref_id)
+        described = describe(download)
+        return torrent_folder(self._root, described.title, described.info_hash or "")
 
     def _relative_folder(self, download: Any) -> str:
         """The torrent's folder relative to the download root, for its schema."""

@@ -30,6 +30,6 @@ def test_torrent_file_columns() -> None:
     assert fields_map["size"].null is False
 
 
-def test_torrent_file_meta_is_transfer() -> None:
+def test_torrent_file_meta_is_torrent() -> None:
     assert TorrentFile.Meta.table == "torrent_file"
-    assert TorrentFile.Meta.schema == "transfer"
+    assert TorrentFile.Meta.schema == "torrent"

@@ -20,17 +20,21 @@ from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, Do
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
 from src.data.schema.download import DownloadSummarySchema
-from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, DownloadStatus, Platform, SourceKind
+from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, DownloadStatus, SourceKind
 from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER
 
 
-def _not_torrent() -> Q:
-    """Not a torrent: the monitor runs those, never the workers.
+def _torrent() -> Q:
+    """A torrent: a download with a torrent source. The monitor runs these, never the workers.
 
     A subquery rather than a join, so a claim's row lock and an update both stay
     on ``download``. Built per call: a queryset needs Tortoise initialised.
     """
-    return ~Q(id__in=Subquery(Mirror.filter(source__kind=SourceKind.TORRENT).values("download_id")))
+    return Q(id__in=Subquery(Mirror.filter(source__kind=SourceKind.TORRENT).values("download_id")))
+
+
+def _not_torrent() -> Q:
+    return ~_torrent()
 
 
 def _name(path: str) -> str:
@@ -300,10 +304,11 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
 
     async def torrents_to_watch(self) -> list[Download]:
         return await (
-            Download.filter(platform=Platform.TORRENT, deleted_at__isnull=True)
-            .order_by("created_at")
-            .prefetch_related(*RELATED)
+            Download.filter(_torrent(), deleted_at__isnull=True).order_by("created_at").prefetch_related(*RELATED)
         )
+
+    async def set_torrent_total(self, info_hash: str, total: int) -> None:
+        await Torrent.filter(info_hash=info_hash).update(total_bytes=total)
 
     async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (

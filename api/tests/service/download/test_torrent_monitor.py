@@ -48,9 +48,13 @@ def _sample(**overrides: Any) -> TorrentProgress:
 class FakeRepo:
     def __init__(self, rows: list[Any]) -> None:
         self.rows = rows
+        self.totals: dict[str, int] = {}
 
     async def torrents_to_watch(self) -> list[Any]:
         return list(self.rows)
+
+    async def set_torrent_total(self, info_hash: str, total: int) -> None:
+        self.totals[info_hash] = total
 
 
 class FakeClient:
@@ -113,10 +117,13 @@ def _monitor(
 async def test_tick_mirrors_bytes_onto_the_row_and_live_numbers_into_live_stats() -> None:
     row = _row()
     live = LiveStats()
-    await _monitor([row], FakeClient([_sample()]), live=live).tick()
+    monitor = _monitor([row], FakeClient([_sample()]), live=live)
+    await monitor.tick()
 
-    assert (row.status, row.downloaded_bytes, row.total_bytes) == (DownloadStatus.DOWNLOADING, 500, 1000)
-    assert row.uploaded_bytes == 100
+    assert (row.status, row.downloaded_size, row.total_size) == (DownloadStatus.DOWNLOADING, 500, 1000)
+    assert row.uploaded_size == 100
+    # A total that moved reaches the torrent's own row too.
+    assert monitor._repo.totals == {row.ref_id: 1000}  # ty: ignore[unresolved-attribute]
     assert live.get(row.id) == Live(speed_bps=4096, eta_seconds=12, upload_speed_bps=512, peers=6)
     assert all("speed_bps" not in fields for fields in row.saved)
 
@@ -138,7 +145,7 @@ async def test_a_finished_torrent_becomes_seeding_and_is_stamped() -> None:
     await _monitor([row], FakeClient([sample])).tick()
 
     assert row.status == DownloadStatus.SEEDING
-    assert row.downloaded_bytes == 1000
+    assert row.downloaded_size == 1000
     assert row.completed_at is not None
 
 
@@ -285,4 +292,4 @@ async def test_a_refused_limit_does_not_stop_the_mirroring() -> None:
 
     await _monitor([row], client, download_limit_bps=1024).tick()
 
-    assert row.downloaded_bytes == 500
+    assert row.downloaded_size == 500
