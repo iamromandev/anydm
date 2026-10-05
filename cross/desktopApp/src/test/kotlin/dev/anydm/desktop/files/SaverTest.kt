@@ -42,7 +42,7 @@ class SaverTest {
     @Test
     fun `a single download saves its one file under its own name`() {
         val task =
-            TaskDto(id = "t", mediaKind = "file", status = "complete", title = "clip", files = listOf(FileDto(path = "clip.mp4")))
+            TaskDto(id = "t", mediaKind = "file", status = "completed", title = "clip", files = listOf(FileDto(path = "clip.mp4")))
                 .toTask()
         assertEquals(listOf(SaveTarget("u/t", "clip.mp4")), saveTargets(task, fileUrl))
     }

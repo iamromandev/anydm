@@ -8,13 +8,14 @@ enum class TaskStatus(
     val wire: String,
 ) {
     PENDING("pending"),
+    QUEUED("queued"),
     DOWNLOADING("downloading"),
     MUXING("muxing"),
     PAUSED("paused"),
     SEEDING("seeding"),
-    COMPLETE("complete"),
+    COMPLETED("completed"),
     FAILED("failed"),
-    CANCELED("canceled"),
+    CANCELLED("cancelled"),
     UNKNOWN(""),
     ;
 

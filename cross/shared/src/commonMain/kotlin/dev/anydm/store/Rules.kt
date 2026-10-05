@@ -9,15 +9,15 @@ import dev.anydm.model.TaskStatus
  *
  * A row already held is updated where it is, so a group's every recount doesn't jump it
  * to the top; only rows new to the list go on top. A group's videos never enter it, and
- * a canceled row leaves it: cancelling publishes the row it just removed.
+ * a cancelled row leaves it: cancelling publishes the row it just removed.
  */
 fun placeRows(
     held: List<Task>,
     rows: List<Task>,
 ): List<Task> {
     val top = rows.filter { it.parentId == null }
-    val removed = top.filter { it.status == TaskStatus.CANCELED }.map { it.id }.toSet()
-    val live = top.filter { it.status != TaskStatus.CANCELED }.associateBy { it.id }
+    val removed = top.filter { it.status == TaskStatus.CANCELLED }.map { it.id }.toSet()
+    val live = top.filter { it.status != TaskStatus.CANCELLED }.associateBy { it.id }
     val heldIds = held.map { it.id }.toSet()
     val fresh = live.values.filter { it.id !in heldIds }
     val updated = held.filter { it.id !in removed }.map { live[it.id] ?: it }

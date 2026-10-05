@@ -35,7 +35,7 @@ fun transition(
     if (previous == null || previous == task.status) return null
     if (task.kind == TaskKind.PLAYLIST) return groupEnded(task)
     return when (task.status) {
-        TaskStatus.COMPLETE -> Notice(Tone.SUCCESS, "Finished: ${task.title}")
+        TaskStatus.COMPLETED -> Notice(Tone.SUCCESS, "Finished: ${task.title}")
         TaskStatus.SEEDING -> Notice(Tone.INFO, "Seeding: ${task.title}")
         TaskStatus.FAILED -> Notice(Tone.ERROR, task.error?.let { "Failed: ${task.title} — $it" } ?: "Failed: ${task.title}")
         else -> null
@@ -44,10 +44,10 @@ fun transition(
 
 /** A group raises one notice, when it ends: "Finished: 29C3, 95 of 96, 1 failed". */
 private fun groupEnded(task: Task): Notice? {
-    if (task.status != TaskStatus.COMPLETE && task.status != TaskStatus.FAILED) return null
+    if (task.status != TaskStatus.COMPLETED && task.status != TaskStatus.FAILED) return null
     val counts =
         task.entryCounts
-            ?: return Notice(if (task.status == TaskStatus.COMPLETE) Tone.SUCCESS else Tone.ERROR, "Finished: ${task.title}")
+            ?: return Notice(if (task.status == TaskStatus.COMPLETED) Tone.SUCCESS else Tone.ERROR, "Finished: ${task.title}")
     val failed = if (counts.failed > 0) ", ${count(counts.failed)} failed" else ""
     return Notice(
         if (counts.failed > 0) Tone.ERROR else Tone.SUCCESS,
@@ -124,7 +124,7 @@ fun removePrompt(
             RemovePrompt("Remove this torrent?", "Sharing stops. The files stay on disk unless you ask for them to go too.", true, "Remove")
         }
 
-        status == TaskStatus.COMPLETE -> {
+        status == TaskStatus.COMPLETED -> {
             RemovePrompt("Remove from the list?", "The download stays on disk unless you ask for it to go too.", true, "Remove")
         }
 

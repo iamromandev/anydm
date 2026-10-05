@@ -10,8 +10,8 @@ import dev.anydm.model.PlaylistDto
 import dev.anydm.model.ProgressDto
 import dev.anydm.model.TaskDto
 import dev.anydm.model.TaskKind
-import dev.anydm.model.TaskStatus.CANCELED
-import dev.anydm.model.TaskStatus.COMPLETE
+import dev.anydm.model.TaskStatus.CANCELLED
+import dev.anydm.model.TaskStatus.COMPLETED
 import dev.anydm.model.TaskStatus.DOWNLOADING
 import dev.anydm.model.TaskStatus.PAUSED
 import kotlinx.coroutines.CompletableDeferred
@@ -74,9 +74,9 @@ class TaskStoreTest {
         runTest {
             api.stream = {
                 emit(ServerEvent.Snapshot(listOf(task("a"), task("b"))))
-                emit(ServerEvent.TaskChanged(task("b", COMPLETE)))
+                emit(ServerEvent.TaskChanged(task("b", COMPLETED)))
                 emit(ServerEvent.TaskChanged(task("v", parentId = "g")))
-                emit(ServerEvent.TaskChanged(task("a", CANCELED)))
+                emit(ServerEvent.TaskChanged(task("a", CANCELLED)))
                 awaitCancellation()
             }
             val store = store()
@@ -85,7 +85,7 @@ class TaskStoreTest {
             runCurrent()
 
             assertEquals(
-                listOf("b" to COMPLETE),
+                listOf("b" to COMPLETED),
                 store.state.value.tasks
                     .map { it.id to it.status },
             )
@@ -172,7 +172,7 @@ class TaskStoreTest {
             val gate = CompletableDeferred<Unit>()
             api.pageGate = gate
             api.stream = {
-                emit(ServerEvent.TaskChanged(task("a", COMPLETE)))
+                emit(ServerEvent.TaskChanged(task("a", COMPLETED)))
                 awaitCancellation()
             }
             val store = store()
@@ -183,7 +183,7 @@ class TaskStoreTest {
             runCurrent()
 
             assertEquals(
-                listOf(COMPLETE),
+                listOf(COMPLETED),
                 store.state.value.tasks
                     .map { it.status },
             )
@@ -244,6 +244,30 @@ class TaskStoreTest {
 
             assertFalse(store.add("https://youtube.com/playlist?list=PL1", preferredPreset = "best"))
             assertTrue(said("Playlists are added from the web app for now"))
+        }
+
+    @Test
+    fun `a torrent the list already holds is said to be there, and a new one is not`() =
+        runTest {
+            api.pages[1] = page(dto("t"))
+            api.stream = { awaitCancellation() }
+            val store = store()
+            store.start()
+            runCurrent()
+
+            api.answer = dto("t")
+            assertTrue(store.addTorrent("magnet:?xt=urn:btih:held"))
+            assertTrue(said(ALREADY_HELD))
+            assertEquals(
+                listOf("t"),
+                store.state.value.tasks
+                    .map { it.id },
+            )
+
+            seen.clear()
+            api.answer = dto("n")
+            assertTrue(store.addTorrent("magnet:?xt=urn:btih:new"))
+            assertFalse(said(ALREADY_HELD))
         }
 
     @Test
@@ -310,14 +334,14 @@ class TaskStoreTest {
             )
 
             api.stream = {}
-            store.onFrame(ServerEvent.TaskChanged(task("v1", COMPLETE, parentId = "g")))
+            store.onFrame(ServerEvent.TaskChanged(task("v1", COMPLETED, parentId = "g")))
             store.onFrame(ServerEvent.Progress(ProgressDto(id = "v2", collectionId = "g", progress = 55)))
             store.onFrame(ServerEvent.TaskChanged(task("other", parentId = "closed")))
             runCurrent()
             val open =
                 store.state.value.entries
                     .getValue("g")
-            assertEquals(COMPLETE, open.first { it.id == "v1" }.status)
+            assertEquals(COMPLETED, open.first { it.id == "v1" }.status)
             assertEquals(55, open.first { it.id == "v2" }.progress)
             assertEquals(setOf("g"), store.state.value.entries.keys)
             assertEquals(

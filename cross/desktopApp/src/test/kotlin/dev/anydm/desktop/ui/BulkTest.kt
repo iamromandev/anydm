@@ -15,17 +15,17 @@ class BulkTest {
 
     @Test
     fun `Space pauses whatever runs in a mixed selection, else resumes the stopped`() {
-        val mixed = listOf(task("a", "downloading"), task("b", "paused"), task("c", "seeding"), task("d", "complete"))
+        val mixed = listOf(task("a", "downloading"), task("b", "paused"), task("c", "seeding"), task("d", "completed"))
         val pause = bulkIntent(mixed)
         assertEquals(CardAction.PAUSE, pause?.action)
         assertEquals(listOf("a", "c"), pause?.targets?.map { it.id })
 
-        val stopped = listOf(task("b", "paused"), task("f", "failed"), task("d", "complete"))
+        val stopped = listOf(task("b", "paused"), task("f", "failed"), task("d", "completed"))
         val resume = bulkIntent(stopped)
         assertEquals(CardAction.RESUME, resume?.action)
         assertEquals(listOf("b", "f"), resume?.targets?.map { it.id })
 
-        assertNull(bulkIntent(listOf(task("d", "complete"))))
+        assertNull(bulkIntent(listOf(task("d", "completed"))))
         assertNull(bulkIntent(emptyList()))
     }
 

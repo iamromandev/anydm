@@ -24,7 +24,7 @@ class EventsTest {
             """data: {"id":"v","collection_id":"g","live":{"speed_bps":10}}""",
             "",
             "event: download",
-            """data: {"type":"download","id":"a","status":"complete","media_kind":"file"}""",
+            """data: {"type":"download","id":"a","status":"completed","media_kind":"file"}""",
             "",
             "event: collection",
             """data: {"type":"collection","id":"c1","kind":"playlist","status":"downloading"}""",
@@ -59,7 +59,7 @@ class EventsTest {
             val progress = assertIs<ServerEvent.Progress>(events[1]).progress
             assertEquals("g", progress.collectionId)
             assertEquals(10, progress.live?.speedBps)
-            assertEquals(TaskStatus.COMPLETE, assertIs<ServerEvent.TaskChanged>(events[2]).task.status)
+            assertEquals(TaskStatus.COMPLETED, assertIs<ServerEvent.TaskChanged>(events[2]).task.status)
             assertEquals("c1", assertIs<ServerEvent.CollectionChanged>(events[3]).task.id)
             assertEquals(40, assertIs<ServerEvent.Disk>(events[4]).disk.freeBytes)
         }

@@ -50,7 +50,7 @@ class RowViewTest {
 
     @Test
     fun `finished, seeding and paused rows read as the OS's own lists do`() {
-        val done = rowView(task("complete").copy(totalBytes = 690 * mb), 0)
+        val done = rowView(task("completed").copy(totalBytes = 690 * mb), 0)
         assertEquals("690.0 MB · Finished", done.detail)
         assertEquals(Glyph.DONE, done.glyph)
         assertNull(done.progress)

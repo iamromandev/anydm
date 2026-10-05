@@ -1,6 +1,10 @@
-Recorded from a throwaway anydm API (8046, with its own rqbit) on 2026-10-02, by
-`p2_record.py` in the download-model renovation (plan Task 22). The extract, error and bulk
-answers come from endpoints that did not change, and are the 2026-09-28 recordings.
+Recorded from a throwaway anydm API on 2026-10-05 by `cross/shared/record_fixtures.py`, which
+says how to run it. The extract, error and bulk answers come from endpoints that did not change,
+and are the 2026-09-28 recordings.
+
+The recorder needs nothing beyond the API: it serves the direct downloads' files itself and stands
+in for rqbit, answering for Big Buck Bunny with its real file list. The playlist's videos are
+never fetched (they are paused once their first tries are over), so it is recorded offline too.
 
 - `task_direct.json` — `GET /download/{id}`: a finished direct download, its one file at index 0.
 - `task_torrent.json` — `GET /download/{id}`: Big Buck Bunny downloading, its video file only

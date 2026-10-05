@@ -20,7 +20,7 @@ class FixtureTest {
     @Test
     fun `a finished direct download reads whole`() {
         val task = dataOf<TaskDto>("task_direct.json").toTask()
-        assertEquals(TaskStatus.COMPLETE, task.status)
+        assertEquals(TaskStatus.COMPLETED, task.status)
         assertEquals(TaskKind.FILE, task.kind)
         assertEquals(100, task.progress)
         assertTrue(task.title.isNotBlank())
