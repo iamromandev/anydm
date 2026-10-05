@@ -8,7 +8,7 @@ import pytest
 from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
-from src.data.type import BulkAction, DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import BulkAction, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.lib.identity import url_ref
 from src.lib.site import error as site_error
 from src.service.download.collection_service import CollectionService
@@ -18,6 +18,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.download_service import BULK_SCOPES, DownloadService, TorrentPlay
 from src.service.download.live import Live, LiveStats
 
+from tests.service.download.described_rows import a_mirror
 from tests.service.download.memory import (
     MemoryFiles,
     MemoryPositions,
@@ -81,11 +82,8 @@ class FakeCollectionRepo:
     def known(self, collection_id: uuid.UUID) -> uuid.UUID:
         self.rows[collection_id] = SimpleNamespace(
             id=collection_id,
-            media_kind=MediaKind.PLAYLIST,
-            provider="Youtube",
-            ref_id="PL",
-            title="Talks",
-            site_detail=SimpleNamespace(preset=Preset.BEST),
+            mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.CONTENT, "Youtube")],
+            media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
             created_at=None,
         )
         return collection_id
@@ -468,7 +466,7 @@ async def test_the_list_keeps_the_view_order_across_downloads_and_collections() 
 
     items, _ = await h.service.list_items(1, 50)
 
-    assert [(item.kind, item.id) for item in items] == [
+    assert [(item.type, item.id) for item in items] == [
         ("download", two.id),
         ("collection", collection_id),
         ("download", one.id),
@@ -497,6 +495,7 @@ async def test_listing_a_group_asks_for_the_statuses_it_means() -> None:
 
     assert set(h.repo.listed_statuses) == {
         DownloadStatus.PENDING,
+        DownloadStatus.QUEUED,
         DownloadStatus.DOWNLOADING,
         DownloadStatus.MUXING,
     }

@@ -3,29 +3,27 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.type import DownloadStatus, MediaKind, Preset, SourceKind
 from src.service.download.live import Live, LiveStats
 from src.service.download.views import DownloadViews, download_schema, progress_frame
+
+from tests.service.download.described_rows import a_mirror, a_torrent
 
 
 def row(**overrides: Any) -> SimpleNamespace:
     base: dict[str, Any] = dict(
         id=uuid.uuid4(),
-        source_url="https://youtu.be/x",
-        provider="Youtube",
-        ref_id="x",
-        uploaded_bytes=0,
-        platform=Platform.SITE,
-        media_kind=MediaKind.VIDEO,
-        title="Talk",
+        mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.CONTENT, "Youtube")],
+        uploaded_size=0,
         status=DownloadStatus.DOWNLOADING,
         folder=None,
         parent_id=None,
-        start_at=None,
-        download_limit_bps=None,
-        total_bytes=200,
-        downloaded_bytes=50,
-        site_detail=SimpleNamespace(preset=Preset.BEST, video_format="137", audio_format="140"),
+        speed_limit=None,
+        total_size=200,
+        downloaded_size=50,
+        media=SimpleNamespace(
+            title="Talk", kind=MediaKind.VIDEO, preset=Preset.BEST, video_format="137", audio_format="140"
+        ),
         error=None,
         error_code=None,
         attempts=1,
@@ -60,7 +58,8 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
         max_attempts=3,
     )
     assert schema.progress == 25
-    assert schema.site is not None and schema.site.video_format == "137"
+    assert schema.site is not None and (schema.site.video_format, schema.site.video_id) == ("137", "dQw4w9WgXcQ")
+    assert (schema.title, schema.source_url) == ("Talk", "https://youtu.be/dQw4w9WgXcQ")
     assert schema.torrent is None
     assert schema.live.speed_bps == 7
     assert schema.files[0].playback is not None and schema.files[0].playback.position_seconds == 4.0
@@ -70,18 +69,18 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
 def test_a_torrent_reports_its_hash_and_no_site() -> None:
     schema = download_schema(
         row(
-            platform=Platform.TORRENT,
-            site_detail=None,
-            provider="torrent",
-            ref_id="a" * 40,
-            uploaded_bytes=9,
+            mirrors=[
+                a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent", torrents=[a_torrent("a" * 40)])
+            ],
+            media=None,
+            uploaded_size=9,
         ),
         files=[],
         playback={},
         live=Live(),
         max_attempts=3,
     )
-    assert schema.torrent is not None and schema.torrent.uploaded_bytes == 9
+    assert schema.torrent is not None and (schema.torrent.info_hash, schema.torrent.uploaded_bytes) == ("a" * 40, 9)
     assert schema.site is None
 
 

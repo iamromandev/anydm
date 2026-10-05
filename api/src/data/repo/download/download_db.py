@@ -12,8 +12,8 @@ from tortoise.transactions import in_transaction
 from src.core.base import BaseRepo
 from src.core.common import now
 from src.core.success import Meta
-from src.data.db.model import Download, DownloadFile, SiteDetail
-from src.data.repo.download.interface.download import RELATED, DownloadRepo
+from src.data.db.model import Download, File, Media
+from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
 from src.data.schema.download import DownloadSummarySchema
@@ -36,7 +36,7 @@ _ORDER = {
     "created_at": "item.created_at",
     "title": "lower(item.title)",
     # NULL means "the size is unknown"; it sorts as 0, not ahead of everything.
-    "total_size": "COALESCE(item.total_bytes, 0)",
+    "total_size": "COALESCE(item.total_size, 0)",
     "progress": "item.progress",
     "speed_bps": "COALESCE(live.speed, 0)",
 }
@@ -55,25 +55,23 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     ) -> Download:
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **download)
-            await SiteDetail.create(using_db=conn, download_id=row.id, **site)
-            await DownloadFile.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_type)
+            await Media.create(using_db=conn, download_id=row.id, **site)
+            await File.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_type)
         return await self._loaded(row.id)
 
     async def create_direct(self, download: dict[str, Any], filename: str) -> Download:
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **download)
-            await DownloadFile.create(
-                using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_of(filename)
-            )
+            await File.create(using_db=conn, download_id=row.id, index=0, path=filename, mime_type=mime_of(filename))
         return await self._loaded(row.id)
 
     async def create_torrent(self, download: dict[str, Any], files: Sequence[FileRow]) -> Download:
         async with in_transaction() as conn:
             row = await Download.create(using_db=conn, **download)
             if files:
-                await DownloadFile.bulk_create(
+                await File.bulk_create(
                     [
-                        DownloadFile(
+                        File(
                             download_id=row.id,
                             index=index,
                             path=path,
@@ -200,18 +198,14 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def by_statuses(self, statuses: Sequence[DownloadStatus]) -> list[Download]:
         """Oldest first: a bulk action reads better applied in the order the queue would reach them."""
         return await (
-            Download.filter(deleted_at__isnull=True, parent_id__isnull=True, status__in=list(statuses))
-            .exclude(media_kind__in=CONTAINER_KINDS)
+            Download.filter(NOT_CONTAINER, deleted_at__isnull=True, parent_id__isnull=True, status__in=list(statuses))
             .order_by("created_at")
             .prefetch_related(*RELATED)
         )
 
     async def get_active_by_id(self, download_id: uuid.UUID) -> Download | None:
         return await (
-            Download.filter(id=download_id, deleted_at__isnull=True)
-            .exclude(media_kind__in=CONTAINER_KINDS)
-            .prefetch_related(*RELATED)
-            .first()
+            Download.filter(NOT_CONTAINER, id=download_id, deleted_at__isnull=True).prefetch_related(*RELATED).first()
         )
 
     async def statuses_by_ref(self, provider: str, ref_ids: Sequence[str]) -> dict[str, DownloadStatus]:

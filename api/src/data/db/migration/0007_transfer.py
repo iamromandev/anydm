@@ -17,6 +17,55 @@ from src.data.type.download.download import (
     SegmentStatus,
 )
 
+#: Standalone downloads and collections as one list, a collection's status and
+#: totals computed from its videos. A download's title is its media's, its
+#: torrent's or its first file's, through its primary mirror (lowest priority).
+#: Hand-written: no model describes a view. Recreate it whenever a column it
+#: reads changes.
+LIST_ITEM_VIEW = """
+CREATE VIEW transfer.list_item AS
+WITH titled AS (
+    SELECT d.*, m.kind AS media_kind,
+           COALESCE(
+               NULLIF(m.title, ''),
+               (SELECT t.name FROM transfer.mirror mi
+                  JOIN torrent.torrent t ON t.source_id = mi.source_id
+                 WHERE mi.download_id = d.id ORDER BY mi.priority, mi.created_at LIMIT 1),
+               (SELECT f.filename FROM transfer.file f WHERE f.download_id = d.id ORDER BY f.index LIMIT 1),
+               ''
+           ) AS title
+    FROM transfer.download d
+    LEFT JOIN transfer.media m ON m.download_id = d.id
+    WHERE d.deleted_at IS NULL AND d.parent_id IS NULL
+)
+SELECT 'download'::text AS type, d.id, d.title, d.status::text AS status, d.created_at,
+       d.total_size, d.downloaded_size,
+       CASE WHEN COALESCE(d.total_size, 0) > 0
+            THEN LEAST(100, (d.downloaded_size * 100 / d.total_size))::int ELSE 0 END AS progress
+FROM titled d
+WHERE d.media_kind IS NULL OR d.media_kind NOT IN ('playlist', 'channel')
+UNION ALL
+SELECT 'collection'::text AS type, c.id, c.title,
+       CASE
+         WHEN EXISTS (SELECT 1 FROM transfer.download v WHERE v.parent_id = c.id AND v.deleted_at IS NULL
+                      AND v.status IN ('pending', 'queued', 'downloading', 'muxing')) THEN 'downloading'
+         WHEN EXISTS (SELECT 1 FROM transfer.download v WHERE v.parent_id = c.id AND v.deleted_at IS NULL
+                      AND v.status = 'paused') THEN 'paused'
+         WHEN EXISTS (SELECT 1 FROM transfer.download v WHERE v.parent_id = c.id AND v.deleted_at IS NULL
+                      AND v.status = 'failed') THEN 'failed'
+         ELSE 'completed'
+       END AS status,
+       c.created_at,
+       (SELECT SUM(v.total_size) FROM transfer.download v WHERE v.parent_id = c.id AND v.deleted_at IS NULL)::bigint
+         AS total_size,
+       COALESCE((SELECT SUM(v.downloaded_size) FROM transfer.download v
+                 WHERE v.parent_id = c.id AND v.deleted_at IS NULL), 0)::bigint AS downloaded_size,
+       COALESCE((SELECT (COUNT(*) FILTER (WHERE v.status IN ('completed', 'seeding')) * 100 / NULLIF(COUNT(*), 0))
+                 FROM transfer.download v WHERE v.parent_id = c.id AND v.deleted_at IS NULL), 0)::int AS progress
+FROM titled c
+WHERE c.media_kind IN ('playlist', 'channel')
+"""
+
 
 class Migration(migrations.Migration):
     dependencies: ClassVar[list[tuple[str, str]]] = [('model', '0006_torrent')]
@@ -129,4 +178,6 @@ class Migration(migrations.Migration):
             options={'table': 'media', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Media'},
             bases=['LinkBase'],
         ),
+        # After every table it reads: download, media, mirror, file and torrent.torrent (0006).
+        ops.RunSQL(LIST_ITEM_VIEW, reverse_sql="DROP VIEW IF EXISTS transfer.list_item"),
     ]

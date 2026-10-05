@@ -10,7 +10,9 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
+from typing import Any
 
+from src.data.repo.download.described import describe
 from src.lib.folder import collection_dirname
 
 
@@ -44,6 +46,12 @@ def collection_folder(title: str, ref_id: str) -> str:
     directory, so it is derived on read rather than stored on the row.
     """
     return collection_relpath(None, title, ref_id)
+
+
+def container_folder(collection: Any) -> str:
+    """``collection_folder`` for a container loaded with ``RELATED``: its title and id from what it was added from."""
+    described = describe(collection)
+    return collection_folder(described.title, described.ref)
 
 
 def standalone_folder(download_id: uuid.UUID) -> str:

@@ -14,10 +14,9 @@ from src.data.db import DB_CONFIG
 from tortoise import Tortoise
 
 _TABLES = (
-    "config.preference, iam.user, "
-    "transfer.playback_position, transfer.segment, transfer.download_file, "
-    "transfer.media, transfer.download, "
-    "shared.tag"
+    "config.preference, iam.user, play.playback_position, "
+    "transfer.segment, transfer.attempt, transfer.mirror, transfer.file, transfer.media, transfer.download, "
+    "torrent.torrent, catalog.source, catalog.provider, shared.url, shared.tag"
 )
 
 

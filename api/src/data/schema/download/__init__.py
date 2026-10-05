@@ -7,7 +7,6 @@ from .download import CollectionSchema as CollectionSchema
 from .download import DownloadFileSchema as DownloadFileSchema
 from .download import DownloadSchema as DownloadSchema
 from .download import DownloadSummarySchema as DownloadSummarySchema
-from .download import FolderRef as FolderRef
 from .download import LimitsSchema as LimitsSchema
 from .download import ListItem as ListItem
 from .download import LiveSchema as LiveSchema

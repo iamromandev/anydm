@@ -24,7 +24,7 @@ from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
 from src.service.download.folders import inside
-from src.service.download.paths import collection_folder, collection_relpath, remove_work_files
+from src.service.download.paths import collection_relpath, container_folder, remove_work_files
 from src.service.download.views import DownloadViews
 
 #: The most videos one add takes; the picker stops there too.
@@ -144,7 +144,7 @@ class CollectionService(BaseService):
         top = len(held)
         largest = top + len(fresh)
         # Removed by hand since the first add: the videos still finish into it.
-        inside(self._root, collection_folder(collection.title, collection.ref_id)).mkdir(parents=True, exist_ok=True)
+        inside(self._root, container_folder(collection)).mkdir(parents=True, exist_ok=True)
         if fresh:
             await self._repo.add_entries(
                 collection,
@@ -167,7 +167,7 @@ class CollectionService(BaseService):
         """One page of a collection's videos, in the order they were added."""
         collection = await self._require(collection_id)
         rows, meta = await self._repo.downloads_page(collection_id, page, page_size)
-        folder = collection_folder(collection.title, collection.ref_id)
+        folder = container_folder(collection)
         return await self._views.many(rows, folders={row.id: folder for row in rows}), meta
 
     async def pause(self, collection_id: uuid.UUID) -> CollectionSchema:
@@ -194,7 +194,7 @@ class CollectionService(BaseService):
             remove_work_files(self._root, video)
         if delete_files:
             # A folder of 5,000 files shouldn't hold up the API.
-            folder = collection_folder(collection.title, collection.ref_id)
+            folder = container_folder(collection)
             await asyncio.to_thread(shutil.rmtree, inside(self._root, folder), ignore_errors=True)
         await self._repo.soft_delete(collection)
 

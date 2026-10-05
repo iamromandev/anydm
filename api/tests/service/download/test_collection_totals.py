@@ -4,23 +4,25 @@ from typing import Any
 
 import pytest
 from src.data.type import DownloadStatus as S
-from src.data.type import MediaKind, Preset
+from src.data.type import MediaKind, Preset, SourceKind
 from src.lib.event import EventHub
 from src.service.download.collection_totals import CollectionTotals, collection_status, counts_of
 from src.service.download.live import Live, LiveStats
 
+from tests.service.download.described_rows import a_mirror
+
 
 def test_status_order() -> None:
-    assert collection_status([S.COMPLETE, S.PENDING]) == S.DOWNLOADING
-    assert collection_status([S.COMPLETE, S.PAUSED, S.FAILED]) == S.PAUSED
-    assert collection_status([S.COMPLETE, S.FAILED]) == S.FAILED
-    assert collection_status([]) == S.COMPLETE
+    assert collection_status([S.COMPLETED, S.PENDING]) == S.DOWNLOADING
+    assert collection_status([S.COMPLETED, S.PAUSED, S.FAILED]) == S.PAUSED
+    assert collection_status([S.COMPLETED, S.FAILED]) == S.FAILED
+    assert collection_status([]) == S.COMPLETED
 
 
 def test_counts() -> None:
     ids = [uuid.uuid4() for _ in range(4)]
     rows = [
-        (ids[0], S.COMPLETE, 9, 9),
+        (ids[0], S.COMPLETED, 9, 9),
         (ids[1], S.DOWNLOADING, 1, 9),
         (ids[2], S.PENDING, 0, None),
         (ids[3], S.FAILED, 0, 2),
@@ -48,12 +50,8 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     member = uuid.uuid4()
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        media_kind=MediaKind.PLAYLIST,
-        provider="Youtube",
-        ref_id="PL",
-        title="Talks",
-        path="Talks [PL]",
-        site_detail=SimpleNamespace(preset=Preset.BEST),
+        mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.CONTENT, "Youtube")],
+        media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
         created_at=None,
     )
     hub, live = EventHub(), LiveStats()
@@ -73,15 +71,11 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
 async def test_schemas_carry_the_watched_count() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        media_kind=MediaKind.CHANNEL,
-        provider="Youtube",
-        ref_id="UC",
-        title="",
-        path="UC",
-        site_detail=SimpleNamespace(preset=Preset.BEST),
+        mirrors=[a_mirror("https://www.youtube.com/channel/UC/videos", SourceKind.CONTENT, "Youtube")],
+        media=SimpleNamespace(title="", kind=MediaKind.CHANNEL, preset=Preset.BEST),
         created_at=None,
     )
     totals = CollectionTotals(Repo(collection, []), EventHub(), LiveStats())  # ty: ignore[invalid-argument-type]
     (schema,) = await totals.schemas([collection])
     assert schema.counts.watched == 1
-    assert schema.status == S.COMPLETE
+    assert schema.status == S.COMPLETED

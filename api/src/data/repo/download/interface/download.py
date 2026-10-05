@@ -5,15 +5,20 @@ from abc import abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from tortoise.expressions import Q
+
 from src.core.base import CrudRepo
 from src.core.success import Meta
 from src.data.db.model import Download
 from src.data.repo.download.interface.file import FileRow
 from src.data.schema.download import DownloadSummarySchema
-from src.data.type import DownloadStatus
+from src.data.type import CONTAINER_KINDS, DownloadStatus
 
-#: The relations every read loads, so a schema can be built without another query.
-RELATED = ("site_detail",)
+#: Not a playlist or channel container: a download with no media, or media of another kind.
+NOT_CONTAINER = Q(media__id__isnull=True) | Q(media__kind__not_in=list(CONTAINER_KINDS))
+
+#: The relations every read loads, so ``describe`` and a schema need no other query.
+RELATED = ("media", "mirrors__source__url", "mirrors__source__provider", "mirrors__source__torrents")
 
 
 class DownloadRepo(CrudRepo[Download]):
