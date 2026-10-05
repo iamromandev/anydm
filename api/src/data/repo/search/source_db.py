@@ -2,34 +2,87 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from urllib.parse import urlsplit
 
-from src.data.db.model import Source
+from src.core.url import normalize_url, url_hash
+from src.data.db.model import Provider, Url
 from src.data.repo.search.interface.source import SourceRepo, SourceRow
+from src.data.type import ProviderStatus
+
+# A search source is a catalog.Provider with a parser: its name is the slug,
+# its kind the parser, its address the Url its base_url points at, and it is
+# enabled while its status is active.
 
 
-def _row(source: Source) -> SourceRow:
-    return SourceRow(source.name, source.kind, source.enabled, source.base_url, source.api_key, source.id)
+def _status(enabled: bool) -> ProviderStatus:
+    return ProviderStatus.ACTIVE if enabled else ProviderStatus.INACTIVE
+
+
+def _row(provider: Provider) -> SourceRow:
+    base_url = provider.base_url.value if provider.base_url else ""
+    enabled = provider.status == ProviderStatus.ACTIVE
+    return SourceRow(provider.slug, provider.parser or "", enabled, base_url, provider.api_key, provider.id)
+
+
+async def _url(address: str) -> Url:
+    """The one Url row for this address, made the first time it is seen."""
+    normalized = normalize_url(address)
+    parts = urlsplit(address)
+    url, _ = await Url.get_or_create(
+        normalized_hash=url_hash(normalized),
+        defaults={
+            "value": address,
+            "normalized": normalized,
+            "scheme": parts.scheme,
+            "host": parts.hostname,
+            "port": parts.port,
+            "path": parts.path or None,
+            "query": parts.query or None,
+            "fragment": parts.fragment or None,
+        },
+    )
+    return url
+
+
+def _search_sources():
+    return Provider.filter(parser__isnull=False).select_related("base_url")
 
 
 class SourceDatabaseRepo(SourceRepo):
     async def list_all(self) -> list[SourceRow]:
-        return [_row(source) for source in await Source.all().order_by("created_at")]
+        return [_row(provider) for provider in await _search_sources().order_by("created_at")]
 
     async def get(self, id: uuid.UUID) -> SourceRow | None:
-        source = await Source.get_or_none(id=id)
-        return _row(source) if source else None
+        provider = await _search_sources().get_or_none(id=id)
+        return _row(provider) if provider else None
 
     async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SourceRow:
-        return _row(await Source.create(name=name, kind=kind, base_url=base_url, api_key=api_key, enabled=enabled))
+        provider = await Provider.create(
+            name=name,
+            slug=name,
+            parser=kind,
+            base_url=await _url(base_url),
+            api_key=api_key,
+            status=_status(enabled),
+        )
+        return _row(provider)
 
     async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
-        stored = {source.name for source in await Source.all()}
+        # Every provider's slug, not only search sources': the slug is unique across them all.
+        stored = set(await Provider.all().values_list("slug", flat=True))
         fresh = [row for row in rows if row.name not in stored]
         if fresh:
-            # ignore_conflicts: two processes seeding at once must not fail on the unique name.
-            await Source.bulk_create(
+            # ignore_conflicts: two processes seeding at once must not fail on the unique slug.
+            await Provider.bulk_create(
                 [
-                    Source(name=row.name, kind=row.kind, enabled=row.enabled, base_url=row.base_url, api_key=row.api_key)
+                    Provider(
+                        name=row.name,
+                        slug=row.name,
+                        parser=row.kind,
+                        base_url=await _url(row.base_url),
+                        api_key=row.api_key,
+                        status=_status(row.enabled),
+                    )
                     for row in fresh
                 ],
                 ignore_conflicts=True,
@@ -44,23 +97,23 @@ class SourceDatabaseRepo(SourceRepo):
         api_key: str | None = None,
         clear_api_key: bool = False,
     ) -> SourceRow | None:
-        source = await Source.get_or_none(id=id)
-        if source is None:
+        provider = await _search_sources().get_or_none(id=id)
+        if provider is None:
             return None
         if enabled is not None:
-            source.enabled = enabled
+            provider.status = _status(enabled)
         if base_url is not None:
-            source.base_url = base_url
+            provider.base_url = await _url(base_url)
         if clear_api_key:
-            source.api_key = None
+            provider.api_key = None
         elif api_key is not None:
-            source.api_key = api_key
-        await source.save()
-        return _row(source)
+            provider.api_key = api_key
+        await provider.save()
+        return _row(provider)
 
     async def delete(self, id: uuid.UUID) -> bool:
-        source = await Source.get_or_none(id=id)
-        if source is None:
+        provider = await Provider.get_or_none(id=id, parser__isnull=False)
+        if provider is None:
             return False
-        await source.delete()
+        await provider.delete()
         return True

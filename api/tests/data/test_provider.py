@@ -40,8 +40,22 @@ def test_provider_dropped_the_old_fields() -> None:
     names = set(Provider._meta.fields_map)
     assert "url" not in names
     assert "key" not in names
-    assert "api_key" not in names
+    # Enabled is the status; there is no second flag for it.
+    assert "enabled" not in names
 
 
 def test_provider_schema_is_catalog() -> None:
     assert Provider.Meta.schema == "catalog"
+
+
+def test_provider_parser_is_a_nullable_varchar_16() -> None:
+    # Null: a provider that is not a search source (http, torrent, a site's extractor).
+    field = Provider._meta.fields_map["parser"]
+    assert field.null is True
+    assert field.max_length == 16
+
+
+def test_provider_api_key_is_a_nullable_varchar_1024() -> None:
+    field = Provider._meta.fields_map["api_key"]
+    assert field.null is True
+    assert field.max_length == 1024

@@ -34,7 +34,7 @@ def test_source_provider_is_a_required_fk_to_provider() -> None:
     assert field.null is False
     assert field.model_name == "model.Provider"
     assert field.related_name == "sources"
-    assert getattr(field, "on_delete", None) == "CASCADE"
+    assert getattr(field, "on_delete", None) == "RESTRICT"
 
 
 def test_source_db_fields_cover_the_schema() -> None:

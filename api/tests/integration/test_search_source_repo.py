@@ -1,4 +1,7 @@
-"""The search_source repository against a real Postgres. Point DB_NAME at a scratch database, never the dev one."""
+"""The search-source repository against a real Postgres. Point DB_NAME at a scratch database, never the dev one.
+
+A search source is a ``catalog.Provider`` with a parser; the fixture touches only those rows.
+"""
 
 import uuid
 from collections.abc import AsyncIterator
@@ -6,7 +9,7 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 from src.data.db import DB_CONFIG
-from src.data.db.model import Source
+from src.data.db.model import Provider
 from src.data.repo import SourceDatabaseRepo
 from src.data.repo.search.interface.source import SourceRow
 from tortoise import Tortoise
@@ -14,32 +17,17 @@ from tortoise import Tortoise
 pytestmark = pytest.mark.integration
 
 
-def _saved_row(source: Source) -> SourceRow:
-    return SourceRow(
-        name=source.name,
-        kind=source.kind,
-        enabled=source.enabled,
-        base_url=source.base_url,
-        api_key=source.api_key,
-        id=source.id,
-    )
-
-
 @pytest_asyncio.fixture
 async def sources() -> AsyncIterator[SourceDatabaseRepo]:
-    """This file's own fixture: it snapshots the table, empties it, and puts every row back."""
+    """This file's own fixture: it snapshots the search sources, empties them, and puts every one back."""
     await Tortoise.init(config=DB_CONFIG)
-    saved = [_saved_row(s) for s in await Source.all()]
-    await Source.all().delete()
-    yield SourceDatabaseRepo()
-    await Source.all().delete()
+    repo = SourceDatabaseRepo()
+    saved = await repo.list_all()
+    await Provider.filter(parser__isnull=False).delete()
+    yield repo
+    await Provider.filter(parser__isnull=False).delete()
     if saved:
-        await Source.bulk_create(
-            [
-                Source(name=r.name, kind=r.kind, enabled=r.enabled, base_url=r.base_url, api_key=r.api_key)
-                for r in saved
-            ]
-        )
+        await repo.insert_missing(saved)
     await Tortoise.close_connections()
 
 
@@ -106,6 +94,25 @@ async def test_insert_missing_never_overwrites_an_edited_row(sources: SourceData
     await sources.update(source_id, enabled=False, base_url="https://mirror.test")
 
     assert await sources.insert_missing([SourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
-    assert await sources.get(source_id) == SourceRow(
-        "nyaa", "nyaa", False, "https://mirror.test", None, source_id
-    )
+    assert await sources.get(source_id) == SourceRow("nyaa", "nyaa", False, "https://mirror.test", None, source_id)
+
+
+@pytest.mark.asyncio
+async def test_a_search_source_is_a_provider_with_a_parser(sources: SourceDatabaseRepo) -> None:
+    created = await sources.create("prowlarr", "torznab", "http://p.test/1/api", api_key="key-1", enabled=False)
+
+    provider = await Provider.get(id=created.id).select_related("base_url")
+    assert (provider.slug, provider.parser, provider.api_key) == ("prowlarr", "torznab", "key-1")
+    assert provider.status == "inactive"
+    assert provider.base_url.value == "http://p.test/1/api"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_without_a_parser_is_not_a_search_source(sources: SourceDatabaseRepo) -> None:
+    other = await Provider.create(name="http", slug="http")
+    try:
+        assert await sources.list_all() == []
+        assert await sources.get(other.id) is None
+        assert await sources.delete(other.id) is False
+    finally:
+        await other.delete()

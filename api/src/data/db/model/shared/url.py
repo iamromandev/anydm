@@ -10,8 +10,9 @@ from src.core.base import LinkBase
 class Url(LinkBase):
     """One address asked at: the value, its normalized form, and its parts.
 
-    ``normalized_hash`` is the SHA-256 of ``normalized``, the same hash as
-    ``src.lib.identity.url_ref``. It is what makes one address one row: a
+    ``normalized`` is ``src.core.url.normalize_url(value)`` and
+    ``normalized_hash`` is ``url_hash(normalized)``, the same hash as
+    ``src.lib.identity.url_ref``. The hash is what makes one address one row: a
     unique index on the text itself would refuse an address longer than a
     B-tree entry allows, and signed links get that long.
     """
