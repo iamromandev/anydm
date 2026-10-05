@@ -104,7 +104,7 @@ async def test_a_search_source_is_a_provider_with_a_parser(sources: SourceDataba
     provider = await Provider.get(id=created.id).select_related("base_url")
     assert (provider.slug, provider.parser, provider.api_key) == ("prowlarr", "torznab", "key-1")
     assert provider.status == "inactive"
-    assert provider.base_url.value == "http://p.test/1/api"
+    assert provider.base_url is not None and provider.base_url.value == "http://p.test/1/api"
 
 
 @pytest.mark.asyncio

@@ -12,13 +12,14 @@ def test_resolve_response_carries_the_file_list() -> None:
     response = TorrentResolveResponse(
         info_hash="abc",
         title="Some Release",
-        total_bytes=1000,
+        total_size=1000,
         files=[
             FileSchema(index=0, path="video.mkv", size=900, selected=True),
             FileSchema(index=1, path="readme.txt", size=100, selected=False),
         ],
     )
     assert [f.index for f in response.files] == [0, 1]
+    assert response.total_size == 1000
     assert response.files[0].downloaded_bytes == 0
 
 

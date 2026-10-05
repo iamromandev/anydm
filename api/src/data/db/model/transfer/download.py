@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar
+from uuid import UUID
 
 from tortoise import fields
 from tortoise.indexes import Index
@@ -46,6 +47,8 @@ class Download(Base):
     next_attempt_at: datetime | None = fields.DatetimeField(null=True)
 
     if TYPE_CHECKING:
+        parent_id: UUID | None
+        children: fields.ReverseRelation[Download]
         #: A site download's title, kind, preset and formats; none for a torrent or a direct file.
         media: Media | None
 

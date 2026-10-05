@@ -4,6 +4,7 @@ from src.data.db.model.torrent.peer import Peer
 from src.data.db.model.torrent.piece import Piece
 from src.data.db.model.torrent.tracker import Tracker
 from src.data.type import PeerStatus, PieceStatus, TrackerStatus
+from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
@@ -33,6 +34,8 @@ def test_peer_shape() -> None:
     fields_map = Peer._meta.fields_map
     from tortoise import fields
 
+    assert isinstance(fields_map["address"], CharField)
+
     assert fields_map["address"].max_length == 255
     assert isinstance(fields_map["port"], fields.IntField)
     assert fields_map["port"].null is False
@@ -52,6 +55,7 @@ def test_piece_shape() -> None:
     assert isinstance(fields_map["index"], fields.IntField)
     assert fields_map["index"].null is False
     assert isinstance(fields_map["size"], fields.BigIntField)
+    assert isinstance(fields_map["hash"], CharField)
     assert fields_map["hash"].max_length == 64
     assert fields_map["status"].default is PieceStatus.PENDING
     assert fields_map["downloaded_bytes"].default == 0

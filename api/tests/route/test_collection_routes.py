@@ -56,7 +56,6 @@ class _FakeCollections:
             media_kind=MediaKind.VIDEO,
             status=DownloadStatus.PENDING,
             collection_id=collection_id,
-            position=1,
         )
         return [video], Meta(page=page, page_size=page_size, total=1, total_pages=1)
 
