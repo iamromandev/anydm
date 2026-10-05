@@ -377,6 +377,22 @@ export default component$(() => {
         );
     });
 
+    // Declared before the visible task that calls it: a `$` closure is captured
+    // where the task is declared, so one declared below it is not defined yet.
+    /** Search shows when the API has torrent sources or can search YouTube; a failure here just hides it. */
+    const refreshSearchAvailability = $(async () => {
+        try {
+            const sources = await searchSources();
+            store.searchTorrents = sources.enabled;
+            store.searchYoutube = sources.youtube;
+            store.searchEnabled = sources.enabled || sources.youtube;
+        } catch {
+            store.searchTorrents = false;
+            store.searchYoutube = false;
+            store.searchEnabled = false;
+        }
+    });
+
     useVisibleTask$(
         ({ cleanup }) => {
             // The remembered order, applied before the first fetch so the
@@ -606,20 +622,6 @@ export default component$(() => {
 
     const handleSearchChange = $((query: string) => {
         store.searchQuery = query;
-    });
-
-    /** Search shows when the API has torrent sources or can search YouTube; a failure here just hides it. */
-    const refreshSearchAvailability = $(async () => {
-        try {
-            const sources = await searchSources();
-            store.searchTorrents = sources.enabled;
-            store.searchYoutube = sources.youtube;
-            store.searchEnabled = sources.enabled || sources.youtube;
-        } catch {
-            store.searchTorrents = false;
-            store.searchYoutube = false;
-            store.searchEnabled = false;
-        }
     });
 
     const handleAddClick = $(() => {
