@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from tortoise import fields
 from tortoise.indexes import Index
 
 from src.core.base import Base
 from src.data.type import DownloadStatus, Folder
+
+if TYPE_CHECKING:
+    from src.data.db.model.transfer.media import Media
 
 
 class Download(Base):
@@ -41,6 +44,10 @@ class Download(Base):
     attempts: int = fields.IntField(default=0)
     #: When a retryable failure may run again; the row waits in ``PENDING`` until then.
     next_attempt_at: datetime | None = fields.DatetimeField(null=True)
+
+    if TYPE_CHECKING:
+        #: A site download's title, kind, preset and formats; none for a torrent or a direct file.
+        media: Media | None
 
     def __str__(self) -> str:
         return f"[Download: id {self.id}, status {self.status}]"

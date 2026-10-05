@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from tortoise import fields
 
 from src.core.base import LinkBase
+
+if TYPE_CHECKING:
+    from src.data.db.model.play.playback_position import PlaybackPosition
 
 
 class File(LinkBase):
@@ -30,6 +33,9 @@ class File(LinkBase):
     downloaded_bytes: int = fields.BigIntField(default=0)
     selected: bool = fields.BooleanField(default=True)
     mime_type: str | None = fields.CharField(max_length=128, null=True)
+
+    if TYPE_CHECKING:
+        playback_positions: fields.ReverseRelation[PlaybackPosition]
 
     def __str__(self) -> str:
         return f"[File: {self.filename}]"
