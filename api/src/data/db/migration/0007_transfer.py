@@ -6,6 +6,7 @@ from tortoise import fields, migrations
 from tortoise.fields.base import OnDelete
 from tortoise.fields.data import JSON_DUMPS
 from tortoise.fields.db_defaults import Now
+from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
 from tortoise.migrations.constraints import UniqueConstraint
 
@@ -25,8 +26,9 @@ class Migration(migrations.Migration):
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
                 ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('deleted_at', fields.DatetimeField(null=True, db_index=True, auto_now=False, auto_now_add=False)),
                 ('folder', fields.CharEnumField(default=Folder.DOWNLOADS, description='DOWNLOADS: downloads\nVIDEOS: videos\nMOVIES: movies\nTV_SHOWS: tv_shows\nMUSIC: music\nAUDIOBOOKS: audiobooks\nPODCASTS: podcasts\nDOCUMENTS: documents\nEBOOKS: ebooks\nIMAGES: images\nPHOTOS: photos\nSOFTWARE: software\nGAMES: games\nARCHIVES: archives\nOTHER: other', enum_type=Folder, max_length=10)),
-                ('status', fields.CharEnumField(default=DownloadStatus.PENDING, description='PENDING: pending\nQUEUED: queued\nDOWNLOADING: downloading\nPAUSED: paused\nCOMPLETED: completed\nFAILED: failed\nCANCELLED: cancelled', enum_type=DownloadStatus, max_length=11)),
+                ('status', fields.CharEnumField(default=DownloadStatus.PENDING, db_index=True, description='PENDING: pending\nQUEUED: queued\nDOWNLOADING: downloading\nMUXING: muxing\nPAUSED: paused\nSEEDING: seeding\nCOMPLETED: completed\nFAILED: failed\nCANCELLED: cancelled', enum_type=DownloadStatus, max_length=11)),
                 ('total_size', fields.BigIntField(null=True)),
                 ('downloaded_size', fields.BigIntField(default=0)),
                 ('uploaded_size', fields.BigIntField(default=0)),
@@ -34,9 +36,13 @@ class Migration(migrations.Migration):
                 ('speed_limit', fields.BigIntField(null=True)),
                 ('started_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
+                ('error', fields.TextField(null=True, unique=False)),
+                ('error_code', fields.CharField(null=True, max_length=64)),
+                ('attempts', fields.IntField(default=0)),
+                ('next_attempt_at', fields.DatetimeField(null=True, description='When a retryable failure may run again; the row waits in ``PENDING`` until then.', auto_now=False, auto_now_add=False)),
             ],
-            options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Download'},
-            bases=['LinkBase'],
+            options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created')], 'pk_attr': 'id', 'table_description': 'Download'},
+            bases=['Base'],
         ),
         ops.CreateModel(
             name='File',

@@ -22,7 +22,7 @@ from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DOWNLOAD_GROUPS, Dow
 
 #: Which of two downloads holding one video speaks for it: the one furthest along.
 _HELD_RANK = {
-    DownloadStatus.COMPLETE: 3,
+    DownloadStatus.COMPLETED: 3,
     DownloadStatus.SEEDING: 3,
     DownloadStatus.PENDING: 2,
     DownloadStatus.DOWNLOADING: 2,
@@ -230,7 +230,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             return {}
         rows = (
             await Download.filter(provider=provider, ref_id__in=list(ref_ids), deleted_at__isnull=True)
-            .exclude(status=DownloadStatus.CANCELED)
+            .exclude(status=DownloadStatus.CANCELLED)
             .exclude(media_kind__in=CONTAINER_KINDS)
             .values_list("ref_id", "status")
         )

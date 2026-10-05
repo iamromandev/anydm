@@ -185,8 +185,8 @@ async def test_adding_a_list_again_joins_its_collection(tmp_path: Path) -> None:
     repo = FakeCollections()
     collection = held_collection(repo, tmp_path)
     repo.held_rows = {
-        "v1": (uuid.uuid4(), DownloadStatus.COMPLETE),
-        "v2": (uuid.uuid4(), DownloadStatus.COMPLETE),
+        "v1": (uuid.uuid4(), DownloadStatus.COMPLETED),
+        "v2": (uuid.uuid4(), DownloadStatus.COMPLETED),
     }
 
     joined = await service(repo, tmp_path).add(request(4))
@@ -204,7 +204,7 @@ async def test_joining_numbers_by_arrival(tmp_path: Path) -> None:
     """A tab lists newest first, so a later listing's numbers would collide."""
     repo = FakeCollections()
     held_collection(repo, tmp_path)
-    repo.held_rows = {"v3": (uuid.uuid4(), DownloadStatus.COMPLETE)}
+    repo.held_rows = {"v3": (uuid.uuid4(), DownloadStatus.COMPLETED)}
 
     await service(repo, tmp_path).add(request(3, channel_tab=True))
 
@@ -222,7 +222,7 @@ async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Pa
     repo.held_rows = {
         "v1": (failed, DownloadStatus.FAILED),
         "v2": (paused, DownloadStatus.PAUSED),
-        "v3": (done, DownloadStatus.COMPLETE),
+        "v3": (done, DownloadStatus.COMPLETED),
     }
 
     await service(repo, tmp_path).add(request(3))
@@ -235,7 +235,7 @@ async def test_joining_resumes_a_ticked_video_that_failed_or_paused(tmp_path: Pa
 async def test_a_join_past_ten_thousand_is_refused(tmp_path: Path) -> None:
     repo = FakeCollections()
     held_collection(repo, tmp_path)
-    repo.held_rows = {f"x{n}": (uuid.uuid4(), DownloadStatus.COMPLETE) for n in range(1, 9_999)}
+    repo.held_rows = {f"x{n}": (uuid.uuid4(), DownloadStatus.COMPLETED) for n in range(1, 9_999)}
 
     with pytest.raises(Error) as caught:
         await service(repo, tmp_path).add(request(3))

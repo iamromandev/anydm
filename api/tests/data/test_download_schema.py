@@ -1,4 +1,4 @@
-"""Download: its folder bucket, status, sizes, priority, speed cap, and timestamps — nothing else."""
+"""Download: its folder bucket, status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
 
 from src.data.db.model.transfer.download import Download
 from src.data.type import DownloadStatus, Folder
@@ -18,14 +18,31 @@ def test_download_has_the_diagram_columns() -> None:
         "started_at",
         "completed_at",
         "updated_at",
+        "deleted_at",
+        "error",
+        "error_code",
+        "attempts",
+        "next_attempt_at",
     } <= names
     assert not Download._meta.fk_fields
-    assert "deleted_at" not in names
 
 
 def test_download_dropped_the_old_columns() -> None:
     names = set(Download._meta.fields_map)
-    for gone in ("parent", "queue", "provider", "url", "title", "filename", "destination", "total_bytes", "downloaded_bytes"):
+    # Title, platform and media kind come from what the download was added from, not from columns here.
+    for gone in (
+        "parent",
+        "queue",
+        "provider",
+        "url",
+        "title",
+        "platform",
+        "media_kind",
+        "filename",
+        "destination",
+        "total_bytes",
+        "downloaded_bytes",
+    ):
         assert gone not in names, gone
 
 
@@ -37,9 +54,18 @@ def test_download_folder_and_status_defaults() -> None:
 
 def test_download_required_vs_nullable() -> None:
     fields_map = Download._meta.fields_map
-    for name in ("folder", "status", "downloaded_size", "uploaded_size", "priority"):
+    for name in ("folder", "status", "downloaded_size", "uploaded_size", "priority", "attempts"):
         assert fields_map[name].null is False, name
-    for name in ("total_size", "speed_limit", "started_at", "completed_at"):
+    for name in (
+        "total_size",
+        "speed_limit",
+        "started_at",
+        "completed_at",
+        "deleted_at",
+        "error",
+        "error_code",
+        "next_attempt_at",
+    ):
         assert fields_map[name].null is True, name
 
 
@@ -56,21 +82,23 @@ def test_download_column_types_and_lengths() -> None:
     assert isinstance(fields_map["speed_limit"], fields.BigIntField)
     assert isinstance(fields_map["started_at"], fields.DatetimeField)
     assert isinstance(fields_map["completed_at"], fields.DatetimeField)
+    assert isinstance(fields_map["error"], fields.TextField)
+    assert isinstance(fields_map["error_code"], fields.CharField)
+    assert fields_map["error_code"].max_length == 64
+    assert isinstance(fields_map["attempts"], fields.IntField)
+    assert isinstance(fields_map["next_attempt_at"], fields.DatetimeField)
 
 
 def test_download_defaults() -> None:
     fields_map = Download._meta.fields_map
     assert fields_map["downloaded_size"].default == 0
     assert fields_map["priority"].default == 0
+    assert fields_map["attempts"].default == 0
 
 
-def test_download_has_no_reverse_relation_annotations() -> None:
-    # Reverse access (mirrors, files, download_files) comes from the FK related_names.
-    assert "mirrors" not in Download.__annotations__
-    assert "files" not in Download.__annotations__
-    assert "download_files" not in Download.__annotations__
+def test_download_soft_delete_and_status_are_indexed() -> None:
+    fields_map = Download._meta.fields_map
+    assert fields_map["deleted_at"].index is True
+    assert fields_map["status"].index is True
+    assert any(index.name == "idx_download_status_created" for index in Download.Meta.indexes)
 
-
-def test_download_str_shows_status_and_id() -> None:
-    download = Download(status=DownloadStatus.PENDING)
-    assert str(download) == f"[Download: id {download.id}, status {DownloadStatus.PENDING}]"

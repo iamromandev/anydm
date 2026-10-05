@@ -40,7 +40,7 @@ from src.service.download.views import DownloadViews
 BULK_SCOPES: dict[str, frozenset[DownloadStatus]] = {
     "pause_all": frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.SEEDING}),
     "resume_all": frozenset({DownloadStatus.PAUSED, DownloadStatus.FAILED}),
-    "clear_finished": frozenset({DownloadStatus.COMPLETE, DownloadStatus.FAILED}),
+    "clear_finished": frozenset({DownloadStatus.COMPLETED, DownloadStatus.FAILED}),
 }
 
 
@@ -220,7 +220,7 @@ class DownloadService(BaseService):
                 else:
                     # Only a finished row has anything worth keeping; asking to
                     # keep the remains of a failure is refused by ``cancel``.
-                    keepable = row.status in (DownloadStatus.COMPLETE, DownloadStatus.SEEDING)
+                    keepable = row.status in (DownloadStatus.COMPLETED, DownloadStatus.SEEDING)
                     await self.cancel(row.id, delete_files=delete_files or not keepable)
                 affected += 1
             except Error as error:
@@ -293,7 +293,7 @@ class DownloadService(BaseService):
             return await self._torrents.resolve_file(download_id, file_index)
         if file_index not in (None, 0):
             raise Error.not_found(message="Only a torrent has files by index")
-        if download.status != DownloadStatus.COMPLETE:
+        if download.status != DownloadStatus.COMPLETED:
             raise Error.conflict(message=f"Download is {download.status.value}, not complete")
         file = await self._files.single(download_id)
         if file is None:
@@ -331,7 +331,7 @@ class DownloadService(BaseService):
         download = await self._require(download_id)
         if download.platform == Platform.TORRENT:
             return await self._torrents.subtitle_files(download_id, file_index)
-        if download.status != DownloadStatus.COMPLETE:
+        if download.status != DownloadStatus.COMPLETED:
             return []
         path, _, _ = await self.resolve_file(download_id, None)
         listing = await asyncio.to_thread(folder_listing, path.parent)
@@ -346,7 +346,7 @@ class DownloadService(BaseService):
         """
         download = await self._require(download_id)
         if download.platform != Platform.TORRENT or download.status in (
-            DownloadStatus.COMPLETE,
+            DownloadStatus.COMPLETED,
             DownloadStatus.SEEDING,
         ):
             return None
@@ -411,7 +411,7 @@ class DownloadService(BaseService):
         cancelling clears those.
         """
         download = await self._require(download_id)
-        if not delete_files and download.status not in (DownloadStatus.COMPLETE, DownloadStatus.SEEDING):
+        if not delete_files and download.status not in (DownloadStatus.COMPLETED, DownloadStatus.SEEDING):
             raise Error.conflict(message=f"Cannot keep the files of a download that is {download.status.value}")
         if download.platform == Platform.TORRENT:
             return await self._torrents.cancel(download_id, delete_files=delete_files)
@@ -423,7 +423,7 @@ class DownloadService(BaseService):
                 # Its file and the subtitles beside it, never the folder it shares.
                 remove_collection_video_files(await self._disk_path(download, file.path))
         await self._segment_repo.clear(download_id)
-        download.status = DownloadStatus.CANCELED
+        download.status = DownloadStatus.CANCELLED
         download.deleted_at = now()
         await download.save(update_fields=["status", "deleted_at"])
         self._live.clear(download.id)
@@ -437,7 +437,7 @@ class DownloadService(BaseService):
 
     async def _folder_of(self, download: Any) -> str | None:
         """The download's folder for its schema: derived when finished, else ``None``."""
-        if download.status != DownloadStatus.COMPLETE:
+        if download.status != DownloadStatus.COMPLETED:
             return None
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)

@@ -32,7 +32,7 @@ STALL_S = 60.0
 
 #: What the picker calls a video some download already holds.
 _HAVE = {
-    DownloadStatus.COMPLETE: "complete",
+    DownloadStatus.COMPLETED: "complete",
     DownloadStatus.SEEDING: "complete",
     DownloadStatus.FAILED: "failed",
 }

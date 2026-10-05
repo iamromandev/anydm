@@ -340,7 +340,7 @@ async def test_stop_seeding_pauses_the_engine_and_completes_the_row() -> None:
     schema = await _service(client, repo=repo).stop_seeding(row.id)
 
     assert client.paused == ["abc123"]
-    assert schema.status == DownloadStatus.COMPLETE
+    assert schema.status == DownloadStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -361,7 +361,7 @@ async def test_cancel_deletes_from_the_engine_and_soft_deletes_the_row() -> None
     await _service(client, repo=repo).cancel(row.id)
 
     assert client.deleted == ["abc123"]
-    assert row.status == DownloadStatus.CANCELED
+    assert row.status == DownloadStatus.CANCELLED
     assert row.deleted_at is not None
 
 
@@ -375,7 +375,7 @@ async def test_cancel_keeping_files_forgets_rather_than_deletes() -> None:
 
     assert client.forgotten == ["abc123"]
     assert client.deleted == []
-    assert row.status == DownloadStatus.CANCELED
+    assert row.status == DownloadStatus.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -387,7 +387,7 @@ async def test_cancel_still_soft_deletes_when_the_engine_is_gone() -> None:
 
     await _service(client, repo=repo).cancel(row.id)
 
-    assert row.status == DownloadStatus.CANCELED
+    assert row.status == DownloadStatus.CANCELLED
 
 
 # --- files -----------------------------------------------------------------------------
@@ -551,7 +551,7 @@ async def test_a_half_written_subtitle_file_is_read_through_rqbit(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_a_finished_torrent_rqbit_no_longer_has_offers_only_what_s_on_disk(tmp_path: Path) -> None:
-    service, download_id, folder = await _release(tmp_path, DownloadStatus.COMPLETE)
+    service, download_id, folder = await _release(tmp_path, DownloadStatus.COMPLETED)
 
     found = await service.subtitle_files(download_id, None)
 

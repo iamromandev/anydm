@@ -107,9 +107,15 @@ class DownloadStatus(StrEnum):
     PENDING = "pending"
     QUEUED = "queued"
     DOWNLOADING = "downloading"
+    #: Every byte is down and the parts are being joined into the final file.
+    MUXING = "muxing"
     PAUSED = "paused"
+    #: Every selected byte has landed and the torrent is still sharing. Not
+    #: terminal: the user can stop seeding, which is what moves it to COMPLETED.
+    SEEDING = "seeding"
     COMPLETED = "completed"
     FAILED = "failed"
+    #: Removed by the person. The row also gets ``deleted_at`` and drops out of every list.
     CANCELLED = "cancelled"
 
 
@@ -180,7 +186,7 @@ OTHER_FOLDER = "Other"
 #: Statuses that mean "a worker was mid-flight". Every row in one of these at
 #: startup is an orphan by definition — this process is the only one that runs
 #: workers, and it has just started.
-ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING})
+ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
 
 #: How the list may be ordered. Spelled out both ways rather than as a field
 #: plus a direction, so an unknown value is a 422 from the route rather than
@@ -203,12 +209,15 @@ DownloadSort = Literal[
 BulkAction = Literal["pause_all", "resume_all", "clear_finished"]
 
 #: The filter names the API accepts, which are the sidebar's own.
-DownloadGroup = Literal["all", "downloading", "completed"]
+DownloadGroup = Literal["all", "downloading", "seeding", "completed"]
 
 #: What each of the sidebar's filters means. Deliberately not ``ACTIVE_STATUSES``:
 #: that answers "was a worker mid-flight", which excludes ``PENDING`` because a
 #: queued row is not an orphan. To someone reading the list, a queued row is active.
 DOWNLOAD_GROUPS: dict[str, frozenset[DownloadStatus]] = {
-    "downloading": frozenset({DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING}),
+    "downloading": frozenset(
+        {DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING}
+    ),
+    "seeding": frozenset({DownloadStatus.SEEDING}),
     "completed": frozenset({DownloadStatus.COMPLETED}),
 }

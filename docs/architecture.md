@@ -133,15 +133,15 @@ resumes from its `.part` file.
 stateDiagram-v2
     [*] --> pending
     pending --> downloading: a worker claims it
-    downloading --> complete: all bytes written
+    downloading --> completed: all bytes written
     downloading --> pending: retryable failure, after a backoff
     downloading --> failed: not retryable, or out of attempts
     downloading --> paused: the person pauses
     paused --> pending: the person resumes
     failed --> pending: the person retries
-    downloading --> canceled: the person removes it
-    complete --> [*]
-    canceled --> [*]
+    downloading --> cancelled: the person removes it
+    completed --> [*]
+    cancelled --> [*]
 ```
 
 Workers move a task through the middle of that diagram; people move it along
@@ -169,9 +169,9 @@ A torrent that runs out of space mid-download is rqbit's to report; it arrives
 as a free-text error the API does not interpret.
 
 Removing is allowed from any status, not only the `downloading` edge drawn
-above. It is a soft delete: the row becomes `canceled` with `deleted_at` set
+above. It is a soft delete: the row becomes `cancelled` with `deleted_at` set
 and drops out of every list. The files go with it unless the request says
-`delete_files=false`, which is accepted only for a `complete` or `seeding`
+`delete_files=false`, which is accepted only for a `completed` or `seeding`
 task and answered 409 otherwise. A half-finished `.part` would outlive its row
 as bytes nothing can describe: the per-segment watermarks that say which ranges
 are sound are cleared along with it.
@@ -185,7 +185,7 @@ direct download by its worker.
 |---|---|
 | `pause_all` | `pending`, `downloading`, `seeding` |
 | `resume_all` | `paused`, `failed` |
-| `clear_finished` | `complete`, `failed`; a failure's files always go, a finished download's only with `delete_files` |
+| `clear_finished` | `completed`, `failed`; a failure's files always go, a finished download's only with `delete_files` |
 
 The server chooses the rows, not the client, and the choice lives in one place,
 `BULK_SCOPES`. A row that refuses, most likely because its status changed a
@@ -194,11 +194,12 @@ response reports how many rows were affected.
 
 Torrents take the same statuses by a different route. The monitor writes them
 from whatever rqbit reports, and adds `seeding`, which a finished torrent stays
-in until someone stops it. `complete` is reachable for a torrent only by that
+in until someone stops it. `completed` is reachable for a torrent only by that
 stop; the engine never produces it.
 
-One status in the enum, `muxing`, is never assigned by anything today. The
-schema and the UI both understand it, but no code path sets it.
+Two statuses in the enum are never assigned by anything today: `muxing`,
+which the schema and the UI both understand, and `queued`, kept for named
+queues (#234). A waiting download is `pending`.
 
 ## A stream session's life
 
