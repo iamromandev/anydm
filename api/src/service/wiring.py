@@ -342,4 +342,5 @@ def get_torrent_reaper() -> TorrentReaper:
         downloads=DownloadDatabaseRepo(),
         sessions=get_stream_sessions(),
         poll_s=settings.torrent_reap_poll_s,
+        enabled=settings.torrent_enabled,
     )

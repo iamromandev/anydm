@@ -25,11 +25,14 @@ class TorrentReaper:
         downloads: DownloadRepo,
         sessions: StreamSessionStore,
         poll_s: float = 60.0,
+        *,
+        enabled: bool,
     ) -> None:
         self._client = client
         self._downloads = downloads
         self._sessions = sessions
         self._poll_s = poll_s
+        self._enabled = enabled
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -37,6 +40,10 @@ class TorrentReaper:
         return self.__class__.__name__
 
     async def start(self) -> None:
+        # No engine to ask: every sweep would only fail to reach it.
+        if not self._enabled:
+            logger.info("{}|torrents are disabled; not starting", self._tag)
+            return
         self._task = asyncio.create_task(self._run(), name="torrent-reaper")
 
     async def stop(self) -> None:
