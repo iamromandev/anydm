@@ -14,6 +14,7 @@ from src.data.type.download.download import (
     MediaKind,
     MirrorStatus,
     Preset,
+    SegmentPart,
     SegmentStatus,
 )
 
@@ -153,6 +154,7 @@ class Migration(migrations.Migration):
                 ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('file', fields.ForeignKeyField('model.File', source_field='file_id', db_constraint=True, to_field='id', related_name='segments', on_delete=OnDelete.CASCADE)),
+                ('part', fields.CharEnumField(default=SegmentPart.FILE, description='FILE: file\nVIDEO: video\nAUDIO: audio', enum_type=SegmentPart, max_length=5)),
                 ('status', fields.CharEnumField(default=SegmentStatus.PENDING, description='PENDING: pending\nDOWNLOADING: downloading\nCOMPLETED: completed\nFAILED: failed', enum_type=SegmentStatus, max_length=11)),
                 ('start_byte', fields.BigIntField()),
                 ('end_byte', fields.BigIntField()),

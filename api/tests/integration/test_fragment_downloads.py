@@ -164,7 +164,7 @@ async def test_an_hls_stream_downloads_and_remuxes_into_a_playable_mp4(kind: str
 
     destination = tmp_path / "out.mp4"
     await FfmpegPostProcessor("ffmpeg").run(
-        SimpleNamespace(media_kind=MediaKind.VIDEO), {"video": part}, destination, fragmented=frozenset({"video"})
+        SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO)), {"video": part}, destination, fragmented=frozenset({"video"})
     )
 
     format_name, codecs, duration = _probe(destination)

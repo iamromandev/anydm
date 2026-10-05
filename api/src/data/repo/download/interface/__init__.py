@@ -1,3 +1,5 @@
+from .attempt import AttemptRepo as AttemptRepo
+from .attempt import Opened as Opened
 from .collection import CollectionRepo as CollectionRepo
 from .collection import EntryRow as EntryRow
 from .collection import MemberRow as MemberRow

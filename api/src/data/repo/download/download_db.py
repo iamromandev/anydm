@@ -8,7 +8,7 @@ from typing import Any
 
 from tortoise import Tortoise
 from tortoise.backends.base.client import BaseDBAsyncClient
-from tortoise.expressions import Q
+from tortoise.expressions import Q, Subquery
 from tortoise.transactions import in_transaction
 
 from src.core.base import BaseRepo
@@ -20,8 +20,17 @@ from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, Do
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
 from src.data.schema.download import DownloadSummarySchema
-from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DOWNLOAD_GROUPS, DownloadStatus, Platform, SourceKind
+from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, DownloadStatus, Platform, SourceKind
 from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER
+
+
+def _not_torrent() -> Q:
+    """Not a torrent: the monitor runs those, never the workers.
+
+    A subquery rather than a join, so a claim's row lock and an update both stay
+    on ``download``. Built per call: a queryset needs Tortoise initialised.
+    """
+    return ~Q(id__in=Subquery(Mirror.filter(source__kind=SourceKind.TORRENT).values("download_id")))
 
 
 def _name(path: str) -> str:
@@ -155,13 +164,9 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         of them. The status flip commits with the lock.
         """
         async with in_transaction() as conn:
-            runnable = (
-                Download.filter(status=DownloadStatus.PENDING, deleted_at__isnull=True)
-                .exclude(platform=Platform.TORRENT)
-                .exclude(media_kind__in=CONTAINER_KINDS)
-                .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
-                .filter(Q(start_at__isnull=True) | Q(start_at__lte=now()))
-            )
+            runnable = Download.filter(
+                _not_torrent(), NOT_CONTAINER, status=DownloadStatus.PENDING, deleted_at__isnull=True
+            ).filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now()))
             # Standalone first, so a pasted link never waits behind a channel
             # archive; then creation order.
             row = None
@@ -170,7 +175,9 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
                     runnable.filter(parent_id__isnull=standalone)
                     .order_by("created_at")
                     .limit(1)
-                    .select_for_update(skip_locked=True)
+                    # The download row only: the container check joins media, and
+                    # Postgres will not lock the nullable side of an outer join.
+                    .select_for_update(skip_locked=True, of=("download",))
                     .using_db(conn)
                     .first()
                 )
@@ -187,17 +194,15 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def recover_orphans(self) -> int:
         """Every in-flight HTTP row at startup belongs to a process that is gone.
 
-        ``downloaded_bytes`` stays: the ``.part`` still holds those bytes. Torrents
+        ``downloaded_size`` stays: the ``.part`` still holds those bytes. Torrents
         are the monitor's to reconcile, never requeued here.
         """
-        return await (
-            Download.filter(status__in=list(ACTIVE_STATUSES), deleted_at__isnull=True)
-            .exclude(platform=Platform.TORRENT)
-            .update(status=DownloadStatus.PENDING)
+        return await Download.filter(_not_torrent(), status__in=list(ACTIVE_STATUSES), deleted_at__isnull=True).update(
+            status=DownloadStatus.PENDING
         )
 
-    async def flush_progress(self, download_id: uuid.UUID, *, downloaded_bytes: int, total_bytes: int | None) -> None:
-        await Download.filter(id=download_id).update(downloaded_bytes=downloaded_bytes, total_bytes=total_bytes)
+    async def flush_progress(self, download_id: uuid.UUID, *, downloaded_size: int, total_size: int | None) -> None:
+        await Download.filter(id=download_id).update(downloaded_size=downloaded_size, total_size=total_size)
 
     async def list_items(
         self,

@@ -24,7 +24,7 @@ async def test_a_single_part_is_renamed_without_calling_ffmpeg(tmp_path: Path) -
     destination = tmp_path / "clip.mp4"
     runner = SpyRunner()
 
-    download = SimpleNamespace(media_kind=MediaKind.VIDEO, audio_format=None, video_format="137")
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO), audio_format=None, video_format="137")
     await FfmpegPostProcessor("ffmpeg", runner).run(download, {"video": part}, destination)
 
     assert runner.calls == []
@@ -38,7 +38,7 @@ async def test_a_direct_download_part_is_also_just_renamed(tmp_path: Path) -> No
     part.write_bytes(b"data")
     destination = tmp_path / "archive.zip"
 
-    download = SimpleNamespace(media_kind=MediaKind.FILE, audio_format=None, video_format=None)
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.FILE), audio_format=None, video_format=None)
     await FfmpegPostProcessor("ffmpeg", SpyRunner()).run(download, {"file": part}, destination)
 
     assert destination.read_bytes() == b"data"
@@ -52,7 +52,7 @@ async def test_a_fragmented_single_part_is_remuxed_not_renamed(tmp_path: Path) -
     destination = tmp_path / "clip.mp4"
     runner = SpyRunner()
 
-    download = SimpleNamespace(media_kind=MediaKind.VIDEO, audio_format=None, video_format="hls-1080")
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO), audio_format=None, video_format="hls-1080")
     await FfmpegPostProcessor("ffmpeg", runner).run(download, {"video": part}, destination, fragmented=frozenset({"video"}))
 
     assert len(runner.calls) == 1
@@ -71,7 +71,7 @@ async def test_video_plus_audio_is_muxed(tmp_path: Path) -> None:
     destination = tmp_path / "clip.mp4"
     runner = SpyRunner()
 
-    download = SimpleNamespace(media_kind=MediaKind.VIDEO, audio_format="140", video_format="137")
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO), audio_format="140", video_format="137")
     await FfmpegPostProcessor("ffmpeg", runner).run(download, {"video": video, "audio": audio}, destination)
 
     assert len(runner.calls) == 1
@@ -85,7 +85,7 @@ async def test_muxing_removes_both_parts(tmp_path: Path) -> None:
     video.write_bytes(b"v")
     audio.write_bytes(b"a")
 
-    download = SimpleNamespace(media_kind=MediaKind.VIDEO, audio_format="140", video_format="137")
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO), audio_format="140", video_format="137")
     await FfmpegPostProcessor("ffmpeg", SpyRunner()).run(
         download, {"video": video, "audio": audio}, tmp_path / "clip.mp4"
     )
@@ -100,7 +100,7 @@ async def test_audio_is_transcoded_to_mp3(tmp_path: Path) -> None:
     audio.write_bytes(b"a")
     runner = SpyRunner()
 
-    download = SimpleNamespace(media_kind=MediaKind.AUDIO, audio_format="140", video_format=None)
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.AUDIO), audio_format="140", video_format=None)
     await FfmpegPostProcessor("ffmpeg", runner).run(download, {"audio": audio}, tmp_path / "clip.mp3")
 
     # An MP3 download has exactly one part, so it must be transcoded rather than
@@ -112,6 +112,6 @@ async def test_audio_is_transcoded_to_mp3(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_no_parts_at_all_is_an_error(tmp_path: Path) -> None:
-    download = SimpleNamespace(media_kind=MediaKind.VIDEO, audio_format=None, video_format="137")
+    download = SimpleNamespace(media=SimpleNamespace(kind=MediaKind.VIDEO), audio_format=None, video_format="137")
     with pytest.raises(Error):
         await FfmpegPostProcessor("ffmpeg", SpyRunner()).run(download, {}, tmp_path / "clip.mp4")
