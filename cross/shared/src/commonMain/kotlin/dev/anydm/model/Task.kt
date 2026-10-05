@@ -118,8 +118,8 @@ fun TaskDto.toTask(): Task {
     val single = if (isTorrent) null else files.firstOrNull { it.index == 0 }
     return Task(
         id = id,
-        title = title.ifBlank { single?.path?.ifBlank { null } ?: sourceUrl },
-        url = sourceUrl,
+        title = title.ifBlank { single?.path?.ifBlank { null } ?: url },
+        url = url,
         kind = if (isTorrent) TaskKind.TORRENT else TaskKind.of(mediaKind),
         status = TaskStatus.of(status),
         progress = progress,
@@ -161,8 +161,8 @@ fun TaskDto.toTask(): Task {
 private fun TaskDto.toCollectionTask(): Task =
     Task(
         id = id,
-        title = title.ifBlank { sourceUrl },
-        url = sourceUrl,
+        title = title.ifBlank { url },
+        url = url,
         kind = TaskKind.PLAYLIST,
         status = TaskStatus.of(status),
         progress = progress,

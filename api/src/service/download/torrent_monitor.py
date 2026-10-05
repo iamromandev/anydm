@@ -167,7 +167,7 @@ class TorrentMonitor:
             try:
                 await self._client.add(
                     # The stored magnet: re-addable, and small (#479 never stores a .torrent).
-                    parse_source(describe(row).source_url),
+                    parse_source(describe(row).url),
                     only_files=await self._file_repo.selected_indexes(row.id),
                     output_folder=str(self._folder(row)),
                 )

@@ -173,8 +173,8 @@ export function normalizeApiTask(raw: any): UiTask {
 
     return {
         id: raw.id,
-        title: raw.title || single?.path || raw.source_url,
-        url: raw.source_url ?? "",
+        title: raw.title || single?.path || raw.url,
+        url: raw.url ?? "",
         kind: isTorrent ? "torrent" : raw.media_kind,
         status: raw.status,
         progress: raw.progress ?? 0,
@@ -223,8 +223,8 @@ export function normalizeApiTask(raw: any): UiTask {
 export function normalizeCollection(raw: any): UiTask {
     return {
         id: raw.id,
-        title: raw.title || raw.source_url,
-        url: raw.source_url ?? "",
+        title: raw.title || raw.url,
+        url: raw.url ?? "",
         kind: "playlist",
         status: raw.status,
         progress: raw.progress ?? 0,

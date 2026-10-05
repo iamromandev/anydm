@@ -8,7 +8,8 @@ import kotlinx.serialization.Serializable
 data class TaskDto(
     val type: String = "download",
     val id: String,
-    @SerialName("source_url") val sourceUrl: String = "",
+    /** Where it is fetched from, or the page a collection was added from. */
+    val url: String = "",
     val platform: String = "",
     @SerialName("media_kind") val mediaKind: String = "",
     /** A collection's kind: `playlist` or `channel`. */

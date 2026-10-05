@@ -20,7 +20,7 @@ class RowViewTest {
         status: String,
         kind: String = "file",
         extractor: String? = null,
-        sourceUrl: String = "https://a.example/f",
+        url: String = "https://a.example/f",
     ): Task =
         TaskDto(
             id = "t",
@@ -29,7 +29,7 @@ class RowViewTest {
             status = status,
             title = "clip",
             site = extractor?.let { SiteDto(extractor = it) },
-            sourceUrl = sourceUrl,
+            url = url,
         ).toTask()
 
     @Test

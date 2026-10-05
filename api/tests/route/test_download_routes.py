@@ -28,13 +28,14 @@ class StubDownloads:
         return [
             DownloadSchema(
                 id=uuid.uuid4(),
-                source_url="u",
+                url="u",
                 platform=Platform.DIRECT,
                 media_kind=MediaKind.FILE,
                 status=DownloadStatus.PENDING,
             ),
             CollectionSchema(
                 id=uuid.uuid4(),
+                url="https://www.youtube.com/playlist?list=PL",
                 kind=CollectionKind.PLAYLIST,
                 extractor="YoutubeTab",
                 external_id="PL",

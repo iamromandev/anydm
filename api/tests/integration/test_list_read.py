@@ -73,7 +73,7 @@ async def test_a_download_schema_reads_its_source_media_and_torrent() -> None:
 
     one = by_id[site.id]
     assert (one.platform, one.media_kind, one.title) == (Platform.SITE, MediaKind.VIDEO, "Never")
-    assert one.source_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert one.url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     assert one.site is not None and (one.site.extractor, one.site.video_id) == ("Youtube", "dQw4w9WgXcQ")
     assert (one.site.preset, one.progress, one.limits.download_bps) == (Preset.P1080, 25, 1000)
     two = by_id[torrent.id]
@@ -99,5 +99,6 @@ async def test_a_collection_reads_its_videos_in_listing_order_and_by_their_ids()
     assert [row.id for row in page] == [first.id, second.id] and meta.total == 2
     assert held == {"one": (first.id, DownloadStatus.COMPLETED), "two": (second.id, DownloadStatus.QUEUED)}
     assert (schema.extractor, schema.external_id, schema.title) == ("Youtube", "PLtalks", "Talks")
+    assert schema.url == "https://www.youtube.com/playlist?list=PLtalks"
     assert (schema.preset, schema.status, schema.progress) == (Preset.P720, DownloadStatus.DOWNLOADING, 50)
     assert await DownloadDatabaseRepo().get_active_by_id(collection.id) is None

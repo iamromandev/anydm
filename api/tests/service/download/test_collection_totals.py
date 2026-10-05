@@ -61,9 +61,11 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     schema = await totals.refresh(collection.id)
     assert schema is not None
     assert (schema.speed_bps, schema.status, schema.total_size) == (40, S.DOWNLOADING, 10)
+    # The page it was added from, for "Copy link".
+    assert schema.url == "https://www.youtube.com/playlist?list=PL"
     event, data = await anext(aiter(subscription))
     assert event == "collection"
-    assert data["id"] == str(collection.id)
+    assert (data["id"], data["url"]) == (str(collection.id), "https://www.youtube.com/playlist?list=PL")
     subscription.close()
 
 

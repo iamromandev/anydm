@@ -14,7 +14,7 @@ from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, P
 def test_a_download_is_tagged_and_nests_by_concern() -> None:
     schema = DownloadSchema(
         id=uuid.uuid4(),
-        source_url="https://e.com/a.mp4",
+        url="https://e.com/a.mp4",
         platform=Platform.DIRECT,
         media_kind=MediaKind.FILE,
         status=DownloadStatus.DOWNLOADING,
@@ -33,6 +33,7 @@ def test_a_download_is_tagged_and_nests_by_concern() -> None:
 def test_a_collection_is_tagged_with_its_counts() -> None:
     schema = CollectionSchema(
         id=uuid.uuid4(),
+        url="https://www.youtube.com/playlist?list=PL",
         kind=CollectionKind.PLAYLIST,
         extractor="YoutubeTab",
         external_id="PL",

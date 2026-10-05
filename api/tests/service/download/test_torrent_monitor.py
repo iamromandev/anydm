@@ -16,7 +16,7 @@ HASH = "abc"
 
 def _row(**overrides: Any) -> Any:
     fields: dict[str, Any] = {
-        "source_url": f"magnet:?xt=urn:btih:{HASH}",
+        "url": f"magnet:?xt=urn:btih:{HASH}",
         "platform": Platform.TORRENT,
         "title": "Some Release",
         "provider": "torrent",

@@ -26,7 +26,7 @@ _PLATFORM = {
 
 @dataclass(frozen=True, slots=True)
 class Described:
-    source_url: str
+    url: str
     platform: Platform
     #: The site (yt-dlp's extractor key, e.g. ``Youtube``), ``http`` or ``torrent``.
     provider: str
@@ -74,7 +74,7 @@ def describe(row: Any, files: Any = ()) -> Described:
         or _name_of(url)
     )
     return Described(
-        source_url=url,
+        url=url,
         platform=platform,
         provider=provider,
         ref=ref,
