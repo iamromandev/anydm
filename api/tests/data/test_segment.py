@@ -14,7 +14,7 @@ def test_segment_has_the_schema_columns() -> None:
 
 def test_segment_dropped_the_old_columns() -> None:
     names = set(Segment._meta.fields_map)
-    for gone in ("download", "part", "index", "downloaded"):
+    for gone in ("download", "index", "downloaded"):
         assert gone not in names, gone
 
 
@@ -55,3 +55,12 @@ def test_segment_columns() -> None:
 def test_segment_meta_is_transfer() -> None:
     assert Segment.Meta.table == "segment"
     assert Segment.Meta.schema == "transfer"
+
+
+def test_segment_part_says_which_stream_and_defaults_to_the_whole_file() -> None:
+    from src.data.type import SegmentPart
+
+    field = Segment._meta.fields_map["part"]
+    assert field.null is False
+    assert field.default is SegmentPart.FILE
+    assert (SegmentPart.FILE, SegmentPart.VIDEO, SegmentPart.AUDIO) == ("file", "video", "audio")

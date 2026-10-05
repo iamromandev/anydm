@@ -127,7 +127,7 @@ async def test_an_unplanned_video_is_planned_from_one_extraction(tmp_path: Path)
     assert client.resolved == []
     assert (await _path(files, row)).startswith("03_")
     assert row.site_detail.video_format
-    assert row.title == site_info("vimeo").title
+    assert row.media.title == site_info("vimeo").title
     assert row.status == DownloadStatus.COMPLETED
 
 
@@ -295,7 +295,7 @@ async def test_a_mixed_plan_sends_each_part_down_its_own_path(tmp_path: Path) ->
     assert sorted(post.parts) == ["audio", "video"]
     assert post.fragmented == frozenset({"video"})
     # The audio part's progress continues from the video's 7 bytes.
-    assert [fields["downloaded_bytes"] for fields in repo.flushed] == [7, 17]
+    assert [fields["downloaded_size"] for fields in repo.flushed] == [7, 17]
 
 
 @pytest.mark.asyncio

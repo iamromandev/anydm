@@ -68,7 +68,7 @@ class DownloadRepo(CrudRepo[Download]):
     async def claim_next(self) -> Download | None:
         """Take the first runnable pending HTTP download and mark it ``downloading``.
 
-        Runnable: not deleted, and ``start_at`` and ``next_attempt_at`` unset or past.
+        Runnable: not deleted, not a torrent or a container, and ``next_attempt_at`` unset or past.
         """
         ...
 
@@ -78,7 +78,7 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def flush_progress(self, download_id: uuid.UUID, *, downloaded_bytes: int, total_bytes: int | None) -> None:
+    async def flush_progress(self, download_id: uuid.UUID, *, downloaded_size: int, total_size: int | None) -> None:
         """Byte counts only: speed and ETA live in ``LiveStats``."""
         ...
 

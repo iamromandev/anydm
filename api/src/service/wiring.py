@@ -5,6 +5,7 @@ import httpx
 
 from src.config import get_settings
 from src.data.repo import (
+    AttemptDatabaseRepo,
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
@@ -270,6 +271,7 @@ def build_worker_pool() -> WorkerPool:
             name=f"worker-{index}",
             repo=DownloadDatabaseRepo(),
             segment_repo=SegmentDatabaseRepo(),
+            attempts=AttemptDatabaseRepo(),
             files=FileDatabaseRepo(),
             collections=CollectionDatabaseRepo(),
             client=get_site_client(),

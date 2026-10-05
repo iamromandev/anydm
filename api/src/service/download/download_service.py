@@ -12,11 +12,11 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
 from src.data.schema.download import CollectionSchema, DownloadSchema, DownloadSummarySchema, PlaybackSchema
 from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, Platform, Preset
 from src.lib.event import EventHub
-from src.lib.identity import TORRENT_PROVIDER
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
@@ -273,7 +273,7 @@ class DownloadService(BaseService):
         exist, just not yet, and a polling client has to tell "wait" from "never".
         """
         download = await self._require(download_id)
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             if file_index is None:
                 raise Error.not_found(message="A torrent's files are fetched by index")
             return await self._torrents.resolve_file(download_id, file_index)
@@ -296,7 +296,7 @@ class DownloadService(BaseService):
         its largest selected media file.
         """
         download = await self._require(download_id)
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             if file_index is None:
                 file_index = await self._torrents.media_file_index(download_id)
             path, filename, _ = await self._torrents.resolve_file(download_id, file_index)
@@ -315,7 +315,7 @@ class DownloadService(BaseService):
         disk, beside it or in a subtitles folder there, once it's finished.
         """
         download = await self._require(download_id)
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             return await self._torrents.subtitle_files(download_id, file_index)
         if download.status != DownloadStatus.COMPLETED:
             return []
@@ -331,7 +331,7 @@ class DownloadService(BaseService):
         would stall; it keeps downloading after the player closes.
         """
         download = await self._require(download_id)
-        if download.platform != Platform.TORRENT or download.status in (
+        if describe(download).platform != Platform.TORRENT or download.status in (
             DownloadStatus.COMPLETED,
             DownloadStatus.SEEDING,
         ):
@@ -341,7 +341,7 @@ class DownloadService(BaseService):
         index = await self._torrents.media_file_index(download_id, file_index)
         if download.status == DownloadStatus.PAUSED:
             await self._torrents.resume(download_id)
-        info_hash = download.ref_id if download.provider == TORRENT_PROVIDER else ""
+        info_hash = describe(download).info_hash or ""
         return TorrentPlay(info_hash=info_hash, file_index=index)
 
     async def pause(self, download_id: uuid.UUID) -> Any:
@@ -351,7 +351,7 @@ class DownloadService(BaseService):
         next read reflects the pause immediately, even mid-chunk.
         """
         download = await self._require(download_id)
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             return await self._torrents.pause(download_id)
         if download.status not in (DownloadStatus.PENDING, DownloadStatus.DOWNLOADING):
             raise Error.conflict(message=f"Cannot pause a download that is {download.status.value}")
@@ -371,7 +371,7 @@ class DownloadService(BaseService):
         continuation of the automatic retry budget that gave up.
         """
         download = await self._require(download_id)
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             return await self._torrents.resume(download_id)
         if download.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED):
             raise Error.conflict(message=f"Cannot resume a download that is {download.status.value}")
@@ -399,7 +399,7 @@ class DownloadService(BaseService):
         download = await self._require(download_id)
         if not delete_files and download.status not in (DownloadStatus.COMPLETED, DownloadStatus.SEEDING):
             raise Error.conflict(message=f"Cannot keep the files of a download that is {download.status.value}")
-        if download.platform == Platform.TORRENT:
+        if describe(download).platform == Platform.TORRENT:
             return await self._torrents.cancel(download_id, delete_files=delete_files)
         self._control.request_stop(download_id)
         if delete_files:

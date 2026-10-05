@@ -50,7 +50,7 @@ class FfmpegPostProcessor(PostProcessor):
         if not parts:
             raise Error.internal(message="Nothing was downloaded")
 
-        if download.media_kind == MediaKind.AUDIO:
+        if download.media is not None and download.media.kind == MediaKind.AUDIO:
             audio = parts.get("audio")
             if audio is None:
                 raise Error.internal(message="Audio download has no audio part")

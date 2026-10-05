@@ -18,9 +18,10 @@ from loguru import logger
 
 from src.core.common import now
 from src.core.error import Error
-from src.core.type import ErrorType
-from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, SegmentRepo
-from src.data.type import DownloadStatus, MediaKind, Platform, SegmentPart
+from src.core.type import Code, ErrorType
+from src.data.repo.download.described import describe
+from src.data.repo.download.interface import AttemptRepo, CollectionRepo, DownloadRepo, FileRepo, Opened, SegmentRepo
+from src.data.type import AttemptStatus, DownloadStatus, MediaKind, MirrorStatus, Platform, SegmentPart
 from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
@@ -35,7 +36,7 @@ from src.service.download.fragment import FragmentDownloader
 from src.service.download.live import Live, LiveStats
 from src.service.download.paths import (
     collection_destination,
-    collection_folder,
+    container_folder,
     final_path,
     part_path,
     remove_work_files,
@@ -60,6 +61,7 @@ class DownloadWorker:
         name: str,
         repo: DownloadRepo,
         segment_repo: SegmentRepo,
+        attempts: AttemptRepo,
         files: FileRepo,
         collections: CollectionRepo,
         client: SiteClient,
@@ -80,6 +82,7 @@ class DownloadWorker:
         self._name = name
         self._repo = repo
         self._segment_repo = segment_repo
+        self._attempts = attempts
         self._files = files
         self._collections = collections
         self._client = client
@@ -131,29 +134,47 @@ class DownloadWorker:
         # row, so a bare ``save()`` would push this stale copy's zeroes back over
         # every byte count the download has since recorded.
         await download.save(update_fields=["attempts"])
+        # One try, through the first mirror still usable: every mirror spent means
+        # there is nothing left to fetch from.
+        opened = await self._attempts.open(download)
+        if opened is None:
+            await self._mark_failed(
+                download,
+                Error.create(
+                    code=Code.UNPROCESSABLE_ENTITY,
+                    message="No source left to try",
+                    error_type=ErrorType.UNPROCESSABLE_ENTITY,
+                ),
+                None,
+            )
+            return
         # Claimed: its collection now has one more video downloading.
         await self._refresh_collection(download)
 
         try:
-            site = download.site_detail
+            platform = describe(download).platform
+            site = download.media
             batch = None
-            if download.platform == Platform.SITE and site is not None and is_unplanned(site):
-                batch = await self._plan(download, site)
+            if platform == Platform.SITE and site is not None and is_unplanned(site):
+                batch = await self._plan(download, site, opened.url)
             try:
-                parts, fragmented = await self._download_parts(download, batch)
+                parts, fragmented = await self._download_parts(download, platform, opened.url, batch)
             except Error as error:
                 # A stored format the site no longer offers: plan again, once,
                 # from the preset, rather than failing for good.
-                if download.platform != Platform.SITE or error.type != ErrorType.UNPROCESSABLE_ENTITY:
+                if platform != Platform.SITE or error.type != ErrorType.UNPROCESSABLE_ENTITY:
                     raise
                 logger.info("{}|re-planning {}: {}", self._name, download.id, error.message)
-                parts, fragmented = await self._download_parts(download, await self._plan(download, site))
+                parts, fragmented = await self._download_parts(
+                    download, platform, opened.url, await self._plan(download, site, opened.url)
+                )
             file = await self._files.single(download.id)
             destination = final_path(self._root, download.id, file.path if file else "download")
             await self._post_processor.run(download, parts, destination, fragmented=fragmented)
             destination, folder = await self._into_folder(download, destination)
             await self._mark_complete(download, destination, folder)
-            await self._save_subtitles(download, destination)
+            await self._attempts.close(opened, AttemptStatus.COMPLETED)
+            await self._save_subtitles(download, opened.url, destination)
         except Stopped:
             # A pause or a cancel already set the row's status, so it is not
             # this worker's to change. But cancel deleted the work directory
@@ -161,6 +182,7 @@ class DownloadWorker:
             # ``mkdir``/``open`` recreated it — so a canceled download must have
             # its files swept a second time, once the writer has let go.
             logger.info("{}|stopped {}", self._name, download.id)
+            await self._attempts.close(opened, AttemptStatus.CANCELLED)
             self._control.clear_stop(download.id)
             self._live.clear(download.id)
             await download.refresh_from_db()
@@ -169,9 +191,9 @@ class DownloadWorker:
             await self._changed(download)
         except Error as error:
             if is_insufficient_storage(error):
-                await self._wait_for_space(download, error, refund=True)
+                await self._wait_for_space(download, error, refund=True, opened=opened)
             else:
-                await self._mark_failed(download, error)
+                await self._mark_failed(download, error, opened)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -179,10 +201,10 @@ class DownloadWorker:
             # the one write error worth waiting out rather than failing on.
             storage = storage_error(exc) if isinstance(exc, OSError) else None
             if storage is not None:
-                await self._wait_for_space(download, storage, refund=True)
+                await self._wait_for_space(download, storage, refund=True, opened=opened)
                 return
             logger.exception("{}|unexpected failure on {}", self._name, download.id)
-            await self._mark_failed(download, Error.internal(message=str(exc)))
+            await self._mark_failed(download, Error.internal(message=str(exc)), opened)
 
     async def _emit(self, download: Any, *, folder: str | None = None) -> None:
         self._hub.publish("download", (await self._views.one(download, folder=folder)).to_json())
@@ -209,17 +231,20 @@ class DownloadWorker:
         collection = await self._collections.get_active_by_id(download.parent_id)
         if collection is None:
             return destination, None
-        video_id = download.ref_id if download.site_detail else str(download.id)
-        path = collection_folder(collection.title, collection.ref_id)
+        video_id = describe(download).ref if download.media else str(download.id)
+        path = container_folder(collection)
         moved = collection_destination(self._root, path, destination.name, video_id)
         moved.parent.mkdir(parents=True, exist_ok=True)
         destination.replace(moved)
         remove_work_files(self._root, download.id)
         return moved, path
 
-    async def _plan(self, download: Any, site: Any) -> dict[str, Resolved]:
-        """Formats for the preset, from the one extraction that also gives their URLs (v0.5)."""
-        info, resolved = await self._client.open(download.source_url)
+    async def _plan(self, download: Any, site: Any, url: str) -> dict[str, Resolved]:
+        """Formats for the preset, from the one extraction that also gives their URLs (v0.5).
+
+        ``site`` is the download's ``Media``: the plan's title, kind and format ids land there.
+        """
+        info, resolved = await self._client.open(url)
         if info.is_live:
             raise site_error.live_not_supported()
         file = await self._files.single(download.id)
@@ -227,30 +252,30 @@ class DownloadWorker:
             info,
             plan_for(info.formats, site.preset),
             preset=site.preset,
-            title=download.title,
+            title=site.title,
             number=leading_number(file.path if file else ""),
         )
-        download.media_kind = planned.media_kind
-        download.title = planned.title
-        download.total_bytes = planned.total_bytes
-        await download.save(update_fields=["media_kind", "title", "total_bytes"])
+        download.total_size = planned.total_bytes
+        await download.save(update_fields=["total_size"])
+        site.title = planned.title
+        site.kind = planned.media_kind
         site.video_format = planned.video_format
         site.audio_format = planned.audio_format
-        await site.save(update_fields=["video_format", "audio_format"])
+        await site.save(update_fields=["title", "kind", "video_format", "audio_format"])
         await self._files.set_single(download.id, path=planned.filename, mime_type=planned.mime_type)
         await self._emit(download)
         return resolved
 
     async def _download_parts(
-        self, download: Any, batch: dict[str, Resolved] | None = None
+        self, download: Any, platform: Platform, url: str, batch: dict[str, Resolved] | None = None
     ) -> tuple[dict[str, Path], frozenset[str]]:
         """Fetch every stream the plan names, resuming any ``.part`` already there.
 
         Returns the parts by name, and the names of those yt-dlp's downloader fetched.
         """
-        if download.platform == Platform.DIRECT:
+        if platform == Platform.DIRECT:
             destination = part_path(self._root, download.id, SegmentPart.FILE.value)
-            source_url = download.source_url
+            source_url = url
 
             async def direct() -> str:
                 return source_url
@@ -258,7 +283,7 @@ class DownloadWorker:
             await self._fetch(download, SegmentPart.FILE, direct, destination, offset=0)
             return {SegmentPart.FILE.value: destination}, frozenset()
 
-        site = download.site_detail
+        site = download.media
         wanted = [
             (part, format_id)
             for part, format_id in ((SegmentPart.VIDEO, site.video_format), (SegmentPart.AUDIO, site.audio_format))
@@ -271,7 +296,7 @@ class DownloadWorker:
         # URLs expire within hours and bind to the requesting IP, so a stored
         # one is worthless on a resume, and one extraction per part would double
         # what the site sees (and what trips YouTube's bot check).
-        source_url = download.source_url
+        source_url = url
         if batch is None:
             batch = await self._client.resolve(source_url, [format_id for _, format_id in wanted])
 
@@ -326,7 +351,7 @@ class DownloadWorker:
         self, download: Any, part: SegmentPart, provider: UrlProvider, destination: Path, *, offset: int
     ) -> None:
         download_id = download.id
-        expected_total = download.total_bytes
+        expected_total = download.total_size
         collection_id = download.parent_id
 
         async def reconcile(plan: list[Segment]) -> tuple[dict[int, int], bool]:
@@ -365,7 +390,7 @@ class DownloadWorker:
         if self._fragments is None:
             raise Error.internal(message="This worker has no fragment downloader")
         download_id = download.id
-        expected_total = download.total_bytes
+        expected_total = download.total_size
         collection_id = download.parent_id
         await self._fragments.fetch(
             page_url,
@@ -397,7 +422,7 @@ class DownloadWorker:
         """
         downloaded = offset + sample.downloaded_bytes
         grand_total = total or (offset + sample.total_bytes if sample.total_bytes else None)
-        await self._repo.flush_progress(download_id, downloaded_bytes=downloaded, total_bytes=grand_total)
+        await self._repo.flush_progress(download_id, downloaded_size=downloaded, total_size=grand_total)
         if sample.segments:
             await self._segment_repo.flush(
                 download_id, part, {segment.index: segment.downloaded for segment in sample.segments}
@@ -416,12 +441,13 @@ class DownloadWorker:
             ),
         )
 
-    async def _save_subtitles(self, download: Any, destination: Path) -> None:
+    async def _save_subtitles(self, download: Any, url: str, destination: Path) -> None:
         """A site video's subtitles beside it (#102). Never fails the download: it's already done."""
-        if download.platform != Platform.SITE or download.media_kind != MediaKind.VIDEO:
+        described = describe(download)
+        if described.platform != Platform.SITE or described.media_kind != MediaKind.VIDEO:
             return
         try:
-            saved = await save_site_subtitles(self._client, download.source_url, destination, self._fetch_subtitle)
+            saved = await save_site_subtitles(self._client, url, destination, self._fetch_subtitle)
         except Exception as exc:
             logger.warning("{}|subtitles for {} not saved: {}", self._name, download.id, exc)
             return
@@ -433,13 +459,13 @@ class DownloadWorker:
         download.status = DownloadStatus.COMPLETED
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
-        download.downloaded_bytes = size
-        download.total_bytes = size
+        download.downloaded_size = size
+        download.total_size = size
         download.completed_at = now()
         download.error = None
         download.error_code = None
         await download.save(
-            update_fields=["status", "downloaded_bytes", "total_bytes", "completed_at", "error", "error_code"]
+            update_fields=["status", "downloaded_size", "total_size", "completed_at", "error", "error_code"]
         )
         await self._files.finish_single(download.id, path=destination.name, size_bytes=size)
         self._live.clear(download.id)
@@ -451,7 +477,9 @@ class DownloadWorker:
         await self._changed(download, folder=folder)
         logger.success("{}|completed {} -> {}/{}", self._name, download.id, folder or download.id, destination.name)
 
-    async def _wait_for_space(self, download: Any, error: Error, *, refund: bool = False) -> None:
+    async def _wait_for_space(
+        self, download: Any, error: Error, *, refund: bool = False, opened: Opened | None = None
+    ) -> None:
         """Back to the queue until the disk has room, keeping whatever is on disk.
 
         Not a failure: the retry budget is for sources that misbehave, and a
@@ -461,6 +489,9 @@ class DownloadWorker:
         """
         if refund:
             download.attempts = max(0, download.attempts - 1)
+        if opened is not None:
+            # Not the source's doing: the try ends without counting against its mirror.
+            await self._attempts.close(opened, AttemptStatus.CANCELLED)
         download.status = DownloadStatus.PENDING
         download.error = error.message
         download.error_code = error.type.value if error.type else None
@@ -470,10 +501,14 @@ class DownloadWorker:
         self._live.clear(download.id)
         await self._changed(download)
 
-    async def _mark_failed(self, download: Any, error: Error) -> None:
+    async def _mark_failed(self, download: Any, error: Error, opened: Opened | None) -> None:
+        """Retry on the same mirror while the policy allows; then fail over to the next one, or fail for good."""
         decision = retry_policy.decide(error, attempts=download.attempts, max_attempts=self._max_attempts)
         download.error = error.message
         download.error_code = error.type.value if error.type else None
+        if opened is not None:
+            await self._attempts.close(opened, AttemptStatus.FAILED)
+        spent = MirrorStatus.EXHAUSTED if download.attempts >= self._max_attempts else MirrorStatus.FAILED
 
         if decision.retry:
             download.status = DownloadStatus.PENDING
@@ -486,12 +521,19 @@ class DownloadWorker:
                 download.attempts,
                 error.message,
             )
+        elif opened is not None and await self._attempts.retire(opened, spent):
+            # This mirror is spent and another is left: start over on it, with a
+            # fresh retry budget, since its failures were the other source's.
+            download.status = DownloadStatus.PENDING
+            download.attempts = 0
+            download.next_attempt_at = None
+            logger.warning("{}|failing over {} to its next mirror: {}", self._name, download.id, error.message)
         else:
             download.status = DownloadStatus.FAILED
             download.next_attempt_at = None
             logger.error("{}|failed {}: {}", self._name, download.id, error.message)
 
-        await download.save(update_fields=["status", "error", "error_code", "next_attempt_at"])
+        await download.save(update_fields=["status", "error", "error_code", "next_attempt_at", "attempts"])
         self._live.clear(download.id)
         await self._changed(download)
 

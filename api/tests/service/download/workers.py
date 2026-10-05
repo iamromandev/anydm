@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.data.repo.download.interface.attempt import USABLE_MIRRORS, Opened
+from src.data.type import AttemptStatus, DownloadStatus, MediaKind, MirrorStatus, Platform, Preset
 from src.lib.event import EventHub
 from src.service.download.control import DownloadControl
 from src.service.download.download_worker import DownloadWorker
 from src.service.download.live import LiveStats
 
+from tests.service.download.described_rows import a_site_row
 from tests.service.download.memory import MemoryFiles, download_row, memory_views, site_detail
 
 
@@ -35,6 +36,29 @@ class FakeSegmentRepo:
         self.cleared.append(download_id)
 
 
+class FakeAttempts:
+    """Tries opened through a download's usable mirrors, as ``AttemptDatabaseRepo`` would, recorded in memory."""
+
+    def __init__(self, *, spare_mirror: bool = False) -> None:
+        self.closed: list[AttemptStatus] = []
+        self.retired: list[MirrorStatus] = []
+        self._spare = spare_mirror
+
+    async def open(self, download: Any) -> Opened | None:
+        usable = [mirror for mirror in download.mirrors if mirror.status in USABLE_MIRRORS]
+        if not usable:
+            return None
+        mirror = min(usable, key=lambda mirror: (mirror.priority, mirror.created_at))
+        return Opened(uuid.uuid4(), download.id, mirror.id, mirror.source.url.value, download.downloaded_size)
+
+    async def close(self, opened: Opened, status: AttemptStatus) -> None:
+        self.closed.append(status)
+
+    async def retire(self, opened: Opened, status: MirrorStatus) -> bool:
+        self.retired.append(status)
+        return self._spare
+
+
 class FlushRecordingRepo:
     def __init__(self) -> None:
         self.flushed: list[dict[str, Any]] = []
@@ -48,7 +72,16 @@ class FakeCollections:
 
     def __init__(self, folder: str | None = None) -> None:
         self.collection: Any = (
-            SimpleNamespace(id=uuid.uuid4(), title=folder, ref_id="PL") if folder is not None else None
+            a_site_row(
+                "https://www.youtube.com/playlist?list=PL",
+                provider="Youtube",
+                title=folder,
+                kind=MediaKind.PLAYLIST,
+                preset=Preset.BEST,
+                id=uuid.uuid4(),
+            )
+            if folder is not None
+            else None
         )
 
     async def get_active_by_id(self, collection_id: uuid.UUID) -> Any:
@@ -110,6 +143,7 @@ def worker(
     files: MemoryFiles | None = None,
     repo: Any = None,
     segment_repo: Any = None,
+    attempts: Any = None,
     collections: Any = None,
     client: Any = None,
     engine: Any = None,
@@ -128,6 +162,7 @@ def worker(
         name="test",
         repo=cast(Any, repo or FlushRecordingRepo()),
         segment_repo=cast(Any, segment_repo or FakeSegmentRepo()),
+        attempts=cast(Any, attempts or FakeAttempts()),
         files=cast(Any, files),
         collections=cast(Any, collections or FakeCollections()),
         client=client or stub,
