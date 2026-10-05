@@ -4,21 +4,13 @@ from typing import Any
 
 import pytest
 from src.data.db import model
-from src.data.db.model import Download, Queue, SiteDetail
+from src.data.db.model import Download, SiteDetail
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.service.download.paths import collection_folder
 
 
-async def a_queue() -> Queue:
-    queue, _ = await Queue.get_or_create(slug="main", defaults={"name": "Main", "is_default": True})
-    return queue
-
-
 async def a_download(**fields: Any) -> Download:
-    base: dict[str, Any] = {
-        "status": DownloadStatus.PENDING,
-        "queue": await a_queue(),
-    }
+    base: dict[str, Any] = {"status": DownloadStatus.PENDING}
     base.update(fields)
     return await Download.create(**base)
 

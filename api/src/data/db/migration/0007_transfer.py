@@ -10,7 +10,15 @@ from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
 from tortoise.migrations.constraints import UniqueConstraint
 
-from src.data.type.download.download import AttemptStatus, DownloadStatus, Folder, MirrorStatus, Preset, SegmentStatus
+from src.data.type.download.download import (
+    AttemptStatus,
+    DownloadStatus,
+    Folder,
+    MediaKind,
+    MirrorStatus,
+    Preset,
+    SegmentStatus,
+)
 
 
 class Migration(migrations.Migration):
@@ -105,6 +113,47 @@ class Migration(migrations.Migration):
                 ('downloaded_bytes', fields.BigIntField(default=0)),
             ],
             options={'table': 'segment', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Segment'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Queue',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('name', fields.CharField(unique=True, max_length=64)),
+                ('slug', fields.CharField(unique=True, description='The name made URL- and comparison-safe; what code and the API refer to.', max_length=64)),
+                ('is_default', fields.BooleanField(default=False, description='The queue a new download joins when none is named.')),
+                ('is_paused', fields.BooleanField(default=False, description='Stops the whole queue without touching its downloads.')),
+                ('max_concurrent', fields.IntField(default=1)),
+                ('start_time', fields.TimeField(null=True, description='Both null: always open. ``stop_time`` before ``start_time`` crosses midnight.', auto_now=False, auto_now_add=False)),
+                ('stop_time', fields.TimeField(null=True, auto_now=False, auto_now_add=False)),
+                ('days', fields.JSONField(null=True, description='ISO weekdays, 1 (Monday) to 7; null means every day.', encoder=JSON_DUMPS, decoder=loads)),
+                ('position', fields.IntField(default=0)),
+            ],
+            options={'table': 'queue', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Queue'},
+            bases=['LinkBase'],
+        ),
+        # CreateModel renders no Meta.constraints (src/core/base.py), so the partial unique is added here.
+        ops.AddConstraint(
+            model_name='Queue',
+            constraint=UniqueConstraint(fields=('is_default',), name='uniq_queue_default', condition='is_default'),
+        ),
+        ops.CreateModel(
+            name='SiteDetail',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('download', fields.OneToOneField('model.Download', source_field='download_id', db_constraint=True, to_field='id', related_name='site_detail', on_delete=OnDelete.CASCADE)),
+                ('title', fields.CharField(default='', description='The title the extract returned.', max_length=512)),
+                ('media_kind', fields.CharEnumField(default=MediaKind.VIDEO, description='VIDEO: video\nAUDIO: audio\nFILE: file\nPLAYLIST: playlist\nCHANNEL: channel', enum_type=MediaKind, max_length=8)),
+                ('preset', fields.CharEnumField(description='BEST: best\nP2160: 2160\nP1440: 1440\nP1080: 1080\nP720: 720\nP480: 480\nMP3: mp3', enum_type=Preset, max_length=8)),
+                ('video_format', fields.CharField(null=True, max_length=64)),
+                ('audio_format', fields.CharField(null=True, max_length=64)),
+                ('playlist_index', fields.IntField(null=True, description='Its place in the playlist it was added from; none for a standalone video.')),
+            ],
+            options={'table': 'site_detail', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'SiteDetail'},
             bases=['LinkBase'],
         ),
     ]
