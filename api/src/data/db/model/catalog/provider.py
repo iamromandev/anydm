@@ -19,7 +19,8 @@ class Provider(LinkBase):
     ``api_key`` is stored as given; encrypting stored secrets is #269.
     """
 
-    base_url = fields.OneToOneField(
+    # Many-to-one: two providers may sit at the same address, as two indexers behind one proxy can.
+    base_url = fields.ForeignKeyField(
         to="model.Url",
         related_name="providers",
         null=True,

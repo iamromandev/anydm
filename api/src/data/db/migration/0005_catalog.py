@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
                 ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
-                ('base_url', fields.OneToOneField('model.Url', source_field='base_url_id', null=True, db_constraint=True, to_field='id', related_name='providers', on_delete=OnDelete.SET_NULL)),
+                ('base_url', fields.ForeignKeyField('model.Url', source_field='base_url_id', null=True, db_constraint=True, to_field='id', related_name='providers', on_delete=OnDelete.SET_NULL)),
                 ('name', fields.CharField(max_length=64)),
                 ('slug', fields.CharField(unique=True, max_length=64)),
                 ('status', fields.CharEnumField(default=ProviderStatus.ACTIVE, description='ACTIVE: active\nINACTIVE: inactive', enum_type=ProviderStatus, max_length=8)),

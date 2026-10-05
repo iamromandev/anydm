@@ -2,12 +2,14 @@
 
 from src.data.db.model.catalog.provider import Provider
 from src.data.type import ProviderStatus
-from tortoise.fields.relational import ForeignKeyFieldInstance
+from tortoise.fields.relational import ForeignKeyFieldInstance, OneToOneFieldInstance
 
 
-def test_provider_base_url_is_a_nullable_one_to_one_to_url() -> None:
+def test_provider_base_url_is_a_nullable_many_to_one_to_url() -> None:
+    # Many-to-one: two providers may share an address.
     field = Provider._meta.fields_map["base_url"]
     assert isinstance(field, ForeignKeyFieldInstance)
+    assert not isinstance(field, OneToOneFieldInstance)
     assert field.null is True
     assert field.model_name == "model.Url"
     assert field.related_name == "providers"
