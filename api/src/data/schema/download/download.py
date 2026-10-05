@@ -65,7 +65,7 @@ class TorrentInfoSchema(BaseSchema):
 class DownloadFileSchema(BaseSchema):
     index: int
     path: str
-    size_bytes: int = 0
+    size: int = 0
     downloaded_bytes: int = 0
     selected: bool = True
     mime_type: str | None = None
@@ -90,8 +90,8 @@ class DownloadSchema(BaseSchema):
     start_at: datetime | None = None
     folder: str | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)
-    total_bytes: int | None = None
-    downloaded_bytes: int = 0
+    total_size: int | None = None
+    downloaded_size: int = 0
     live: LiveSchema = Field(default_factory=LiveSchema)
     site: SiteSchema | None = None
     torrent: TorrentInfoSchema | None = None
@@ -135,8 +135,8 @@ class CollectionSchema(BaseSchema):
     status: DownloadStatus
     progress: int = 0
     counts: CollectionCountsSchema = Field(default_factory=CollectionCountsSchema)
-    total_bytes: int | None = None
-    downloaded_bytes: int = 0
+    total_size: int | None = None
+    downloaded_size: int = 0
     #: The sum of its members' live speeds.
     speed_bps: int = 0
     created_at: datetime | None = None

@@ -26,12 +26,12 @@ export function normalizeResolvedTorrent(raw: any): ResolvedTorrent {
     return {
         infoHash: raw?.info_hash ?? "",
         title: raw?.title ?? "",
-        totalBytes: raw?.total_bytes ?? 0,
+        totalBytes: raw?.total_size ?? 0,
         files: Array.isArray(raw?.files)
             ? raw.files.map((file: any) => ({
                   index: file.index ?? 0,
                   path: file.path ?? "",
-                  sizeBytes: file.size_bytes ?? 0,
+                  sizeBytes: file.size ?? 0,
               }))
             : [],
     };

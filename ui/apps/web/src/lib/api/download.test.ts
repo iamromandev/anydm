@@ -46,8 +46,8 @@ describe("normalizeApiTask", () => {
         title: "clip",
         status: "downloading",
         progress: 42,
-        downloaded_bytes: 4200,
-        total_bytes: 10000,
+        downloaded_size: 4200,
+        total_size: 10000,
         live: {
             speed_bps: 512,
             eta_seconds: 11,
@@ -59,7 +59,7 @@ describe("normalizeApiTask", () => {
             {
                 index: 0,
                 path: "clip.mp4",
-                size_bytes: 0,
+                size: 0,
                 downloaded_bytes: 4200,
                 selected: true,
             },
@@ -101,7 +101,7 @@ describe("normalizeApiTask", () => {
     it("tolerates nulls", () => {
         const task = normalizeApiTask({
             ...raw,
-            total_bytes: null,
+            total_size: null,
             live: { speed_bps: 0, eta_seconds: null },
         });
         expect(task.totalBytes).toBe(0);
@@ -128,8 +128,8 @@ describe("normalizeApiTask on the new wire shape", () => {
         status: "complete",
         progress: 100,
         queue: { id: "q", name: "Main" },
-        total_bytes: 10,
-        downloaded_bytes: 10,
+        total_size: 10,
+        downloaded_size: 10,
         live: {
             speed_bps: 0,
             eta_seconds: null,
@@ -140,7 +140,7 @@ describe("normalizeApiTask on the new wire shape", () => {
             {
                 index: 0,
                 path: "a.mp4",
-                size_bytes: 10,
+                size: 10,
                 downloaded_bytes: 10,
                 selected: true,
                 mime_type: "video/mp4",
@@ -173,7 +173,7 @@ describe("normalizeApiTask on the new wire shape", () => {
             {
                 index: 1,
                 path: "bbb.mp4",
-                size_bytes: 100,
+                size: 100,
                 downloaded_bytes: 10,
                 selected: true,
             },
@@ -201,8 +201,8 @@ describe("normalizeApiTask on the new wire shape", () => {
             failed: 0,
             watched: 1,
         },
-        total_bytes: 200,
-        downloaded_bytes: 150,
+        total_size: 200,
+        downloaded_size: 150,
         speed_bps: 40,
     };
 
@@ -273,7 +273,7 @@ describe("normalizeApiTask on the new wire shape", () => {
         const task = normalizeApiTask(torrentWire);
         const next = applyProgressFrame(task, {
             id: "t1",
-            downloaded_bytes: 50,
+            downloaded_size: 50,
             progress: 50,
             live: {
                 speed_bps: 10,
@@ -429,8 +429,8 @@ describe("torrent fields", () => {
         title: "Some Release",
         status: "seeding",
         progress: 100,
-        downloaded_bytes: 1000,
-        total_bytes: 1000,
+        downloaded_size: 1000,
+        total_size: 1000,
         live: {
             speed_bps: 0,
             eta_seconds: null,
@@ -442,14 +442,14 @@ describe("torrent fields", () => {
             {
                 index: 0,
                 path: "video.mkv",
-                size_bytes: 900,
+                size: 900,
                 selected: true,
                 downloaded_bytes: 900,
             },
             {
                 index: 1,
                 path: "readme.txt",
-                size_bytes: 100,
+                size: 100,
                 selected: false,
                 downloaded_bytes: 0,
             },
@@ -468,7 +468,7 @@ describe("torrent fields", () => {
     });
 
     it("leaves the ratio undefined when nothing has downloaded", () => {
-        const task = normalizeApiTask({ ...rawTorrent, downloaded_bytes: 0 });
+        const task = normalizeApiTask({ ...rawTorrent, downloaded_size: 0 });
         expect(task.ratio).toBeUndefined();
     });
 

@@ -183,7 +183,7 @@ async def test_resolve_returns_the_file_list_without_creating_a_download() -> No
     repo = FakeDownloadRepo()
     response = await _service(repo=repo).resolve(MAGNET)
 
-    assert (response.info_hash, response.title, response.total_bytes) == ("abc123", "Some Release", 1000)
+    assert (response.info_hash, response.title, response.total_size) == ("abc123", "Some Release", 1000)
     assert [f.index for f in response.files] == [0, 1]
     assert response.files[0].path == "video.mkv"
     assert all(f.selected for f in response.files)

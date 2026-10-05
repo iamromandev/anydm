@@ -6,10 +6,10 @@ describe("normalizeResolvedTorrent", () => {
     const raw = {
         info_hash: "abc",
         title: "Some Release",
-        total_bytes: 1000,
+        total_size: 1000,
         files: [
-            { index: 0, path: "video.mkv", size_bytes: 900, selected: true },
-            { index: 1, path: "readme.txt", size_bytes: 100, selected: true },
+            { index: 0, path: "video.mkv", size: 900, selected: true },
+            { index: 1, path: "readme.txt", size: 100, selected: true },
         ],
     };
 

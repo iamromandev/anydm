@@ -217,8 +217,8 @@ async def test_a_torrents_files_are_on_the_answer(client: httpx.AsyncClient, str
     response = await client.post("/stream/start", json={"torrent": "magnet:?xt=urn:btih:abc"})
 
     assert response.json()["data"]["files"] == [
-        {"index": 0, "path": "Show.S01E2.mkv", "size_bytes": 800, "selected": True, "downloaded_bytes": 0},
-        {"index": 1, "path": "readme.txt", "size_bytes": 10, "selected": True, "downloaded_bytes": 0},
+        {"index": 0, "path": "Show.S01E2.mkv", "size": 800, "selected": True, "downloaded_bytes": 0},
+        {"index": 1, "path": "readme.txt", "size": 10, "selected": True, "downloaded_bytes": 0},
     ]
 
 

@@ -4,9 +4,9 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from src.data.db.model import DownloadFile
+from src.data.db.model import File
 
-#: ``(index, path, size_bytes, selected)``. A tuple rather than the service
+#: ``(index, path, size, selected)``. A tuple rather than the service
 #: layer's ``FileInfo``: the data layer imports nothing from ``src.lib`` or
 #: ``src.service``.
 FileRow = tuple[int, str, int, bool]
@@ -23,12 +23,12 @@ class FileRepo(ABC):
         ...
 
     @abstractmethod
-    async def single(self, download_id: uuid.UUID) -> DownloadFile | None:
+    async def single(self, download_id: uuid.UUID) -> File | None:
         """A site or direct download's one file, at index 0."""
         ...
 
     @abstractmethod
-    async def set_single(self, download_id: uuid.UUID, *, path: str, mime_type: str | None) -> DownloadFile:
+    async def set_single(self, download_id: uuid.UUID, *, path: str, mime_type: str | None) -> File:
         """Create or rename the one file; planning names it."""
         ...
 
@@ -38,15 +38,15 @@ class FileRepo(ABC):
         ...
 
     @abstractmethod
-    async def get(self, download_id: uuid.UUID, index: int) -> DownloadFile | None: ...
+    async def get(self, download_id: uuid.UUID, index: int) -> File | None: ...
 
     @abstractmethod
-    async def list_for(self, download_id: uuid.UUID) -> list[DownloadFile]:
+    async def list_for(self, download_id: uuid.UUID) -> list[File]:
         """Every file row, in index order."""
         ...
 
     @abstractmethod
-    async def list_for_downloads(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[DownloadFile]]:
+    async def list_for_downloads(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[File]]:
         """Every file of each download, in index order, in one query.
 
         For a page of the list: asking once per download would be a query per

@@ -100,7 +100,7 @@ function playableFiles(raw: unknown): PlayableFile[] {
         (Array.isArray(raw) ? raw : []).map((f: any) => ({
             index: typeof f?.index === "number" ? f.index : 0,
             path: typeof f?.path === "string" ? f.path : "",
-            sizeBytes: typeof f?.size_bytes === "number" ? f.size_bytes : 0,
+            sizeBytes: typeof f?.size === "number" ? f.size : 0,
         })),
     );
 }

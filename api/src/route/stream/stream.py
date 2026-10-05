@@ -108,7 +108,7 @@ def _session_schema(session: StreamSession) -> StreamSessionSchema:
         playing_height=menu.playing if menu else None,
         quality_default=menu.default if menu else None,
         default_height=menu.default_height if menu else None,
-        files=[FileSchema(index=f.index, path=f.path, size_bytes=f.size_bytes) for f in session.files],
+        files=[FileSchema(index=f.index, path=f.path, size=f.size_bytes) for f in session.files],
     )
 
 

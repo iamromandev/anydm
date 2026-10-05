@@ -24,7 +24,7 @@ async def test_single_file_is_named_then_finished() -> None:
     await repo.finish_single(row.id, path="007_Talk.mp4", size_bytes=42)
     single = await repo.single(row.id)
     assert single is not None
-    assert (single.path, single.mime_type, single.size_bytes, single.downloaded_bytes) == (
+    assert (single.path, single.mime_type, single.size, single.downloaded_bytes) == (
         "007_Talk.mp4",
         "video/mp4",
         42,

@@ -74,12 +74,12 @@ class TorrentService(BaseService):
         return TorrentResolveResponse(
             info_hash=details.info_hash,
             title=details.name,
-            total_bytes=sum(file.size_bytes for file in details.files),
+            total_size=sum(file.size_bytes for file in details.files),
             files=[
                 FileSchema(
                     index=file.index,
                     path=file.path,
-                    size_bytes=file.size_bytes,
+                    size=file.size_bytes,
                     # Everything is offered ticked; the picker is a way to
                     # remove files, not a puzzle to solve before downloading.
                     selected=True,
@@ -291,7 +291,7 @@ class TorrentService(BaseService):
                 message="This torrent has no media file to play",
                 error_type=ErrorType.UNPROCESSABLE_ENTITY,
             )
-        return max(media, key=lambda row: row.size_bytes).index
+        return max(media, key=lambda row: row.size or 0).index
 
     async def subtitle_files(
         self, download_id: uuid.UUID, file_index: int | None
@@ -324,10 +324,7 @@ class TorrentService(BaseService):
             row = by_path[sidecar.path]
             path = (folder / row.path).resolve()
             on_disk = (
-                row.selected
-                and path.is_relative_to(folder)
-                and path.is_file()
-                and path.stat().st_size == row.size_bytes
+                row.selected and path.is_relative_to(folder) and path.is_file() and path.stat().st_size == row.size
             )
             if on_disk:
                 found.append((sidecar, path))

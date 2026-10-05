@@ -54,8 +54,12 @@ class Migration(migrations.Migration):
                 ('filename', fields.CharField(max_length=512)),
                 ('path', fields.TextField(unique=False)),
                 ('size', fields.BigIntField(null=True)),
+                ('index', fields.IntField()),
+                ('downloaded_bytes', fields.BigIntField(default=0)),
+                ('selected', fields.BooleanField(default=True)),
+                ('mime_type', fields.CharField(null=True, max_length=128)),
             ],
-            options={'table': 'file', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'File'},
+            options={'table': 'file', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'index'),), 'pk_attr': 'id', 'table_description': 'File'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
