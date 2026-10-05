@@ -42,7 +42,12 @@ class FakeApi : TaskApi {
         return pages[page] ?: Page(emptyList(), PageMetaDto(page = page, totalPages = 1))
     }
 
-    override suspend fun summary(): SummaryDto = summaryDto
+    var summaryCalls = 0
+
+    override suspend fun summary(): SummaryDto {
+        summaryCalls += 1
+        return summaryDto
+    }
 
     override fun events(): Flow<ServerEvent> =
         flow {

@@ -231,7 +231,10 @@ class TaskStore(
         announce(top, before)
     }
 
-    /** A notice for each row whose status moved; the counts are fetched again when any did. */
+    /**
+     * A notice for each row whose status moved. The counts are fetched again when a row moved
+     * between them, which a pause, resume or remove does without a notice.
+     */
     private suspend fun announce(
         rows: List<Task>,
         before: List<Task>,
@@ -239,10 +242,8 @@ class TaskStore(
         val previous = before.associate { it.id to it.status }
         var moved = false
         rows.forEach { row ->
-            transition(previous[row.id], row)?.let {
-                moved = true
-                say(it)
-            }
+            if (countsMoved(previous[row.id], row.status)) moved = true
+            transition(previous[row.id], row)?.let { say(it) }
         }
         if (moved) scope.launch { loadSummary() }
     }

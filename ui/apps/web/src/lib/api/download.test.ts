@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
     aggregateStats,
     appendPage,
+    countsMoved,
     normalizeSummary,
     canPause,
     retryLabel,
@@ -1583,5 +1584,28 @@ describe("normalizeEntryCounts", () => {
 
     it("reads the watched count when the list sent one", () => {
         expect(normalizeEntryCounts({ total: 2, watched: 1 })?.watched).toBe(1);
+    });
+});
+
+describe("countsMoved", () => {
+    it("moves the counts on a pause, a resume, a finish and a remove", () => {
+        expect(countsMoved("downloading", "paused")).toBe(true);
+        expect(countsMoved("paused", "pending")).toBe(true);
+        expect(countsMoved("downloading", "completed")).toBe(true);
+        expect(countsMoved("downloading", "seeding")).toBe(true);
+        expect(countsMoved("seeding", "completed")).toBe(true);
+        expect(countsMoved("completed", "cancelled")).toBe(true);
+        expect(countsMoved("failed", "pending")).toBe(true);
+    });
+
+    it("leaves them alone within one count", () => {
+        expect(countsMoved("pending", "downloading")).toBe(false);
+        expect(countsMoved("queued", "downloading")).toBe(false);
+        expect(countsMoved("downloading", "downloading")).toBe(false);
+        expect(countsMoved("paused", "failed")).toBe(false);
+    });
+
+    it("says nothing for a row new to the list", () => {
+        expect(countsMoved(undefined, "downloading")).toBe(false);
     });
 });
