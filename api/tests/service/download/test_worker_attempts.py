@@ -155,3 +155,26 @@ async def test_a_worker_holds_its_download_for_the_whole_try_and_lets_go_after(t
 
     assert engine.held_while_fetching is True
     assert runner._control.held() == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_download_is_published_as_downloading_before_anything_else(tmp_path: Path) -> None:
+    files, hub = MemoryFiles(), RecordingHub()
+    row = await direct_row(files)
+
+    await worker(tmp_path, files=files, engine=FailingEngine(_refused()), hub=hub).run_task(row)
+
+    (first_name, first), *_ = hub.events
+    assert (first_name, first["id"], first["status"]) == ("download", str(row.id), "downloading")
+    assert [frame["status"] for frame in hub.named("download")] == ["downloading", "failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_download_with_no_source_left_never_reads_downloading(tmp_path: Path) -> None:
+    files, hub = MemoryFiles(), RecordingHub()
+    row = await direct_row(files)
+    row.mirrors[0].status = MirrorStatus.FAILED
+
+    await worker(tmp_path, files=files, engine=FailingEngine(_refused()), hub=hub).run_task(row)
+
+    assert [frame["status"] for frame in hub.named("download")] == ["failed"]
