@@ -277,15 +277,29 @@ async def test_a_selection_naming_no_real_file_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adding_a_torrent_already_held_returns_that_download(tmp_path: Path) -> None:
+async def test_a_torrent_already_held_is_refused_naming_its_download(tmp_path: Path) -> None:
     client, repo = FakeTorrentClient(), FakeDownloadRepo()
     service = _service(client, repo=repo, root=tmp_path)
 
     first = await service.enqueue(MAGNET, [0])
-    again = await service.enqueue(MAGNET, [])
+    with pytest.raises(Error) as caught:
+        await service.enqueue(MAGNET, [])
 
-    assert again.id == first.id
+    assert caught.value.code == Code.CONFLICT
+    (detail,) = caught.value.details or []
+    assert (detail.subject, detail.fields) == (str(first.id), ["pending"])
     assert len(repo.created) == 1 and len(client.added) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_second_copy_of_a_torrent_is_refused_before_the_engine_is_asked() -> None:
+    client = FakeTorrentClient()
+
+    with pytest.raises(Error) as caught:
+        await _service(client).enqueue(MAGNET, [], allow_duplicate=True)
+
+    assert caught.value.code == Code.BAD_REQUEST
+    assert client.resolved == []
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.download.disk import DiskGuard
+from src.service.download.duplicate import already_held
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
@@ -89,7 +90,7 @@ class TorrentService(BaseService):
             ],
         )
 
-    async def enqueue(self, raw: str, files: Sequence[int]) -> DownloadSchema:
+    async def enqueue(self, raw: str, files: Sequence[int], *, allow_duplicate: bool = False) -> DownloadSchema:
         """Start a torrent and record it as a download.
 
         The engine is asked first. Its answer carries the info hash, the real
@@ -97,16 +98,23 @@ class TorrentService(BaseService):
         be a guess at all three.
         """
         self._require_enabled()
+        if allow_duplicate:
+            # The engine holds one torrent per info hash, so a second copy can't exist.
+            raise Error.create(
+                code=Code.BAD_REQUEST,
+                message="A torrent can only be in the list once",
+                error_type=ErrorType.BAD_REQUEST,
+            )
         source = parse_source(raw)
 
         # Resolving before adding buys the rejection below: a selection naming a
         # file the torrent does not have would otherwise be a silently empty download.
         details = await self._client.resolve(source)
-        # A torrent already downloading or seeding is that download, not a second
-        # one mirroring the same engine torrent into the same folder.
+        # A torrent already in the list is refused, naming it: a second row would
+        # mirror the same engine torrent into the same folder.
         existing = await self._repo.by_info_hash(details.info_hash)
         if existing is not None:
-            return await self._views.one(existing, folder=self._relative_folder(existing))
+            raise already_held(existing)
         selected = self._validated_selection(details, files)
         total_bytes = sum(file.size_bytes for file in details.files if file.index in selected)
 

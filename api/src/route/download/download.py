@@ -45,8 +45,13 @@ async def enqueue_media(
     payload: MediaDownloadRequest,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
 ) -> Response:
-    """Queue a download from any page yt-dlp supports, for a quality preset."""
-    data = await download_service.enqueue_media(payload.url.strip(), payload.preset)
+    """Queue a download from any page yt-dlp supports, for a quality preset.
+
+    409 when the list already holds the page, naming that download; ``allow_duplicate`` adds it anyway.
+    """
+    data = await download_service.enqueue_media(
+        payload.url.strip(), payload.preset, allow_duplicate=payload.allow_duplicate
+    )
     return Success.created(data=data).to_resp()
 
 
@@ -55,7 +60,11 @@ async def enqueue_url(
     payload: UrlDownloadRequest,
     download_service: Annotated[DownloadService, Depends(get_download_service)],
 ) -> Response:
-    data = await download_service.enqueue_url(payload.url.strip())
+    """Queue a direct download.
+
+    409 when the list already holds the address, naming that download; ``allow_duplicate`` adds it anyway.
+    """
+    data = await download_service.enqueue_url(payload.url.strip(), allow_duplicate=payload.allow_duplicate)
     return Success.created(data=data).to_resp()
 
 

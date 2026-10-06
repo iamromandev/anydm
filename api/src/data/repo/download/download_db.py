@@ -323,6 +323,20 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def set_torrent_total(self, info_hash: str, total: int) -> None:
         await Torrent.filter(info_hash=info_hash).update(total_bytes=total)
 
+    async def held_at(self, url: str) -> Download | None:
+        # Standalone only: a video a collection holds is a question of its own (#504).
+        return await (
+            Download.filter(
+                NOT_CONTAINER,
+                mirrors__source__url__normalized_hash=address_hash(url),
+                parent_id__isnull=True,
+                deleted_at__isnull=True,
+            )
+            .order_by("created_at")
+            .prefetch_related(*RELATED)
+            .first()
+        )
+
     async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (
             Download.filter(mirrors__source__torrents__info_hash=info_hash, deleted_at__isnull=True)

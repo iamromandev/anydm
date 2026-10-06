@@ -148,6 +148,11 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
+    async def held_at(self, url: str) -> Download | None:
+        """The standalone download not removed at this address, however it is spelled, if any."""
+        ...
+
+    @abstractmethod
     async def by_info_hash(self, info_hash: str) -> Download | None:
         """The download not removed of the torrent ``info_hash``, if any."""
         ...

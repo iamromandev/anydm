@@ -51,3 +51,7 @@ class TorrentDownloadRequest(BaseSchema):
             description="File indexes to download. Empty means every file.",
         ),
     ]
+    allow_duplicate: Annotated[
+        bool,
+        Field(default=False, description="Refused with a 400: the engine holds a torrent once"),
+    ]

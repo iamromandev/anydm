@@ -5,10 +5,12 @@ from types import SimpleNamespace
 from typing import Any, get_args
 
 import pytest
+from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
 from src.data.repo.catalog import address_hash
+from src.data.repo.download.described import describe
 from src.data.type import BulkAction, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.lib.identity import url_ref
 from src.lib.site import error as site_error
@@ -84,6 +86,17 @@ class FakeDownloadRepo:
     async def get_active_by_id(self, download_id: uuid.UUID) -> Any:
         row = self.rows.get(download_id)
         return None if row is None or row.deleted_at is not None else row
+
+    async def held_at(self, url: str) -> Any:
+        wanted = address_hash(url)
+        return next(
+            (
+                row
+                for row in self.rows.values()
+                if row.deleted_at is None and row.parent_id is None and address_hash(describe(row).url) == wanted
+            ),
+            None,
+        )
 
 
 class FakeCollectionRepo:
@@ -196,6 +209,7 @@ def _service(
     )
     return SimpleNamespace(
         service=service,
+        client=service._client,
         repo=repo,
         collections=collections,
         torrents=torrents,
@@ -222,8 +236,15 @@ def _row(h: SimpleNamespace, **overrides: Any) -> Any:
 
 
 def _torrent(h: SimpleNamespace, status: DownloadStatus) -> Any:
-    return _row(h, platform=Platform.TORRENT, media_kind=MediaKind.FILE, site_detail=None,
-                provider="torrent", ref_id="abc123", status=status)
+    return _row(
+        h,
+        platform=Platform.TORRENT,
+        media_kind=MediaKind.FILE,
+        site_detail=None,
+        provider="torrent",
+        ref_id="abc123",
+        status=status,
+    )
 
 
 GIB = 1024**3
@@ -376,7 +397,10 @@ async def test_enqueue_url_writes_a_direct_download_with_its_one_file() -> None:
     schema = await h.service.enqueue_url("https://cdn.test/files/report.pdf")
 
     created = h.repo.created[0]
-    assert (created["url"], created["download"]["status"]) == ("https://cdn.test/files/report.pdf", DownloadStatus.PENDING)
+    assert (created["url"], created["download"]["status"]) == (
+        "https://cdn.test/files/report.pdf",
+        DownloadStatus.PENDING,
+    )
     assert created["filename"] == "report.pdf"
     assert schema.site is None and schema.media_kind == MediaKind.FILE
 
@@ -386,7 +410,7 @@ async def test_a_direct_download_is_identified_by_its_normalized_address() -> No
     """Two spellings of one address are one identity: the case of the host and tracking parameters do not count."""
     h = _service()
     await h.service.enqueue_url("https://CDN.test/files/report.pdf?utm_source=mail")
-    await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+    await h.service.enqueue_url("https://cdn.test/files/report.pdf", allow_duplicate=True)
 
     first, second = (created["url"] for created in h.repo.created)
     assert address_hash(first) == address_hash(second) == url_ref("https://cdn.test/files/report.pdf")
@@ -1060,3 +1084,74 @@ async def test_an_unknown_bulk_action_is_refused(tmp_path: Path) -> None:
 def test_every_bulk_action_the_api_accepts_has_a_scope() -> None:
     """The names live in the type module; what they mean lives in the service."""
     assert set(get_args(BulkAction)) == set(BULK_SCOPES)
+
+
+# --- a duplicate add -----------------------------------------------------------
+
+
+def _held(caught: pytest.ExceptionInfo[Error]) -> tuple[str | None, str | None, Any]:
+    (detail,) = caught.value.details or []
+    return detail.subject, detail.description, detail.fields
+
+
+@pytest.mark.asyncio
+async def test_a_direct_address_already_held_is_refused_naming_its_download() -> None:
+    h = _service()
+    first = await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    # Another spelling of the same address.
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_url("https://CDN.test/files/report.pdf?utm_source=mail")
+
+    assert caught.value.code == Code.CONFLICT
+    assert caught.value.message == "Already in your list: report.pdf (pending)"
+    assert _held(caught) == (str(first.id), "report.pdf", ["pending"])
+    assert len(h.repo.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_allow_duplicate_adds_a_second_copy() -> None:
+    h = _service()
+    await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    await h.service.enqueue_url("https://cdn.test/files/report.pdf", allow_duplicate=True)
+
+    assert len(h.repo.created) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_removed_download_does_not_hold_its_address() -> None:
+    h = _service()
+    first = await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+    h.repo.rows[first.id].deleted_at = now()
+
+    await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    assert len(h.repo.created) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_page_pasted_again_is_refused_before_it_is_extracted() -> None:
+    h = _service()
+    await h.service.enqueue_media(YOUTUBE, Preset.BEST)
+    page = site_info("youtube").webpage_url
+
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_media(page, Preset.BEST)
+
+    assert caught.value.code == Code.CONFLICT
+    # The held page answered from the list: no second extraction.
+    assert h.client.extracted == [YOUTUBE]
+
+
+@pytest.mark.asyncio
+async def test_a_short_link_to_a_page_already_held_is_refused_once_extracted() -> None:
+    h = _service()
+    await h.service.enqueue_media(YOUTUBE, Preset.BEST)
+
+    # Stored under the site's own page, so the short link only matches after extraction.
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_media(YOUTUBE, Preset.P720)
+
+    assert caught.value.code == Code.CONFLICT
+    assert len(h.repo.created) == 1
