@@ -4,6 +4,7 @@ export * from "./envelope";
 export * from "./position";
 export * from "./stream";
 export * from "./download";
+export * from "./duplicate";
 export * from "./torrent";
 export * from "./site";
 export * from "./group";

@@ -16,6 +16,26 @@
     contain: content;
 }
 
+/* The row Open brought into view: an outline that fades, or just holds
+   for a person who has asked for less motion. */
+.torrent-list-item--found {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    animation: torrent-list-found 2.4s ease-out forwards;
+}
+
+@keyframes torrent-list-found {
+    to {
+        outline-color: transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .torrent-list-item--found {
+        animation: none;
+    }
+}
+
 .torrent-list-empty {
     display: flex;
     flex-direction: column;

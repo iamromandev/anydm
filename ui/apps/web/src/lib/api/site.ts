@@ -200,10 +200,14 @@ export async function addLink(
     url: string,
     preferred: string,
     post: Post = postApi,
+    allowDuplicate = false,
 ): Promise<void> {
     const found = await lookupLink(url, post);
     if (found.kind === "file") {
-        await post("/download/url", { url });
+        await post("/download/url", {
+            url,
+            ...(allowDuplicate && { allow_duplicate: true }),
+        });
         return;
     }
     if (found.kind === "playlist" || found.kind === "channel") {
@@ -215,5 +219,9 @@ export async function addLink(
     if (preset === null) {
         throw new ApiError("Nothing on this page can be downloaded yet");
     }
-    await post("/download/media", { url, preset });
+    await post("/download/media", {
+        url,
+        preset,
+        ...(allowDuplicate && { allow_duplicate: true }),
+    });
 }

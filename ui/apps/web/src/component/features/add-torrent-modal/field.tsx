@@ -1,4 +1,11 @@
-import type { AddType } from "@/lib/api/site";
+import {
+    addAnyway,
+    canAddAnyway,
+    duplicateOf,
+    type AddInput,
+    type Duplicate,
+} from "@/lib/api/duplicate";
+import { DuplicateNotice } from "@/component/features/duplicate-notice";
 import { component$, $, useStore, useVisibleTask$ } from "@qwik.dev/core";
 import {
     LuMagnet,
@@ -28,12 +35,9 @@ export interface AddTorrentModalProps {
         fileIndex?: number | null,
         files?: PlayableFile[],
     ) => void | Promise<void>;
-    onAdd: (input: {
-        type: AddType;
-        value: string;
-        preset?: string;
-        files?: number[];
-    }) => Promise<void> | void;
+    onAdd: (input: AddInput) => Promise<void> | void;
+    /** Show a download the list already holds, from a refused add. */
+    onOpen: (id: string) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -55,7 +59,7 @@ function formatBytes(bytes: number): string {
 }
 
 export const AddTorrentModal = component$<AddTorrentModalProps>(
-    ({ open, initial, onClose, onResolve, onPlay, onAdd }) => {
+    ({ open, initial, onClose, onResolve, onPlay, onAdd, onOpen }) => {
         const store = useStore({
             inputType: (initial?.type ?? "magnet") as "magnet" | "file" | "url",
             inputValue: (initial?.value ?? "") as string,
@@ -68,6 +72,9 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
             resolved: null as ResolvedTorrent | null,
             selected: [] as number[],
             resolveError: "" as string,
+            // A refused add that names a download the list already holds.
+            duplicate: null as Duplicate | null,
+            retry: null as AddInput | null,
         });
 
         const handleResolve = $(async () => {
@@ -124,9 +131,37 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
         });
 
         const resetTorrentStep = $(() => {
+            store.duplicate = null;
             store.resolved = null;
             store.selected = [];
             store.resolveError = "";
+        });
+
+        /** Send an add; a refusal naming a download offers Open and Add anyway. */
+        const submit = $(async (input: AddInput) => {
+            // This modal collects input; the page owns the network call. It
+            // used to POST here *and* call onAdd, which POSTed again — every
+            // URL added created two tasks.
+            store.isAdding = true;
+            store.duplicate = null;
+            try {
+                await onAdd(input);
+                store.isAdding = false;
+                store.inputValue = "";
+                store.resolved = null;
+                store.selected = [];
+                store.resolveError = "";
+                onClose();
+            } catch (err) {
+                const held = duplicateOf(err);
+                if (held) {
+                    store.duplicate = held;
+                    store.retry = input;
+                } else {
+                    console.error(err);
+                }
+                store.isAdding = false;
+            }
         });
 
         const handleAdd = $(async () => {
@@ -135,29 +170,25 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                 return;
             }
 
-            // This modal collects input; the page owns the network call. It
-            // used to POST here *and* call onAdd, which POSTed again — every
-            // URL added created two tasks.
-            store.isAdding = true;
-            try {
-                await onAdd({
-                    // Its URL tab has no preview, so the page asks what the
-                    // link is and routes it: a site page or a plain file.
-                    type: inputType === "url" ? "link" : inputType,
-                    value: inputValue,
-                    preset: inputType !== "url" ? undefined : inputPreset,
-                    files: inputType === "url" ? undefined : selected,
-                });
-                store.isAdding = false;
-                store.inputValue = "";
-                store.resolved = null;
-                store.selected = [];
-                store.resolveError = "";
-                onClose();
-            } catch (err) {
-                console.error(err);
-                store.isAdding = false;
-            }
+            await submit({
+                // Its URL tab has no preview, so the page asks what the
+                // link is and routes it: a site page or a plain file.
+                type: inputType === "url" ? "link" : inputType,
+                value: inputValue,
+                preset: inputType !== "url" ? undefined : inputPreset,
+                files: inputType === "url" ? undefined : selected,
+            });
+        });
+
+        const openHeld = $(() => {
+            const held = store.duplicate;
+            if (!held) return;
+            store.duplicate = null;
+            onOpen(held.id);
+        });
+
+        const addSecondCopy = $(async () => {
+            if (store.retry) await submit(addAnyway(store.retry));
         });
 
         // Compute button label - simple string ternary
@@ -279,6 +310,7 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                 class={`modal-tab ${store.inputType === "url" ? "modal-tab--active" : ""}`}
                                 onClick$={() => {
                                     store.inputType = "url";
+                                    store.duplicate = null;
                                 }}
                                 aria-selected={store.inputType === "url"}
                                 role="tab"
@@ -366,6 +398,7 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                             const target =
                                                 e.target as HTMLInputElement;
                                             store.inputValue = target.value;
+                                            store.duplicate = null;
                                         }}
                                         aria-label="Video URL"
                                     />
@@ -485,6 +518,22 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                             )}
                         </div>
                     </main>
+
+                    {store.duplicate && (
+                        <div class="modal-duplicate">
+                            <DuplicateNotice
+                                duplicate={store.duplicate}
+                                busy={store.isAdding}
+                                onOpen={openHeld}
+                                onAddAnyway={
+                                    store.retry &&
+                                    canAddAnyway(store.retry.type)
+                                        ? addSecondCopy
+                                        : undefined
+                                }
+                            />
+                        </div>
+                    )}
 
                     <footer class="modal-footer">
                         <button
