@@ -28,6 +28,7 @@ from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.direct import ensure_fetchable, filename_from_url
 from src.service.download.disk import DiskGuard
+from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
 from src.service.download.paths import container_folder, remove_work_files, standalone_folder
@@ -96,15 +97,28 @@ class DownloadService(BaseService):
         if self._disk is not None:
             self._disk.require(extra_bytes or 0)
 
-    async def enqueue_media(self, url: str, preset: Preset) -> DownloadSchema:
+    async def _refuse_held(self, url: str) -> None:
+        """409 when the list already holds this address, under any spelling of it."""
+        held = await self._repo.held_at(url)
+        if held is not None:
+            raise already_held(held)
+
+    async def enqueue_media(self, url: str, preset: Preset, *, allow_duplicate: bool = False) -> DownloadSchema:
         """Resolve the plan now, move the bytes later, for any site.
 
         Everything that can fail on the caller's behalf (an unsupported link, a
-        private video, a live stream, a preset the site cannot satisfy) fails
-        here, as a 4xx they see immediately. What reaches the queue is a
-        decision, not a guess.
+        private video, a live stream, a preset the site cannot satisfy, a page
+        already in the list) fails here, as a 4xx they see immediately. What
+        reaches the queue is a decision, not a guess.
         """
+        # The link as pasted, before an extraction it would only repeat.
+        if not allow_duplicate:
+            await self._refuse_held(url)
         info = await self._client.extract(url)
+        # And the site's own page for it: a short link to a video already held.
+        page = info.webpage_url or url
+        if not allow_duplicate and page != url:
+            await self._refuse_held(page)
         if info.is_live:
             raise site_error.live_not_supported()
         plan = select_plan(info.formats, preset)
@@ -116,7 +130,7 @@ class DownloadService(BaseService):
         download = await self._repo.create_site(
             # The site's own page for the video, not the link as pasted: a short
             # link and a playlist's entry for the same video are then one address.
-            url=info.webpage_url or url,
+            url=page,
             provider=info.extractor,
             download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes},
             media={
@@ -134,9 +148,11 @@ class DownloadService(BaseService):
         self._control.wake()
         return await self._published(download)
 
-    async def enqueue_url(self, url: str) -> DownloadSchema:
+    async def enqueue_url(self, url: str, *, allow_duplicate: bool = False) -> DownloadSchema:
         """Queue a plain HTTP download — anything that is not a media platform."""
         ensure_fetchable(url)
+        if not allow_duplicate:
+            await self._refuse_held(url)
         # The size is not known until a worker probes the source, so only the
         # minimum can be checked here.
         self._require_space()

@@ -17,12 +17,27 @@ from src.data.schema.transfer import CollectionSchema, DownloadSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 from src.main import app
 from src.service import get_download_service
+from src.service.download.duplicate import already_held
+
+from tests.service.download.memory import download_row
 
 
 class StubDownloads:
     def __init__(self) -> None:
         self.playback: list[tuple[Any, ...]] = []
         self.files: list[tuple[uuid.UUID, int | None]] = []
+        #: Each direct add: the address and whether a duplicate was allowed.
+        self.added: list[tuple[str, bool]] = []
+        #: What the next direct add raises, as the real service does for an address it holds.
+        self.held: Any = None
+
+    async def enqueue_url(self, url: str, *, allow_duplicate: bool = False) -> DownloadSchema:
+        self.added.append((url, allow_duplicate))
+        if self.held is not None and not allow_duplicate:
+            raise already_held(self.held)
+        return DownloadSchema(
+            id=uuid.uuid4(), url=url, platform=Platform.DIRECT, media_kind=MediaKind.FILE, status=DownloadStatus.PENDING
+        )
 
     async def list_items(self, page: int, page_size: int, group: str = "all", sort: str = "-created_at") -> Any:
         return [
@@ -99,3 +114,29 @@ async def test_every_download_s_file_is_fetched_by_index(http: httpx.AsyncClient
     assert downloads.files == [(download_id, 0)]
     # The single-file route without an index is gone.
     assert (await http.get(f"/download/{download_id}/file")).status_code in (404, 405)
+
+
+@pytest.mark.asyncio
+async def test_an_address_already_held_answers_409_naming_its_download(
+    http: httpx.AsyncClient, downloads: StubDownloads
+) -> None:
+    held = download_row(url="https://cdn.test/a.iso", title="a.iso", status=DownloadStatus.COMPLETED)
+    downloads.held = held
+
+    response = await http.post("/download/url", json={"url": "https://cdn.test/a.iso"})
+
+    assert response.status_code == 409
+    body = response.json()
+    assert (body["type"], body["message"]) == ("conflict", "Already in your list: a.iso (completed)")
+    (detail,) = body["details"]
+    assert (detail["subject"], detail["description"], detail["fields"]) == (str(held.id), "a.iso", ["completed"])
+
+
+@pytest.mark.asyncio
+async def test_allow_duplicate_reaches_the_service(http: httpx.AsyncClient, downloads: StubDownloads) -> None:
+    downloads.held = download_row(url="https://cdn.test/a.iso", title="a.iso")
+
+    response = await http.post("/download/url", json={"url": "https://cdn.test/a.iso", "allow_duplicate": True})
+
+    assert response.status_code == 201
+    assert downloads.added == [("https://cdn.test/a.iso", True)]

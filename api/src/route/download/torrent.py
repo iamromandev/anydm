@@ -34,7 +34,14 @@ async def enqueue_torrent(
     payload: TorrentDownloadRequest,
     torrent_service: Annotated[TorrentService, Depends(get_torrent_service)],
 ) -> Response:
-    data = await torrent_service.enqueue(payload.torrent.strip(), payload.files)
+    """Queue a torrent with a file selection.
+
+    409 when the list already holds the torrent, naming that download. A torrent is held once,
+    so ``allow_duplicate`` is refused with a 400.
+    """
+    data = await torrent_service.enqueue(
+        payload.torrent.strip(), payload.files, allow_duplicate=payload.allow_duplicate
+    )
     return Success.created(data=data).to_resp()
 
 

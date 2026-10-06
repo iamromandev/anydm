@@ -150,8 +150,8 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /settings` — how this API is configured, secrets left out, and the running yt-dlp version; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
   - Downloads
-    - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset
-    - `POST /download/url` — enqueue a direct URL download
+    - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset. A page already in the list is refused with 409, naming that download in the error's one detail (`subject` its id, `description` its title, `fields` its status); `allow_duplicate: true` adds a second copy
+    - `POST /download/url` — enqueue a direct URL download. An address already in the list, however it is spelled, is refused with 409; `allow_duplicate: true` adds it anyway
     - `GET /download` — one page of the list: standalone downloads and collections together, each item tagged `"type": "download"` or `"collection"` (a collection's videos are listed through `GET /collection/{collection_id}/downloads`). `page` (from 1) and `page_size` (1–100, default 50); `group` is one of the sidebar's filters, `all` (default), `downloading`, `seeding` or `completed`; `sort` is `created_at`, `title`, `total_size`, `progress` or `speed_bps` (the live speed), prefixed with `-` for descending (default `-created_at`)
     - `GET /download/summary` — how many list items each sidebar filter holds, counted in the database; a collection counts once, by its computed status
     - `GET /download/events` — SSE: `downloads` (the first page, sent on every connection), then `download` (a full download on any status change), `progress` (only what moved: bytes, `live` speed/ETA/peers, `segments`, and `files` for a torrent; a collection's video carries `collection_id`), `collection` (a collection's computed totals) and `disk`
@@ -161,7 +161,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /download/{download_id}/media` — what the player needs to play a finished download: its MIME type for `canPlayType`, duration, and file URL (`?file_index=` for a torrent's file, else its largest media file), with its audio and subtitle tracks
     - `GET /download/{download_id}/subtitles/{track}.vtt` — one of those subtitle tracks, embedded or a subtitle file beside it, whole, as WebVTT, for a file the browser plays itself (`?file_index=` as above)
     - `POST /download/{download_id}/pause` · `POST /download/{download_id}/resume`
-    - `DELETE /download/{download_id}` — remove a download and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `complete` or `seeding` download, and answered 409 otherwise
+    - `DELETE /download/{download_id}` — remove a download and, by default, its files. `delete_files=false` keeps the files and drops only the row; that is accepted only for a `completed` or `seeding` download, and answered 409 otherwise
     - `POST /download/bulk` — act on the whole list: `{"action": "pause_all" | "resume_all" | "clear_finished"}`. For `clear_finished`, `"delete_files": true` takes finished downloads' files too; a failed download's partial file goes either way
   - Collections (a playlist or a channel's tab, added as one)
     - `POST /collection` — add a listing's chosen videos as one collection: `url`, `extractor`, `external_id`, `title`, `channel_tab`, `preset` (a ceiling for each video), and `entries` as `GET /extract/entries` listed them. Answers 201 with the collection, whose `folder` names where its videos finish (numbered `01_…`, unless it is a channel's tab). Nothing is extracted until each video starts; more than 10,000 videos answers 422 `payload_too_large`. Adding a listing again whose `extractor` and `external_id` match a collection that isn't removed joins it: new videos go into its folder after its last, a video it holds isn't added twice, and one ticked while paused or failed goes back in the queue
@@ -171,7 +171,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `DELETE /collection/{collection_id}` — remove it and every video: `delete_files=true` (default) takes its folder, `false`, accepted in any state, keeps what finished
   - Torrents
     - `POST /download/torrent/resolve` — inspect a magnet or `.torrent` without downloading
-    - `POST /download/torrent` — enqueue a torrent with a file selection
+    - `POST /download/torrent` — enqueue a torrent with a file selection. A torrent already in the list is refused with 409; it can only be held once, so `allow_duplicate` is a 400
     - `POST /download/{download_id}/seed/stop` — stop seeding, keep the files
   - Search and browse the latest releases (every source below, each asked at once)
     - `GET /search/sources` — whether search is on, and the sources' names (enabled built-ins and indexers); never their URLs or keys. Also `youtube`, which is always true

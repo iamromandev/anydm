@@ -197,3 +197,22 @@ async def test_claim_skips_a_download_a_worker_still_holds() -> None:
     # Let go of: claimable again.
     again = await repo.claim_next()
     assert again is not None and again.id == held.id
+
+
+@pytest.mark.asyncio
+async def test_held_at_finds_a_standalone_download_by_any_spelling_of_its_address() -> None:
+    repo = DownloadDatabaseRepo()
+    held = await add_site(repo, url="https://www.youtube.com/watch?v=aaaaaaaaaaa")
+    gone = await add_site(repo, url="https://www.youtube.com/watch?v=bbbbbbbbbbb")
+    await Download.filter(id=gone.id).update(deleted_at=now())
+    collection = await a_collection()
+    await add_site(repo, url="https://www.youtube.com/watch?v=ccccccccccc", parent_id=collection.id)
+
+    found = await repo.held_at("HTTPS://WWW.YOUTUBE.COM/watch?v=aaaaaaaaaaa")
+    assert found is not None and found.id == held.id and found.media is not None
+    # Removed, a collection's video (#504), the collection itself, or never added: none holds it.
+    assert await repo.held_at("https://www.youtube.com/watch?v=bbbbbbbbbbb") is None
+    assert await repo.held_at("https://www.youtube.com/watch?v=ccccccccccc") is None
+    playlist = (await Mirror.get(download_id=collection.id).prefetch_related("source__url")).source.url.value
+    assert await repo.held_at(playlist) is None
+    assert await repo.held_at("https://www.youtube.com/watch?v=ddddddddddd") is None

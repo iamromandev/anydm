@@ -123,10 +123,18 @@ ListItem = DownloadSchema | CollectionSchema
 class MediaDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A page on any supported site: YouTube, Vimeo, ...")]
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset")]
+    allow_duplicate: Annotated[
+        bool,
+        Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
+    ]
 
 
 class UrlDownloadRequest(BaseSchema):
     url: Annotated[str, Field(min_length=1, description="A direct http or https URL")]
+    allow_duplicate: Annotated[
+        bool,
+        Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
+    ]
 
 
 class CollectionEntryRequest(BaseSchema):
