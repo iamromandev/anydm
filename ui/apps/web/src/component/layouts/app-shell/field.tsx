@@ -1,11 +1,12 @@
-import type { AddType } from "@/lib/api/site";
 import { component$, $, useSignal, useStore } from "@qwik.dev/core";
 import {
     aggregateStats,
     canPause,
     canResume,
+    duplicateOf,
     isActive,
     isSeeding,
+    type AddInput,
     type EntriesView,
     type ResolvedTorrent,
     type TaskSummary,
@@ -140,12 +141,11 @@ export interface AppShellProps {
     onBulkCancel: () => void;
     onBulkConfirm: () => void;
     onStopSeeding: (id: string) => void;
-    onAdd: (input: {
-        type: AddType;
-        value: string;
-        preset?: string;
-        files?: number[];
-    }) => void;
+    onAdd: (input: AddInput) => void;
+    /** Bring a download the list already holds into view, outlined. */
+    onOpenDownload: (id: string) => void;
+    /** The row Open just brought into view. */
+    highlightId: string;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
     /** Add a playlist's ticked videos as one group (v0.5). */
     onAddPlaylist: (request: PlaylistRequest) => Promise<void>;
@@ -238,6 +238,8 @@ export const AppShell = component$<AppShellProps>(
         onBulkConfirm,
         onStopSeeding,
         onAdd,
+        onOpenDownload,
+        highlightId,
         onResolve,
         onAddPlaylist,
         entries,
@@ -467,9 +469,23 @@ export const AppShell = component$<AppShellProps>(
                                 torrents={searchTorrents}
                                 youtube={searchYoutube}
                                 onAdd={onAddFound}
-                                onAddVideo={$((url: string) =>
-                                    onAdd({ type: "link", value: url }),
-                                )}
+                                onAddVideo={$(async (url: string) => {
+                                    try {
+                                        await onAdd({
+                                            type: "link",
+                                            value: url,
+                                        });
+                                    } catch (err) {
+                                        // Search has no add box to answer in,
+                                        // so a duplicate is a toast here.
+                                        if (
+                                            duplicateOf(err) &&
+                                            err instanceof Error
+                                        )
+                                            onNotify("error", err.message);
+                                        throw err;
+                                    }
+                                })}
                                 onPlay={onPlayClick}
                                 onNotify={onNotify}
                             />
@@ -478,15 +494,10 @@ export const AppShell = component$<AppShellProps>(
                                 <HeroInput
                                     compact={counts.all > 0}
                                     defaultPreset={prefs.defaultPreset}
-                                    onSubmit={$(
-                                        async (input: {
-                                            type: AddType;
-                                            value: string;
-                                            preset?: string;
-                                        }) => {
-                                            await onAdd(input);
-                                        },
-                                    )}
+                                    onSubmit={$(async (input: AddInput) => {
+                                        await onAdd(input);
+                                    })}
+                                    onOpen={onOpenDownload}
                                     onPlay={$((value: string, kind: string) =>
                                         onPlayClick(value, kind),
                                     )}
@@ -529,6 +540,7 @@ export const AppShell = component$<AppShellProps>(
                                         onLoadMore={onLoadMore}
                                         filter={filter}
                                         searchQuery={searchQuery}
+                                        highlightId={highlightId}
                                         onPause={onPause}
                                         onResume={onResume}
                                         onDownloadFile={onDownloadFile}
@@ -645,6 +657,12 @@ export const AppShell = component$<AppShellProps>(
                     open={addModalOpen}
                     onClose={onAddModalClose}
                     onAdd={onAdd}
+                    onOpen={$((id: string) => {
+                        // The modal can open over any view; the row is in the list.
+                        view.value = "list";
+                        onAddModalClose();
+                        onOpenDownload(id);
+                    })}
                     onResolve={onResolve}
                     onPlay={$(
                         (

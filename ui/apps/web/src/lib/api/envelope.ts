@@ -12,7 +12,11 @@
  * Carries the service's own code so a caller can tell a rejected action from
  * an unreachable service without matching on message text.
  */
-export type ApiErrorDetail = { subject?: string; description?: string };
+export type ApiErrorDetail = {
+    subject?: string;
+    description?: string;
+    fields?: string[];
+};
 
 export class ApiError extends Error {
     readonly code?: number | string;
@@ -46,6 +50,9 @@ function readDetails(raw: unknown): ApiErrorDetail[] | undefined {
             subject: typeof d.subject === "string" ? d.subject : undefined,
             description:
                 typeof d.description === "string" ? d.description : undefined,
+            fields: Array.isArray(d.fields)
+                ? d.fields.filter((f): f is string => typeof f === "string")
+                : undefined,
         }));
 }
 

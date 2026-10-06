@@ -30,7 +30,10 @@ import {
     type TaskSummary,
     type UiTask,
     addLink,
-    type AddType,
+    directRequest,
+    duplicateOf,
+    withRowOnTop,
+    type AddInput,
     placeRows,
     keepWatched,
     trackVideoSpeed,
@@ -132,6 +135,8 @@ export default component$(() => {
         disk: null as Disk | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
         searchQuery: "" as string,
+        // The row Open just brought into view, outlined for a moment.
+        highlightId: "" as string,
         // Read from storage once the browser is running; the server render
         // has no localStorage and must not guess at one.
         sort: DEFAULT_SORT as SortValue,
@@ -1054,52 +1059,77 @@ export default component$(() => {
         },
     );
 
-    const handleAdd = $(
-        async (input: {
-            type: AddType;
-            value: string;
-            preset?: string;
-            files?: number[];
-        }) => {
-            try {
-                // unwrap() throws with the service's own message on either
-                // envelope, so there is no response.ok check to write here.
-                if (input.type === "site") {
-                    // The add box already asked the API about this page and
-                    // picked a preset it offers.
-                    await postApi("/download/media", {
-                        url: input.value,
-                        preset: input.preset || "best",
-                    });
-                } else if (input.type === "url") {
-                    await postApi("/download/url", { url: input.value });
-                } else if (input.type === "link") {
-                    // A link nobody has looked at yet: ask, then route it.
-                    await addLink(
-                        input.value,
-                        input.preset || store.prefs.defaultPreset,
-                    );
-                } else {
-                    const known = new Set(store.tasks.map((task) => task.id));
-                    const notice = heldTorrentNotice(
-                        await addTorrent(input.value, input.files ?? []),
-                        known,
-                    );
-                    if (notice) notify("info", notice);
-                }
-            } catch (err) {
-                notify("error", errorMessage(err));
-                // Rethrown so the modal keeps what was typed instead of
-                // closing over a submission that never landed.
-                throw err;
+    const handleAdd = $(async (input: AddInput) => {
+        try {
+            // unwrap() throws with the service's own message on either
+            // envelope, so there is no response.ok check to write here.
+            if (input.type === "site" || input.type === "url") {
+                // For a page, the add box already asked the API about it
+                // and picked a preset it offers.
+                const request = directRequest(input);
+                await postApi(request.path, request.body);
+            } else if (input.type === "link") {
+                // A link nobody has looked at yet: ask, then route it.
+                await addLink(
+                    input.value,
+                    input.preset || store.prefs.defaultPreset,
+                    postApi,
+                    input.allowDuplicate,
+                );
+            } else {
+                const known = new Set(store.tasks.map((task) => task.id));
+                const notice = heldTorrentNotice(
+                    await addTorrent(input.value, input.files ?? []),
+                    known,
+                );
+                if (notice) notify("info", notice);
             }
+        } catch (err) {
+            // A duplicate is answered where it was asked, with Open and
+            // Add anyway, so it raises no toast of its own.
+            if (!duplicateOf(err)) notify("error", errorMessage(err));
+            // Rethrown so the modal keeps what was typed instead of
+            // closing over a submission that never landed.
+            throw err;
+        }
 
-            store.addModalOpen = false;
-            // The new row arrives by its own frame, on top, without taking
-            // the list back to page 1. Only the counts need asking again.
-            loadSummary();
-        },
-    );
+        store.addModalOpen = false;
+        // The new row arrives by its own frame, on top, without taking
+        // the list back to page 1. Only the counts need asking again.
+        loadSummary();
+    });
+
+    /**
+     * Bring a download the list already holds into view and outline it.
+     *
+     * The list is the database's answer for a filter and a page, so the row
+     * may be on none of what is loaded: reset to every download, and fetch the
+     * one row if page 1 still lacks it.
+     */
+    const handleOpenDownload = $(async (id: string) => {
+        store.filter = "all";
+        store.searchQuery = "";
+        store.page = 1;
+        store.totalPages = 1;
+        await loadPage(1);
+        if (!store.tasks.some((task) => task.id === id)) {
+            const row = await getApi<any>(`/download/${id}`).catch(() => null);
+            if (row === null) {
+                notify("error", "That download is no longer in your list");
+                return;
+            }
+            store.tasks = withRowOnTop(store.tasks, normalizeApiTask(row));
+        }
+        store.highlightId = id;
+        setTimeout(() => {
+            document
+                .getElementById(`download-${id}`)
+                ?.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 50);
+        setTimeout(() => {
+            if (store.highlightId === id) store.highlightId = "";
+        }, 2600);
+    });
 
     /** A playlist's ticked videos, as one group. Its row arrives by its frame. */
     const handleAddPlaylist = $(async (request: PlaylistRequest) => {
@@ -1195,6 +1225,8 @@ export default component$(() => {
             onBulkCancel={handleBulkCancel}
             onBulkConfirm={handleBulkConfirm}
             onAdd={handleAdd}
+            onOpenDownload={handleOpenDownload}
+            highlightId={store.highlightId}
             onResolve={handleResolveTorrent}
             searchEnabled={store.searchEnabled}
             searchTorrents={store.searchTorrents}

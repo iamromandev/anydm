@@ -23,12 +23,19 @@ import {
     choosePreset,
     lookupLink,
     playlistMeta,
-    type AddType,
     type PlaylistPreview,
     type PlaylistTab,
     type SitePreview,
 } from "@/lib/api/site";
 import type { PickerTarget } from "@/lib/api/playlist";
+import {
+    addAnyway,
+    canAddAnyway,
+    duplicateOf,
+    type AddInput,
+    type Duplicate,
+} from "@/lib/api/duplicate";
+import { DuplicateNotice } from "@/component/features/duplicate-notice";
 import { detectKind, isPlayableKind } from "./kind";
 import type { InputKind } from "./kind";
 import { PRESET_OPTIONS } from "@/lib/prefs";
@@ -43,11 +50,9 @@ const LOOKUP_DELAY_MS = 600;
 export interface HeroInputProps {
     /** What a site link starts on, from the person's preferences. */
     defaultPreset: string;
-    onSubmit: (input: {
-        type: AddType;
-        value: string;
-        preset?: string;
-    }) => void | Promise<void>;
+    onSubmit: (input: AddInput) => void | Promise<void>;
+    /** Show a download the list already holds, from a refused add. */
+    onOpen?: (id: string) => void;
     onPlay?: (value: string, kind: string) => void | Promise<void>;
     /** Open the picker on a playlist, or on one of a channel's tabs. */
     onChoose?: (target: PickerTarget) => void;
@@ -64,7 +69,14 @@ function magnetName(value: string): string {
 }
 
 export const HeroInput = component$<HeroInputProps>(
-    ({ defaultPreset, onSubmit, onPlay, onChoose, compact = false }) => {
+    ({
+        defaultPreset,
+        onSubmit,
+        onOpen,
+        onPlay,
+        onChoose,
+        compact = false,
+    }) => {
         const inputRef = useSignal<HTMLInputElement>();
         /**
          * The quality picked in this session, or null to follow the
@@ -79,6 +91,9 @@ export const HeroInput = component$<HeroInputProps>(
             isDragging: false,
             isLoading: false,
             error: "" as string,
+            /** The download a refused add says the list already holds, and the add. */
+            duplicate: null as Duplicate | null,
+            retry: null as AddInput | null,
             /** What the API said about the site link in the box, if anything. */
             lookup: "idle" as LookupStatus,
             preview: null as SitePreview | null,
@@ -153,6 +168,7 @@ export const HeroInput = component$<HeroInputProps>(
         const updateValue = $((value: string) => {
             store.value = value;
             store.error = "";
+            store.duplicate = null;
         });
 
         const activeKind =
@@ -194,6 +210,30 @@ export const HeroInput = component$<HeroInputProps>(
             });
         });
 
+        /** Send an add; a refusal naming a download shows Open and Add anyway. */
+        const send = $(async (input: AddInput, clear: boolean) => {
+            store.isLoading = true;
+            store.error = "";
+            store.duplicate = null;
+            try {
+                await onSubmit(input);
+                if (clear) store.value = "";
+            } catch (err) {
+                const held = duplicateOf(err);
+                if (held) {
+                    store.duplicate = held;
+                    store.retry = input;
+                } else {
+                    store.error =
+                        err instanceof Error
+                            ? err.message
+                            : "Failed to start download";
+                }
+            } finally {
+                store.isLoading = false;
+            }
+        });
+
         const handleSubmit = $(async () => {
             const value = store.value.trim();
             if (!value) {
@@ -210,7 +250,7 @@ export const HeroInput = component$<HeroInputProps>(
             const kindNow =
                 store.kind === "auto" ? detectKind(store.value) : store.kind;
 
-            let input: { type: AddType; value: string; preset?: string };
+            let input: AddInput;
             if (kindNow === "magnet") {
                 input = { type: "magnet", value };
             } else if (kindNow === "site") {
@@ -244,19 +284,7 @@ export const HeroInput = component$<HeroInputProps>(
                 input = { type: "url", value };
             }
 
-            store.isLoading = true;
-            store.error = "";
-            try {
-                await onSubmit(input);
-                store.value = "";
-            } catch (err) {
-                store.error =
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to start download";
-            } finally {
-                store.isLoading = false;
-            }
+            await send(input, true);
         });
 
         const handleFile = $((file: File) => {
@@ -269,20 +297,20 @@ export const HeroInput = component$<HeroInputProps>(
             reader.onload = async () => {
                 const result = reader.result as string;
                 const base64 = result?.split(",")[1] || "";
-                store.isLoading = true;
-                store.error = "";
-                try {
-                    await onSubmit({ type: "file", value: base64 });
-                } catch (err) {
-                    store.error =
-                        err instanceof Error
-                            ? err.message
-                            : "Failed to start torrent";
-                } finally {
-                    store.isLoading = false;
-                }
+                await send({ type: "file", value: base64 }, false);
             };
             reader.readAsDataURL(file);
+        });
+
+        const openHeld = $(() => {
+            const held = store.duplicate;
+            if (!held) return;
+            store.duplicate = null;
+            onOpen?.(held.id);
+        });
+
+        const addSecondCopy = $(async () => {
+            if (store.retry) await send(addAnyway(store.retry), true);
         });
 
         const isYoutube = store.preview?.extractor === "Youtube";
@@ -620,6 +648,19 @@ export const HeroInput = component$<HeroInputProps>(
                         );
                     })}
                 </div>
+
+                {store.duplicate && (
+                    <DuplicateNotice
+                        duplicate={store.duplicate}
+                        busy={store.isLoading}
+                        onOpen={openHeld}
+                        onAddAnyway={
+                            store.retry && canAddAnyway(store.retry.type)
+                                ? addSecondCopy
+                                : undefined
+                        }
+                    />
+                )}
 
                 {store.error && (
                     <div class="hero-input-error" role="alert">

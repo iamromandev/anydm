@@ -15,6 +15,8 @@ export interface TorrentListProps {
     tasks: TorrentTask[];
     filter: TorrentFilter;
     searchQuery: string;
+    /** The row Open just brought into view, outlined for a moment. */
+    highlightId?: string;
     /** The shared clock every card's retry countdown reads. */
     now: number;
     /** Whether the API has pages left for the current filter. */
@@ -55,6 +57,7 @@ export const TorrentList = component$<TorrentListProps>(
         tasks,
         filter,
         searchQuery,
+        highlightId = "",
         now,
         hasMore,
         loadingMore,
@@ -165,7 +168,8 @@ export const TorrentList = component$<TorrentListProps>(
                     {filteredTasks.map((task) => (
                         <div
                             key={task.id}
-                            class="torrent-list-item"
+                            id={`download-${task.id}`}
+                            class={`torrent-list-item ${task.id === highlightId ? "torrent-list-item--found" : ""}`}
                             style={{ contentVisibility: "auto" }}
                         >
                             {task.kind === "playlist" ? (

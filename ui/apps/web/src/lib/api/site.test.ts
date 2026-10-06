@@ -196,6 +196,26 @@ describe("addLink", () => {
         expect(calls[1].body).toEqual({ url: "https://files.test/a.bin" });
     });
 
+    it("asks for a second copy when told to", async () => {
+        const page = fakePost({ "/extract": VIMEO, "/download/media": {} });
+        await addLink("https://vimeo.com/1", "720", page.post, true);
+        expect(page.calls.at(-1)?.body).toEqual({
+            url: "https://vimeo.com/1",
+            preset: "720",
+            allow_duplicate: true,
+        });
+
+        const file = fakePost({
+            "/extract": unsupported,
+            "/download/url": {},
+        });
+        await addLink("https://files.test/a", "best", file.post, true);
+        expect(file.calls.at(-1)?.body).toEqual({
+            url: "https://files.test/a",
+            allow_duplicate: true,
+        });
+    });
+
     it("refuses a page with nothing downloadable instead of guessing", async () => {
         const { post } = fakePost({ "/extract": { ...VIMEO, presets: [] } });
 
