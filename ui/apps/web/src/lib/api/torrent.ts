@@ -55,10 +55,12 @@ export async function resolveTorrent(
 export async function addTorrent(
     torrent: string,
     files: number[],
+    categoryId?: string,
 ): Promise<string> {
     const download = await postApi<{ id: string }>("/download/torrent", {
         torrent,
         files,
+        ...(categoryId ? { category_id: categoryId } : {}),
     });
     return download.id;
 }

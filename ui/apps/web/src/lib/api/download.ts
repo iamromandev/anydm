@@ -10,6 +10,7 @@
  */
 
 import { hasMediaExtension, mediaFiles } from "../media";
+import { type CategoryRef, normalizeCategoryRef } from "./category";
 
 export type TaskStatus =
     | "pending"
@@ -87,6 +88,8 @@ export type UiTask = {
     entryCounts?: EntryCounts;
     /** A group's own row: the folder its videos finish into. */
     folder?: string;
+    /** The category it saves in; every row the API sends has one. */
+    category?: CategoryRef;
     /**
      * Torrent-only, and never filled: the engine reports connected peers and
      * does not split a swarm into seeders and leechers. Kept because the card
@@ -216,6 +219,7 @@ export function normalizeApiTask(raw: any): UiTask {
         positions: normalizePositions(raw),
         parentId: raw.collection_id ?? undefined,
         position: raw.position ?? undefined,
+        category: normalizeCategoryRef(raw.category),
     };
 }
 
@@ -242,6 +246,7 @@ export function normalizeCollection(raw: any): UiTask {
         createdAt: raw.created_at ? Date.parse(raw.created_at) : undefined,
         entryCounts: normalizeEntryCounts(raw.counts),
         folder: raw.folder || undefined,
+        category: normalizeCategoryRef(raw.category),
     };
 }
 

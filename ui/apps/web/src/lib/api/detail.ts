@@ -87,6 +87,10 @@ export function detailRows(task: UiTask, now: number): DetailRow[] {
         rows.push({ label: "File", value: `${task.filename}${size}` });
     }
 
+    if (task.category) {
+        rows.push({ label: "Category", value: task.category.name });
+    }
+
     if (task.kind === "playlist") {
         if (task.folder) {
             rows.push({

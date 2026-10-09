@@ -64,6 +64,8 @@ export interface PlaylistRequest {
     title: string;
     channel_tab: boolean;
     preset: string;
+    /** The category the group and its videos save in; Downloads when left out. */
+    category_id?: string;
     entries: {
         index: number;
         id: string;
@@ -79,6 +81,7 @@ export function playlistRequest(
     preset: string,
     entries: readonly PlaylistEntry[],
     selected: ReadonlySet<number>,
+    categoryId?: string,
 ): PlaylistRequest {
     return {
         url: target.url,
@@ -87,6 +90,7 @@ export function playlistRequest(
         title: target.title,
         channel_tab: target.channelTab,
         preset,
+        ...(categoryId ? { category_id: categoryId } : {}),
         entries: entries
             .filter((entry) => selected.has(entry.index))
             .map((entry) => ({
