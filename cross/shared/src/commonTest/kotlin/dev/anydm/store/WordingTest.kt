@@ -97,3 +97,36 @@ class WordingTest {
         assertEquals("12,345,678", count(12_345_678))
     }
 }
+
+class BatchWordingTest {
+    private fun item(outcome: dev.anydm.model.BatchOutcome) = dev.anydm.model.BatchItem("u", outcome, null, "")
+
+    @Test
+    fun `links are counted`() {
+        assertEquals("1 link", linkCount(1))
+        assertEquals("1,000 links", linkCount(1000))
+    }
+
+    @Test
+    fun `a preview says how many it leaves out, and nothing when it shows them all`() {
+        assertEquals("…and 115 more", previewMore(120))
+        assertNull(previewMore(5))
+        assertNull(previewMore(2))
+    }
+
+    @Test
+    fun `the summary names every outcome, a zero included`() {
+        val items =
+            listOf(dev.anydm.model.BatchOutcome.ADDED, dev.anydm.model.BatchOutcome.ADDED, dev.anydm.model.BatchOutcome.DUPLICATE)
+                .map(::item)
+        assertEquals("2 added · 1 already in your list · 0 failed", batchSummary(items))
+    }
+
+    @Test
+    fun `several links are two or more lines with something on them`() {
+        assertEquals(true, looksLikeMany("https://a.test/1\nhttps://a.test/2"))
+        assertEquals(true, looksLikeMany("https://a.test/1\r\n\r\nhttps://a.test/2\n"))
+        assertEquals(false, looksLikeMany("https://a.test/1\n"))
+        assertEquals(false, looksLikeMany("\n \nhttps://a.test/1\n "))
+    }
+}

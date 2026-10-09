@@ -1,5 +1,7 @@
 package dev.anydm.store
 
+import dev.anydm.model.BatchItem
+import dev.anydm.model.BatchOutcome
 import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
@@ -132,3 +134,26 @@ fun removePrompt(
             RemovePrompt("Stop and remove?", "Anything downloaded so far is discarded.", false, "Stop and remove")
         }
     }
+
+/** "1 link", "120 links". */
+fun linkCount(n: Int): String = if (n == 1) "1 link" else "${count(n)} links"
+
+/** How many links a preview shows before "and N more". */
+const val PREVIEW_SHOWN = 5
+
+/** "…and 115 more" after the first [shown] links, or `null` when they are all shown. */
+fun previewMore(
+    total: Int,
+    shown: Int = PREVIEW_SHOWN,
+): String? = (total - shown).takeIf { it > 0 }?.let { "…and ${count(it)} more" }
+
+/** "118 added · 2 already in your list · 1 failed": every part, a zero included. */
+fun batchSummary(items: List<BatchItem>): String {
+    fun of(outcome: BatchOutcome) = count(items.count { it.outcome == outcome })
+    return "${of(BatchOutcome.ADDED)} added · " +
+        "${of(BatchOutcome.DUPLICATE)} already in your list · " +
+        "${of(BatchOutcome.ERROR)} failed"
+}
+
+/** Whether pasted text is several links: two or more lines with something on them. */
+fun looksLikeMany(text: String): Boolean = text.lines().count { it.isNotBlank() } > 1

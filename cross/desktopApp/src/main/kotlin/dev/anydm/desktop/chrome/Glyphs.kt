@@ -32,6 +32,23 @@ object Glyphs {
             moveTo(3f, 8f)
             lineTo(13f, 8f)
         }
+
+    /** Three lines with bullets: many links. */
+    val Many =
+        glyph("many") {
+            moveTo(6f, 4f)
+            lineTo(13f, 4f)
+            moveTo(6f, 8f)
+            lineTo(13f, 8f)
+            moveTo(6f, 12f)
+            lineTo(13f, 12f)
+            moveTo(3f, 4f)
+            lineTo(3.01f, 4f)
+            moveTo(3f, 8f)
+            lineTo(3.01f, 8f)
+            moveTo(3f, 12f)
+            lineTo(3.01f, 12f)
+        }
     val Pause =
         glyph("pause") {
             moveTo(5.5f, 3.5f)

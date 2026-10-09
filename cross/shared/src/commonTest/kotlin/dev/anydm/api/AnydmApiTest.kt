@@ -1,6 +1,11 @@
 package dev.anydm.api
 
+import dev.anydm.model.BatchItemDto
+import dev.anydm.model.BatchKind
+import dev.anydm.model.BatchOutcome
+import dev.anydm.model.BatchPreview
 import dev.anydm.model.TaskStatus
+import dev.anydm.model.toItem
 import dev.anydm.model.toTask
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -155,6 +160,35 @@ class AnydmApiTest {
         runTest {
             api { json(ok(TASK)) }.task("t1")
             assertEquals("/download/t1", seen.last().url.encodedPath)
+        }
+
+    @Test
+    fun `a batch sends a list as its lines and a pattern as typed`() =
+        runTest {
+            val client = api { json(ok("""{"count":2,"urls":["a","b"]}""")) }
+            val preview = client.previewBatch(BatchKind.LIST, "a\nb")
+            assertEquals("/download/batch/preview", seen.last().url.encodedPath)
+            assertEquals("""{"lines":["a","b"]}""", bodyOf(seen.last()))
+            assertEquals(BatchPreview(2, listOf("a", "b")), preview)
+            client.previewBatch(BatchKind.PATTERN, "img[001-120].png")
+            assertEquals("""{"pattern":"img[001-120].png"}""", bodyOf(seen.last()))
+        }
+
+    @Test
+    fun `adding a batch carries the preset and reads every link's answer`() =
+        runTest {
+            val body =
+                """[{"url":"a","result":"added","download_id":"d1"},""" +
+                    """{"url":"b","result":"duplicate","download_id":"d0","message":"Already in your list"},""" +
+                    """{"url":"c","result":"error","message":"no"}]"""
+            val items = api { json(ok(body)) }.addBatch(BatchKind.PATTERN, "f[1-3]", "720")
+            assertEquals("/download/batch", seen.last().url.encodedPath)
+            assertEquals("""{"pattern":"f[1-3]","preset":"720"}""", bodyOf(seen.last()))
+            assertEquals(
+                listOf(BatchOutcome.ADDED, BatchOutcome.DUPLICATE, BatchOutcome.ERROR),
+                items.map { it.toItem().outcome },
+            )
+            assertEquals(BatchOutcome.ERROR, BatchItemDto("x", "weird").toItem().outcome)
         }
 
     @Test

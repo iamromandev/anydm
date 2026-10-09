@@ -113,6 +113,7 @@ fun Toolbar(
     onTorrent: () -> Unit,
     onSettings: () -> Unit,
     onLinkFocus: (Boolean) -> Unit = {},
+    onAddMany: () -> Unit = {},
 ) {
     val t = LocalTokens.current
     LocalWindowDrag.current {
@@ -126,6 +127,7 @@ fun Toolbar(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             ToolButton(Glyphs.Add, "Add a link") { focus.requestFocus() }
+            ToolButton(Glyphs.Many, "Add many links…", onClick = onAddMany)
             ToolButton(Glyphs.Pause, "Pause all", onClick = onPauseAll)
             ToolButton(Glyphs.Resume, "Resume all", onClick = onResumeAll)
             LinkField(
