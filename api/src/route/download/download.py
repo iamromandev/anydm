@@ -12,6 +12,10 @@ from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.play import MediaInfoSchema, PlaybackRequest, PlaybackSchema
 from src.data.schema.transfer import (
+    BatchItemSchema,
+    BatchLinks,
+    BatchPreviewSchema,
+    BatchRequest,
     BulkActionRequest,
     BulkResultSchema,
     CollectionSchema,
@@ -66,6 +70,34 @@ async def enqueue_url(
     """
     data = await download_service.enqueue_url(payload.url.strip(), allow_duplicate=payload.allow_duplicate)
     return Success.created(data=data).to_resp()
+
+
+@router.post(path="/download/batch/preview", response_model=Success[BatchPreviewSchema])
+async def preview_batch(
+    payload: BatchLinks,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    """The links a list or a pattern such as ``img[001-120].png`` names, without adding any.
+
+    400 for a pattern that cannot be expanded and for more than 1,000 links.
+    """
+    return Success.ok(data=download_service.preview_batch(payload.lines, payload.pattern)).to_resp()
+
+
+@router.post(path="/download/batch", response_model=Success[list[BatchItemSchema]])
+async def add_batch(
+    payload: BatchRequest,
+    download_service: Annotated[DownloadService, Depends(get_download_service)],
+) -> Response:
+    """Add many links, each as the add box would, and answer for every one.
+
+    ``added``, ``duplicate`` (naming the download that already has it) or ``error``;
+    one failing link never stops the rest. The answer is 200 whatever the mix.
+    """
+    data = await download_service.add_batch(
+        payload.lines, payload.pattern, payload.preset, allow_duplicate=payload.allow_duplicate
+    )
+    return Success.ok(data=data).to_resp()
 
 
 @router.post(path="/download/bulk", response_model=Success[BulkResultSchema])
