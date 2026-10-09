@@ -49,6 +49,7 @@ import { HeroInput } from "@/component/features/hero-input";
 import { StatusLine } from "@/component/features/status-line";
 import { PlayerModal } from "@/component/features/player-modal";
 import { PlaylistPicker } from "@/component/features/playlist-picker";
+import { CategoryMove } from "@/component/features/category-move";
 import { RemoveDialog } from "@/component/features/remove-dialog";
 import {
     SettingsModal,
@@ -125,6 +126,8 @@ export interface AppShellProps {
     addCategory: string;
     onCategoryChange: (id: string | null) => void;
     onAddCategoryChange: (id: string) => void;
+    /** Move a row to another category; the dialog closes once it has answered. */
+    onMoveCategory: (taskId: string, categoryId: string) => Promise<void>;
     onSearchChange: (query: string) => void;
     onAddModalClose: () => void;
     onAddClick: () => void;
@@ -238,6 +241,7 @@ export const AppShell = component$<AppShellProps>(
         addCategory,
         onCategoryChange,
         onAddCategoryChange,
+        onMoveCategory,
         onSearchChange,
         onAddModalClose,
         onAddClick,
@@ -287,6 +291,8 @@ export const AppShell = component$<AppShellProps>(
             add box: `.app-shell-content` has `contain: layout`, which would
             pin a fixed overlay to the content column. */
         const picker = useSignal<PickerTarget | null>(null);
+        // The row whose category is being changed, while its dialog is open.
+        const moving = useSignal<string | null>(null);
 
         /** The list, Search, or Sources. Held here with Search's own state, so the
             query and results survive switching away and back. */
@@ -578,6 +584,9 @@ export const AppShell = component$<AppShellProps>(
                                         onLoadMore={onLoadMore}
                                         filter={filter}
                                         category={category}
+                                        onMoveCategory={$((id: string) => {
+                                            moving.value = id;
+                                        })}
                                         searchQuery={searchQuery}
                                         highlightId={highlightId}
                                         onPause={onPause}
@@ -704,6 +713,24 @@ export const AppShell = component$<AppShellProps>(
                     onNextItem={onNextItem}
                     onPreviousItem={onPreviousItem}
                     onClose={onPlayerModalClose}
+                />
+
+                <CategoryMove
+                    task={
+                        moving.value
+                            ? (tasks.find((t) => t.id === moving.value) ?? null)
+                            : null
+                    }
+                    categories={categories}
+                    onClose={$(() => {
+                        moving.value = null;
+                    })}
+                    onMove={$(async (categoryId: string) => {
+                        const id = moving.value;
+                        if (!id) return;
+                        await onMoveCategory(id, categoryId);
+                        moving.value = null;
+                    })}
                 />
 
                 {/* After the player: remounted by key for each search result,

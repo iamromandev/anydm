@@ -18,6 +18,7 @@ import {
     LuUpload,
     LuCircle,
     LuList,
+    LuFolderInput,
     SiYoutube,
 } from "@/component/core/icons";
 import {
@@ -25,6 +26,7 @@ import {
     detailRows,
     canResume,
     canStopSeeding,
+    canMoveCategory,
     canDownloadTorrentFile,
     canPlayTask,
     watchedProgress,
@@ -55,6 +57,8 @@ export interface TorrentCardProps {
     onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
+    /** Open the picker for the row's category. */
+    onMoveCategory: (id: string) => void;
     /** Whether this card is the one showing its details. */
     expanded: boolean;
     onToggleDetail: (id: string) => void;
@@ -136,6 +140,7 @@ export const TorrentCard = component$<TorrentCardProps>(
         onPlay,
         onRemove,
         onStopSeeding,
+        onMoveCategory,
         expanded,
         onToggleDetail,
     }) => {
@@ -506,6 +511,21 @@ export const TorrentCard = component$<TorrentCardProps>(
                         </button>
                     )}
 
+                    {canMoveCategory(task) && (
+                        <button
+                            type="button"
+                            class="action-btn"
+                            aria-label="Move to category"
+                            title="Move to category"
+                            onClick$={() => onMoveCategory(task.id)}
+                        >
+                            <LuFolderInput
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
                     <button
                         type="button"
                         class="action-btn action-btn--danger"

@@ -11,6 +11,7 @@ import {
     LuTrash as _LuTrash,
     LuRefreshCw as _LuRefreshCw,
     LuFolderOpen as _LuFolderOpen,
+    LuFolderInput as _LuFolderInput,
     LuHardDrive as _LuHardDrive,
     LuArrowDownToLine as _LuArrowDownToLine,
     LuCheckCircle as _LuCheckCircle,
@@ -59,6 +60,7 @@ export const LuX = _LuX;
 export const LuTrash = _LuTrash;
 export const LuRefreshCw = _LuRefreshCw;
 export const LuFolderOpen = _LuFolderOpen;
+export const LuFolderInput = _LuFolderInput;
 export const LuHardDrive = _LuHardDrive;
 export const LuArrowDownToLine = _LuArrowDownToLine;
 export const LuCheckCircle = _LuCheckCircle;

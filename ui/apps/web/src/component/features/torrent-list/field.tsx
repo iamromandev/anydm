@@ -32,6 +32,8 @@ export interface TorrentListProps {
     onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
+    /** Open the picker for a row's category. */
+    onMoveCategory: (id: string) => void;
     /** Each open group's Entries list, by group id (v0.5). */
     entries: Record<string, EntriesView>;
     onToggleEntries: (id: string) => void;
@@ -71,6 +73,7 @@ export const TorrentList = component$<TorrentListProps>(
         onPlay,
         onRemove,
         onStopSeeding,
+        onMoveCategory,
         entries,
         onToggleEntries,
         onLoadMoreEntries,
@@ -190,6 +193,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onPause={onPause}
                                     onResume={onResume}
                                     onRemove={onRemove}
+                                    onMoveCategory={onMoveCategory}
                                     onPauseVideo={onPauseVideo}
                                     onResumeVideo={onResumeVideo}
                                     onPlayVideo={onPlay}
@@ -208,6 +212,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onPlay={onPlay}
                                     onRemove={onRemove}
                                     onStopSeeding={onStopSeeding}
+                                    onMoveCategory={onMoveCategory}
                                 />
                             )}
                         </div>

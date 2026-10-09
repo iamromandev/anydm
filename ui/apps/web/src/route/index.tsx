@@ -48,6 +48,7 @@ import {
     addEntriesPage,
     dropVideo,
     listCategories,
+    moveToCategory,
     DOWNLOADS_CATEGORY_ID,
     type CategoryItem,
 } from "@/lib/api";
@@ -661,6 +662,31 @@ export default component$(() => {
         store.totalPages = 1;
         await loadPage(1);
         await loadSummary();
+    });
+
+    /**
+     * Move a row to another category. The row is replaced from the answer, in
+     * one synchronous read-then-write of the list, so a stream frame landing
+     * meanwhile cannot undo it.
+     */
+    const handleMoveCategory = $(async (taskId: string, categoryId: string) => {
+        const task = store.tasks.find((t) => t.id === taskId);
+        if (!task) return;
+        let updated: any;
+        try {
+            updated = await moveToCategory(
+                { id: taskId, collection: task.kind === "playlist" },
+                categoryId,
+            );
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return;
+        }
+        store.tasks = store.tasks.map((t) =>
+            t.id === taskId ? normalizeApiTask(updated) : t,
+        );
+        await loadSummary();
+        await loadCategories();
     });
 
     /** The add forms' choice, remembered for the next visit. */
@@ -1299,6 +1325,7 @@ export default component$(() => {
             addCategory={store.addCategory}
             onCategoryChange={handleCategoryChange}
             onAddCategoryChange={handleAddCategoryChange}
+            onMoveCategory={handleMoveCategory}
             onSearchChange={handleSearchChange}
             addModalOpen={store.addModalOpen}
             onAddModalClose={handleAddModalClose}
