@@ -149,7 +149,11 @@ class DownloadRepo(CrudRepo[Download]):
 
     @abstractmethod
     async def held_at(self, url: str) -> Download | None:
-        """The standalone download not removed at this address, however it is spelled, if any."""
+        """The download not removed at this address, however it is spelled, if any.
+
+        A standalone download is preferred. Otherwise a video a collection holds, with
+        that ``parent`` and its ``media`` loaded so the refusal can name the collection.
+        """
         ...
 
     @abstractmethod
