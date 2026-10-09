@@ -200,19 +200,54 @@ async def test_claim_skips_a_download_a_worker_still_holds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_held_at_finds_a_standalone_download_by_any_spelling_of_its_address() -> None:
+async def test_held_at_finds_a_download_by_any_spelling_of_its_address() -> None:
     repo = DownloadDatabaseRepo()
     held = await add_site(repo, url="https://www.youtube.com/watch?v=aaaaaaaaaaa")
     gone = await add_site(repo, url="https://www.youtube.com/watch?v=bbbbbbbbbbb")
     await Download.filter(id=gone.id).update(deleted_at=now())
     collection = await a_collection()
-    await add_site(repo, url="https://www.youtube.com/watch?v=ccccccccccc", parent_id=collection.id)
 
     found = await repo.held_at("HTTPS://WWW.YOUTUBE.COM/watch?v=aaaaaaaaaaa")
     assert found is not None and found.id == held.id and found.media is not None
-    # Removed, a collection's video (#504), the collection itself, or never added: none holds it.
+    # Removed, the collection itself, or never added: none holds it.
     assert await repo.held_at("https://www.youtube.com/watch?v=bbbbbbbbbbb") is None
-    assert await repo.held_at("https://www.youtube.com/watch?v=ccccccccccc") is None
     playlist = (await Mirror.get(download_id=collection.id).prefetch_related("source__url")).source.url.value
     assert await repo.held_at(playlist) is None
     assert await repo.held_at("https://www.youtube.com/watch?v=ddddddddddd") is None
+
+
+@pytest.mark.asyncio
+async def test_held_at_finds_a_video_a_collection_holds_with_its_collection_loaded() -> None:
+    repo = DownloadDatabaseRepo()
+    collection = await a_collection()
+    member = await add_site(repo, url="https://www.youtube.com/watch?v=ccccccccccc", parent_id=collection.id)
+
+    found = await repo.held_at("https://www.youtube.com/watch?v=ccccccccccc")
+
+    assert found is not None and found.id == member.id and found.parent_id == collection.id
+    parent = found.parent
+    assert parent is not None and parent.id == collection.id
+    assert parent.media is not None and parent.media.title == "Talks"
+
+
+@pytest.mark.asyncio
+async def test_held_at_prefers_a_standalone_copy_to_a_collection_s_video() -> None:
+    repo = DownloadDatabaseRepo()
+    collection = await a_collection()
+    url = "https://www.youtube.com/watch?v=eeeeeeeeeee"
+    await add_site(repo, url=url, parent_id=collection.id)
+    standalone = await add_site(repo, url=url)
+
+    found = await repo.held_at(url)
+
+    assert found is not None and found.id == standalone.id and found.parent_id is None
+
+
+@pytest.mark.asyncio
+async def test_held_at_ignores_a_removed_collection_s_video() -> None:
+    repo = DownloadDatabaseRepo()
+    collection = await a_collection()
+    member = await add_site(repo, url="https://www.youtube.com/watch?v=fffffffffff", parent_id=collection.id)
+    await Download.filter(id=member.id).update(deleted_at=now())
+
+    assert await repo.held_at("https://www.youtube.com/watch?v=fffffffffff") is None

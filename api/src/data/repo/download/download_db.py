@@ -324,18 +324,17 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         await Torrent.filter(info_hash=info_hash).update(total_bytes=total)
 
     async def held_at(self, url: str) -> Download | None:
-        # Standalone only: a video a collection holds is a question of its own (#504).
-        return await (
-            Download.filter(
-                NOT_CONTAINER,
-                mirrors__source__url__normalized_hash=address_hash(url),
-                parent_id__isnull=True,
-                deleted_at__isnull=True,
-            )
-            .order_by("created_at")
-            .prefetch_related(*RELATED)
-            .first()
-        )
+        held = Download.filter(
+            NOT_CONTAINER,
+            mirrors__source__url__normalized_hash=address_hash(url),
+            deleted_at__isnull=True,
+        ).order_by("created_at")
+        # A standalone download speaks for the address before a collection's video does:
+        # it is a row of the list itself, which a client can select as it stands.
+        standalone = await held.filter(parent_id__isnull=True).prefetch_related(*RELATED).first()
+        if standalone is not None:
+            return standalone
+        return await held.filter(parent_id__not_isnull=True).prefetch_related(*RELATED, "parent__media").first()
 
     async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (

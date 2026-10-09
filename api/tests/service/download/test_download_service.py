@@ -89,14 +89,9 @@ class FakeDownloadRepo:
 
     async def held_at(self, url: str) -> Any:
         wanted = address_hash(url)
-        return next(
-            (
-                row
-                for row in self.rows.values()
-                if row.deleted_at is None and row.parent_id is None and address_hash(describe(row).url) == wanted
-            ),
-            None,
-        )
+        held = [row for row in self.rows.values() if row.deleted_at is None and address_hash(describe(row).url) == wanted]
+        # A standalone download speaks for the address before a collection's video does.
+        return next((row for row in held if row.parent_id is None), next(iter(held), None))
 
 
 class FakeCollectionRepo:
@@ -1117,6 +1112,66 @@ async def test_allow_duplicate_adds_a_second_copy() -> None:
     await h.service.enqueue_url("https://cdn.test/files/report.pdf", allow_duplicate=True)
 
     assert len(h.repo.created) == 2
+
+
+def _in_playlist(h: Any, url: str, *, title: str = "Talks") -> Any:
+    """A video a collection holds, as the repo hands it back: its ``parent`` and that one's ``media`` loaded."""
+    collection_id = uuid.uuid4()
+    parent = SimpleNamespace(id=collection_id, media=SimpleNamespace(title=title))
+    video = download_row(url=url, title="Clip", parent_id=collection_id, parent=parent)
+    h.repo.rows[video.id] = video
+    return video, parent
+
+
+@pytest.mark.asyncio
+async def test_a_video_a_playlist_holds_is_refused_naming_it_and_its_playlist() -> None:
+    h = _service()
+    video, parent = _in_playlist(h, "https://cdn.test/files/clip.mp4")
+
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_url("https://cdn.test/files/clip.mp4")
+
+    assert caught.value.code == Code.CONFLICT
+    assert caught.value.message == "Already in your list: clip.mp4 (pending), in Talks"
+    first, second = caught.value.details or []
+    assert (first.subject, first.description, first.fields) == (str(video.id), "clip.mp4", ["pending"])
+    assert (second.subject, second.description, second.fields) == (str(parent.id), "Talks", ["collection"])
+    assert h.repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_standalone_download_names_no_playlist() -> None:
+    h = _service()
+    await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_url("https://cdn.test/files/report.pdf")
+
+    assert len(caught.value.details or []) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_standalone_copy_is_named_before_a_playlist_s_video() -> None:
+    h = _service()
+    url = "https://cdn.test/files/clip.mp4"
+    _in_playlist(h, url)
+    standalone = await h.service.enqueue_url(url, allow_duplicate=True)
+
+    with pytest.raises(Error) as caught:
+        await h.service.enqueue_url(url)
+
+    assert _held(caught)[0] == str(standalone.id)
+    assert len(caught.value.details or []) == 1
+
+
+@pytest.mark.asyncio
+async def test_allow_duplicate_still_adds_a_standalone_copy_of_a_playlist_s_video() -> None:
+    h = _service()
+    _in_playlist(h, "https://cdn.test/files/clip.mp4")
+
+    await h.service.enqueue_url("https://cdn.test/files/clip.mp4", allow_duplicate=True)
+
+    assert len(h.repo.created) == 1
 
 
 @pytest.mark.asyncio
