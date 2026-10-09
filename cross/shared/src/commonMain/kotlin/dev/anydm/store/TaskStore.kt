@@ -238,6 +238,11 @@ class TaskStore(
         loadSummary()
     }
 
+    /** The sidebar's counts again, after something outside this store added rows (a batch). */
+    fun refreshCounts() {
+        scope.launch { loadSummary() }
+    }
+
     private suspend fun loadSummary() {
         read { api.summary() }?.let { summary -> mutableState.update { it.copy(summary = summary) } }
     }

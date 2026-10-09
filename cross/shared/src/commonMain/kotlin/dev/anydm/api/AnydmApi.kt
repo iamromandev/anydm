@@ -1,6 +1,9 @@
 package dev.anydm.api
 
 import dev.anydm.model.AnydmJson
+import dev.anydm.model.BatchItemDto
+import dev.anydm.model.BatchKind
+import dev.anydm.model.BatchPreview
 import dev.anydm.model.BulkResultDto
 import dev.anydm.model.ExtractMediaDto
 import dev.anydm.model.FetchedDto
@@ -66,7 +69,8 @@ class AnydmApi(
     config: ServerConfig,
     engine: HttpClientEngine,
 ) : TaskApi,
-    SearchApi {
+    SearchApi,
+    BatchApi {
     private val config = config.normalized()
     private val client =
         HttpClient(engine) {
@@ -107,6 +111,34 @@ class AnydmApi(
             Extracted.Media(decode(data))
         }
     }
+
+    override suspend fun previewBatch(
+        kind: BatchKind,
+        text: String,
+    ): BatchPreview = decode(call(HttpMethod.Post, listOf("download", "batch", "preview"), body = batchBody(kind, text)).data)
+
+    override suspend fun addBatch(
+        kind: BatchKind,
+        text: String,
+        preset: String,
+    ): List<BatchItemDto> =
+        decode(
+            call(
+                HttpMethod.Post,
+                listOf("download", "batch"),
+                body = JsonObject(batchBody(kind, text) + ("preset" to JsonPrimitive(preset))),
+            ).data,
+        )
+
+    /** A list as its lines, for the API to trim; a pattern as typed, for the API to expand. */
+    private fun batchBody(
+        kind: BatchKind,
+        text: String,
+    ): JsonObject =
+        when (kind) {
+            BatchKind.LIST -> JsonObject(mapOf("lines" to JsonArray(text.lines().map { JsonPrimitive(it) })))
+            BatchKind.PATTERN -> JsonObject(mapOf("pattern" to JsonPrimitive(text)))
+        }
 
     override suspend fun task(id: String): TaskDto = decode(call(HttpMethod.Get, listOf("download", id)).data)
 

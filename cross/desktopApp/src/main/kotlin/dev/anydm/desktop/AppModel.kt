@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.anydm.api.AnydmApi
+import dev.anydm.api.BatchApi
 import dev.anydm.api.ServerConfig
 import dev.anydm.api.createAnydmApi
 import dev.anydm.api.normalized
@@ -29,6 +30,8 @@ sealed interface Screen {
     data class Main(
         val store: TaskStore,
         val search: SearchStore,
+        /** What the Add many dialog asks of the API. */
+        val batches: BatchApi,
         val fileUrl: (String, Int?) -> String,
     ) : Screen
 }
@@ -85,7 +88,7 @@ class AppModel(
         store.start()
         val search = SearchStore(candidate, scope) { torrent -> store.addTorrent(torrent) }
         scope.launch { search.checkAvailable() }
-        screen = Screen.Main(store, search) { id, index -> candidate.fileUrl(id, index) }
+        screen = Screen.Main(store, search, candidate) { id, index -> candidate.fileUrl(id, index) }
         // A 401 later, from the stream or an action, returns here with the key's message.
         watcher =
             scope.launch {

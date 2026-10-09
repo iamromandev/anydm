@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.anydm.api.BatchApi
 import dev.anydm.api.Duplicate
 import dev.anydm.desktop.chrome.Banner
 import dev.anydm.desktop.chrome.BannerHost
@@ -69,11 +70,13 @@ import dev.anydm.model.Task
 import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
 import dev.anydm.settings.SettingsStore
+import dev.anydm.store.BatchStore
 import dev.anydm.store.BulkAction
 import dev.anydm.store.SearchStore
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
 import dev.anydm.store.Tone
+import dev.anydm.store.looksLikeMany
 import dev.anydm.store.removePrompt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -99,6 +102,7 @@ private val ALWAYS =
 fun MainScreen(
     store: TaskStore,
     search: SearchStore,
+    batches: BatchApi,
     settings: SettingsStore,
     fileUrl: (String, Int?) -> String,
     commands: Flow<Command> = emptyFlow(),
@@ -134,6 +138,13 @@ fun MainScreen(
             now = System.currentTimeMillis()
         }
     }
+    // The Add many dialog while it is open; a new one for each opening, so a paste starts fresh.
+    var batch by remember { mutableStateOf<BatchStore?>(null) }
+
+    fun openBatch(text: String) {
+        batch = BatchStore(batches, scope, text, onAdded = { store.refreshCounts() })
+    }
+
     // An add the list already holds, until it is opened, added anyway, dismissed, or the link changes.
     var duplicate by remember { mutableStateOf<StoreEvent.Duplicated?>(null) }
     LaunchedEffect(store) {
@@ -219,12 +230,15 @@ fun MainScreen(
         }
     }
 
-    /** Select the download the list already holds, loading it first if the page doesn't have it. */
-    fun openDuplicate(held: Duplicate) {
-        val id = held.id
+    // Select a download the list holds, loading it first if the page doesn't have it.
+    fun openRow(
+        id: String,
+        collectionId: String? = null,
+    ) {
         scope.launch {
-            if (store.reveal(id, held.collectionId)) {
+            if (store.reveal(id, collectionId)) {
                 duplicate = null
+                batch = null
                 view = MainView.LIST
                 selection = Selection(setOf(id), id, id)
                 keys.requestFocus()
@@ -233,6 +247,8 @@ fun MainScreen(
             }
         }
     }
+
+    fun openDuplicate(held: Duplicate) = openRow(held.id, held.collectionId)
 
     fun addAnyway(held: StoreEvent.Duplicated) {
         val again = held.link ?: return
@@ -345,7 +361,12 @@ fun MainScreen(
             }
 
             Command.PASTE -> {
-                pastedText()?.trim()?.takeIf { it.startsWith("http") || it.startsWith("magnet:") }?.let {
+                val pasted = pastedText()
+                if (pasted != null && looksLikeMany(pasted)) {
+                    openBatch(pasted)
+                    return
+                }
+                pasted?.trim()?.takeIf { it.startsWith("http") || it.startsWith("magnet:") }?.let {
                     link = it
                     submitLink()
                 }
@@ -426,9 +447,15 @@ fun MainScreen(
                     inset = toolbarInset(),
                     link = link,
                     onLink = {
-                        link = it
-                        duplicate = null
+                        // Several links pasted into a one-line field go to Add many, not into the field.
+                        if (looksLikeMany(it)) {
+                            openBatch(it)
+                        } else {
+                            link = it
+                            duplicate = null
+                        }
                     },
+                    onAddMany = { openBatch("") },
                     onSubmit = ::submitLink,
                     adding = adding,
                     preset = prefs.defaultPreset,
@@ -536,6 +563,19 @@ fun MainScreen(
                 clearing = false
                 scope.launch { store.bulk(BulkAction.CLEAR_FINISHED) }
             }
+        }
+        batch?.let { open ->
+            val batchState by open.state.collectAsState()
+            BatchDialog(
+                state = batchState,
+                presetLabel = PRESET_OPTIONS.firstOrNull { it.first == prefs.defaultPreset }?.second ?: prefs.defaultPreset,
+                onKind = open::setKind,
+                onText = open::setText,
+                onAdd = { scope.launch { open.add(prefs.defaultPreset) } },
+                onOpen = { id -> openRow(id) },
+                onStartOver = open::startOver,
+                onClose = { batch = null },
+            )
         }
     }
 }
