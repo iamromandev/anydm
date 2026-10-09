@@ -2,6 +2,7 @@ package dev.anydm.desktop.list
 
 import dev.anydm.model.Task
 import dev.anydm.store.ListFilter
+import dev.anydm.store.inCategory
 import dev.anydm.store.matches
 
 /** What a press on a row means, from its button and modifiers. */
@@ -26,7 +27,11 @@ fun visibleOrder(
     tasks: List<Task>,
     entries: Map<String, List<Task>>,
     filter: ListFilter,
-): List<String> = tasks.filter { filter.matches(it) }.flatMap { task -> listOf(task.id) + entries[task.id].orEmpty().map { it.id } }
+    categoryFilter: String? = null,
+): List<String> =
+    tasks
+        .filter { filter.matches(it) && inCategory(it, categoryFilter) }
+        .flatMap { task -> listOf(task.id) + entries[task.id].orEmpty().map { it.id } }
 
 /**
  * The selected rows by id (spec: "Selection and keys"). [anchor] is where a Shift range starts; [lead] is

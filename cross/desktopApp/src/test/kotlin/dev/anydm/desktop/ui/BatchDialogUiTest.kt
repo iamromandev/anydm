@@ -3,6 +3,7 @@ package dev.anydm.desktop.ui
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
@@ -26,6 +27,18 @@ class BatchDialogUiTest {
     private val urls = (1..120).map { "https://x.test/img${it.toString().padStart(3, '0')}.png" }
 
     @Test
+    fun `the form says where the links save`() =
+        runComposeUiTest {
+            setContent {
+                DesktopTheme(dark = false) {
+                    BatchDialog(BatchState(), "Best", categoryLabel = "Music", onKind = {
+                    }, onText = {}, onAdd = {}, onOpen = {}, onStartOver = {}, onClose = {})
+                }
+            }
+            onNodeWithText("Saves in: Music, from the toolbar").assertIsDisplayed()
+        }
+
+    @Test
     fun `a preview names the count, the first links and how many more, and offers to add them all`() =
         runComposeUiTest {
             var added = 0
@@ -44,9 +57,9 @@ class BatchDialogUiTest {
                     )
                 }
             }
-            onNodeWithText("120 links").assertExists()
-            onNodeWithText("https://x.test/img001.png").assertExists()
-            onNodeWithText("…and 115 more").assertExists()
+            onNodeWithText("120 links").assertIsDisplayed()
+            onNodeWithText("https://x.test/img001.png").assertIsDisplayed()
+            onNodeWithText("…and 115 more").assertIsDisplayed()
             onNodeWithText("Add 120 links").assertIsEnabled().performClick()
             assertEquals(1, added)
         }
@@ -65,7 +78,7 @@ class BatchDialogUiTest {
                     BatchDialog(state, "Best", onKind = {}, onText = {}, onAdd = {}, onOpen = {}, onStartOver = {}, onClose = {})
                 }
             }
-            onNodeWithText("The pattern names 1,200 links; the most is 1,000").assertExists()
+            onNodeWithText("The pattern names 1,200 links; the most is 1,000").assertIsDisplayed()
             onNodeWithText("Add").assertIsNotEnabled()
         }
 
@@ -87,7 +100,7 @@ class BatchDialogUiTest {
                     )
                 }
             }
-            onNodeWithTag("batch-list").assertExists()
+            onNodeWithTag("batch-list").assertIsDisplayed()
             onNodeWithText("Pattern").performClick()
             onNodeWithText("List").performClick()
             assertEquals(listOf(BatchKind.PATTERN, BatchKind.LIST), picked)
@@ -114,9 +127,9 @@ class BatchDialogUiTest {
                     }, onClose = {})
                 }
             }
-            onNodeWithText("1 added · 1 already in your list · 1 failed").assertExists()
-            onNodeWithText("Video unavailable").assertExists()
-            onNodeWithText("In your list").assertExists()
+            onNodeWithText("1 added · 1 already in your list · 1 failed").assertIsDisplayed()
+            onNodeWithText("Video unavailable").assertIsDisplayed()
+            onNodeWithText("In your list").assertIsDisplayed()
             // Two Opens: the new download's and the held one's; the failed link has none.
             val opens = onAllNodesWithText("Open")
             opens.assertCountEquals(2)

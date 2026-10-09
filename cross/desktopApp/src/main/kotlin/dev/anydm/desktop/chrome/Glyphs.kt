@@ -135,6 +135,23 @@ object Glyphs {
             lineTo(13f, 11f)
         }
 
+    /** A folder with an arrow into it: move to a category. */
+    val Move =
+        glyph("move") {
+            moveTo(2.5f, 4f)
+            lineTo(6f, 4f)
+            lineTo(7.5f, 5.5f)
+            lineTo(13.5f, 5.5f)
+            lineTo(13.5f, 12.5f)
+            lineTo(2.5f, 12.5f)
+            lineTo(2.5f, 4f)
+            moveTo(5.5f, 9f)
+            lineTo(9f, 9f)
+            moveTo(7.5f, 7.5f)
+            lineTo(9f, 9f)
+            lineTo(7.5f, 10.5f)
+        }
+
     /** A circling arrow: retry. */
     val Retry =
         glyph("retry") {

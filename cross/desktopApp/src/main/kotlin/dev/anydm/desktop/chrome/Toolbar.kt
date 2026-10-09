@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.anydm.desktop.theme.LocalTokens
 import dev.anydm.desktop.theme.isMac
+import dev.anydm.model.CategoryDto
+import dev.anydm.model.DOWNLOADS_CATEGORY_ID
 
 /** Room the macOS traffic lights need when the toolbar is drawn into the title bar. */
 fun toolbarInset(os: String = System.getProperty("os.name")): Dp = if (isMac(os)) 78.dp else 0.dp
@@ -114,6 +116,9 @@ fun Toolbar(
     onSettings: () -> Unit,
     onLinkFocus: (Boolean) -> Unit = {},
     onAddMany: () -> Unit = {},
+    categories: List<CategoryDto> = emptyList(),
+    addCategory: String = DOWNLOADS_CATEGORY_ID,
+    onAddCategory: (String) -> Unit = {},
 ) {
     val t = LocalTokens.current
     LocalWindowDrag.current {
@@ -140,6 +145,9 @@ fun Toolbar(
                 onPreset,
                 focus,
                 onLinkFocus,
+                categories,
+                addCategory,
+                onAddCategory,
                 Modifier.weight(1f).widthIn(max = 640.dp),
             )
             ToolButton(Glyphs.Torrent, "Open a .torrent…", onClick = onTorrent)
@@ -160,6 +168,9 @@ private fun LinkField(
     onPreset: (String) -> Unit,
     focus: FocusRequester,
     onLinkFocus: (Boolean) -> Unit,
+    categories: List<CategoryDto>,
+    addCategory: String,
+    onAddCategory: (String) -> Unit,
     modifier: Modifier,
 ) {
     val t = LocalTokens.current
@@ -197,7 +208,36 @@ private fun LinkField(
                         },
             )
         }
+        CategoryMenu(addCategory, categories, onAddCategory)
         PresetMenu(preset, presets, onPreset)
+    }
+}
+
+/** Where the next link saves, beside the quality it downloads at. The chosen category's name shows. */
+@Composable
+private fun CategoryMenu(
+    addCategory: String,
+    categories: List<CategoryDto>,
+    onAddCategory: (String) -> Unit,
+) {
+    val t = LocalTokens.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.clip(RoundedCornerShape(5.dp)).clickable { open = true }.padding(horizontal = 6.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(categories.firstOrNull { it.id == addCategory }?.name ?: "Downloads", fontSize = 12.sp, color = t.secondaryText)
+            Icon(Glyphs.ChevronDown, null, Modifier.size(12.dp), tint = t.secondaryText)
+        }
+        DropdownMenu(open, { open = false }) {
+            categories.forEach { category ->
+                DropdownMenuItem(text = { Text(category.name) }, onClick = {
+                    open = false
+                    onAddCategory(category.id)
+                })
+            }
+        }
     }
 }
 

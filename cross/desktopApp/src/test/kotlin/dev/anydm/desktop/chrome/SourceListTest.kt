@@ -1,5 +1,7 @@
 package dev.anydm.desktop.chrome
 
+import dev.anydm.model.CategoryDto
+import dev.anydm.model.DOWNLOADS_CATEGORY_ID
 import dev.anydm.model.SummaryDto
 import dev.anydm.store.Connection
 import dev.anydm.store.ListFilter
@@ -30,5 +32,19 @@ class SourceListTest {
         assertEquals(160f, clampSidebar(90f))
         assertEquals(200f, clampSidebar(200f))
         assertEquals(260f, clampSidebar(400f))
+    }
+
+    @Test
+    fun `the categories section lists All categories, then each with its count`() {
+        val rows =
+            categoryRows(
+                listOf(
+                    CategoryDto(DOWNLOADS_CATEGORY_ID, "Downloads", count = 3),
+                    CategoryDto("c1", "Music", count = 0),
+                ),
+            )
+        assertEquals(listOf("All categories", "Downloads", "Music"), rows.map { it.label })
+        assertEquals(listOf(null, DOWNLOADS_CATEGORY_ID, "c1"), rows.map { it.id })
+        assertEquals(listOf(null, 3, 0), rows.map { it.count })
     }
 }

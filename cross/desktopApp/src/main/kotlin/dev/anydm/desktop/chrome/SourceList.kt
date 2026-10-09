@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.anydm.desktop.theme.LocalTokens
+import dev.anydm.model.CategoryDto
 import dev.anydm.model.SummaryDto
 import dev.anydm.store.Connection
 import dev.anydm.store.ListFilter
@@ -50,6 +51,17 @@ data class SourceItem(
     val label: String,
     val count: Int?,
 )
+
+/** A category row in the sidebar: its id, or null for every category, with its label and count. */
+data class CategoryRow(
+    val id: String?,
+    val label: String,
+    val count: Int?,
+)
+
+/** The Categories section's rows: every category first, then one per category with its count. */
+fun categoryRows(categories: List<CategoryDto>): List<CategoryRow> =
+    listOf(CategoryRow(null, "All categories", null)) + categories.map { CategoryRow(it.id, it.name, it.count) }
 
 fun sourceItems(summary: SummaryDto?): List<SourceItem> =
     listOf(
@@ -88,6 +100,9 @@ fun SourceList(
     showSearch: Boolean = false,
     searchSelected: Boolean = false,
     onSearch: () -> Unit = {},
+    categories: List<CategoryDto> = emptyList(),
+    categoryFilter: String? = null,
+    onSelectCategory: (String?) -> Unit = {},
 ) {
     val t = LocalTokens.current
     val density = LocalDensity.current
@@ -114,6 +129,13 @@ fun SourceList(
                     ContextMenuArea(items = { listOf(ContextMenuItem("Clear finished…", onClearFinished)) }) { row() }
                 } else {
                     row()
+                }
+            }
+            Spacer(Modifier.size(10.dp))
+            Heading("Categories")
+            categoryRows(categories).forEach { row ->
+                SourceRow(row.label, row.count?.let(::count), !searchSelected && row.id == categoryFilter) {
+                    onSelectCategory(row.id)
                 }
             }
             if (showSearch) {

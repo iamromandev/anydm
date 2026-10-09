@@ -140,7 +140,7 @@ private fun Section(text: String) {
 }
 
 @Composable
-private fun Choice(
+internal fun Choice(
     label: String,
     selected: Boolean,
     onPick: () -> Unit,
