@@ -102,6 +102,7 @@ data class Task(
     val position: Int?,
     val entryCounts: EntryCounts?,
     val folder: String?,
+    val category: CategoryRefDto?,
     val files: List<TaskFile>?,
     val positions: List<Position>?,
 )
@@ -148,6 +149,7 @@ fun TaskDto.toTask(): Task {
         position = position,
         entryCounts = null,
         folder = null,
+        category = category,
         files = if (isTorrent) files.map { TaskFile(it.index, it.path, it.sizeBytes, it.selected, it.downloadedBytes) } else null,
         positions =
             files.mapNotNull { file ->
@@ -193,6 +195,7 @@ private fun TaskDto.toCollectionTask(): Task =
                 EntryCounts(it.total, it.complete, it.active, it.downloading, it.paused, it.failed, it.watched)
             },
         folder = folder,
+        category = category,
         files = null,
         positions = null,
     )

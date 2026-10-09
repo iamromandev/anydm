@@ -4,6 +4,7 @@ import dev.anydm.model.BatchItemDto
 import dev.anydm.model.BatchKind
 import dev.anydm.model.BatchOutcome
 import dev.anydm.model.BatchPreview
+import dev.anydm.model.CategoryDto
 import dev.anydm.model.TaskStatus
 import dev.anydm.model.toItem
 import dev.anydm.model.toTask
@@ -265,5 +266,73 @@ class AnydmApiTest {
             assertEquals("/collection/g1/downloads", seen.last().url.encodedPath)
             assertEquals(HttpMethod.Get, seen.last().method)
             assertEquals(listOf("t1"), rows.map { it.id })
+        }
+
+    @Test
+    fun `categories are listed from inside the payload`() =
+        runTest {
+            val listed =
+                api {
+                    json(
+                        ok(
+                            """{"categories":[{"id":"c1","name":"Music","slug":"music","folder":"music","position":1,"builtin":false,"count":2}]}""",
+                        ),
+                    )
+                }.listCategories()
+            assertEquals(listOf(CategoryDto("c1", "Music", "music", "music", 1, false, 2)), listed)
+            assertEquals("/category", seen.last().url.encodedPath)
+        }
+
+    @Test
+    fun `create, patch only what is given, order and delete`() =
+        runTest {
+            val client = api { json(ok("""{"id":"c1","name":"Lectures","slug":"lectures","folder":"edu","position":15}""")) }
+            client.createCategory("Lectures", "edu")
+            assertEquals("""{"name":"Lectures","folder":"edu"}""", bodyOf(seen.last()))
+            client.updateCategory("c1", null, "edu/talks")
+            assertEquals(HttpMethod.Patch, seen.last().method)
+            assertEquals("""{"folder":"edu/talks"}""", bodyOf(seen.last()))
+        }
+
+    @Test
+    fun `a move goes to the download's or the collection's own route`() =
+        runTest {
+            val client = api { json(ok("""{"id":"d1","type":"download"}""")) }
+            client.moveToCategory("d1", collection = false, categoryId = "c1")
+            assertEquals(HttpMethod.Put, seen.last().method)
+            assertEquals("/download/d1/category", seen.last().url.encodedPath)
+            assertEquals("""{"category_id":"c1"}""", bodyOf(seen.last()))
+            client.moveToCategory("g1", collection = true, categoryId = "c1")
+            assertEquals("/collection/g1/category", seen.last().url.encodedPath)
+        }
+
+    @Test
+    fun `the list and the summary send the category filter only when set`() =
+        runTest {
+            val client = api { json(ok("[]")) }
+            client.listTasks(1, 50, "all", "-created_at", categoryFilter = "c1")
+            assertEquals("c1", seen.last().url.parameters["category"])
+            client.listTasks(1, 50, "all", "-created_at")
+            assertEquals(null, seen.last().url.parameters["category"])
+            api { json(ok("""{"all":1}""")) }.summary(categoryFilter = "c1")
+            assertEquals("c1", seen.last().url.parameters["category"])
+        }
+
+    @Test
+    fun `adds carry category_id last`() =
+        runTest {
+            val client = api { json(ok(TASK)) }
+            client.addTorrent("magnet:?xt=urn:btih:abc", emptyList(), categoryId = "c1")
+            assertEquals("""{"torrent":"magnet:?xt=urn:btih:abc","files":[],"category_id":"c1"}""", bodyOf(seen.last()))
+            client.addUrl("https://x/a.iso", categoryId = "c1")
+            assertEquals("""{"url":"https://x/a.iso","category_id":"c1"}""", bodyOf(seen.last()))
+        }
+
+    @Test
+    fun `a 409 from deleting a category keeps the server's words`() =
+        runTest {
+            val body = """{"status":"error","code":409,"message":"Music still holds 1 download; move them first"}"""
+            val error = assertFailsWith<ApiException> { api { json(body, HttpStatusCode.Conflict) }.deleteCategory("c1") }
+            assertEquals("Music still holds 1 download; move them first", error.message)
         }
 }

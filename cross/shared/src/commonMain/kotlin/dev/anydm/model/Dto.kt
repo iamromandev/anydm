@@ -26,6 +26,7 @@ data class TaskDto(
     val torrent: TorrentDto? = null,
     val files: List<FileDto> = emptyList(),
     val folder: String? = null,
+    val category: CategoryRefDto? = null,
     val extractor: String? = null,
     val preset: String? = null,
     val counts: CountsDto? = null,

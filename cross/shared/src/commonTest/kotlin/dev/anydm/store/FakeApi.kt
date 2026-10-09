@@ -4,6 +4,7 @@ import dev.anydm.api.ApiException
 import dev.anydm.api.Page
 import dev.anydm.api.ServerEvent
 import dev.anydm.api.TaskApi
+import dev.anydm.model.CategoryRefDto
 import dev.anydm.model.PageMetaDto
 import dev.anydm.model.SummaryDto
 import dev.anydm.model.TaskDto
@@ -31,21 +32,31 @@ class FakeApi : TaskApi {
     val viaCollection = mutableListOf<String>()
     var affected = 0
 
+    /** The `category` each list call sent, beside `listCalls`. */
+    val categoryFilters = mutableListOf<String?>()
+    val summaryFilters = mutableListOf<String?>()
+    val addedCategories = mutableListOf<String?>()
+    val moved = mutableListOf<Triple<String, Boolean, String>>()
+    var movedAnswer: TaskDto? = null
+
     override suspend fun listTasks(
         page: Int,
         pageSize: Int,
         group: String,
         sort: String,
+        categoryFilter: String?,
     ): Page<TaskDto> {
         listCalls += page to group
+        categoryFilters += categoryFilter
         pageGate?.await()
         return pages[page] ?: Page(emptyList(), PageMetaDto(page = page, totalPages = 1))
     }
 
     var summaryCalls = 0
 
-    override suspend fun summary(): SummaryDto {
+    override suspend fun summary(categoryFilter: String?): SummaryDto {
         summaryCalls += 1
+        summaryFilters += categoryFilter
         return summaryDto
     }
 
@@ -64,8 +75,10 @@ class FakeApi : TaskApi {
         url: String,
         preferred: String,
         allowDuplicate: Boolean,
+        categoryId: String?,
     ): TaskDto {
         allowed += allowDuplicate
+        addedCategories += categoryId
         return if (allowDuplicate) answer else answerOrFail()
     }
 
@@ -87,7 +100,21 @@ class FakeApi : TaskApi {
     override suspend fun addTorrent(
         torrent: String,
         files: List<Int>,
-    ) = answerOrFail()
+        categoryId: String?,
+    ): TaskDto {
+        addedCategories += categoryId
+        return answerOrFail()
+    }
+
+    override suspend fun moveToCategory(
+        id: String,
+        collection: Boolean,
+        categoryId: String,
+    ): TaskDto {
+        moved += Triple(id, collection, categoryId)
+        failWith?.let { throw it }
+        return movedAnswer ?: TaskDto(id = id, category = CategoryRefDto(categoryId, "Moved"))
+    }
 
     override suspend fun pause(
         id: String,
