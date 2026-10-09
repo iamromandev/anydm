@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 from tortoise import fields
 
 from src.core.base import LinkBase
-
-if TYPE_CHECKING:
-    from src.data.db.model.transfer.download import Download
 
 
 class Category(LinkBase):
@@ -22,9 +19,6 @@ class Category(LinkBase):
     folder: str = fields.TextField(default="")
     position: int = fields.IntField(default=0)
     builtin: bool = fields.BooleanField(default=False)
-
-    if TYPE_CHECKING:
-        downloads: fields.ReverseRelation[Download]
 
     def __str__(self) -> str:
         return f"[Category: {self.name} -> {self.folder or '.'}]"

@@ -7,9 +7,9 @@ dependencies = [
     ### core ###
     "toml==0.10.2",
     "loguru==0.7.3",
-    "fastapi[all]==0.136.1",
+    "fastapi[all]==0.143.0",
     # Read by the one-time SEARCH_INDEXERS import; pinned direct so it never depends on arriving transitively.
-    "python-dotenv==1.2.3",
+    "python-dotenv==1.2.4",
     ### db ###
     "tortoise-orm[asyncpg, accel]==1.1.8",
     ### media ###
@@ -19,13 +19,13 @@ dependencies = [
     # requests, as Dailymotion does from some networks (#88).
     "yt-dlp[default,curl-cffi]==2026.8.19",
     "httpx[http2]==0.28.1",
-    "sse-starlette==3.4.11",
+    "sse-starlette==3.5.0",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff==0.16.6",
-    "ty==0.0.80",
+    "ruff==0.16.10",
+    "ty==0.0.85",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
 ]
