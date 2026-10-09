@@ -1,3 +1,4 @@
+from .category import CategoryDatabaseRepo as CategoryDatabaseRepo
 from .download import AttemptDatabaseRepo as AttemptDatabaseRepo
 from .download import CollectionDatabaseRepo as CollectionDatabaseRepo
 from .download import DownloadDatabaseRepo as DownloadDatabaseRepo
