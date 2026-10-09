@@ -87,15 +87,19 @@ class TaskStore(
 
     /** Open a group: fetch its videos; frames keep them current until [collapse]. */
     fun expand(id: String) {
-        scope.launch {
-            val rows = read { api.entries(id) } ?: return@launch
-            mutableState.update {
-                it.copy(
-                    entries =
-                        it.entries + (id to rows.map { dto -> dto.toTask() }.sortedBy { t -> t.position ?: Int.MAX_VALUE }),
-                )
-            }
+        scope.launch { loadEntries(id) }
+    }
+
+    /** False if the API would not say. */
+    private suspend fun loadEntries(id: String): Boolean {
+        val rows = read { api.entries(id) } ?: return false
+        mutableState.update {
+            it.copy(
+                entries =
+                    it.entries + (id to rows.map { dto -> dto.toTask() }.sortedBy { t -> t.position ?: Int.MAX_VALUE }),
+            )
         }
+        return true
     }
 
     fun collapse(id: String) {
@@ -147,16 +151,26 @@ class TaskStore(
 
     /**
      * Show a download the list already holds: every download, with its row loaded, fetched on its own
-     * when the first page doesn't have it. False if the API no longer knows it.
+     * when the first page doesn't have it. A video a playlist holds ([collectionId]) is not a row of the
+     * list: its group is, opened, with the video among its entries. False if the API no longer knows it.
      */
-    suspend fun reveal(id: String): Boolean {
+    suspend fun reveal(
+        id: String,
+        collectionId: String? = null,
+    ): Boolean {
         mutableState.update { it.copy(filter = ListFilter.ALL, page = 1, totalPages = 1) }
         loadPage(1)
-        if (state.value.tasks.none { it.id == id }) {
-            val row = read { api.task(id) } ?: return false
+        val rowId = collectionId ?: id
+        if (state.value.tasks.none { it.id == rowId }) {
+            val row = read { if (collectionId != null) api.collection(rowId) else api.task(rowId) } ?: return false
             merge(listOf(row.toTask()))
         }
-        return true
+        if (collectionId == null) return true
+        // Fetched fresh even if the group is open: the video may have joined it since.
+        return loadEntries(collectionId) &&
+            state.value.entries[collectionId]
+                .orEmpty()
+                .any { it.id == id }
     }
 
     /** A playlist row is a collection, which the API acts on by its own routes. */

@@ -52,6 +52,21 @@ class EnvelopeTest {
     }
 
     @Test
+    fun `a 409 for a playlist's video also names the playlist`() {
+        val error =
+            assertFailsWith<ApiException> {
+                unwrap(
+                    409,
+                    """{"status":"error","code":409,"message":"Already in your list: Clip (completed), in Talks",
+                        |"details":[{"subject":"v1","description":"Clip","fields":["completed"]},
+                        |{"subject":"g1","description":"Talks","fields":["collection"]}]}
+                    """.trimMargin(),
+                )
+            }
+        assertEquals(Duplicate("v1", "Clip", "completed", "g1", "Talks"), error.duplicate)
+    }
+
+    @Test
     fun `a 409 that names nothing, and other failures, are not duplicates`() {
         assertNull(assertFailsWith<ApiException> { unwrap(409, """{"status":"error","code":409,"message":"Task is paused"}""") }.duplicate)
         assertNull(

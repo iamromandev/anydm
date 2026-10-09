@@ -72,6 +72,12 @@ class FakeApi : TaskApi {
     /** Rows [task] can fetch by id. */
     val rows = mutableMapOf<String, TaskDto>()
     val taskCalls = mutableListOf<String>()
+    val collectionCalls = mutableListOf<String>()
+
+    override suspend fun collection(id: String): TaskDto {
+        collectionCalls += id
+        return rows[id] ?: throw ApiException("No such collection", 404, null)
+    }
 
     override suspend fun task(id: String): TaskDto {
         taskCalls += id
