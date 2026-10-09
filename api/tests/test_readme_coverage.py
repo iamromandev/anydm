@@ -26,7 +26,7 @@ def test_readme_lists_every_route() -> None:
         f"{method} {route.path}"
         for route in router.routes
         if isinstance(route, APIRoute)
-        for method in sorted(route.methods)
+        for method in sorted(route.methods or ())
         if not _documented(method, route.path)
     ]
 

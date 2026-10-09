@@ -27,7 +27,7 @@ async def sources() -> AsyncIterator[SourceDatabaseRepo]:
     yield repo
     await Provider.filter(parser__isnull=False).delete()
     if saved:
-        await repo.insert_missing(saved)
+        await repo.seed(saved)
     await Tortoise.close_connections()
 
 
@@ -85,15 +85,15 @@ async def test_get_on_a_random_id_is_none(sources: SourceDatabaseRepo) -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_missing_never_overwrites_an_edited_row(sources: SourceDatabaseRepo) -> None:
-    await sources.insert_missing([SourceRow("nyaa", "nyaa", True, "https://n.test", None)])
+async def test_seed_never_overwrites_an_edited_row(sources: SourceDatabaseRepo) -> None:
+    await sources.seed([SourceRow("nyaa", "nyaa", True, "https://n.test", None)])
     listed = await sources.list_all()
     assert len(listed) == 1
     source_id = listed[0].id
     assert source_id is not None
     await sources.update(source_id, enabled=False, base_url="https://mirror.test")
 
-    assert await sources.insert_missing([SourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
+    assert await sources.seed([SourceRow("nyaa", "nyaa", True, "https://n.test", None)]) == 0
     assert await sources.get(source_id) == SourceRow("nyaa", "nyaa", False, "https://mirror.test", None, source_id)
 
 

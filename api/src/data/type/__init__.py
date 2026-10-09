@@ -10,10 +10,12 @@ from .torrent import PieceStatus as PieceStatus
 from .torrent import TrackerStatus as TrackerStatus
 from .transfer import ACTIVE_STATUSES as ACTIVE_STATUSES
 from .transfer import CONTAINER_KINDS as CONTAINER_KINDS
+from .transfer import DONE_STATUSES as DONE_STATUSES
 from .transfer import DOWNLOAD_GROUPS as DOWNLOAD_GROUPS
 from .transfer import DOWNLOADS_ID as DOWNLOADS_ID
 from .transfer import OTHER_FOLDER as OTHER_FOLDER
 from .transfer import SEEDED_CATEGORIES as SEEDED_CATEGORIES
+from .transfer import TODO_STATUSES as TODO_STATUSES
 from .transfer import AttemptStatus as AttemptStatus
 from .transfer import BulkAction as BulkAction
 from .transfer import CollectionKind as CollectionKind
@@ -26,4 +28,5 @@ from .transfer import Platform as Platform
 from .transfer import Preset as Preset
 from .transfer import SegmentPart as SegmentPart
 from .transfer import SegmentStatus as SegmentStatus
+from .transfer import collection_status as collection_status
 from .transfer import slugify as slugify

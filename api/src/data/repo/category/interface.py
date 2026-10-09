@@ -37,6 +37,11 @@ class CategoryRepo(ABC):
         ...
 
     @abstractmethod
+    async def seed(self, rows: Sequence[CategoryRow]) -> int:
+        """Insert the rows whose slug isn't stored; never touch one that is. Returns how many were added."""
+        ...
+
+    @abstractmethod
     async def create(self, name: str, slug: str, folder: str) -> CategoryRow:
         """A new category, placed after the last one."""
         ...

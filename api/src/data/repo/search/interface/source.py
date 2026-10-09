@@ -32,7 +32,7 @@ class SourceRepo(ABC):
     async def create(self, name: str, kind: str, base_url: str, api_key: str | None, enabled: bool) -> SourceRow: ...
 
     @abstractmethod
-    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
+    async def seed(self, rows: Sequence[SourceRow]) -> int:
         """Insert the rows whose name isn't stored; never touch one that is. Returns how many were added."""
         ...
 

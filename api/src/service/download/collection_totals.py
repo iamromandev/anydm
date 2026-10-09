@@ -8,40 +8,25 @@ frame whenever a member's status changes (never on a progress tick).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, MemberRow
 from src.data.schema.transfer import CollectionCountsSchema, CollectionSchema
-from src.data.type import CollectionKind, DownloadStatus, MediaKind
+from src.data.type import DONE_STATUSES, TODO_STATUSES, CollectionKind, DownloadStatus, MediaKind, collection_status
 from src.lib.event import EventHub
 from src.service.download.live import LiveStats
 from src.service.download.paths import container_folder
 from src.service.download.views import category_ref
-
-#: Statuses that mean "still to do": waiting, queued or downloading.
-_ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
-
-
-def collection_status(statuses: Iterable[DownloadStatus]) -> DownloadStatus:
-    """Downloading while anything is left to do, then paused, failed or complete."""
-    seen = set(statuses)
-    if seen & _ACTIVE:
-        return DownloadStatus.DOWNLOADING
-    if DownloadStatus.PAUSED in seen:
-        return DownloadStatus.PAUSED
-    if DownloadStatus.FAILED in seen:
-        return DownloadStatus.FAILED
-    return DownloadStatus.COMPLETED
 
 
 def counts_of(rows: Sequence[MemberRow]) -> CollectionCountsSchema:
     statuses = [row[1] for row in rows]
     return CollectionCountsSchema(
         total=len(statuses),
-        complete=sum(s in (DownloadStatus.COMPLETED, DownloadStatus.SEEDING) for s in statuses),
-        active=sum(s in _ACTIVE for s in statuses),
+        complete=sum(s in DONE_STATUSES for s in statuses),
+        active=sum(s in TODO_STATUSES for s in statuses),
         downloading=sum(s in (DownloadStatus.DOWNLOADING, DownloadStatus.MUXING) for s in statuses),
         paused=statuses.count(DownloadStatus.PAUSED),
         failed=statuses.count(DownloadStatus.FAILED),

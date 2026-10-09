@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Collection, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 from typing import Any
 
-from tortoise import Tortoise
 from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.expressions import Q, Subquery
 from tortoise.transactions import in_transaction
@@ -16,11 +19,20 @@ from src.core.common import now
 from src.core.success import Meta
 from src.data.db.model import Download, File, Media, Mirror, Source, Torrent, TorrentFile
 from src.data.repo.catalog import address_hash, provider_row, source_row, url_row
+from src.data.repo.download.described import describe, primary_mirror
 from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
 from src.data.schema.transfer import DownloadSummarySchema
-from src.data.type import ACTIVE_STATUSES, DOWNLOAD_GROUPS, DownloadStatus, SourceKind
+from src.data.type import (
+    ACTIVE_STATUSES,
+    CONTAINER_KINDS,
+    DONE_STATUSES,
+    DOWNLOAD_GROUPS,
+    DownloadStatus,
+    SourceKind,
+    collection_status,
+)
 from src.lib.identity import HTTP_PROVIDER, TORRENT_PROVIDER
 
 
@@ -35,6 +47,12 @@ def _torrent() -> Q:
 
 def _not_torrent() -> Q:
     return ~_torrent()
+
+
+def _torrent_named(row: Download) -> bool:
+    """Whether a torrent names it, through its primary mirror: then no file is needed for its title."""
+    mirror = primary_mirror(row)
+    return mirror is not None and any(torrent.name for torrent in mirror.source.torrents)
 
 
 def _name(path: str) -> str:
@@ -53,16 +71,70 @@ _HELD_RANK = {
     DownloadStatus.FAILED: 1,
 }
 
-#: ``list_item`` expressions each sort reads. Spelled out so a sort value never
-#: reaches SQL as text: an unknown one is a ``KeyError`` here.
-_ORDER = {
-    "created_at": "item.created_at",
-    "title": "lower(item.title)",
-    # NULL means "the size is unknown"; it sorts as 0, not ahead of everything.
-    "total_size": "COALESCE(item.total_size, 0)",
-    "progress": "item.progress",
-    "speed_bps": "COALESCE(live.speed, 0)",
+
+@dataclass(frozen=True, slots=True)
+class _Item:
+    """One row of the list: a standalone download or a collection, its status and bytes computed from its videos."""
+
+    type: str
+    id: uuid.UUID
+    title: str
+    status: DownloadStatus
+    created_at: datetime
+    total_size: int | None
+    downloaded_size: int
+    progress: int
+
+
+#: What each sort reads off an item; ``speeds`` are the live ones. Spelled out so
+#: an unknown sort value is a ``KeyError`` here.
+_ORDER: dict[str, Callable[[_Item, Mapping[uuid.UUID, int]], Any]] = {
+    "created_at": lambda item, _: item.created_at,
+    "title": lambda item, _: item.title.lower(),
+    # None means "the size is unknown"; it sorts as 0, not ahead of everything.
+    "total_size": lambda item, _: item.total_size or 0,
+    "progress": lambda item, _: item.progress,
+    "speed_bps": lambda item, speeds: speeds.get(item.id, 0),
 }
+
+
+def _ordered(items: list[_Item], sort: str, speeds: Mapping[uuid.UUID, int]) -> list[_Item]:
+    """By ``sort``, then the newest, then by id. Stable sorts, last key first."""
+    key = _ORDER[sort.lstrip("-")]
+    ordered = sorted(items, key=lambda item: item.id)
+    ordered.sort(key=lambda item: item.created_at, reverse=True)
+    ordered.sort(key=lambda item: key(item, speeds), reverse=sort.startswith("-"))
+    return ordered
+
+
+def _download_item(row: Download, title: str) -> _Item:
+    total = row.total_size or 0
+    return _Item(
+        type="download",
+        id=row.id,
+        title=title,
+        status=row.status,
+        created_at=row.created_at,
+        total_size=row.total_size,
+        downloaded_size=row.downloaded_size,
+        progress=min(100, row.downloaded_size * 100 // total) if total > 0 else 0,
+    )
+
+
+def _collection_item(row: Download, title: str, members: Sequence[tuple[DownloadStatus, int | None, int]]) -> _Item:
+    """Progress is videos done over videos, as the collection's own schema has it: sizes aren't known until each starts."""
+    statuses = [status for status, _, _ in members]
+    known = [total for _, total, _ in members if total is not None]
+    return _Item(
+        type="collection",
+        id=row.id,
+        title=title,
+        status=collection_status(statuses),
+        created_at=row.created_at,
+        total_size=sum(known) if known else None,
+        downloaded_size=sum(done for _, _, done in members),
+        progress=sum(status in DONE_STATUSES for status in statuses) * 100 // len(statuses) if statuses else 0,
+    )
 
 
 class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
@@ -221,6 +293,43 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     async def flush_progress(self, download_id: uuid.UUID, *, downloaded_size: int, total_size: int | None) -> None:
         await Download.filter(id=download_id).update(downloaded_size=downloaded_size, total_size=total_size)
 
+    @staticmethod
+    async def _items(category: uuid.UUID | None) -> list[_Item]:
+        """Every top-level row as a list item: standalone downloads and collections, not a collection's videos.
+
+        Three queries whatever the size: the rows with what titles them, the
+        first file of those still untitled, and every collection's videos.
+        """
+        query = Download.filter(parent_id__isnull=True, deleted_at__isnull=True)
+        if category is not None:
+            query = query.filter(category_id=category)
+        rows = await query.prefetch_related(*RELATED)
+
+        untitled = [row.id for row in rows if not (row.media and row.media.title) and not _torrent_named(row)]
+        first_files: dict[uuid.UUID, str] = {}
+        if untitled:
+            for download_id, filename in (
+                await File.filter(download_id__in=untitled).order_by("index").values_list("download_id", "filename")
+            ):
+                first_files.setdefault(download_id, filename)
+
+        collections = [row.id for row in rows if row.media and row.media.kind in CONTAINER_KINDS]
+        members: dict[uuid.UUID, list[tuple[DownloadStatus, int | None, int]]] = {id: [] for id in collections}
+        if collections:
+            for parent_id, status, total, done in await Download.filter(
+                parent_id__in=collections, deleted_at__isnull=True
+            ).values_list("parent_id", "status", "total_size", "downloaded_size"):
+                members[parent_id].append((DownloadStatus(status), total, done))
+
+        items = []
+        for row in rows:
+            named = [SimpleNamespace(filename=first_files[row.id])] if row.id in first_files else ()
+            title = describe(row, named).title
+            items.append(
+                _collection_item(row, title, members[row.id]) if row.id in members else _download_item(row, title)
+            )
+        return items
+
     async def list_items(
         self,
         page: int,
@@ -230,47 +339,26 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         speeds: Mapping[uuid.UUID, int],
         category: uuid.UUID | None = None,
     ) -> tuple[list[tuple[str, uuid.UUID]], Meta]:
-        order = _ORDER[sort.lstrip("-")]
-        direction = "DESC" if sort.startswith("-") else "ASC"
-        params: list[Any] = [list(speeds), list(speeds.values())]
-        conditions: list[str] = []
+        items = await self._items(category)
         if statuses:
-            params.append([status.value for status in statuses])
-            conditions.append(f"item.status = ANY(${len(params)}::text[])")
-        if category is not None:
-            params.append(category)
-            conditions.append(f"item.category_id = ${len(params)}")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        source = (
-            "FROM transfer.list_item AS item "
-            "LEFT JOIN unnest($1::uuid[], $2::bigint[]) AS live(id, speed) ON live.id = item.id "
-            f"{where}"
-        )
-        conn = Tortoise.get_connection("default")
-        total = int((await conn.execute_query_dict(f"SELECT COUNT(*) AS n {source}", params))[0]["n"])
-        rows = await conn.execute_query_dict(
-            f"SELECT item.type, item.id {source} "
-            f"ORDER BY {order} {direction}, item.created_at DESC, item.id "
-            f"LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}",
-            [*params, page_size, (page - 1) * page_size],
-        )
+            wanted = set(statuses)
+            items = [item for item in items if item.status in wanted]
+        start = (page - 1) * page_size
+        shown = _ordered(items, sort, speeds)[start : start + page_size]
+        total = len(items)
         meta = Meta(page=page, page_size=page_size, total=total, total_pages=max(1, math.ceil(total / page_size)))
-        return [(str(row["type"]), row["id"]) for row in rows], meta
+        return [(item.type, item.id) for item in shown], meta
 
     async def summary(self, category: uuid.UUID | None = None) -> DownloadSummarySchema:
-        """Counted from ``list_item``, so a collection counts once, by its computed status.
+        """Counted from the list's items, so a collection counts once, by its computed status.
 
-        Counted in the database rather than from the rows a browser holds, so the
+        Counted from every row rather than the ones a browser holds, so the
         numbers stay right however little of the list has been loaded.
         """
-        where, params = ("WHERE category_id = $1", [category]) if category is not None else ("", [])
-        rows = await Tortoise.get_connection("default").execute_query_dict(
-            f"SELECT status, COUNT(*) AS n FROM transfer.list_item {where} GROUP BY status", params
-        )
-        counts = {str(row["status"]): int(row["n"]) for row in rows}
+        counts = Counter(item.status for item in await self._items(category))
 
         def group(name: str) -> int:
-            return sum(counts.get(status.value, 0) for status in DOWNLOAD_GROUPS[name])
+            return sum(counts[status] for status in DOWNLOAD_GROUPS[name])
 
         return DownloadSummarySchema(
             all=sum(counts.values()),

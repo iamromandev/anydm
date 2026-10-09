@@ -46,7 +46,7 @@ class SourceDatabaseRepo(SourceRepo):
         )
         return _row(provider)
 
-    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
+    async def seed(self, rows: Sequence[SourceRow]) -> int:
         # Every provider's slug, not only search sources': the slug is unique across them all.
         stored = set(await Provider.all().values_list("slug", flat=True))
         fresh = [row for row in rows if row.name not in stored]

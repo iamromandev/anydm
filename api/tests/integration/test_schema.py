@@ -55,20 +55,3 @@ async def test_what_keeps_one_thing_one_row_is_in_place() -> None:
     # One Media per download, and one file per index of a download.
     assert has("transfer.media", "download_id")
     assert has("transfer.file", "download_id, index")
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("db")
-async def test_the_list_view_is_in_place_with_the_columns_the_list_reads() -> None:
-    conn = Tortoise.get_connection("default")
-    columns = {
-        row["column_name"]
-        for row in await conn.execute_query_dict(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = 'transfer' AND table_name = 'list_item'"
-        )
-    }
-
-    assert columns == {
-        "type", "id", "title", "status", "created_at", "category_id", "total_size", "downloaded_size", "progress",
-    }

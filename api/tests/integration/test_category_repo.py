@@ -106,3 +106,24 @@ async def test_move_rows_moves_a_collection_and_the_videos_that_have_a_place() -
     assert (done.category_id, done.folder) == (made.id, "edu/talks")
     # Not finished, so it has no place yet: it takes the category and finds its folder when it does.
     assert (waiting.category_id, waiting.folder) == (made.id, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("db")
+async def test_seed_adds_only_the_slugs_not_stored_and_leaves_the_rest() -> None:
+    repo = CategoryDatabaseRepo()
+    games = await repo.by_name("games")
+    assert games is not None
+    await repo.delete(games.id)
+    movies = await repo.by_name("movies")
+    assert movies is not None
+    await repo.update(movies.id, folder="cinema")
+
+    rows = await repo.list_all()
+    again = [*rows, games]
+    assert await repo.seed(again) == 1
+    assert await repo.seed(again) == 0
+
+    assert await repo.get(games.id) == games
+    kept = await repo.get(movies.id)
+    assert kept is not None and kept.folder == "cinema"

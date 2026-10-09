@@ -43,7 +43,7 @@ async def http() -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def _seed_registry(repo: FakeSourceRepo) -> None:
-    await repo.insert_missing(
+    await repo.seed(
         [SourceRow(b.name, b.name, b.default_enabled, b.default_url, None) for b in BUILTINS.values()]
     )
 

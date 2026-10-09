@@ -14,7 +14,7 @@ working" in the README.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -57,7 +57,7 @@ _REFUSALS = ("not a bot", "account authentication is required")
 
 
 @contextmanager
-def _unless_refused() -> Iterator[None]:
+def _unless_refused() -> Generator[None]:
     """Skip, naming the reason, when the site refused this machine rather than the page."""
     try:
         yield
