@@ -34,10 +34,6 @@ export const CategoryManager = component$<CategoryManagerProps>(
         const draftFor = (category: CategoryItem): Draft =>
             drafts[category.id] ?? draftOf(category);
 
-        const setDraft = (category: CategoryItem, change: Partial<Draft>) => {
-            drafts[category.id] = { ...draftFor(category), ...change };
-        };
-
         return (
             <section class="settings-section category-manager">
                 <h3 class="settings-section-title">Categories</h3>
@@ -57,9 +53,13 @@ export const CategoryManager = component$<CategoryManagerProps>(
                                     class="settings-input category-manager-name"
                                     aria-label={`Name of ${category.name}`}
                                     value={draft.name}
-                                    onInput$={$((_, el) =>
-                                        setDraft(category, { name: el.value }),
-                                    )}
+                                    onInput$={$((_, el) => {
+                                        drafts[category.id] = {
+                                            ...draftOf(category),
+                                            ...drafts[category.id],
+                                            name: el.value,
+                                        };
+                                    })}
                                 />
                                 <input
                                     class="settings-input category-manager-folder"
@@ -71,11 +71,13 @@ export const CategoryManager = component$<CategoryManagerProps>(
                                     }
                                     value={draft.folder}
                                     disabled={category.builtin}
-                                    onInput$={$((_, el) =>
-                                        setDraft(category, {
+                                    onInput$={$((_, el) => {
+                                        drafts[category.id] = {
+                                            ...draftOf(category),
+                                            ...drafts[category.id],
                                             folder: el.value,
-                                        }),
-                                    )}
+                                        };
+                                    })}
                                 />
                                 <span class="category-manager-count">
                                     {category.count}

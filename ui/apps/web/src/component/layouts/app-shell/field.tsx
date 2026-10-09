@@ -659,26 +659,6 @@ export const AppShell = component$<AppShellProps>(
                     onConfirm={handleSourceDeleteConfirm}
                 />
 
-                <ConfirmDialog
-                    prompt={
-                        confirmingCategory.value
-                            ? {
-                                  heading: `Delete ${confirmingCategory.value.name}?`,
-                                  body: "Its folder and files stay on disk.",
-                                  confirmLabel: "Delete",
-                              }
-                            : null
-                    }
-                    onCancel={$(() => {
-                        confirmingCategory.value = null;
-                    })}
-                    onConfirm={$(async () => {
-                        const category = confirmingCategory.value;
-                        confirmingCategory.value = null;
-                        if (category) await onCategoryDelete(category.id);
-                    })}
-                />
-
                 {batch.value && (
                     <BatchModal
                         key={`batch-${batch.value.seq}`}
@@ -727,6 +707,29 @@ export const AppShell = component$<AppShellProps>(
                     apiKey={apiKey}
                     apiKeyMessage={apiKeyMessage}
                     onApiKeySave={onApiKeySave}
+                />
+
+                {/* After Settings: the two share a z-index, and the later one
+                    is drawn on top, so this confirmation opened from inside
+                    Settings must come after it. */}
+                <ConfirmDialog
+                    prompt={
+                        confirmingCategory.value
+                            ? {
+                                  heading: `Delete ${confirmingCategory.value.name}?`,
+                                  body: "Its folder and files stay on disk.",
+                                  confirmLabel: "Delete",
+                              }
+                            : null
+                    }
+                    onCancel={$(() => {
+                        confirmingCategory.value = null;
+                    })}
+                    onConfirm={$(async () => {
+                        const category = confirmingCategory.value;
+                        confirmingCategory.value = null;
+                        if (category) await onCategoryDelete(category.id);
+                    })}
                 />
 
                 <RemoveDialog
