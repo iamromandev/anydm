@@ -147,7 +147,7 @@ class TorrentMonitor:
 
     def _folder(self, row: Any) -> Path:
         """The torrent's folder on disk, as recorded on its row when it was added."""
-        if not row.folder:
+        if row.folder is None:
             raise Error.internal(message=f"Torrent {row.id} has no recorded folder")
         return inside(self._downloads, row.folder)
 

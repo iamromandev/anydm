@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from tortoise.backends.base.client import BaseDBAsyncClient
+from tortoise.expressions import Q
 from tortoise.transactions import in_transaction
 
 from src.core.common import now
@@ -173,6 +174,25 @@ class CollectionDatabaseRepo(CollectionRepo):
             for owner in owners:
                 counts[cast(uuid.UUID, owner)] += 1
         return counts
+
+    async def move_rows(self, collection_id: uuid.UUID, category_id: uuid.UUID, folder: str) -> None:
+        async with in_transaction() as conn:
+            await Download.filter(id=collection_id).using_db(conn).update(category_id=category_id, folder=folder)
+            await (
+                Download.filter(parent_id=collection_id, deleted_at__isnull=True)
+                .using_db(conn)
+                .update(category_id=category_id)
+            )
+            # A video with a place, or finished before categories, moves with its collection.
+            await (
+                Download.filter(
+                    Q(folder__isnull=False) | Q(status=DownloadStatus.COMPLETED),
+                    parent_id=collection_id,
+                    deleted_at__isnull=True,
+                )
+                .using_db(conn)
+                .update(folder=folder)
+            )
 
     async def soft_delete(self, collection: Download) -> None:
         collection.deleted_at = now()

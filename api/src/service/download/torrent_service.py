@@ -248,7 +248,7 @@ class TorrentService(BaseService):
 
     def _folder(self, download: Any) -> Path:
         """The torrent's folder on disk, as recorded when it was added (migration 0009 records the older ones)."""
-        if not download.folder:
+        if download.folder is None:
             raise Error.internal(message=f"Torrent {download.id} has no recorded folder")
         return inside(self._downloads, download.folder)
 

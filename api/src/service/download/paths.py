@@ -53,7 +53,7 @@ def container_folder(collection: Any) -> str:
 
     Derived on read only for a collection from before categories, whose row has no folder.
     """
-    if getattr(collection, "folder", None):
+    if getattr(collection, "folder", None) is not None:
         return collection.folder
     described = describe(collection)
     return collection_folder(described.title, described.ref)
@@ -66,7 +66,7 @@ def standalone_folder(download_id: uuid.UUID) -> str:
 
 def placed_folder(download: Any) -> str:
     """Where a standalone download's file is: its stored folder, else the ``<download_id>`` folder from before categories."""
-    return download.folder or standalone_folder(download.id)
+    return download.folder if download.folder is not None else standalone_folder(download.id)
 
 
 def short_id(download_id: uuid.UUID) -> str:

@@ -6,8 +6,8 @@ from fastapi.responses import Response
 
 from src.core.success import Success
 from src.core.type import Code
-from src.data.schema.transfer import CollectionRequest, CollectionSchema, DownloadSchema
-from src.service import CollectionService, get_collection_service
+from src.data.schema.transfer import CategoryMoveRequest, CollectionRequest, CollectionSchema, DownloadSchema
+from src.service import CategoryMover, CollectionService, get_category_mover, get_collection_service
 
 router = APIRouter()
 
@@ -55,6 +55,16 @@ async def resume_collection(
     collections: Annotated[CollectionService, Depends(get_collection_service)],
 ) -> Response:
     return Success.ok(data=await collections.resume(collection_id)).to_resp()
+
+
+@router.put(path="/collection/{collection_id}/category", response_model=Success[CollectionSchema])
+async def move_collection(
+    collection_id: uuid.UUID,
+    payload: CategoryMoveRequest,
+    mover: Annotated[CategoryMover, Depends(get_category_mover)],
+) -> Response:
+    """Move a collection's folder and its videos to another category. 409 while a video downloads."""
+    return Success.ok(data=await mover.move_collection(collection_id, payload.category_id)).to_resp()
 
 
 @router.delete(path="/collection/{collection_id}")

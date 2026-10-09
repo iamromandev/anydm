@@ -576,7 +576,7 @@ class DownloadService(BaseService):
         """The download's folder for its schema: derived when finished, else ``None``."""
         if download.status != DownloadStatus.COMPLETED:
             return None
-        if download.folder:
+        if download.folder is not None:
             return download.folder
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
@@ -587,7 +587,7 @@ class DownloadService(BaseService):
 
     async def _disk_path(self, download: Any, filename: str) -> Path:
         """The finished file on disk: its recorded folder, else the one derived from before categories."""
-        if download.folder:
+        if download.folder is not None:
             return inside(self._root, download.folder) / Path(filename).name
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)

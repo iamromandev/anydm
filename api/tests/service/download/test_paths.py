@@ -51,3 +51,11 @@ def test_a_standalone_download_is_where_its_row_says_or_its_id_folder_from_befor
     download_id = uuid.UUID(int=7)
     assert placed_folder(SimpleNamespace(id=download_id, folder="videos")) == "videos"
     assert placed_folder(SimpleNamespace(id=download_id, folder=None)) == str(download_id)
+
+
+def test_an_empty_stored_folder_is_the_download_root_not_an_unset_one() -> None:
+    from types import SimpleNamespace
+
+    from src.service.download.paths import placed_folder
+
+    assert placed_folder(SimpleNamespace(id=uuid.UUID(int=7), folder="")) == ""

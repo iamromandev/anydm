@@ -18,6 +18,7 @@ from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
 from src.lib.torrent.client import RqbitClient
+from src.service.category import CategoryMover as CategoryMover
 from src.service.category import CategoryService as CategoryService
 from src.service.download.collection_service import CollectionService as CollectionService
 from src.service.download.collection_totals import CollectionTotals
@@ -73,6 +74,19 @@ def get_search_client() -> httpx.AsyncClient:
 @lru_cache
 def get_category_service() -> CategoryService:
     return CategoryService(CategoryDatabaseRepo(), Path(get_settings().download_dir))
+
+
+def get_category_mover() -> CategoryMover:
+    return CategoryMover(
+        downloads=DownloadDatabaseRepo(),
+        collections=CollectionDatabaseRepo(),
+        categories=CategoryDatabaseRepo(),
+        files=FileDatabaseRepo(),
+        views=get_download_views(),
+        totals=get_collection_totals(),
+        hub=get_event_hub(),
+        downloads_root=Path(get_settings().download_dir),
+    )
 
 
 def get_source_service() -> SourceService:

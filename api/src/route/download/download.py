@@ -18,6 +18,7 @@ from src.data.schema.transfer import (
     BatchRequest,
     BulkActionRequest,
     BulkResultSchema,
+    CategoryMoveRequest,
     CollectionSchema,
     DownloadSchema,
     DownloadSummarySchema,
@@ -27,9 +28,11 @@ from src.data.schema.transfer import (
 from src.data.type import DownloadGroup, DownloadSort
 from src.lib.event import EventHub, get_event_hub
 from src.service import (
+    CategoryMover,
     DiskGuard,
     DownloadService,
     StreamService,
+    get_category_mover,
     get_disk_guard,
     get_download_service,
     get_stream_service,
@@ -248,6 +251,19 @@ async def resume_download(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
 ) -> Response:
     return Success.ok(data=await download_service.resume(download_id)).to_resp()
+
+
+@router.put(path="/download/{download_id}/category", response_model=Success[DownloadSchema])
+async def move_download(
+    download_id: uuid.UUID,
+    payload: CategoryMoveRequest,
+    mover: Annotated[CategoryMover, Depends(get_category_mover)],
+) -> Response:
+    """Move a download to another category, its finished file and subtitles with it.
+
+    409 while it downloads or muxes; 422 for a torrent (it stays where it was added) and for a collection's video.
+    """
+    return Success.ok(data=await mover.move_download(download_id, payload.category_id)).to_resp()
 
 
 @router.delete(path="/download/{download_id}")

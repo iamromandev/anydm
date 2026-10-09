@@ -52,6 +52,9 @@ class FileDatabaseRepo(FileRepo):
             path=path, filename=_name(path), size=size_bytes, downloaded_bytes=size_bytes
         )
 
+    async def rename_single(self, download_id: uuid.UUID, path: str) -> None:
+        await File.filter(download_id=download_id, index=0).update(path=path, filename=_name(path))
+
     async def get(self, download_id: uuid.UUID, index: int) -> File | None:
         return await File.filter(download_id=download_id, index=index).first()
 

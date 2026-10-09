@@ -120,6 +120,11 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
+        """Point one download at a category; ``folder`` is written only when given."""
+        ...
+
+    @abstractmethod
     async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:
         """These downloads with ``RELATED`` loaded, in the order asked."""
         ...

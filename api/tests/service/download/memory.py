@@ -140,6 +140,11 @@ class MemoryFiles:
             self.by_download.setdefault(download_id, []).append(found)
         found.path, found.size, found.downloaded_bytes = path, size_bytes, size_bytes
 
+    async def rename_single(self, download_id: uuid.UUID, path: str) -> None:
+        found = await self.single(download_id)
+        if found is not None:
+            found.path, found.filename = path, path.rsplit("/", 1)[-1]
+
     async def get(self, download_id: uuid.UUID, index: int) -> SimpleNamespace | None:
         return next((f for f in self.by_download.get(download_id, []) if f.index == index), None)
 
