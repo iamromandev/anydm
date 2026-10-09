@@ -16,6 +16,8 @@ export interface TopToolbarProps {
     sort: SortValue;
     onSortChange: (sort: SortValue) => void;
     onAddClick: () => void;
+    /** Open the dialog for adding many links at once. */
+    onAddManyClick: () => void;
     onSettingsClick: () => void;
     sidebarOpen: boolean;
     onSidebarToggle: () => void;
@@ -28,6 +30,7 @@ export const TopToolbar = component$<TopToolbarProps>(
         sort,
         onSortChange,
         onAddClick,
+        onAddManyClick,
         onSettingsClick,
         sidebarOpen,
         onSidebarToggle,
@@ -150,9 +153,14 @@ export const TopToolbar = component$<TopToolbarProps>(
                             <div
                                 class="toolbar-dropdown-menu"
                                 role="menu"
-                                onClick$={() => {
+                                onClick$={(event) => {
                                     store.addMenuOpen = false;
-                                    onAddClick();
+                                    // Every item but Add many opens the add dialog.
+                                    const many = (
+                                        event.target as Element
+                                    ).closest("[data-add-many]");
+                                    if (many) onAddManyClick();
+                                    else onAddClick();
                                 }}
                             >
                                 <button
@@ -218,6 +226,40 @@ export const TopToolbar = component$<TopToolbarProps>(
                                         <path d="M12 2a20 20 0 0 1 4 10 20 20 0 0 1-4 10 20 20 0 0 1-4-10 20 20 0 0 1 4-10z" />
                                     </svg>
                                     <span>Link (any site or file)</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="dropdown-item"
+                                    role="menuitem"
+                                    data-add-many
+                                >
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        aria-hidden="true"
+                                    >
+                                        <line x1="8" y1="6" x2="21" y2="6" />
+                                        <line x1="8" y1="12" x2="21" y2="12" />
+                                        <line x1="8" y1="18" x2="21" y2="18" />
+                                        <line x1="3" y1="6" x2="3.01" y2="6" />
+                                        <line
+                                            x1="3"
+                                            y1="12"
+                                            x2="3.01"
+                                            y2="12"
+                                        />
+                                        <line
+                                            x1="3"
+                                            y1="18"
+                                            x2="3.01"
+                                            y2="18"
+                                        />
+                                    </svg>
+                                    <span>Add many…</span>
                                 </button>
                             </div>
                         )}

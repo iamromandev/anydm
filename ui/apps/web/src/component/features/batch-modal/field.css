@@ -1,0 +1,258 @@
+.batch-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    z-index: 50;
+}
+
+.batch-modal-panel {
+    background: var(--color-card);
+    color: var(--color-foreground);
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 34rem;
+    max-height: calc(100vh - 2rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.batch-modal-header {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.batch-modal-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.batch-modal-close {
+    margin-left: auto;
+    border: none;
+    background: transparent;
+    color: var(--color-foreground);
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+.batch-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem 1rem 0;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.batch-modal-tabs {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.batch-modal-tab {
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.3rem 0.9rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+}
+
+.batch-modal-tab--active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+}
+
+.batch-modal-input {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.5rem 0.6rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+}
+
+.batch-modal-textarea {
+    resize: vertical;
+    min-height: 8rem;
+    white-space: pre;
+    overflow-x: auto;
+}
+
+.batch-modal-hint,
+.batch-modal-note {
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+    margin: 0;
+}
+
+.batch-modal-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-height: 2.5rem;
+}
+
+.batch-modal-count {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.batch-modal-head,
+.batch-modal-results {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.batch-modal-url {
+    font-size: 0.8125rem;
+    overflow-wrap: anywhere;
+}
+
+.batch-modal-error {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
+    font-size: 0.8125rem;
+}
+
+.batch-modal-summary {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.batch-modal-results {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-border);
+}
+
+.batch-modal-result {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 44px;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.batch-modal-result-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.batch-modal-message {
+    font-size: 0.75rem;
+    color: var(--color-error);
+    overflow-wrap: anywhere;
+}
+
+.batch-modal-chip {
+    flex: none;
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+}
+
+.batch-modal-chip--added {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+.batch-modal-chip--duplicate {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+}
+
+.batch-modal-chip--error {
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
+}
+
+.batch-modal-link {
+    flex: none;
+    border: none;
+    background: transparent;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 2.25rem;
+    padding: 0 0.5rem;
+}
+
+.batch-modal-actions {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: flex-end;
+    margin: 0 -1rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-card);
+}
+
+.batch-modal-select {
+    margin-right: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.4rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+.batch-modal-btn {
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.45rem 0.8rem;
+    min-height: 2.5rem;
+    cursor: pointer;
+}
+
+.batch-modal-btn--primary {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+}
+
+.batch-modal-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.batch-modal-btn:focus-visible,
+.batch-modal-close:focus-visible,
+.batch-modal-tab:focus-visible,
+.batch-modal-link:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}

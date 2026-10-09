@@ -1,6 +1,7 @@
 import {
     component$,
     $,
+    sync$,
     useStore,
     useSignal,
     useVisibleTask$,
@@ -36,6 +37,7 @@ import {
     type Duplicate,
 } from "@/lib/api/duplicate";
 import { DuplicateNotice } from "@/component/features/duplicate-notice";
+import { looksLikeMany } from "@/lib/api/batch";
 import { detectKind, isPlayableKind } from "./kind";
 import type { InputKind } from "./kind";
 import { PRESET_OPTIONS } from "@/lib/prefs";
@@ -53,6 +55,8 @@ export interface HeroInputProps {
     onSubmit: (input: AddInput) => void | Promise<void>;
     /** Show a download the list already holds, from a refused add. */
     onOpen?: (id: string, collectionId?: string) => void;
+    /** Several links pasted at once: they go to the dialog for adding many. */
+    onMany?: (text: string) => void;
     onPlay?: (value: string, kind: string) => void | Promise<void>;
     /** Open the picker on a playlist, or on one of a channel's tabs. */
     onChoose?: (target: PickerTarget) => void;
@@ -73,6 +77,7 @@ export const HeroInput = component$<HeroInputProps>(
         defaultPreset,
         onSubmit,
         onOpen,
+        onMany,
         onPlay,
         onChoose,
         compact = false,
@@ -380,6 +385,35 @@ export const HeroInput = component$<HeroInputProps>(
                         onInput$={(e: Event) => {
                             updateValue((e.target as HTMLInputElement).value);
                         }}
+                        onPaste$={[
+                            // Synchronous, so the paste can still be stopped:
+                            // a one-line field would flatten several links
+                            // into one. The text is left on the element for
+                            // the handler below, which may load later.
+                            sync$(
+                                (
+                                    event: ClipboardEvent,
+                                    el: HTMLInputElement,
+                                ) => {
+                                    const text =
+                                        event.clipboardData?.getData("text") ??
+                                        "";
+                                    if (!/[\r\n]/.test(text.trim())) return;
+                                    event.preventDefault();
+                                    el.dataset.pasted = text;
+                                },
+                            ),
+                            $((_: ClipboardEvent, el: HTMLInputElement) => {
+                                const text = el.dataset.pasted;
+                                if (text === undefined) return;
+                                delete el.dataset.pasted;
+                                if (looksLikeMany(text) && onMany) {
+                                    onMany(text);
+                                } else {
+                                    updateValue(text.trim());
+                                }
+                            }),
+                        ]}
                         onKeyDown$={(e: KeyboardEvent) => {
                             if (e.key === "Enter" && !siteBlocked)
                                 handleSubmit();
