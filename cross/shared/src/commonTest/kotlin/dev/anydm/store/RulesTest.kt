@@ -1,5 +1,8 @@
 package dev.anydm.store
 
+import dev.anydm.model.CategoryDto
+import dev.anydm.model.CategoryRefDto
+import dev.anydm.model.DOWNLOADS_CATEGORY_ID
 import dev.anydm.model.EntryCounts
 import dev.anydm.model.FileProgressDto
 import dev.anydm.model.LiveDto
@@ -11,10 +14,13 @@ import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus.CANCELLED
 import dev.anydm.model.TaskStatus.COMPLETED
 import dev.anydm.model.TaskStatus.DOWNLOADING
+import dev.anydm.model.TaskStatus.MUXING
 import dev.anydm.model.TaskStatus.PAUSED
 import dev.anydm.model.TaskStatus.PENDING
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class RulesTest {
     private fun ids(rows: List<Task>) = rows.map { it.id }
@@ -121,5 +127,31 @@ class RulesTest {
                 ?.single()
                 ?.positionSeconds,
         )
+    }
+
+    @Test
+    fun `no category filter shows every row and one shows only its own`() {
+        val music = task("a").copy(category = CategoryRefDto("c1", "Music"))
+        assertTrue(inCategory(music, null))
+        assertTrue(inCategory(music, "c1"))
+        assertFalse(inCategory(music, "c2"))
+        assertFalse(inCategory(task("b").copy(category = null), "c1"))
+    }
+
+    @Test
+    fun `torrents, group videos and running downloads can't be moved`() {
+        assertTrue(canMoveCategory(task("a", status = COMPLETED)))
+        assertFalse(canMoveCategory(task("a", kind = TaskKind.TORRENT, status = COMPLETED)))
+        assertFalse(canMoveCategory(task("a", parentId = "g1", status = COMPLETED)))
+        assertFalse(canMoveCategory(task("a", status = DOWNLOADING)))
+        assertFalse(canMoveCategory(task("a", status = MUXING)))
+    }
+
+    @Test
+    fun `the remembered add category falls back to Downloads once it is gone`() {
+        val listed = listOf(CategoryDto(DOWNLOADS_CATEGORY_ID, "Downloads"), CategoryDto("c1", "Music"))
+        assertEquals("c1", chosenCategory("c1", listed))
+        assertEquals(DOWNLOADS_CATEGORY_ID, chosenCategory("gone", listed))
+        assertEquals(DOWNLOADS_CATEGORY_ID, chosenCategory(null, listed))
     }
 }

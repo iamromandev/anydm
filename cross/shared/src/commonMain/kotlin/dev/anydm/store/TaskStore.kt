@@ -85,6 +85,28 @@ class TaskStore(
         scope.launch { loadPage(1) }
     }
 
+    /** Only the rows of one category, or every row for null. The counts follow it, unlike the status filter's. */
+    fun setCategoryFilter(id: String?) {
+        mutableState.update { it.copy(categoryFilter = id, page = 1, totalPages = 1) }
+        scope.launch {
+            loadPage(1)
+            loadSummary()
+        }
+    }
+
+    fun setAddCategory(id: String) {
+        mutableState.update { it.copy(addCategory = id) }
+    }
+
+    suspend fun moveToCategory(
+        id: String,
+        categoryId: String,
+    ): Boolean =
+        act {
+            merge(listOf(api.moveToCategory(id, isCollection(id), categoryId).toTask()))
+            refreshCounts()
+        }
+
     /** Open a group: fetch its videos; frames keep them current until [collapse]. */
     fun expand(id: String) {
         scope.launch { loadEntries(id) }
@@ -143,11 +165,15 @@ class TaskStore(
         preferredPreset: String,
         allowDuplicate: Boolean = false,
     ): Boolean =
-        actOrHeld(link) { merge(listOf(api.addLink(link, preferredPreset, allowDuplicate).toTask())) }.also { if (it) loadSummary() }
+        actOrHeld(link) {
+            merge(listOf(api.addLink(link, preferredPreset, allowDuplicate, state.value.addCategory).toTask()))
+        }.also { if (it) loadSummary() }
 
     /** A torrent the list already holds is [StoreEvent.Duplicated] with no link: it can be opened, not added again. */
     suspend fun addTorrent(torrent: String): Boolean =
-        actOrHeld(null) { merge(listOf(api.addTorrent(torrent).toTask())) }.also { if (it) loadSummary() }
+        actOrHeld(null) {
+            merge(listOf(api.addTorrent(torrent, categoryId = state.value.addCategory).toTask()))
+        }.also { if (it) loadSummary() }
 
     /**
      * Show a download the list already holds: every download, with its row loaded, fetched on its own
@@ -158,7 +184,7 @@ class TaskStore(
         id: String,
         collectionId: String? = null,
     ): Boolean {
-        mutableState.update { it.copy(filter = ListFilter.ALL, page = 1, totalPages = 1) }
+        mutableState.update { it.copy(filter = ListFilter.ALL, categoryFilter = null, page = 1, totalPages = 1) }
         loadPage(1)
         val rowId = collectionId ?: id
         if (state.value.tasks.none { it.id == rowId }) {
@@ -244,7 +270,7 @@ class TaskStore(
     }
 
     private suspend fun loadSummary() {
-        read { api.summary() }?.let { summary -> mutableState.update { it.copy(summary = summary) } }
+        read { api.summary(state.value.categoryFilter) }?.let { summary -> mutableState.update { it.copy(summary = summary) } }
     }
 
     /**
@@ -254,7 +280,7 @@ class TaskStore(
     private suspend fun loadPage(page: Int) {
         val since = seq
         val current = state.value
-        val result = read { api.listTasks(page, PAGE_SIZE, current.filter.wire, current.sort) } ?: return
+        val result = read { api.listTasks(page, PAGE_SIZE, current.filter.wire, current.sort, current.categoryFilter) } ?: return
         val fresh = result.items.map { it.toTask() }
         val stale = touched.filterValues { it > since }.keys
         // Read and written with no suspension between: the store runs on one thread, so no

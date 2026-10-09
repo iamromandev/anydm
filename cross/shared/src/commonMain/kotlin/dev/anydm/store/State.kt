@@ -1,6 +1,7 @@
 package dev.anydm.store
 
 import dev.anydm.api.Duplicate
+import dev.anydm.model.DOWNLOADS_CATEGORY_ID
 import dev.anydm.model.DiskDto
 import dev.anydm.model.SummaryDto
 import dev.anydm.model.Task
@@ -85,6 +86,10 @@ data class ListState(
     val loadingMore: Boolean = false,
     /** The videos of each group that's open, by group id, in playlist order. */
     val entries: Map<String, List<Task>> = emptyMap(),
+    /** The sidebar's category filter: an id, or null for every category. */
+    val categoryFilter: String? = null,
+    /** Where new links save. */
+    val addCategory: String = DOWNLOADS_CATEGORY_ID,
 )
 
 /** One-off things the UI shows once: a notice, a refused duplicate, or being signed out by a 401. */

@@ -503,4 +503,49 @@ class TaskStoreTest {
             store.collapse("g")
             assertEquals(emptyMap(), store.state.value.entries)
         }
+
+    @Test
+    fun `a category filter reloads the page and the counts with it`() =
+        runTest {
+            val store = store()
+            store.setCategoryFilter("c1")
+            runCurrent()
+            assertEquals("c1", api.categoryFilters.last())
+            assertEquals("c1", api.summaryFilters.last())
+            store.setCategoryFilter(null)
+            runCurrent()
+            assertEquals(null, api.categoryFilters.last())
+        }
+
+    @Test
+    fun `adds go to the add category`() =
+        runTest {
+            val store = store()
+            store.setAddCategory("c1")
+            store.add("https://x/a.iso", "best")
+            assertEquals("c1", api.addedCategories.last())
+        }
+
+    @Test
+    fun `a move merges the moved row and a refusal is said`() =
+        runTest {
+            val store = store()
+            assertTrue(store.moveToCategory("a", "c1"))
+            assertEquals(Triple("a", false, "c1"), api.moved.last())
+            api.failWith = ApiException("A torrent stays in the category it was added to", 422, null)
+            assertFalse(store.moveToCategory("a", "c1"))
+            assertTrue(said("A torrent stays in the category it was added to"))
+        }
+
+    @Test
+    fun `reveal clears the category filter too`() =
+        runTest {
+            val store = store()
+            store.setCategoryFilter("c1")
+            runCurrent()
+            api.rows["a"] = dto("a")
+            store.reveal("a")
+            runCurrent()
+            assertEquals(null, store.state.value.categoryFilter)
+        }
 }
