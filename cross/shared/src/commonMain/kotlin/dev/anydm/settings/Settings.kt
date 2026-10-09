@@ -27,4 +27,6 @@ data class Settings(
     val defaultPreset: String = "best",
     val confirmBeforeRemove: Boolean = true,
     val player: Player = Player.System,
+    /** The category new links save in, as last chosen; null until one is. */
+    val addCategoryId: String? = null,
 )

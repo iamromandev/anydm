@@ -76,12 +76,15 @@ class BatchStore(
     }
 
     /** True once the batch landed; its results are then in [state]. */
-    suspend fun add(preset: String): Boolean {
+    suspend fun add(
+        preset: String,
+        categoryId: String? = null,
+    ): Boolean {
         val asked = state.value
         if (!asked.canAdd) return false
         mutableState.update { it.copy(adding = true, addError = null) }
         return try {
-            val items = api.addBatch(asked.kind, asked.text, preset).map { it.toItem() }
+            val items = api.addBatch(asked.kind, asked.text, preset, categoryId).map { it.toItem() }
             mutableState.update { it.copy(adding = false, results = items) }
             onAdded()
             true

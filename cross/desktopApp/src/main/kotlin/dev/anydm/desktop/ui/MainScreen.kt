@@ -72,10 +72,12 @@ import dev.anydm.model.TaskStatus
 import dev.anydm.settings.SettingsStore
 import dev.anydm.store.BatchStore
 import dev.anydm.store.BulkAction
+import dev.anydm.store.CategoryStore
 import dev.anydm.store.SearchStore
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
 import dev.anydm.store.Tone
+import dev.anydm.store.chosenCategory
 import dev.anydm.store.looksLikeMany
 import dev.anydm.store.removePrompt
 import kotlinx.coroutines.delay
@@ -103,6 +105,7 @@ fun MainScreen(
     store: TaskStore,
     search: SearchStore,
     batches: BatchApi,
+    categories: CategoryStore,
     settings: SettingsStore,
     fileUrl: (String, Int?) -> String,
     commands: Flow<Command> = emptyFlow(),
@@ -110,6 +113,19 @@ fun MainScreen(
 ) {
     val state by store.state.collectAsState()
     val prefs by settings.settings.collectAsState()
+    val categoryState by categories.state.collectAsState()
+    LaunchedEffect(categories) { categories.load() }
+    // The saved choice wins while its category exists; the store's add category follows it.
+    LaunchedEffect(categoryState.categories, prefs.addCategoryId) {
+        store.setAddCategory(chosenCategory(prefs.addCategoryId, categoryState.categories))
+    }
+    // A filter on a category that was just deleted would show nothing, so it goes back to every row.
+    LaunchedEffect(categoryState.loaded, categoryState.categories, state.categoryFilter) {
+        val filter = state.categoryFilter
+        if (categoryState.loaded && filter != null && categoryState.categories.none { it.id == filter }) store.setCategoryFilter(null)
+    }
+    var moving by remember { mutableStateOf<Task?>(null) }
+    var managingCategories by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val banners = remember { BannerQueue(System::currentTimeMillis) }
     var link by remember { mutableStateOf("") }
@@ -167,7 +183,7 @@ fun MainScreen(
     }
 
     // Read fresh each time: commands arrive from a flow collected once.
-    fun order() = visibleOrder(state.tasks, state.entries, state.filter)
+    fun order() = visibleOrder(state.tasks, state.entries, state.filter, state.categoryFilter)
 
     fun chosen(): List<Task> {
         val byId = (state.tasks + state.entries.values.flatten()).associateBy { it.id }
@@ -316,6 +332,10 @@ fun MainScreen(
                 copyText(task.url)
             }
 
+            CardAction.MOVE_CATEGORY -> {
+                moving = task
+            }
+
             CardAction.REMOVE -> {
                 remove(listOf(task))
             }
@@ -327,6 +347,11 @@ fun MainScreen(
         task: Task,
         action: CardAction,
     ) {
+        // A move is one row's dialog: its menu offers it on the row clicked, never on a selection.
+        if (action == CardAction.MOVE_CATEGORY) {
+            act(task, action)
+            return
+        }
         val targets = if (task.id in selection.ids) chosen() else listOf(task)
         if (action == CardAction.REMOVE) {
             remove(targets.filter { CardAction.REMOVE in rowView(it, now).menu })
@@ -467,6 +492,9 @@ fun MainScreen(
                     onTorrent = ::chooseTorrent,
                     onSettings = { showSettings = true },
                     onLinkFocus = { linkFocused = it },
+                    categories = categoryState.categories,
+                    addCategory = state.addCategory,
+                    onAddCategory = { id -> settings.update { it.copy(addCategoryId = id) } },
                 )
                 duplicate?.let { held ->
                     DuplicateStrip(
@@ -494,6 +522,12 @@ fun MainScreen(
                         showSearch = searchAvailable,
                         searchSelected = view == MainView.SEARCH,
                         onSearch = ::openSearch,
+                        categories = categoryState.categories,
+                        categoryFilter = state.categoryFilter,
+                        onSelectCategory = { id ->
+                            view = MainView.LIST
+                            store.setCategoryFilter(id)
+                        },
                     )
                     if (view == MainView.SEARCH) {
                         Box(Modifier.weight(1f)) {
@@ -539,6 +573,7 @@ fun MainScreen(
                                     keys.requestFocus()
                                 },
                                 onAction = ::actOn,
+                                categoryFilter = state.categoryFilter,
                             )
                         }
                     }
@@ -557,7 +592,20 @@ fun MainScreen(
                 scope.launch { gone.forEach { store.remove(it.id, deleteFiles) } }
             }
         }
-        if (showSettings) SettingsWindow(settings, onChangeServer = onSignOut) { showSettings = false }
+        moving?.let { task ->
+            CategoryPickerDialog(task, categoryState.categories, onCancel = { moving = null }) { categoryId ->
+                moving = null
+                scope.launch { if (store.moveToCategory(task.id, categoryId)) categories.load() }
+            }
+        }
+        if (showSettings) {
+            SettingsWindow(settings, onChangeServer = onSignOut, onManageCategories = { managingCategories = true }) {
+                showSettings = false
+            }
+        }
+        if (managingCategories) {
+            CategoriesWindow(categories) { managingCategories = false }
+        }
         if (clearing) {
             ClearFinishedDialog(onCancel = { clearing = false }) {
                 clearing = false
@@ -569,9 +617,10 @@ fun MainScreen(
             BatchDialog(
                 state = batchState,
                 presetLabel = PRESET_OPTIONS.firstOrNull { it.first == prefs.defaultPreset }?.second ?: prefs.defaultPreset,
+                categoryLabel = categoryState.categories.firstOrNull { it.id == state.addCategory }?.name ?: "Downloads",
                 onKind = open::setKind,
                 onText = open::setText,
-                onAdd = { scope.launch { open.add(prefs.defaultPreset) } },
+                onAdd = { scope.launch { open.add(prefs.defaultPreset, state.addCategory) } },
                 onOpen = { id -> openRow(id) },
                 onStartOver = open::startOver,
                 onClose = { batch = null },

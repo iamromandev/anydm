@@ -11,9 +11,10 @@ interface TaskApi {
         pageSize: Int,
         group: String = "all",
         sort: String = "-created_at",
+        categoryFilter: String? = null,
     ): Page<TaskDto>
 
-    suspend fun summary(): SummaryDto
+    suspend fun summary(categoryFilter: String? = null): SummaryDto
 
     /** A collection's videos, in listing order. */
     suspend fun entries(id: String): List<TaskDto>
@@ -25,6 +26,7 @@ interface TaskApi {
         url: String,
         preferred: String,
         allowDuplicate: Boolean = false,
+        categoryId: String? = null,
     ): TaskDto
 
     /** One download, by id: a row the loaded page doesn't hold. */
@@ -36,6 +38,14 @@ interface TaskApi {
     suspend fun addTorrent(
         torrent: String,
         files: List<Int> = emptyList(),
+        categoryId: String? = null,
+    ): TaskDto
+
+    /** Moves a download, or a collection and its videos, to another category. */
+    suspend fun moveToCategory(
+        id: String,
+        collection: Boolean,
+        categoryId: String,
     ): TaskDto
 
     /** [collection] for a playlist row: a collection has its own routes. */

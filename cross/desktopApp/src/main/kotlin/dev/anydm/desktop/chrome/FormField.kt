@@ -38,6 +38,7 @@ fun FormField(
     secret: Boolean = false,
     placeholder: String = "",
     onSubmit: () -> Unit = {},
+    enabled: Boolean = true,
 ) {
     val t = LocalTokens.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -55,6 +56,7 @@ fun FormField(
             BasicTextField(
                 value,
                 onValue,
+                enabled = enabled,
                 singleLine = true,
                 textStyle = TextStyle(fontSize = 13.sp, color = t.text),
                 cursorBrush = SolidColor(t.accent),

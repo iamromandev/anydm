@@ -18,6 +18,7 @@ import dev.anydm.desktop.ui.CardAction
 import dev.anydm.desktop.ui.rowView
 import dev.anydm.model.Task
 import dev.anydm.store.ListFilter
+import dev.anydm.store.inCategory
 import dev.anydm.store.matches
 
 fun emptyText(filter: ListFilter): String =
@@ -55,15 +56,17 @@ fun DownloadList(
     lead: String? = null,
     onPress: (String, Gesture) -> Unit = { _, _ -> },
     onAction: (Task, CardAction) -> Unit,
+    categoryFilter: String? = null,
 ) {
     val t = LocalTokens.current
-    val shown = tasks.filter { filter.matches(it) }
+    // Frames arrive for every row, so the category is checked here as the status filter is.
+    val shown = tasks.filter { filter.matches(it) && inCategory(it, categoryFilter) }
     if (shown.isEmpty()) {
         EmptyState(emptyText(filter))
         return
     }
     val state = rememberLazyListState()
-    val order = visibleOrder(tasks, entries, filter)
+    val order = visibleOrder(tasks, entries, filter, categoryFilter)
     LaunchedEffect(lead) {
         val index = lead?.let(order::indexOf)?.takeIf { it >= 0 } ?: return@LaunchedEffect
         val visible = state.layoutInfo.visibleItemsInfo.map { it.index }

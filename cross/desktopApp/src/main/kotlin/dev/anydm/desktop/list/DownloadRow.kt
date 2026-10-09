@@ -81,6 +81,7 @@ fun glyphOf(action: CardAction): ImageVector =
         CardAction.SAVE -> Glyphs.Save
         CardAction.STOP_SEEDING, CardAction.REMOVE -> Glyphs.Remove
         CardAction.COPY_LINK -> Glyphs.Add
+        CardAction.MOVE_CATEGORY -> Glyphs.Move
     }
 
 /**

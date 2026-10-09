@@ -22,6 +22,7 @@ import kotlin.test.assertTrue
 private class FakeBatchApi : BatchApi {
     val previews = mutableListOf<Pair<BatchKind, String>>()
     val adds = mutableListOf<Triple<BatchKind, String, String>>()
+    val addedCategories = mutableListOf<String?>()
     var gate: CompletableDeferred<Unit>? = null
     var previewFails: ApiException? = null
     var addFails: ApiException? = null
@@ -47,8 +48,10 @@ private class FakeBatchApi : BatchApi {
         kind: BatchKind,
         text: String,
         preset: String,
+        categoryId: String?,
     ): List<BatchItemDto> {
         adds += Triple(kind, text, preset)
+        addedCategories += categoryId
         addFails?.let { throw it }
         return items
     }

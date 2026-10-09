@@ -116,4 +116,13 @@ class RowViewTest {
         assertEquals(cardView(group, 0).detail, row.detail)
         assertEquals(38f / 96, row.progress)
     }
+
+    @Test
+    fun `a finished file can move to a category, a torrent can't`() {
+        val file = task("completed")
+        assertEquals(true, CardAction.MOVE_CATEGORY in rowView(file, 0).menu)
+        assertEquals(CardAction.REMOVE, rowView(file, 0).menu.last())
+        val torrent = task("seeding", kind = "torrent", url = "magnet:?xt=urn:btih:abc")
+        assertEquals(false, CardAction.MOVE_CATEGORY in rowView(torrent, 0).menu)
+    }
 }

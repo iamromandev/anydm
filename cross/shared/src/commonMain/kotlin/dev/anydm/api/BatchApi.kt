@@ -17,5 +17,6 @@ interface BatchApi {
         kind: BatchKind,
         text: String,
         preset: String,
+        categoryId: String? = null,
     ): List<BatchItemDto>
 }

@@ -5,6 +5,8 @@ import dev.anydm.model.BatchItemDto
 import dev.anydm.model.BatchKind
 import dev.anydm.model.BatchPreview
 import dev.anydm.model.BulkResultDto
+import dev.anydm.model.CategoryDto
+import dev.anydm.model.CategoryListDto
 import dev.anydm.model.ExtractMediaDto
 import dev.anydm.model.FetchedDto
 import dev.anydm.model.PageMetaDto
@@ -70,7 +72,8 @@ class AnydmApi(
     engine: HttpClientEngine,
 ) : TaskApi,
     SearchApi,
-    BatchApi {
+    BatchApi,
+    CategoryApi {
     private val config = config.normalized()
     private val client =
         HttpClient(engine) {
@@ -83,17 +86,32 @@ class AnydmApi(
         pageSize: Int,
         group: String,
         sort: String,
+        categoryFilter: String?,
     ): Page<TaskDto> {
         val envelope =
             call(
                 HttpMethod.Get,
                 listOf("download"),
-                query = mapOf("page" to page, "page_size" to pageSize, "group" to group, "sort" to sort),
+                query =
+                    buildMap {
+                        put("page", page)
+                        put("page_size", pageSize)
+                        put("group", group)
+                        put("sort", sort)
+                        categoryFilter?.let { put("category", it) }
+                    },
             )
         return Page(decode(envelope.data), envelope.meta ?: PageMetaDto())
     }
 
-    override suspend fun summary(): SummaryDto = decode(call(HttpMethod.Get, listOf("download", "summary")).data)
+    override suspend fun summary(categoryFilter: String?): SummaryDto =
+        decode(
+            call(
+                HttpMethod.Get,
+                listOf("download", "summary"),
+                query = buildMap { categoryFilter?.let { put("category", it) } },
+            ).data,
+        )
 
     override suspend fun entries(id: String): List<TaskDto> = decode(call(HttpMethod.Get, listOf("collection", id, "downloads")).data)
 
@@ -121,12 +139,13 @@ class AnydmApi(
         kind: BatchKind,
         text: String,
         preset: String,
+        categoryId: String?,
     ): List<BatchItemDto> =
         decode(
             call(
                 HttpMethod.Post,
                 listOf("download", "batch"),
-                body = JsonObject(batchBody(kind, text) + ("preset" to JsonPrimitive(preset))),
+                body = withCategory(JsonObject(batchBody(kind, text) + ("preset" to JsonPrimitive(preset))), categoryId),
             ).data,
         )
 
@@ -148,19 +167,28 @@ class AnydmApi(
         url: String,
         preset: String,
         allowDuplicate: Boolean = false,
+        categoryId: String? = null,
     ): TaskDto =
         decode(
             call(
                 HttpMethod.Post,
                 listOf("download", "media"),
-                body = withDuplicate(obj("url" to url, "preset" to preset), allowDuplicate),
+                body = withCategory(withDuplicate(obj("url" to url, "preset" to preset), allowDuplicate), categoryId),
             ).data,
         )
 
     suspend fun addUrl(
         url: String,
         allowDuplicate: Boolean = false,
-    ): TaskDto = decode(call(HttpMethod.Post, listOf("download", "url"), body = withDuplicate(obj("url" to url), allowDuplicate)).data)
+        categoryId: String? = null,
+    ): TaskDto =
+        decode(
+            call(
+                HttpMethod.Post,
+                listOf("download", "url"),
+                body = withCategory(withDuplicate(obj("url" to url), allowDuplicate), categoryId),
+            ).data,
+        )
 
     /** The API holds a torrent once, so only a page or a file takes this. */
     private fun withDuplicate(
@@ -168,18 +196,69 @@ class AnydmApi(
         allowDuplicate: Boolean,
     ): JsonObject = if (allowDuplicate) JsonObject(body + ("allow_duplicate" to JsonPrimitive(true))) else body
 
+    /** Sent last, so the bodies a test compares keep their order: `category_id` is the final key. */
+    private fun withCategory(
+        body: JsonObject,
+        categoryId: String?,
+    ): JsonObject = if (categoryId != null) JsonObject(body + ("category_id" to JsonPrimitive(categoryId))) else body
+
     /** A magnet link, or a `.torrent` file base64-encoded. An empty list takes every file. */
     override suspend fun addTorrent(
         torrent: String,
         files: List<Int>,
+        categoryId: String?,
     ): TaskDto =
         decode(
             call(
                 HttpMethod.Post,
                 listOf("download", "torrent"),
-                body = JsonObject(mapOf("torrent" to JsonPrimitive(torrent), "files" to JsonArray(files.map { JsonPrimitive(it) }))),
+                body =
+                    withCategory(
+                        JsonObject(mapOf("torrent" to JsonPrimitive(torrent), "files" to JsonArray(files.map { JsonPrimitive(it) }))),
+                        categoryId,
+                    ),
             ).data,
         )
+
+    override suspend fun moveToCategory(
+        id: String,
+        collection: Boolean,
+        categoryId: String,
+    ): TaskDto = decode(call(HttpMethod.Put, listOf(owner(collection), id, "category"), body = obj("category_id" to categoryId)).data)
+
+    override suspend fun listCategories(): List<CategoryDto> =
+        decode<CategoryListDto>(call(HttpMethod.Get, listOf("category")).data).categories
+
+    override suspend fun createCategory(
+        name: String,
+        folder: String,
+    ): CategoryDto = decode(call(HttpMethod.Post, listOf("category"), body = obj("name" to name, "folder" to folder)).data)
+
+    override suspend fun updateCategory(
+        id: String,
+        name: String?,
+        folder: String?,
+    ): CategoryDto {
+        val fields =
+            buildMap<String, JsonElement> {
+                name?.let { put("name", JsonPrimitive(it)) }
+                folder?.let { put("folder", JsonPrimitive(it)) }
+            }
+        return decode(call(HttpMethod.Patch, listOf("category", id), body = JsonObject(fields)).data)
+    }
+
+    override suspend fun orderCategories(ids: List<String>): List<CategoryDto> =
+        decode<CategoryListDto>(
+            call(
+                HttpMethod.Post,
+                listOf("category", "order"),
+                body = JsonObject(mapOf("ids" to JsonArray(ids.map { JsonPrimitive(it) }))),
+            ).data,
+        ).categories
+
+    override suspend fun deleteCategory(id: String) {
+        call(HttpMethod.Delete, listOf("category", id))
+    }
 
     /**
      * A link nobody has looked at yet, routed as the web's `addLink` does: a page is downloaded at
@@ -190,12 +269,13 @@ class AnydmApi(
         url: String,
         preferred: String,
         allowDuplicate: Boolean,
+        categoryId: String?,
     ): TaskDto {
         val found =
             try {
                 extract(url)
             } catch (error: ApiException) {
-                if (error.type == "unsupported_url") return addUrl(url, allowDuplicate)
+                if (error.type == "unsupported_url") return addUrl(url, allowDuplicate, categoryId)
                 throw error
             }
         return when (found) {
@@ -207,7 +287,7 @@ class AnydmApi(
                 val preset =
                     choosePreset(found.media.presets, preferred)
                         ?: throw ApiException("Nothing on this page can be downloaded yet", null, null)
-                addMedia(url, preset, allowDuplicate)
+                addMedia(url, preset, allowDuplicate, categoryId)
             }
         }
     }

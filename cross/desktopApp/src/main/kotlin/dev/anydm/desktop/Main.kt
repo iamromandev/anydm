@@ -138,6 +138,7 @@ fun main() {
                                 screen.store,
                                 screen.search,
                                 screen.batches,
+                                screen.categories,
                                 model.settings,
                                 screen.fileUrl,
                                 commands = commands,

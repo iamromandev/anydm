@@ -10,6 +10,7 @@ import dev.anydm.api.createAnydmApi
 import dev.anydm.api.normalized
 import dev.anydm.desktop.ui.connectError
 import dev.anydm.settings.SettingsStore
+import dev.anydm.store.CategoryStore
 import dev.anydm.store.SearchStore
 import dev.anydm.store.StoreEvent
 import dev.anydm.store.TaskStore
@@ -32,6 +33,8 @@ sealed interface Screen {
         val search: SearchStore,
         /** What the Add many dialog asks of the API. */
         val batches: BatchApi,
+        /** The categories: the toolbar's menu, the sidebar's section, the move dialog and the Categories window. */
+        val categories: CategoryStore,
         val fileUrl: (String, Int?) -> String,
     ) : Screen
 }
@@ -88,7 +91,8 @@ class AppModel(
         store.start()
         val search = SearchStore(candidate, scope) { torrent -> store.addTorrent(torrent) }
         scope.launch { search.checkAvailable() }
-        screen = Screen.Main(store, search, candidate) { id, index -> candidate.fileUrl(id, index) }
+        val categories = CategoryStore(candidate)
+        screen = Screen.Main(store, search, candidate, categories) { id, index -> candidate.fileUrl(id, index) }
         // A 401 later, from the stream or an action, returns here with the key's message.
         watcher =
             scope.launch {

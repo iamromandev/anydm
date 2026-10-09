@@ -11,6 +11,7 @@ import dev.anydm.store.Connection
 import dev.anydm.store.RemovePrompt
 import dev.anydm.store.RetryTone
 import dev.anydm.store.RetryView
+import dev.anydm.store.canMoveCategory
 import dev.anydm.store.count
 import dev.anydm.store.retryLabel
 import java.util.Locale
@@ -86,7 +87,7 @@ val PRESET_OPTIONS =
 
 private fun presetLabel(preset: String?) = PRESET_OPTIONS.firstOrNull { it.first == preset }?.second ?: ""
 
-enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, PLAY, SAVE, COPY_LINK, REMOVE }
+enum class CardAction { PAUSE, RESUME, RETRY, STOP_SEEDING, PLAY, SAVE, COPY_LINK, MOVE_CATEGORY, REMOVE }
 
 /** Everything one card draws, decided here so it's tested without a window. */
 data class CardView(
@@ -217,6 +218,7 @@ private val ACTION_LABELS =
         CardAction.PLAY to "Open file",
         CardAction.SAVE to "Save to Downloads",
         CardAction.COPY_LINK to "Copy link",
+        CardAction.MOVE_CATEGORY to "Move to category…",
         CardAction.REMOVE to "Remove…",
     )
 
@@ -230,7 +232,9 @@ fun rowView(
     nowMillis: Long,
 ): RowView {
     val actions = actionsOf(task)
-    val menu = if (task.url.isNotBlank()) actions.dropLast(1) + CardAction.COPY_LINK + CardAction.REMOVE else actions
+    val base = if (task.url.isNotBlank()) actions.dropLast(1) + CardAction.COPY_LINK + CardAction.REMOVE else actions
+    // Before Remove, which every menu ends with.
+    val menu = if (canMoveCategory(task)) base.dropLast(1) + CardAction.MOVE_CATEGORY + CardAction.REMOVE else base
     val primary = actions.firstOrNull { it != CardAction.REMOVE && it != CardAction.STOP_SEEDING }
     val hover = listOfNotNull(primary, CardAction.REMOVE)
     val retry = retryLabel(task, nowMillis)

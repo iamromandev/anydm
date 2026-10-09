@@ -66,6 +66,7 @@ private val OUTCOME_LABEL =
 fun BatchDialog(
     state: BatchState,
     presetLabel: String,
+    categoryLabel: String = "Downloads",
     onKind: (BatchKind) -> Unit,
     onText: (String) -> Unit,
     onAdd: () -> Unit,
@@ -106,7 +107,7 @@ fun BatchDialog(
                         PushButton("Done", primary = true, onClick = onClose)
                     }
                 } else {
-                    Form(state, presetLabel, onKind, onText)
+                    Form(state, presetLabel, categoryLabel, onKind, onText)
                     Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                         PushButton("Cancel", enabled = !state.adding, onClick = onClose)
                         val count = state.preview?.count ?: 0
@@ -128,6 +129,7 @@ fun BatchDialog(
 private fun Form(
     state: BatchState,
     presetLabel: String,
+    categoryLabel: String,
     onKind: (BatchKind) -> Unit,
     onText: (String) -> Unit,
 ) {
@@ -166,6 +168,7 @@ private fun Form(
     }
     Preview(state)
     Text("Quality for links on a site: $presetLabel, from the toolbar", color = t.secondaryText, fontSize = 12.sp)
+    Text("Saves in: $categoryLabel, from the toolbar", color = t.secondaryText, fontSize = 12.sp)
     state.addError?.let { Text(it, color = t.error) }
 }
 

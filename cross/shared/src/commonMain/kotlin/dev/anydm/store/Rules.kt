@@ -1,7 +1,10 @@
 package dev.anydm.store
 
+import dev.anydm.model.CategoryDto
+import dev.anydm.model.DOWNLOADS_CATEGORY_ID
 import dev.anydm.model.ProgressDto
 import dev.anydm.model.Task
+import dev.anydm.model.TaskKind
 import dev.anydm.model.TaskStatus
 
 /**
@@ -73,6 +76,25 @@ fun applyProgress(
             )
         }
     }
+
+/** Whether a row belongs under the chosen category; no choice lets every row through. web: `inCategory`. */
+fun inCategory(
+    task: Task,
+    categoryId: String?,
+): Boolean = categoryId == null || task.category?.id == categoryId
+
+/** The API refuses the rest: a torrent stays where it was added, a group's video moves with its group, a running download waits. */
+fun canMoveCategory(task: Task): Boolean =
+    task.kind != TaskKind.TORRENT &&
+        task.parentId == null &&
+        task.status != TaskStatus.DOWNLOADING &&
+        task.status != TaskStatus.MUXING
+
+/** Where new links save: the remembered category while it exists, else Downloads. */
+fun chosenCategory(
+    remembered: String?,
+    categories: List<CategoryDto>,
+): String = remembered?.takeIf { id -> categories.any { it.id == id } } ?: DOWNLOADS_CATEGORY_ID
 
 /**
  * Rows from a frame, with what frames never carry kept from the held copies: playback
