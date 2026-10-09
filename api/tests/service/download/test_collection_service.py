@@ -9,12 +9,13 @@ from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code
 from src.data.schema.transfer import CollectionEntryRequest, CollectionRequest
-from src.data.type import DownloadStatus, MediaKind, Preset
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Preset
 from src.service.download.collection_service import CollectionService
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.live import LiveStats
 
+from tests.service.category.fake_category_repo import FakeCategoryRepo
 from tests.service.download.described_rows import a_site_row
 from tests.service.download.memory import RecordingHub, download_row, memory_views
 
@@ -54,6 +55,8 @@ class FakeCollections:
             id=uuid.uuid4(),
             created_at=None,
         )
+        self.collection.category_id = created["collection"].get("category_id", DOWNLOADS_ID)
+        self.collection.folder = created["collection"].get("folder")
         return self.collection
 
     async def add_entries(self, collection: Any, provider: str, entries: list[Any]) -> None:
@@ -106,7 +109,7 @@ def request(count: int = 3, *, channel_tab: bool = False, preset: Preset = Prese
     )
 
 
-def service(repo: FakeCollections, root: Path) -> CollectionService:
+def service(repo: FakeCollections, root: Path, categories: Any = None) -> CollectionService:
     hub, live = RecordingHub(), LiveStats()
     return CollectionService(
         repo=repo,  # ty: ignore[invalid-argument-type]
@@ -115,6 +118,7 @@ def service(repo: FakeCollections, root: Path) -> CollectionService:
         downloads_root=root,
         totals=CollectionTotals(repo, hub, live),  # ty: ignore[invalid-argument-type]
         views=memory_views(live=live),
+        categories=categories,
     )
 
 
@@ -128,6 +132,7 @@ def held_collection(repo: FakeCollections, root: Path) -> Any:
         id=uuid.uuid4(),
         created_at=None,
     )
+    repo.collection.category_id = DOWNLOADS_ID
     (root / "29C3_ Not my department [PL1]").mkdir()
     return repo.collection
 
@@ -144,7 +149,11 @@ async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp
         "Youtube",
         "https://www.youtube.com/playlist?list=PL1",
     )
-    assert repo.created["collection"] == {"status": DownloadStatus.PENDING}  # the folder is derived, never stored
+    assert repo.created["collection"] == {
+        "status": DownloadStatus.PENDING,
+        "category_id": DOWNLOADS_ID,
+        "folder": "29C3_ Not my department [PL1]",
+    }
     assert schema.folder == "29C3_ Not my department [PL1]"
     assert (tmp_path / "29C3_ Not my department [PL1]").is_dir()
     first = repo.entries[0]
@@ -334,3 +343,29 @@ async def test_a_channel_tab_s_folder_is_the_one_every_read_names(tmp_path: Path
 
     assert schema.folder == "TED [@TED]"
     assert (tmp_path / schema.folder).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_a_listing_added_to_a_category_lives_under_its_folder_and_its_videos_inherit_it(tmp_path: Path) -> None:
+    categories = FakeCategoryRepo()
+    music = categories.named("music")
+    repo = FakeCollections()
+
+    schema = await service(repo, tmp_path, categories).add(request(2).model_copy(update={"category_id": music.id}))
+
+    assert schema.folder == "music/29C3_ Not my department [PL1]"
+    assert (tmp_path / "music" / "29C3_ Not my department [PL1]").is_dir()
+    assert all(entry.download["category_id"] == music.id for entry in repo.entries)
+
+
+@pytest.mark.asyncio
+async def test_a_listing_added_again_saves_its_new_videos_in_the_collections_category(tmp_path: Path) -> None:
+    categories = FakeCategoryRepo()
+    music = categories.named("music")
+    repo = FakeCollections()
+    held_collection(repo, tmp_path)
+    repo.collection.category_id = music.id
+
+    await service(repo, tmp_path, categories).add(request(3))
+
+    assert repo.added and all(entry.download["category_id"] == music.id for entry in repo.added)

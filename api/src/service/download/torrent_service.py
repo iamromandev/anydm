@@ -20,6 +20,7 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
+from src.data.repo.category import CategoryRepo
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.schema.torrent import FileSchema, TorrentResolveResponse
@@ -30,8 +31,10 @@ from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sid
 from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
+from src.service.category.pick import pick_category
 from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
+from src.service.download.folders import inside
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
@@ -47,9 +50,9 @@ class TorrentService(BaseService):
         views: DownloadViews,
         live: LiveStats,
         downloads_root: Path,
-        torrent_root: Path,
         enabled: bool,
         disk: DiskGuard | None = None,
+        categories: CategoryRepo | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
@@ -59,7 +62,7 @@ class TorrentService(BaseService):
         self._views = views
         self._live = live
         self._downloads = downloads_root.resolve()
-        self._root = torrent_root
+        self._categories = categories
         self._enabled = enabled
         self._disk = disk
 
@@ -90,7 +93,9 @@ class TorrentService(BaseService):
             ],
         )
 
-    async def enqueue(self, raw: str, files: Sequence[int], *, allow_duplicate: bool = False) -> DownloadSchema:
+    async def enqueue(
+        self, raw: str, files: Sequence[int], *, allow_duplicate: bool = False, category_id: uuid.UUID | None = None
+    ) -> DownloadSchema:
         """Start a torrent and record it as a download.
 
         The engine is asked first. Its answer carries the info hash, the real
@@ -98,6 +103,7 @@ class TorrentService(BaseService):
         be a guess at all three.
         """
         self._require_enabled()
+        category = await pick_category(self._categories, category_id)
         if allow_duplicate:
             # The engine holds one torrent per info hash, so a second copy can't exist.
             raise Error.create(
@@ -123,10 +129,11 @@ class TorrentService(BaseService):
         if self._disk is not None:
             self._disk.require(total_bytes)
 
-        # A folder of its own: rqbit writes into exactly this folder, not one
-        # named after the torrent inside it (#107). Derived on read from the
-        # same rule, never stored.
-        folder = torrent_folder(self._root, details.name, details.info_hash)
+        # A folder of its own, under the category's: rqbit writes into exactly
+        # this folder, not one named after the torrent inside it (#107). Recorded
+        # on the row, so a later change to the category's folder can't lose it.
+        folder = torrent_folder(inside(self._downloads, category.folder), details.name, details.info_hash)
+        relative = folder.relative_to(self._downloads).as_posix()
         await self._client.add(
             source,
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
@@ -139,7 +146,7 @@ class TorrentService(BaseService):
             info_hash=details.info_hash,
             name=details.name,
             total_size=total_bytes,
-            download={"status": DownloadStatus.PENDING},
+            download={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": relative},
             files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
         return await self._published(download)
@@ -240,13 +247,14 @@ class TorrentService(BaseService):
         await self._published(download)
 
     def _folder(self, download: Any) -> Path:
-        """The torrent's folder on disk, derived from the same rule as at add time."""
-        described = describe(download)
-        return torrent_folder(self._root, described.title, described.info_hash or "")
+        """The torrent's folder on disk, as recorded when it was added (migration 0009 records the older ones)."""
+        if not download.folder:
+            raise Error.internal(message=f"Torrent {download.id} has no recorded folder")
+        return inside(self._downloads, download.folder)
 
     def _relative_folder(self, download: Any) -> str:
         """The torrent's folder relative to the download root, for its schema."""
-        return str(self._folder(download).resolve().relative_to(self._downloads))
+        return download.folder or ""
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.

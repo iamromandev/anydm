@@ -39,7 +39,7 @@ class StubDownloads:
         #: Each batch add: its lines, pattern, preset and whether duplicates were allowed.
         self.batches: list[tuple[Any, ...]] = []
 
-    async def enqueue_url(self, url: str, *, allow_duplicate: bool = False) -> DownloadSchema:
+    async def enqueue_url(self, url: str, *, allow_duplicate: bool = False, category_id: Any = None) -> DownloadSchema:
         self.added.append((url, allow_duplicate))
         if self.held is not None and not allow_duplicate:
             raise already_held(self.held)

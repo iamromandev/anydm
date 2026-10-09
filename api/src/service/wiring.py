@@ -141,6 +141,7 @@ def get_collection_service() -> CollectionService:
         totals=get_collection_totals(),
         views=get_download_views(),
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -162,6 +163,7 @@ def get_download_service() -> DownloadService:
         totals=get_collection_totals(),
         live=get_live_stats(),
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -195,9 +197,9 @@ def get_torrent_service() -> TorrentService:
         views=get_download_views(),
         live=get_live_stats(),
         downloads_root=Path(settings.download_dir),
-        torrent_root=Path(settings.torrent_dir).resolve(),
         enabled=settings.torrent_enabled,
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -217,7 +219,6 @@ def get_torrent_monitor() -> TorrentMonitor:
         enabled=settings.torrent_enabled,
         download_limit_bps=settings.torrent_download_limit_bps,
         upload_limit_bps=settings.torrent_upload_limit_bps,
-        torrent_root=Path(settings.torrent_dir).resolve(),
     )
 
 
@@ -317,7 +318,7 @@ def get_stream_service() -> StreamService:
         prober=partial(probe, timeout_s=settings.stream_probe_timeout_s),
         torrent_client=get_torrent_client(),
         download_repo=DownloadDatabaseRepo(),
-        torrent_dir=Path(settings.torrent_dir).resolve(),
+        torrent_dir=Path(settings.download_dir).resolve(),
         torrent_api_url=settings.torrent_api_url,
         torrent_enabled=settings.torrent_enabled,
         event_hub=get_event_hub(),

@@ -130,6 +130,9 @@ class MediaDownloadRequest(BaseSchema):
         bool,
         Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category to save it in; Downloads when left out"
+    )
 
 
 class UrlDownloadRequest(BaseSchema):
@@ -138,6 +141,9 @@ class UrlDownloadRequest(BaseSchema):
         bool,
         Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category to save it in; Downloads when left out"
+    )
 
 
 class CollectionEntryRequest(BaseSchema):
@@ -161,6 +167,9 @@ class CollectionRequest(BaseSchema):
     channel_tab: bool = False
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset, a ceiling for each video")]
     entries: Annotated[list[CollectionEntryRequest], Field(min_length=1)]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category the collection and its videos save in; Downloads when left out"
+    )
 
 
 class BulkActionRequest(BaseSchema):

@@ -24,10 +24,10 @@ from src.data.repo.download.described import describe
 from src.data.repo.download.interface import DownloadRepo, FileRepo
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
-from src.lib.torrent.folder import torrent_folder
 from src.lib.torrent.mapping import status_for
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
+from src.service.download.folders import inside
 from src.service.download.live import Live, LiveStats
 from src.service.download.views import DownloadViews, progress_frame
 
@@ -46,7 +46,6 @@ class TorrentMonitor:
         enabled: bool,
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
-        torrent_root: Path | None = None,
     ) -> None:
         self._repo = repo
         self._file_repo = file_repo
@@ -56,7 +55,6 @@ class TorrentMonitor:
         self._views = views
         self._poll_s = poll_ms / 1000
         self._downloads = downloads_root.resolve()
-        self._torrents = (torrent_root or downloads_root).resolve()
         self._enabled = enabled
         self._task: asyncio.Task[None] | None = None
         #: Reconciliation is a startup job, but the engine may not be up yet at
@@ -148,9 +146,10 @@ class TorrentMonitor:
             logger.warning("{}|engine refused the rate limits: {}", self._tag, error.message)
 
     def _folder(self, row: Any) -> Path:
-        """The torrent's folder on disk, derived from the same rule as at add time."""
-        described = describe(row)
-        return torrent_folder(self._torrents, described.title, described.info_hash or "")
+        """The torrent's folder on disk, as recorded on its row when it was added."""
+        if not row.folder:
+            raise Error.internal(message=f"Torrent {row.id} has no recorded folder")
+        return inside(self._downloads, row.folder)
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.
@@ -215,7 +214,7 @@ class TorrentMonitor:
 
         # The full snapshot only when the status moved; every tick, the light frame.
         if "status" in changed:
-            folder = str(self._folder(row).resolve().relative_to(self._downloads))
+            folder = row.folder
             self._hub.publish("download", (await self._views.one(row, folder=folder)).to_json())
         self._hub.publish(
             "progress",

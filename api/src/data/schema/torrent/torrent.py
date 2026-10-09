@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from pydantic import Field
@@ -55,3 +56,6 @@ class TorrentDownloadRequest(BaseSchema):
         bool,
         Field(default=False, description="Refused with a 400: the engine holds a torrent once"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category to save it in; Downloads when left out"
+    )

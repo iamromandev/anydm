@@ -21,6 +21,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.download_service import BULK_SCOPES, DownloadService, TorrentPlay
 from src.service.download.live import Live, LiveStats
 
+from tests.service.category.fake_category_repo import FakeCategoryRepo
 from tests.service.download.described_rows import a_mirror
 from tests.service.download.memory import (
     MemoryFiles,
@@ -153,7 +154,7 @@ class FakeTorrentService:
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         return Path(f"/t/file{index}.mkv"), f"file{index}.mkv", "video/x-matroska"
 
-    async def enqueue(self, raw: str, files: Any) -> Any:
+    async def enqueue(self, raw: str, files: Any, *, category_id: Any = None, **_: Any) -> Any:
         self.enqueued.append(raw)
         return SimpleNamespace(id=uuid.uuid4())
 
@@ -177,6 +178,7 @@ def _service(
     *,
     disk: DiskGuard | None = None,
     client: FakeSiteClient | None = None,
+    categories: Any = None,
 ) -> SimpleNamespace:
     root = root or Path("/tmp/anydm-test")
     repo, collections, torrents = FakeDownloadRepo(), FakeCollectionRepo(), FakeTorrentService()
@@ -207,6 +209,7 @@ def _service(
         totals=totals,
         live=live,
         disk=disk,
+        categories=categories,
     )
     return SimpleNamespace(
         service=service,
@@ -1226,3 +1229,26 @@ async def test_a_short_link_to_a_page_already_held_is_refused_once_extracted() -
 
     assert caught.value.code == Code.CONFLICT
     assert len(h.repo.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_direct_download_lands_in_the_category_it_was_added_to() -> None:
+    categories = FakeCategoryRepo()
+    music = categories.named("music")
+    h = _service(categories=categories)
+
+    await h.service.enqueue_url("https://files.test/album.flac", category_id=music.id)
+
+    assert h.repo.created[-1]["download"]["category_id"] == music.id
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_category_refuses_the_add_before_any_row_exists() -> None:
+    h = _service(categories=FakeCategoryRepo())
+    missing = uuid.uuid4()
+
+    with pytest.raises(Error) as raised:
+        await h.service.enqueue_url("https://files.test/a.bin", category_id=missing)
+
+    assert int(raised.value.code) == 422
+    assert h.repo.created == []

@@ -69,7 +69,6 @@ def _monitor(engine: Engine, root: Path) -> TorrentMonitor:
         poll_ms=1000,
         downloads_root=root,
         enabled=True,
-        torrent_root=root / "torrent",
     )
 
 
@@ -79,7 +78,11 @@ async def _torrent(**download: Any) -> Download:
         info_hash=HASH,
         name="Release",
         total_size=None,
-        download={"status": DownloadStatus.DOWNLOADING, **download},
+        download={
+            "status": DownloadStatus.DOWNLOADING,
+            "folder": torrent_folder(Path("."), "Release", HASH).name,
+            **download,
+        },
         files=[(0, "Release/a.mkv", 900, True), (1, "Release/b.nfo", 1, False)],
     )
 
@@ -119,5 +122,5 @@ async def test_reconcile_re_adds_a_lost_torrent_from_its_magnet_and_selection(tm
 
     (added,) = engine.added
     assert added["only_files"] == [0]
-    assert added["output_folder"] == str(torrent_folder((tmp_path / "torrent").resolve(), "Release", HASH))
+    assert added["output_folder"] == str((tmp_path / torrent_folder(Path("."), "Release", HASH).name).resolve())
     assert HASH in str(added["source"]).lower()

@@ -21,6 +21,8 @@ def _row(**overrides: Any) -> Any:
         "title": "Some Release",
         "provider": "torrent",
         "ref_id": HASH,
+        #: Recorded when the torrent was added: under its category, here the download root.
+        "folder": "Some Release [abc]",
     }
     fields.update(overrides)
     return download_row(**fields)
@@ -93,7 +95,6 @@ def _monitor(
     root: Path = Path("/workdir/download"),
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
-    torrent_root: Path | None = None,
 ) -> TorrentMonitor:
     files = files or MemoryFiles()
     live = live or LiveStats()
@@ -109,7 +110,6 @@ def _monitor(
         enabled=True,
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
-        torrent_root=torrent_root or root / "torrent",
     )
 
 
@@ -224,7 +224,7 @@ async def test_a_row_the_engine_has_lost_is_re_added_into_its_folder_with_its_se
     await _monitor([row], client, files=files, root=tmp_path).tick()
 
     assert client.added == [
-        {"only_files": [0, 2], "output_folder": str((tmp_path / "torrent" / "Some Release [abc]").resolve())}
+        {"only_files": [0, 2], "output_folder": str((tmp_path / "Some Release [abc]").resolve())}
     ]
 
 

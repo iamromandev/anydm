@@ -93,7 +93,7 @@ cp api/.env.example api/.env
 | `API_KEY` | *(empty)* | When set, every route but `GET /health/check` requires it in the `X-API-Key` header. Browser-opened URLs (event streams, file downloads, HLS) may pass `?api_key=` instead. Enter the same key in the UI's Settings. Empty leaves the API open |
 | `CORS_ORIGINS` | *(empty)* | Comma-separated origins; empty leaves the CORS middleware off (same-origin only) |
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:8030` | Public URL of this service (declared in settings; no route reads it yet) |
-| `DOWNLOAD_DIR` | `./download` | Where finished files land; compose mounts a named volume here |
+| `DOWNLOAD_DIR` | `./download` | Where everything lands: each category's folder is under it, and so is every torrent's (one folder per torrent, named after it). Compose mounts a named volume here |
 | `DOWNLOAD_WORKERS` | `2` | Concurrent download workers (min 1) |
 | `DOWNLOAD_CHUNK_SIZE` | `65536` | Read chunk size in bytes (min 1024); still paces progress updates, because the write buffer's flush timer only gets a chance to fire when a chunk arrives |
 | `DOWNLOAD_SEGMENTS` | `4` | Concurrent range requests per part (min 1). `1` turns segmentation off entirely |
@@ -105,7 +105,6 @@ cp api/.env.example api/.env
 | `DOWNLOAD_RATE_LIMIT_BPS` | `0` | Bytes per second shared by every download. HTTP downloads and their segments draw from one limiter. An HLS or DASH download gets `DOWNLOAD_RATE_LIMIT_BPS ÷ DOWNLOAD_WORKERS` through yt-dlp, one fragment at a time, and what it reads is charged to that limiter, so HTTP downloads alongside make room. `0` is unlimited |
 | `TORRENT_ENABLED` | `true` | Torrent routes and the monitor. Off, torrent routes answer 503 and nothing polls |
 | `TORRENT_API_URL` | `http://torrent-anydm-api:3030` | rqbit's control API. `http://127.0.0.1:8031` when running the API on the host |
-| `TORRENT_DIR` | `./download/torrent` | Where rqbit writes, under `DOWNLOAD_DIR`: one folder per torrent, named after it |
 | `TORRENT_POLL_MS` | `1000` | How often the monitor samples the engine (min 250) |
 | `TORRENT_METADATA_TIMEOUT_S` | `30` | How long resolving waits for peers to supply metadata |
 | `TORRENT_REQUEST_TIMEOUT_S` | `10` | Per-call timeout against the control API |
@@ -155,6 +154,7 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `POST /category/order` — `{ids}`, every category exactly once, in the new order; otherwise 422
     - `PATCH /category/{id}` — rename it, point it at another folder, or both
     - `DELETE /category/{id}` — delete a category; answers 204. One still holding downloads answers 409 with how many
+    - Every add route (`POST /download/media`, `/download/url`, `/download/batch`, `/download/torrent`, `/collection`) takes an optional `category_id`: the download saves in that category's folder, Downloads when left out. An unknown category answers 422. A torrent's and a collection's folder is fixed when it is added
   - Downloads
     - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset. A page already in the list is refused with 409, naming that download in the error's first detail (`subject` its id, `description` its title, `fields` its status). A video a playlist or channel holds counts too, and adds a second detail for the collection (`subject` its id, `description` its title, `fields` `["collection"]`); `allow_duplicate: true` adds a second copy
     - `POST /download/url` — enqueue a direct URL download. An address already in the list, however it is spelled, is refused with 409; `allow_duplicate: true` adds it anyway
