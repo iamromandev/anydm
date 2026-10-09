@@ -1,7 +1,7 @@
 """How much room is left where downloads land, and refusing work that would not fit.
 
-One filesystem is checked: ``DOWNLOAD_DIR``'s. ``TORRENT_DIR`` lives under it,
-so rqbit's writes come out of the same free space.
+One filesystem is checked: ``DOWNLOAD_DIR``'s. Every category's folder, and so
+every torrent's, lives under it, so all writes come out of the same free space.
 """
 
 from __future__ import annotations

@@ -30,6 +30,9 @@ class BatchRequest(BatchLinks):
         bool,
         Field(default=False, description="Add a second copy of a link the list already holds"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category every link saves in; Downloads when left out"
+    )
 
 
 class BatchResult(StrEnum):

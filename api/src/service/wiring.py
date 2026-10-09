@@ -6,6 +6,7 @@ import httpx
 from src.config import get_settings
 from src.data.repo import (
     AttemptDatabaseRepo,
+    CategoryDatabaseRepo,
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
@@ -17,6 +18,8 @@ from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
 from src.lib.torrent.client import RqbitClient
+from src.service.category import CategoryMover as CategoryMover
+from src.service.category import CategoryService as CategoryService
 from src.service.download.collection_service import CollectionService as CollectionService
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -69,6 +72,23 @@ def get_search_client() -> httpx.AsyncClient:
 
 
 @lru_cache
+def get_category_service() -> CategoryService:
+    return CategoryService(CategoryDatabaseRepo(), Path(get_settings().download_dir))
+
+
+def get_category_mover() -> CategoryMover:
+    return CategoryMover(
+        downloads=DownloadDatabaseRepo(),
+        collections=CollectionDatabaseRepo(),
+        categories=CategoryDatabaseRepo(),
+        files=FileDatabaseRepo(),
+        views=get_download_views(),
+        totals=get_collection_totals(),
+        hub=get_event_hub(),
+        downloads_root=Path(get_settings().download_dir),
+    )
+
+
 def get_source_service() -> SourceService:
     return SourceService(SourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
 
@@ -135,6 +155,7 @@ def get_collection_service() -> CollectionService:
         totals=get_collection_totals(),
         views=get_download_views(),
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -156,6 +177,7 @@ def get_download_service() -> DownloadService:
         totals=get_collection_totals(),
         live=get_live_stats(),
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -189,9 +211,9 @@ def get_torrent_service() -> TorrentService:
         views=get_download_views(),
         live=get_live_stats(),
         downloads_root=Path(settings.download_dir),
-        torrent_root=Path(settings.torrent_dir).resolve(),
         enabled=settings.torrent_enabled,
         disk=get_disk_guard(),
+        categories=CategoryDatabaseRepo(),
     )
 
 
@@ -211,7 +233,6 @@ def get_torrent_monitor() -> TorrentMonitor:
         enabled=settings.torrent_enabled,
         download_limit_bps=settings.torrent_download_limit_bps,
         upload_limit_bps=settings.torrent_upload_limit_bps,
-        torrent_root=Path(settings.torrent_dir).resolve(),
     )
 
 
@@ -311,7 +332,7 @@ def get_stream_service() -> StreamService:
         prober=partial(probe, timeout_s=settings.stream_probe_timeout_s),
         torrent_client=get_torrent_client(),
         download_repo=DownloadDatabaseRepo(),
-        torrent_dir=Path(settings.torrent_dir).resolve(),
+        torrent_dir=Path(settings.download_dir).resolve(),
         torrent_api_url=settings.torrent_api_url,
         torrent_enabled=settings.torrent_enabled,
         event_hub=get_event_hub(),

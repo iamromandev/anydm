@@ -1,4 +1,4 @@
-"""RED: Download carries no placement columns; locations are derived."""
+"""Download carries no save_dir, path or position: its place is ``folder``, set when its files land."""
 
 from src.data.db.model.transfer.download import Download
 

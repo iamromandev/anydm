@@ -30,7 +30,6 @@ class SettingsService(BaseService):
             download_rate_limit_bps=settings.download_rate_limit_bps,
             download_min_free_bytes=settings.download_min_free_bytes,
             torrent_enabled=settings.torrent_enabled,
-            torrent_dir=settings.torrent_dir,
             torrent_download_limit_bps=settings.torrent_download_limit_bps,
             torrent_upload_limit_bps=settings.torrent_upload_limit_bps,
             stream_segment_seconds=settings.stream_segment_seconds,

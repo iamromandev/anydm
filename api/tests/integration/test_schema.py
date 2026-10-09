@@ -11,7 +11,7 @@ TABLES = {
     "play": {"playback_position"},
     "shared": {"tag", "url"},
     "torrent": {"torrent", "torrent_file", "peer", "piece", "tracker"},
-    "transfer": {"download", "file", "mirror", "attempt", "segment", "media"},
+    "transfer": {"download", "file", "mirror", "attempt", "segment", "media", "category"},
 }
 
 
@@ -69,4 +69,6 @@ async def test_the_list_view_is_in_place_with_the_columns_the_list_reads() -> No
         )
     }
 
-    assert columns == {"type", "id", "title", "status", "created_at", "total_size", "downloaded_size", "progress"}
+    assert columns == {
+        "type", "id", "title", "status", "created_at", "category_id", "total_size", "downloaded_size", "progress",
+    }

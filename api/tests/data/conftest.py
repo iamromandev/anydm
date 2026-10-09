@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 
 import pytest_asyncio
 from src.data.db import model as models
+from src.data.type import DOWNLOADS_ID
 from tortoise import Tortoise
 from tortoise.models import Model
 
@@ -34,6 +35,10 @@ async def sqlite() -> AsyncIterator[None]:
     try:
         await Tortoise.init(db_url="sqlite://:memory:", modules={"model": ["src.data.db.model"]})
         await Tortoise.generate_schemas()
+        # The migration seeds Downloads; every download points at it.
+        await models.Category.create(
+            id=DOWNLOADS_ID, name="Downloads", slug="downloads", folder="", position=0, builtin=True
+        )
         yield
     finally:
         await Tortoise.close_connections()

@@ -13,6 +13,7 @@ from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
 from src.core.type import Code, ErrorType
+from src.data.repo.category import CategoryRepo
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
 from src.data.schema.play import PlaybackSchema
@@ -32,6 +33,7 @@ from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.entry_plan import plan_fields
 from src.lib.site.format import select_plan
+from src.service.category.pick import pick_category
 from src.service.download.collection_service import CollectionService, remove_collection_video_files
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -87,9 +89,11 @@ class DownloadService(BaseService):
         totals: CollectionTotals,
         live: LiveStats,
         disk: DiskGuard | None = None,
+        categories: CategoryRepo | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
+        self._categories = categories
         self._collections = collections
         self._collection_repo = collection_repo
         self._segment_repo = segment_repo
@@ -115,7 +119,9 @@ class DownloadService(BaseService):
         if held is not None:
             raise already_held(held)
 
-    async def enqueue_media(self, url: str, preset: Preset, *, allow_duplicate: bool = False) -> DownloadSchema:
+    async def enqueue_media(
+        self, url: str, preset: Preset, *, allow_duplicate: bool = False, category_id: uuid.UUID | None = None
+    ) -> DownloadSchema:
         """Resolve the plan now, move the bytes later, for any site.
 
         Everything that can fail on the caller's behalf (an unsupported link, a
@@ -123,6 +129,7 @@ class DownloadService(BaseService):
         already in the list) fails here, as a 4xx they see immediately. What
         reaches the queue is a decision, not a guess.
         """
+        category = await pick_category(self._categories, category_id)
         # The link as pasted, before an extraction it would only repeat.
         if not allow_duplicate:
             await self._refuse_held(url)
@@ -144,7 +151,7 @@ class DownloadService(BaseService):
             # link and a playlist's entry for the same video are then one address.
             url=page,
             provider=info.extractor,
-            download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes},
+            download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes, "category_id": category.id},
             media={
                 "title": planned.title,
                 "kind": planned.media_kind,
@@ -160,16 +167,21 @@ class DownloadService(BaseService):
         self._control.wake()
         return await self._published(download)
 
-    async def enqueue_url(self, url: str, *, allow_duplicate: bool = False) -> DownloadSchema:
+    async def enqueue_url(
+        self, url: str, *, allow_duplicate: bool = False, category_id: uuid.UUID | None = None
+    ) -> DownloadSchema:
         """Queue a plain HTTP download — anything that is not a media platform."""
         ensure_fetchable(url)
+        category = await pick_category(self._categories, category_id)
         if not allow_duplicate:
             await self._refuse_held(url)
         # The size is not known until a worker probes the source, so only the
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
-        download = await self._repo.create_direct(url=url, download={"status": DownloadStatus.PENDING}, filename=name)
+        download = await self._repo.create_direct(
+            url=url, download={"status": DownloadStatus.PENDING, "category_id": category.id}, filename=name
+        )
         self._control.wake()
         return await self._published(download)
 
@@ -200,6 +212,7 @@ class DownloadService(BaseService):
         preset: Preset,
         *,
         allow_duplicate: bool = False,
+        category_id: uuid.UUID | None = None,
     ) -> list[BatchItemSchema]:
         """Add each link as the add box would, and say what became of every one.
 
@@ -208,6 +221,8 @@ class DownloadService(BaseService):
         unless ``allow_duplicate`` asks for second copies.
         """
         links = self.batch_links(lines, pattern)
+        # Checked once, so an unknown category fails the whole batch rather than each link.
+        await pick_category(self._categories, category_id)
         first: dict[str, int] = {}
         unique: list[str] = []
         for link in links:
@@ -218,7 +233,7 @@ class DownloadService(BaseService):
 
         async def one(link: str) -> BatchItemSchema:
             async with gate:
-                return await self._add_link(link, preset, allow_duplicate)
+                return await self._add_link(link, preset, allow_duplicate, category_id)
 
         done = await asyncio.gather(*(one(link) for link in unique))
         if allow_duplicate:
@@ -241,20 +256,24 @@ class DownloadService(BaseService):
                 results.append(original)
         return results
 
-    async def _add_link(self, link: str, preset: Preset, allow_duplicate: bool) -> BatchItemSchema:
+    async def _add_link(
+        self, link: str, preset: Preset, allow_duplicate: bool, category_id: uuid.UUID | None = None
+    ) -> BatchItemSchema:
         """One link through the normal add: a magnet is a torrent, a page is downloaded from its
         site, and a link no site supports is a direct file."""
         try:
             if link.lower().startswith("magnet:"):
                 # The engine holds a torrent once, so a second copy is not asked for.
-                download = await self._torrents.enqueue(link, [])
+                download = await self._torrents.enqueue(link, [], category_id=category_id)
             else:
                 try:
-                    download = await self.enqueue_media(link, preset, allow_duplicate=allow_duplicate)
+                    download = await self.enqueue_media(
+                        link, preset, allow_duplicate=allow_duplicate, category_id=category_id
+                    )
                 except Error as error:
                     if error.type != ErrorType.UNSUPPORTED_URL:
                         raise
-                    download = await self.enqueue_url(link, allow_duplicate=allow_duplicate)
+                    download = await self.enqueue_url(link, allow_duplicate=allow_duplicate, category_id=category_id)
         except Error as error:
             held = error.details[0].subject if error.code == Code.CONFLICT and error.details else None
             if held is not None:
@@ -269,7 +288,12 @@ class DownloadService(BaseService):
         return BatchItemSchema(url=link, result=BatchResult.ADDED, download_id=download.id)
 
     async def list_items(
-        self, page: int, page_size: int, group: str = "all", sort: str = "-created_at"
+        self,
+        page: int,
+        page_size: int,
+        group: str = "all",
+        sort: str = "-created_at",
+        category: uuid.UUID | None = None,
     ) -> tuple[list[DownloadSchema | CollectionSchema], Meta]:
         """One page of the tagged list, narrowed to a sidebar filter, in the view's order.
 
@@ -283,7 +307,7 @@ class DownloadService(BaseService):
         if sort not in get_args(DownloadSort):
             raise Error.bad_request(message=f"Cannot sort by: {sort}")
         statuses = None if group == "all" else sorted(DOWNLOAD_GROUPS[group])
-        items, meta = await self._repo.list_items(page, page_size, statuses, sort, self._live.speeds())
+        items, meta = await self._repo.list_items(page, page_size, statuses, sort, self._live.speeds(), category)
         download_ids = [item_id for kind, item_id in items if kind == "download"]
         collection_ids = [item_id for kind, item_id in items if kind == "collection"]
         downloads = {s.id: s for s in await self._views.many(await self._repo.by_ids(download_ids))}
@@ -353,8 +377,8 @@ class DownloadService(BaseService):
             affected += 1
         return affected
 
-    async def summary(self) -> DownloadSummarySchema:
-        return await self._repo.summary()
+    async def summary(self, category: uuid.UUID | None = None) -> DownloadSummarySchema:
+        return await self._repo.summary(category)
 
     async def get(self, download_id: uuid.UUID) -> DownloadSchema:
         return await self._views.one(await self._require(download_id))
@@ -552,6 +576,8 @@ class DownloadService(BaseService):
         """The download's folder for its schema: derived when finished, else ``None``."""
         if download.status != DownloadStatus.COMPLETED:
             return None
+        if download.folder is not None:
+            return download.folder
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
@@ -560,7 +586,9 @@ class DownloadService(BaseService):
         return standalone_folder(download.id)
 
     async def _disk_path(self, download: Any, filename: str) -> Path:
-        """The finished file on disk: its derived folder plus its file name."""
+        """The finished file on disk: its recorded folder, else the one derived from before categories."""
+        if download.folder is not None:
+            return inside(self._root, download.folder) / Path(filename).name
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:

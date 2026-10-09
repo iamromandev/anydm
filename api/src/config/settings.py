@@ -87,10 +87,6 @@ class Settings(BaseSettings):
             description="rqbit control API base URL",
         ),
     ]
-    torrent_dir: Annotated[
-        str,
-        Field(default="./download/torrent", description="Output folder handed to rqbit"),
-    ]
     torrent_poll_ms: Annotated[
         int,
         Field(default=1000, ge=250, description="Monitor tick in milliseconds"),

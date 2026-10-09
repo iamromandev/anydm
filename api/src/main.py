@@ -45,7 +45,6 @@ async def lifespan(_app: FastAPI):
     """
     settings = get_settings()
     Path(settings.download_dir).mkdir(parents=True, exist_ok=True)
-    Path(settings.torrent_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.stream_dir).mkdir(parents=True, exist_ok=True)
 
     try:

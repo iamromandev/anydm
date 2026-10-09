@@ -8,7 +8,7 @@ from tortoise import fields
 from tortoise.indexes import Index
 
 from src.core.base import Base
-from src.data.type import DownloadStatus, Folder
+from src.data.type import DOWNLOADS_ID, DownloadStatus
 
 if TYPE_CHECKING:
     from src.data.db.model.transfer.media import Media
@@ -31,7 +31,11 @@ class Download(Base):
     # media); its videos point at it here.
     #: The collection this download belongs to; none for a standalone download.
     parent = fields.ForeignKeyField("model.Download", related_name="children", null=True, on_delete=fields.CASCADE)
-    folder: Folder = fields.CharEnumField(enum_type=Folder, default=Folder.DOWNLOADS)
+    category = fields.ForeignKeyField(
+        "model.Category", related_name="downloads", on_delete=fields.RESTRICT, db_index=True, db_default=DOWNLOADS_ID
+    )
+    #: Where its files are, relative to DOWNLOAD_DIR, once they have a place. Null on rows from before categories.
+    folder: str | None = fields.TextField(null=True)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
     downloaded_size: int = fields.BigIntField(default=0)
@@ -48,6 +52,7 @@ class Download(Base):
 
     if TYPE_CHECKING:
         parent_id: UUID | None
+        category_id: UUID
         children: fields.ReverseRelation[Download]
         #: A site download's title, kind, preset and formats; none for a torrent or a direct file.
         media: Media | None

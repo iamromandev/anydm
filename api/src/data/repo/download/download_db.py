@@ -228,14 +228,19 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         statuses: Sequence[DownloadStatus] | None,
         sort: str,
         speeds: Mapping[uuid.UUID, int],
+        category: uuid.UUID | None = None,
     ) -> tuple[list[tuple[str, uuid.UUID]], Meta]:
         order = _ORDER[sort.lstrip("-")]
         direction = "DESC" if sort.startswith("-") else "ASC"
         params: list[Any] = [list(speeds), list(speeds.values())]
-        where = ""
+        conditions: list[str] = []
         if statuses:
             params.append([status.value for status in statuses])
-            where = f"WHERE item.status = ANY(${len(params)}::text[])"
+            conditions.append(f"item.status = ANY(${len(params)}::text[])")
+        if category is not None:
+            params.append(category)
+            conditions.append(f"item.category_id = ${len(params)}")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         source = (
             "FROM transfer.list_item AS item "
             "LEFT JOIN unnest($1::uuid[], $2::bigint[]) AS live(id, speed) ON live.id = item.id "
@@ -252,14 +257,15 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         meta = Meta(page=page, page_size=page_size, total=total, total_pages=max(1, math.ceil(total / page_size)))
         return [(str(row["type"]), row["id"]) for row in rows], meta
 
-    async def summary(self) -> DownloadSummarySchema:
+    async def summary(self, category: uuid.UUID | None = None) -> DownloadSummarySchema:
         """Counted from ``list_item``, so a collection counts once, by its computed status.
 
         Counted in the database rather than from the rows a browser holds, so the
         numbers stay right however little of the list has been loaded.
         """
+        where, params = ("WHERE category_id = $1", [category]) if category is not None else ("", [])
         rows = await Tortoise.get_connection("default").execute_query_dict(
-            "SELECT status, COUNT(*) AS n FROM transfer.list_item GROUP BY status"
+            f"SELECT status, COUNT(*) AS n FROM transfer.list_item {where} GROUP BY status", params
         )
         counts = {str(row["status"]): int(row["n"]) for row in rows}
 
@@ -272,6 +278,12 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             seeding=group("seeding"),
             completed=group("completed"),
         )
+
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
+        changes: dict[str, Any] = {"category_id": category_id}
+        if folder is not None:
+            changes["folder"] = folder
+        await Download.filter(id=download_id).update(**changes)
 
     async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:
         if not ids:

@@ -70,6 +70,8 @@ class FlushRecordingRepo:
         self.ended: list[dict[str, Any]] = []
         self.over: list[frozenset[DownloadStatus]] = []
         self._refuse = person_got_there_first
+        #: What ``get_active_by_id`` answers, by id: a row a test changed while the try ran.
+        self.active: dict[uuid.UUID, Any] = {}
 
     async def end_try(self, download_id: uuid.UUID, fields: Any, *, over: Any = None) -> bool:
         self.over.append(frozenset(over or ()))
@@ -80,6 +82,9 @@ class FlushRecordingRepo:
 
     async def flush_progress(self, download_id: uuid.UUID, **fields: Any) -> None:
         self.flushed.append(fields)
+
+    async def get_active_by_id(self, download_id: uuid.UUID) -> Any:
+        return self.active.get(download_id)
 
 
 class FakeCollections:

@@ -89,7 +89,6 @@ def test_torrent_defaults() -> None:
     settings = _settings()
     assert settings.torrent_enabled is True
     assert settings.torrent_api_url == "http://torrent-anydm-api:3030"
-    assert settings.torrent_dir == "./download/torrent"
     assert settings.torrent_poll_ms == 1000
     assert settings.torrent_metadata_timeout_s == 30
     assert settings.torrent_request_timeout_s == 10

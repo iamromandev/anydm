@@ -10,9 +10,9 @@ from src.core.type import Code, ErrorType
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.lib.media.sidecar import folder_listing, match_sidecars
 from src.lib.site.subtitles import SiteSubtitle
+from src.service.download.collection_service import remove_collection_video_files
 from src.service.download.download_worker import DownloadWorker
 from src.service.download.downloader import Stopped
-from src.service.download.paths import remove_work_files
 from src.service.download.progress import AggregateSample
 
 from tests.service.download.memory import MemoryFiles
@@ -102,7 +102,7 @@ async def test_every_part_comes_from_one_extraction(tmp_path: Path) -> None:
 
     assert client.resolved == [("https://youtu.be/dQw4w9WgXcQ", ["137", "140"])]
     assert row.status == DownloadStatus.COMPLETED
-    assert (tmp_path / str(row.id) / (await _path(files, row))).is_file()
+    assert (tmp_path / (await _path(files, row))).is_file()
 
 
 @pytest.mark.asyncio
@@ -371,7 +371,8 @@ async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: P
 
     await _subtitled_worker(tmp_path, files, server).run_task(row)
 
-    folder = tmp_path / str(row.id)
+    # Downloads is the root, so the file and its subtitles land there, beside each other.
+    folder = tmp_path
     assert row.status == DownloadStatus.COMPLETED
     assert sorted(p.name for p in folder.iterdir() if p.suffix != ".part") == [
         "Rick_1080p.en.auto.vtt",
@@ -389,9 +390,9 @@ async def test_a_finished_video_saves_the_page_s_subtitles_beside_it(tmp_path: P
         ("Rick_1080p.es.srt", "es", False),
         ("Rick_1080p.en.auto.vtt", "en", True),
     ]
-    # Deleting the download's work files takes them too.
-    remove_work_files(tmp_path, row.id)
-    assert not folder.exists()
+    # Removing the video takes the subtitles that share its name, and nothing else.
+    remove_collection_video_files(folder / "Rick_1080p.mp4")
+    assert not any(p.name.startswith("Rick_1080p") for p in folder.iterdir())
 
 
 @pytest.mark.asyncio
@@ -402,7 +403,7 @@ async def test_a_subtitle_that_fails_is_skipped_and_the_download_still_completes
     await _subtitled_worker(tmp_path, files, FakeSubtitleServer(failing={"https://yt.test/es.srt"})).run_task(row)
 
     assert row.status == DownloadStatus.COMPLETED
-    assert sorted(p.name for p in (tmp_path / str(row.id)).iterdir() if p.suffix != ".part") == [
+    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix != ".part") == [
         "Rick_1080p.en.auto.vtt",
         "Rick_1080p.en.vtt",
         "Rick_1080p.mp4",

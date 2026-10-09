@@ -8,6 +8,7 @@ from pydantic import Field
 
 from src.core.base import BaseSchema
 from src.data.schema.play.playback import PlaybackSchema
+from src.data.schema.transfer.category import CategoryRefSchema
 from src.data.type import BulkAction, CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 
 
@@ -62,6 +63,7 @@ class DownloadSchema(BaseSchema):
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
     folder: str | None = None
+    category: CategoryRefSchema | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)
     total_size: int | None = None
     downloaded_size: int = 0
@@ -106,6 +108,7 @@ class CollectionSchema(BaseSchema):
     external_id: str
     title: str = ""
     folder: str
+    category: CategoryRefSchema | None = None
     preset: Preset
     status: DownloadStatus
     progress: int = 0
@@ -127,6 +130,9 @@ class MediaDownloadRequest(BaseSchema):
         bool,
         Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category to save it in; Downloads when left out"
+    )
 
 
 class UrlDownloadRequest(BaseSchema):
@@ -135,6 +141,9 @@ class UrlDownloadRequest(BaseSchema):
         bool,
         Field(default=False, description="Add a second copy of an address the list already holds, instead of a 409"),
     ]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category to save it in; Downloads when left out"
+    )
 
 
 class CollectionEntryRequest(BaseSchema):
@@ -158,6 +167,9 @@ class CollectionRequest(BaseSchema):
     channel_tab: bool = False
     preset: Annotated[Preset, Field(default=Preset.BEST, description="Quality preset, a ceiling for each video")]
     entries: Annotated[list[CollectionEntryRequest], Field(min_length=1)]
+    category_id: uuid.UUID | None = Field(
+        default=None, description="The category the collection and its videos save in; Downloads when left out"
+    )
 
 
 class BulkActionRequest(BaseSchema):

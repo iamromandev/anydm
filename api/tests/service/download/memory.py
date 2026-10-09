@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset, SourceKind
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 
@@ -53,6 +53,8 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         status=DownloadStatus.PENDING,
         folder=None,
         folder_id=None,
+        category_id=DOWNLOADS_ID,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         parent_id=None,
         start_at=None,
         download_limit_bps=None,
@@ -137,6 +139,11 @@ class MemoryFiles:
             found = file_row(0, path)
             self.by_download.setdefault(download_id, []).append(found)
         found.path, found.size, found.downloaded_bytes = path, size_bytes, size_bytes
+
+    async def rename_single(self, download_id: uuid.UUID, path: str) -> None:
+        found = await self.single(download_id)
+        if found is not None:
+            found.path, found.filename = path, path.rsplit("/", 1)[-1]
 
     async def get(self, download_id: uuid.UUID, index: int) -> SimpleNamespace | None:
         return next((f for f in self.by_download.get(download_id, []) if f.index == index), None)

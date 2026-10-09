@@ -18,6 +18,7 @@ from src.data.schema.transfer import (
     BatchRequest,
     BulkActionRequest,
     BulkResultSchema,
+    CategoryMoveRequest,
     CollectionSchema,
     DownloadSchema,
     DownloadSummarySchema,
@@ -27,9 +28,11 @@ from src.data.schema.transfer import (
 from src.data.type import DownloadGroup, DownloadSort
 from src.lib.event import EventHub, get_event_hub
 from src.service import (
+    CategoryMover,
     DiskGuard,
     DownloadService,
     StreamService,
+    get_category_mover,
     get_disk_guard,
     get_download_service,
     get_stream_service,
@@ -54,7 +57,10 @@ async def enqueue_media(
     409 when the list already holds the page, naming that download; ``allow_duplicate`` adds it anyway.
     """
     data = await download_service.enqueue_media(
-        payload.url.strip(), payload.preset, allow_duplicate=payload.allow_duplicate
+        payload.url.strip(),
+        payload.preset,
+        allow_duplicate=payload.allow_duplicate,
+        category_id=payload.category_id,
     )
     return Success.created(data=data).to_resp()
 
@@ -68,7 +74,9 @@ async def enqueue_url(
 
     409 when the list already holds the address, naming that download; ``allow_duplicate`` adds it anyway.
     """
-    data = await download_service.enqueue_url(payload.url.strip(), allow_duplicate=payload.allow_duplicate)
+    data = await download_service.enqueue_url(
+        payload.url.strip(), allow_duplicate=payload.allow_duplicate, category_id=payload.category_id
+    )
     return Success.created(data=data).to_resp()
 
 
@@ -95,7 +103,11 @@ async def add_batch(
     one failing link never stops the rest. The answer is 200 whatever the mix.
     """
     data = await download_service.add_batch(
-        payload.lines, payload.pattern, payload.preset, allow_duplicate=payload.allow_duplicate
+        payload.lines,
+        payload.pattern,
+        payload.preset,
+        allow_duplicate=payload.allow_duplicate,
+        category_id=payload.category_id,
     )
     return Success.ok(data=data).to_resp()
 
@@ -116,17 +128,21 @@ async def list_items(
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
     group: Annotated[DownloadGroup, Query(description="Which of the sidebar's filters to answer for")] = "all",
     sort: Annotated[DownloadSort, Query(description="Field to order by; prefix with - for descending")] = "-created_at",
+    category: Annotated[uuid.UUID | None, Query(description="Only the items in this category")] = None,
 ) -> Response:
     """Standalone downloads and collections as one list, each item tagged by ``type``."""
-    data, meta = await download_service.list_items(page=page, page_size=page_size, group=group, sort=sort)
+    data, meta = await download_service.list_items(
+        page=page, page_size=page_size, group=group, sort=sort, category=category
+    )
     return Success.ok(data=data, meta=meta).to_resp()
 
 
 @router.get(path="/download/summary", response_model=Success[DownloadSummarySchema])
 async def download_summary(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
+    category: Annotated[uuid.UUID | None, Query(description="Count only the items in this category")] = None,
 ) -> Response:
-    return Success.ok(data=await download_service.summary()).to_resp()
+    return Success.ok(data=await download_service.summary(category)).to_resp()
 
 
 @router.get(path="/download/events")
@@ -244,6 +260,19 @@ async def resume_download(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
 ) -> Response:
     return Success.ok(data=await download_service.resume(download_id)).to_resp()
+
+
+@router.put(path="/download/{download_id}/category", response_model=Success[DownloadSchema])
+async def move_download(
+    download_id: uuid.UUID,
+    payload: CategoryMoveRequest,
+    mover: Annotated[CategoryMover, Depends(get_category_mover)],
+) -> Response:
+    """Move a download to another category, its finished file and subtitles with it.
+
+    409 while it downloads or muxes; 422 for a torrent (it stays where it was added) and for a collection's video.
+    """
+    return Success.ok(data=await mover.move_download(download_id, payload.category_id)).to_resp()
 
 
 @router.delete(path="/download/{download_id}")

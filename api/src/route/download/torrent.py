@@ -40,7 +40,10 @@ async def enqueue_torrent(
     so ``allow_duplicate`` is refused with a 400.
     """
     data = await torrent_service.enqueue(
-        payload.torrent.strip(), payload.files, allow_duplicate=payload.allow_duplicate
+        payload.torrent.strip(),
+        payload.files,
+        allow_duplicate=payload.allow_duplicate,
+        category_id=payload.category_id,
     )
     return Success.created(data=data).to_resp()
 

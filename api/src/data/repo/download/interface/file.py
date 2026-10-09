@@ -38,6 +38,11 @@ class FileRepo(ABC):
         ...
 
     @abstractmethod
+    async def rename_single(self, download_id: uuid.UUID, path: str) -> None:
+        """The one file's new path and name, after a move renamed it to avoid a clash."""
+        ...
+
+    @abstractmethod
     async def get(self, download_id: uuid.UUID, index: int) -> File | None: ...
 
     @abstractmethod

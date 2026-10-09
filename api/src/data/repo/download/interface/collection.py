@@ -116,4 +116,9 @@ class CollectionRepo(ABC):
         ...
 
     @abstractmethod
+    async def move_rows(self, collection_id: uuid.UUID, category_id: uuid.UUID, folder: str) -> None:
+        """The collection's new category and folder; its live videos take the category, and the ones with a place take the folder."""
+        ...
+
+    @abstractmethod
     async def soft_delete(self, collection: Download) -> None: ...

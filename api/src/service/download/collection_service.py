@@ -15,12 +15,14 @@ from typing import Any
 from src.core.base import BaseService
 from src.core.error import Error
 from src.core.success import Meta
+from src.data.repo.category import CategoryRepo
 from src.data.repo.download.interface import CollectionRepo, EntryRow, SegmentRepo
 from src.data.schema.transfer import CollectionEntryRequest, CollectionRequest, CollectionSchema, DownloadSchema
 from src.data.type import DownloadStatus, MediaKind, Preset
 from src.lib.identity import site_ref
 from src.lib.site import error as site_error
 from src.lib.site.filename import number_prefix
+from src.service.category.pick import pick_category
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard
@@ -55,9 +57,11 @@ class CollectionService(BaseService):
         totals: CollectionTotals,
         views: DownloadViews,
         disk: DiskGuard | None = None,
+        categories: CategoryRepo | None = None,
     ) -> None:
         super().__init__()
         self._repo = repo
+        self._categories = categories
         self._segment_repo = segment_repo
         self._control = control
         self._root = downloads_root
@@ -83,26 +87,32 @@ class CollectionService(BaseService):
             return await self._join(existing, request)
         # Named by the id read off its address, as every later read of its folder does
         # (a channel tab's address gives its handle, where the listing gives its UC id).
-        path = collection_relpath(None, request.title, site_ref(provider, request.url))
+        category = await pick_category(self._categories, request.category_id)
+        path = collection_relpath(category.folder, request.title, site_ref(provider, request.url))
         inside(self._root, path).mkdir(parents=True, exist_ok=True)
         largest = max(entry.index for entry in request.entries)
         collection = await self._repo.create_with_entries(
             url=request.url,
             provider=provider,
-            collection={"status": DownloadStatus.PENDING},
+            collection={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": path},
             media={
                 "kind": MediaKind.CHANNEL if request.channel_tab else MediaKind.PLAYLIST,
                 "title": request.title,
                 "preset": request.preset,
             },
-            entries=[self._entry(entry, request, largest=largest) for entry in request.entries],
+            entries=[self._entry(entry, request, largest=largest, category_id=category.id) for entry in request.entries],
         )
         self._control.wake()
         return await self._changed(collection)
 
     @staticmethod
     def _entry(
-        entry: CollectionEntryRequest, request: CollectionRequest, *, largest: int, number: int | None = None
+        entry: CollectionEntryRequest,
+        request: CollectionRequest,
+        *,
+        largest: int,
+        category_id: uuid.UUID,
+        number: int | None = None,
     ) -> EntryRow:
         """One video's rows, unplanned: its formats and name are chosen when it starts."""
         # The number now; planning appends the name. Channel tabs aren't numbered.
@@ -112,7 +122,7 @@ class CollectionService(BaseService):
             # The listing's own address for the video, its canonical page: what a
             # single download of it is stored under too.
             url=entry.url,
-            download={"status": DownloadStatus.PENDING},
+            download={"status": DownloadStatus.PENDING, "category_id": category_id},
             media={
                 "title": entry.title or "",
                 "kind": MediaKind.AUDIO if request.preset == Preset.MP3 else MediaKind.VIDEO,
@@ -149,7 +159,7 @@ class CollectionService(BaseService):
                 collection,
                 request.extractor.removesuffix("Tab"),
                 [
-                    self._entry(entry, request, largest=largest, number=top + offset)
+                    self._entry(entry, request, largest=largest, category_id=collection.category_id, number=top + offset)
                     for offset, entry in enumerate(fresh, start=1)
                 ],
             )

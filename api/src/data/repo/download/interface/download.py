@@ -18,7 +18,7 @@ from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DownloadStatus
 NOT_CONTAINER = Q(media__id__isnull=True) | Q(media__kind__not_in=list(CONTAINER_KINDS))
 
 #: The relations every read loads, so ``describe`` and a schema need no other query.
-RELATED = ("media", "mirrors__source__url", "mirrors__source__provider", "mirrors__source__torrents")
+RELATED = ("media", "category", "mirrors__source__url", "mirrors__source__provider", "mirrors__source__torrents")
 
 
 class DownloadRepo(CrudRepo[Download]):
@@ -106,12 +106,23 @@ class DownloadRepo(CrudRepo[Download]):
         statuses: Sequence[DownloadStatus] | None,
         sort: str,
         speeds: Mapping[uuid.UUID, int],
+        category: uuid.UUID | None = None,
     ) -> tuple[list[tuple[str, uuid.UUID]], Meta]:
-        """One page of ``list_item``: ``(type, id)`` in order. ``speeds`` are the live ones, for ``speed_bps``."""
+        """One page of ``list_item``: ``(type, id)`` in order. ``speeds`` are the live ones, for ``speed_bps``.
+
+        ``category`` narrows it to one category's items when given.
+        """
         ...
 
     @abstractmethod
-    async def summary(self) -> DownloadSummarySchema: ...
+    async def summary(self, category: uuid.UUID | None = None) -> DownloadSummarySchema:
+        """The sidebar counts, narrowed to one category when given."""
+        ...
+
+    @abstractmethod
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
+        """Point one download at a category; ``folder`` is written only when given."""
+        ...
 
     @abstractmethod
     async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:

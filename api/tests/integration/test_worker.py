@@ -131,7 +131,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
     )
     single = await FileDatabaseRepo().single(row.id)
     assert single is not None and (single.path, single.size) == ("clip.mp4", 500)
-    assert (tmp_path / str(row.id) / "clip.mp4").read_bytes() == BODY
+    assert (tmp_path / "clip.mp4").read_bytes() == BODY
 
 
 async def test_a_retryable_failure_requeues_with_a_backoff(db: None, tmp_path: Path) -> None:
@@ -245,7 +245,7 @@ async def test_a_resumed_download_continues_from_the_partial_file(db: None, tmp_
     assert seen == ["bytes=0-0", "bytes=100-"]
     await row.refresh_from_db()
     assert row.status == DownloadStatus.COMPLETED
-    assert (tmp_path / str(row.id) / "clip.mp4").read_bytes() == BODY
+    assert (tmp_path / "clip.mp4").read_bytes() == BODY
 
 
 async def test_a_direct_download_fetches_from_its_source_url(db: None, tmp_path: Path) -> None:
@@ -294,7 +294,7 @@ async def test_a_segmented_download_records_its_plan_and_clears_it_when_done(db:
 
     await row.refresh_from_db()
     assert row.status == DownloadStatus.COMPLETED
-    assert (tmp_path / str(row.id) / "f.bin").read_bytes() == BIG
+    assert (tmp_path / "f.bin").read_bytes() == BIG
     # Transient state: gone once the file exists.
     assert await Segment.filter(file__download_id=row.id).count() == 0
 
@@ -343,7 +343,7 @@ async def test_an_interrupted_download_finishes_from_the_database_alone(db: None
 
     await row.refresh_from_db()
     assert row.status == DownloadStatus.COMPLETED
-    assert (tmp_path / str(row.id) / "f.bin").read_bytes() == BIG
+    assert (tmp_path / "f.bin").read_bytes() == BIG
 
     # And it genuinely resumed: the bytes already on disk were not re-fetched.
     refetched = 0
@@ -450,3 +450,20 @@ async def test_pausing_mid_download_keeps_the_partial_file(db: None, tmp_path: P
         await _worker(tmp_path, control, client).run_task(claimed)
 
     assert (tmp_path / str(row.id) / "video.part").exists()
+
+
+async def test_a_finished_download_lands_in_its_category_and_records_the_folder(db: None, tmp_path: Path) -> None:
+    from src.data.db.model import Category
+
+    lectures = await Category.create(name="Lectures", slug="lectures", folder="edu/lectures", position=99)
+    row = await DownloadDatabaseRepo().create_direct(
+        url="https://cdn.test/f.bin",
+        download={"status": DownloadStatus.PENDING, "category_id": lectures.id},
+        filename="f.bin",
+    )
+
+    await _run(tmp_path, DownloadControl(), httpx.MockTransport(lambda request: httpx.Response(200, content=BIG)))
+
+    await row.refresh_from_db()
+    assert (row.status, row.folder) == (DownloadStatus.COMPLETED, "edu/lectures")
+    assert (tmp_path / "edu" / "lectures" / "f.bin").read_bytes() == BIG

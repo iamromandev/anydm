@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from src.core.auth import require_api_key
 
+from .category import router as _category_router
 from .download import router as _download_router
 from .extract import router as _extract_router
 from .health import router as _health_router
@@ -15,6 +16,7 @@ from .system import router as _system_router
 #: checking whether the API is up before either of them has a key.
 _subrouters = [
     _extract_router,
+    _category_router,
     _download_router,
     _search_router,
     _source_router,

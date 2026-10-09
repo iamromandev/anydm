@@ -1,5 +1,4 @@
-"""No Folder model: downloads are filed by derived location, and the schema
-``category`` key stays only as an always-null contract placeholder."""
+"""No Folder model: a download's place is its category's folder, recorded in ``download.folder``."""
 
 from src.data.db import model
 

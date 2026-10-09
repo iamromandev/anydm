@@ -32,6 +32,7 @@ from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
 from src.service.download.disk import DiskGuard, is_insufficient_storage, storage_error
 from src.service.download.downloader import Stopped
+from src.service.download.folders import inside
 from src.service.download.fragment import FragmentDownloader
 from src.service.download.live import Live, LiveStats
 from src.service.download.paths import (
@@ -40,6 +41,8 @@ from src.service.download.paths import (
     final_path,
     part_path,
     remove_work_files,
+    short_id,
+    standalone_folder,
 )
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
@@ -232,26 +235,31 @@ class DownloadWorker:
         await self._emit(download, folder=folder)
         await self._refresh_collection(download)
 
-    async def _into_folder(self, download: Any, destination: Path) -> tuple[Path, str | None]:
+    async def _into_folder(self, download: Any, destination: Path) -> tuple[Path, str]:
         """Where the finished file lives, and that folder relative to the download root.
 
-        A standalone download stays in its work folder. A collection's video
-        moves into the collection's folder, before COMPLETE: a crash here
+        A standalone download goes flat into its category's folder, read again
+        here: a pause just before the last byte can be followed by a move, and
+        the file must land where the person moved it. A collection's video goes
+        into its collection's folder. Both happen before COMPLETE: a crash here
         requeues it and the move runs again, replacing a file of the same name.
-        The folder is derived from the collection's row, never stored.
         """
         if download.parent_id is None:
-            return destination, None
-        collection = await self._collections.get_active_by_id(download.parent_id)
-        if collection is None:
-            return destination, None
-        video_id = describe(download).ref if download.media else str(download.id)
-        path = container_folder(collection)
-        moved = collection_destination(self._root, path, destination.name, video_id)
+            current = await self._repo.get_active_by_id(download.id) or download
+            folder = current.category.folder
+            tag = short_id(download.id)
+        else:
+            collection = await self._collections.get_active_by_id(download.parent_id)
+            if collection is None:
+                return destination, standalone_folder(download.id)
+            folder = container_folder(collection)
+            tag = describe(download).ref if download.media else short_id(download.id)
+        inside(self._root, folder)
+        moved = collection_destination(self._root, folder, destination.name, tag)
         moved.parent.mkdir(parents=True, exist_ok=True)
         destination.replace(moved)
         remove_work_files(self._root, download.id)
-        return moved, path
+        return moved, folder
 
     async def _plan(self, download: Any, site: Any, url: str) -> dict[str, Resolved]:
         """Formats for the preset, from the one extraction that also gives their URLs (v0.5).
@@ -464,8 +472,8 @@ class DownloadWorker:
         if saved:
             logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), download.id)
 
-    async def _mark_complete(self, download: Any, destination: Path, folder: str | None = None) -> bool:
-        """Record the finished file. False when the download was removed while it finished."""
+    async def _mark_complete(self, download: Any, destination: Path, folder: str) -> bool:
+        """Record the finished file and the folder it is in. False when the download was removed while it finished."""
         size = destination.stat().st_size
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
@@ -476,6 +484,7 @@ class DownloadWorker:
             "completed_at": now(),
             "error": None,
             "error_code": None,
+            "folder": folder,
         }
         # A pause (or a pause and a resume) that landed as the last bytes did loses
         # to them: the file is whole. Only a remove refuses it.

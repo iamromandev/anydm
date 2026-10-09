@@ -1,7 +1,7 @@
 """Download: its folder bucket, status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
 
 from src.data.db.model.transfer.download import Download
-from src.data.type import DownloadStatus, Folder
+from src.data.type import DOWNLOADS_ID, DownloadStatus
 
 
 def test_download_has_the_diagram_columns() -> None:
@@ -24,8 +24,8 @@ def test_download_has_the_diagram_columns() -> None:
         "attempts",
         "next_attempt_at",
     } <= names
-    # Its only relation: the collection it belongs to.
-    assert Download._meta.fk_fields == {"parent"}
+    # Its relations: the collection it belongs to, and the category it saves in.
+    assert Download._meta.fk_fields == {"parent", "category"}
 
 
 def test_download_dropped_the_old_columns() -> None:
@@ -46,17 +46,18 @@ def test_download_dropped_the_old_columns() -> None:
         assert gone not in names, gone
 
 
-def test_download_folder_and_status_defaults() -> None:
+def test_download_status_default_and_a_category_that_defaults_to_downloads() -> None:
     fields_map = Download._meta.fields_map
-    assert fields_map["folder"].default is Folder.DOWNLOADS
     assert fields_map["status"].default is DownloadStatus.PENDING
+    assert fields_map["category"].db_default == DOWNLOADS_ID
 
 
 def test_download_required_vs_nullable() -> None:
     fields_map = Download._meta.fields_map
-    for name in ("folder", "status", "downloaded_size", "uploaded_size", "priority", "attempts"):
+    for name in ("category", "status", "downloaded_size", "uploaded_size", "priority", "attempts"):
         assert fields_map[name].null is False, name
     for name in (
+        "folder",
         "total_size",
         "speed_limit",
         "started_at",
@@ -72,9 +73,9 @@ def test_download_required_vs_nullable() -> None:
 def test_download_column_types_and_lengths() -> None:
     fields_map = Download._meta.fields_map
     assert getattr(fields_map["status"], "enum_type", None) is DownloadStatus
-    assert getattr(fields_map["folder"], "enum_type", None) is Folder
     from tortoise import fields
 
+    assert isinstance(fields_map["folder"], fields.TextField)
     assert isinstance(fields_map["total_size"], fields.BigIntField)
     assert isinstance(fields_map["downloaded_size"], fields.BigIntField)
     assert isinstance(fields_map["uploaded_size"], fields.BigIntField)

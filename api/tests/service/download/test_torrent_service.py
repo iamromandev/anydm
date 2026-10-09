@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.core.type import Code
-from src.data.type import DownloadStatus, MediaKind, Platform
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Platform
 from src.lib.media.sidecar import TorrentFile
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.protocol import FileInfo, TorrentDetails
@@ -15,6 +15,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_service import TorrentService
 
+from tests.service.category.fake_category_repo import FakeCategoryRepo
 from tests.service.download.memory import (
     MemoryFiles,
     RecordingHub,
@@ -119,6 +120,7 @@ def _service(
     root: Path = ROOT,
     enabled: bool = True,
     disk: DiskGuard | None = None,
+    categories: Any = None,
 ) -> TorrentService:
     repo = repo or FakeDownloadRepo()
     files = files or MemoryFiles()
@@ -132,9 +134,9 @@ def _service(
         views=memory_views(files=files, live=live),
         live=live,
         downloads_root=root,
-        torrent_root=root / "torrent",
         enabled=enabled,
         disk=disk,
+        categories=categories,
     )
 
 
@@ -156,6 +158,8 @@ def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
         "total_bytes": 1000,
         "provider": "torrent",
         "ref_id": "abc123",
+        #: Recorded when the torrent was added: its category's folder, here the root.
+        "folder": "Some Release [abc123]",
     }
     fields.update(overrides)
     row = download_row(**fields)
@@ -235,11 +239,15 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     schema = await _service(client, repo=repo, root=tmp_path).enqueue(MAGNET, [0])
 
     assert client.added[0]["only_files"] == [0]
-    # Its own folder, derived from the same rule rqbit is told (#107), relative to DOWNLOAD_DIR.
-    assert client.added[0]["output_folder"] == str(tmp_path / "torrent" / "Some Release [abc123]")
+    # Its own folder under its category's (Downloads, the root here), named by the same rule rqbit is told (#107).
+    assert client.added[0]["output_folder"] == str(tmp_path / "Some Release [abc123]")
     created = repo.created[0]
-    assert schema.folder == "torrent/Some Release [abc123]"
-    assert created["download"] == {"status": DownloadStatus.PENDING}
+    assert schema.folder == "Some Release [abc123]"
+    assert created["download"] == {
+        "status": DownloadStatus.PENDING,
+        "category_id": DOWNLOADS_ID,
+        "folder": "Some Release [abc123]",
+    }
     assert (created["name"], created["url"], created["info_hash"]) == ("Some Release", MAGNET, "abc123")
     # Only the selected file counts towards the size the UI shows.
     assert created["total_size"] == 900
@@ -430,7 +438,7 @@ async def _with_files(files: MemoryFiles, row: Any, rows: list[tuple[int, str, i
 
 @pytest.mark.asyncio
 async def test_resolve_file_returns_the_path_for_an_index(tmp_path: Path) -> None:
-    folder = tmp_path / "torrent" / "Some Release [abc123]"
+    folder = tmp_path / "Some Release [abc123]"
     folder.mkdir(parents=True)
     (folder / "video.mkv").write_bytes(b"data")
     repo, files = FakeDownloadRepo(), MemoryFiles()
@@ -537,7 +545,7 @@ async def test_a_named_file_to_play_must_be_a_selected_media_file() -> None:
 
 async def _release(tmp_path: Path, status: DownloadStatus) -> tuple[TorrentService, uuid.UUID, Path]:
     """A film with a subtitle file beside it on disk, and one in Subs/ that wasn't selected."""
-    folder = tmp_path / "torrent" / "Some Release [abc123]"
+    folder = tmp_path / "Some Release [abc123]"
     (folder / "Subs").mkdir(parents=True)
     (folder / "Movie.mkv").write_bytes(b"x" * 900)
     (folder / "Movie.en.srt").write_bytes(b"s" * 10)
@@ -589,3 +597,35 @@ async def test_a_finished_torrent_rqbit_no_longer_has_offers_only_what_s_on_disk
     assert [(sidecar.path, source) for sidecar, source in found] == [
         ("Movie.en.srt", (folder / "Movie.en.srt").resolve())
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_is_written_under_its_category_and_its_folder_is_recorded(tmp_path: Path) -> None:
+    categories = FakeCategoryRepo()
+    videos = categories.named("videos")
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
+
+    schema = await _service(client, repo=repo, root=tmp_path, categories=categories).enqueue(
+        MAGNET, [0], category_id=videos.id
+    )
+
+    assert client.added[0]["output_folder"] == str(tmp_path / "videos" / "Some Release [abc123]")
+    assert repo.created[0]["download"] == {
+        "status": DownloadStatus.PENDING,
+        "category_id": videos.id,
+        "folder": "videos/Some Release [abc123]",
+    }
+    assert schema.folder == "videos/Some Release [abc123]"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_category_refuses_a_torrent_before_the_engine_is_asked(tmp_path: Path) -> None:
+    client = FakeTorrentClient()
+
+    with pytest.raises(Error) as raised:
+        await _service(client, root=tmp_path, categories=FakeCategoryRepo()).enqueue(
+            MAGNET, [0], category_id=uuid.uuid4()
+        )
+
+    assert int(raised.value.code) == 422
+    assert client.added == []
