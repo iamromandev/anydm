@@ -17,6 +17,7 @@ import { TopToolbar } from "@/component/layouts/top-toolbar";
 import { TorrentList } from "@/component/features/torrent-list";
 import { Sidebar, type SidebarFilter } from "@/component/layouts/sidebar";
 import { AddTorrentModal } from "@/component/features/add-torrent-modal";
+import { BatchModal } from "@/component/features/batch-modal";
 import {
     SearchView,
     emptySearch,
@@ -149,6 +150,8 @@ export interface AppShellProps {
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
     /** Add a playlist's ticked videos as one group (v0.5). */
     onAddPlaylist: (request: PlaylistRequest) => Promise<void>;
+    /** After a batch of links was added: the counts are asked for again. */
+    onBatchAdded: () => void;
     /** Each open group's Entries list, by group id (v0.5). */
     entries: Record<string, EntriesView>;
     onToggleEntries: (id: string) => void;
@@ -242,6 +245,7 @@ export const AppShell = component$<AppShellProps>(
         highlightId,
         onResolve,
         onAddPlaylist,
+        onBatchAdded,
         entries,
         onToggleEntries,
         onLoadMoreEntries,
@@ -278,6 +282,15 @@ export const AppShell = component$<AppShellProps>(
         const sourcesLoaded = useSignal(false);
         /** The add/edit dialog Task 9 renders; set here so the row buttons work. */
         const sourceDialog = useSignal<SourceModalMode | null>(null);
+        /**
+         * The dialog for adding many links, and what it opens with: the lines
+         * pasted into the add box, or nothing from the menu. ``seq`` remounts it
+         * for each opening, so a new paste starts a new dialog.
+         */
+        const batch = useSignal<{ text: string; seq: number } | null>(null);
+        const openBatch = $((text: string) => {
+            batch.value = { text, seq: (batch.value?.seq ?? 0) + 1 };
+        });
 
         const clearBusy = $((id: string) => {
             const busy = { ...sourceView.busy };
@@ -409,6 +422,7 @@ export const AppShell = component$<AppShellProps>(
                     sort={sort}
                     onSortChange={onSortChange}
                     onAddClick={onAddClick}
+                    onAddManyClick={$(() => openBatch(""))}
                     onSettingsClick={onSettingsOpen}
                     sidebarOpen={sidebarOpen}
                     onSidebarToggle={onSidebarToggle}
@@ -498,6 +512,7 @@ export const AppShell = component$<AppShellProps>(
                                         await onAdd(input);
                                     })}
                                     onOpen={onOpenDownload}
+                                    onMany={openBatch}
                                     onPlay={$((value: string, kind: string) =>
                                         onPlayClick(value, kind),
                                     )}
@@ -597,6 +612,23 @@ export const AppShell = component$<AppShellProps>(
                     onCancel={handleSourceDeleteCancel}
                     onConfirm={handleSourceDeleteConfirm}
                 />
+
+                {batch.value && (
+                    <BatchModal
+                        key={`batch-${batch.value.seq}`}
+                        initialText={batch.value.text}
+                        defaultPreset={prefs.defaultPreset}
+                        onClose={$(() => {
+                            batch.value = null;
+                        })}
+                        onAdded={onBatchAdded}
+                        onOpen={$((id: string) => {
+                            batch.value = null;
+                            view.value = "list";
+                            onOpenDownload(id);
+                        })}
+                    />
+                )}
 
                 {sourceDialog.value && (
                     <SourceModal

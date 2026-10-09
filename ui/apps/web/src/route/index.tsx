@@ -1280,6 +1280,7 @@ export default component$(() => {
             onSourcesChanged={refreshSearchAvailability}
             onStopSeeding={handleStopSeeding}
             onAddPlaylist={handleAddPlaylist}
+            onBatchAdded={loadSummary}
             entries={store.entries}
             onToggleEntries={handleToggleEntries}
             onLoadMoreEntries={loadEntries}

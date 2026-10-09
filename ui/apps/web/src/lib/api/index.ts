@@ -1,3 +1,4 @@
+export * from "./batch";
 export * from "./client";
 export * from "./detail";
 export * from "./envelope";
