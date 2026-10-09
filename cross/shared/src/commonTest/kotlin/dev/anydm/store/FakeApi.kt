@@ -57,10 +57,26 @@ class FakeApi : TaskApi {
 
     private fun answerOrFail(): TaskDto = failWith?.let { throw it } ?: answer
 
+    /** Whether each addLink asked for a second copy. A second copy is never refused. */
+    val allowed = mutableListOf<Boolean>()
+
     override suspend fun addLink(
         url: String,
         preferred: String,
-    ) = answerOrFail()
+        allowDuplicate: Boolean,
+    ): TaskDto {
+        allowed += allowDuplicate
+        return if (allowDuplicate) answer else answerOrFail()
+    }
+
+    /** Rows [task] can fetch by id. */
+    val rows = mutableMapOf<String, TaskDto>()
+    val taskCalls = mutableListOf<String>()
+
+    override suspend fun task(id: String): TaskDto {
+        taskCalls += id
+        return rows[id] ?: throw ApiException("No such download", 404, null)
+    }
 
     override suspend fun addTorrent(
         torrent: String,

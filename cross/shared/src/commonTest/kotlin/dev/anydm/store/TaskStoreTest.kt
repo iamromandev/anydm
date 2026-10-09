@@ -1,6 +1,8 @@
 package dev.anydm.store
 
 import dev.anydm.api.ApiException
+import dev.anydm.api.Duplicate
+import dev.anydm.api.ErrorDetail
 import dev.anydm.api.Page
 import dev.anydm.api.PlaylistLink
 import dev.anydm.api.ServerEvent
@@ -272,28 +274,108 @@ class TaskStoreTest {
             assertTrue(said("Playlists are added from the web app for now"))
         }
 
+    private val refused =
+        ApiException("Already in your list: Clip (completed)", 409, null, listOf(ErrorDetail("d1", "Clip", listOf("completed"))))
+
+    private fun duplicates() = seen.filterIsInstance<StoreEvent.Duplicated>()
+
     @Test
-    fun `a torrent the list already holds is said to be there, and a new one is not`() =
+    fun `a link the list holds is a duplicate to offer on, not an error`() =
         runTest {
-            api.pages[1] = page(dto("t"))
+            api.stream = { awaitCancellation() }
+            api.failWith = refused
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertFalse(store.add("https://x/a.iso", preferredPreset = "best"))
+            assertEquals(listOf(StoreEvent.Duplicated(Duplicate("d1", "Clip", "completed"), "https://x/a.iso")), duplicates())
+            assertTrue(seen.filterIsInstance<StoreEvent.Said>().isEmpty())
+        }
+
+    @Test
+    fun `Add anyway sends the link again as a second copy`() =
+        runTest {
+            api.stream = { awaitCancellation() }
+            api.failWith = refused
+            api.answer = dto("copy")
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertFalse(store.add("https://x/a.iso", preferredPreset = "best"))
+            assertTrue(store.add("https://x/a.iso", preferredPreset = "best", allowDuplicate = true))
+            assertEquals(listOf(false, true), api.allowed)
+            assertTrue(
+                "copy" in
+                    store.state.value.tasks
+                        .map { it.id },
+            )
+        }
+
+    @Test
+    fun `a torrent the list holds is a duplicate with no second copy to offer`() =
+        runTest {
+            api.stream = { awaitCancellation() }
+            api.failWith = refused
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertFalse(store.addTorrent("magnet:?xt=urn:btih:held"))
+            assertEquals(listOf(StoreEvent.Duplicated(Duplicate("d1", "Clip", "completed"), null)), duplicates())
+        }
+
+    @Test
+    fun `a 409 that names no download is still an error`() =
+        runTest {
+            api.stream = { awaitCancellation() }
+            api.failWith = ApiException("Task is paused", 409, null)
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertFalse(store.add("https://x/a.iso", preferredPreset = "best"))
+            assertTrue(duplicates().isEmpty())
+            assertTrue(said("Task is paused"))
+        }
+
+    @Test
+    fun `revealing a row on the first page shows every download and finds it there`() =
+        runTest {
+            api.pages[1] = page(dto("a"), dto("b"))
+            api.stream = { awaitCancellation() }
+            val store = store()
+            store.start()
+            runCurrent()
+            store.setFilter(ListFilter.COMPLETED)
+            runCurrent()
+            api.listCalls.clear()
+
+            assertTrue(store.reveal("b"))
+            assertEquals(ListFilter.ALL, store.state.value.filter)
+            assertEquals(listOf(1 to "all"), api.listCalls)
+            assertTrue(api.taskCalls.isEmpty())
+        }
+
+    @Test
+    fun `revealing a row past the first page fetches it on its own, and says so when it is gone`() =
+        runTest {
+            api.pages[1] = page(dto("a"), totalPages = 3)
+            api.rows["far"] = dto("far")
             api.stream = { awaitCancellation() }
             val store = store()
             store.start()
             runCurrent()
 
-            api.answer = dto("t")
-            assertTrue(store.addTorrent("magnet:?xt=urn:btih:held"))
-            assertTrue(said(ALREADY_HELD))
-            assertEquals(
-                listOf("t"),
-                store.state.value.tasks
-                    .map { it.id },
+            assertTrue(store.reveal("far"))
+            assertEquals(listOf("far"), api.taskCalls)
+            assertTrue(
+                "far" in
+                    store.state.value.tasks
+                        .map { it.id },
             )
-
-            seen.clear()
-            api.answer = dto("n")
-            assertTrue(store.addTorrent("magnet:?xt=urn:btih:new"))
-            assertFalse(said(ALREADY_HELD))
+            assertFalse(store.reveal("gone"))
         }
 
     @Test

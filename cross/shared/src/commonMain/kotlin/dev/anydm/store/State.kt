@@ -1,5 +1,6 @@
 package dev.anydm.store
 
+import dev.anydm.api.Duplicate
 import dev.anydm.model.DiskDto
 import dev.anydm.model.SummaryDto
 import dev.anydm.model.Task
@@ -19,7 +20,6 @@ const val WARN_AFTER_MS = 20_000L
 
 const val LOST_CONTACT = "Lost contact with the API. Still trying, and the list may be out of date."
 const val BACK_IN_CONTACT = "Back in contact"
-const val ALREADY_HELD = "Already in your downloads"
 
 /** The sidebar's four views, as the API names them (`group=`). */
 enum class ListFilter(
@@ -87,10 +87,19 @@ data class ListState(
     val entries: Map<String, List<Task>> = emptyMap(),
 )
 
-/** One-off things the UI shows once: a notice, or being signed out by a 401. */
+/** One-off things the UI shows once: a notice, a refused duplicate, or being signed out by a 401. */
 sealed interface StoreEvent {
     data class Said(
         val notice: Notice,
+    ) : StoreEvent
+
+    /**
+     * An add the list already holds. [link] is what was added when a second copy is possible, so
+     * Add anyway can send it again; it is null for a torrent, which the API holds only once.
+     */
+    data class Duplicated(
+        val held: Duplicate,
+        val link: String?,
     ) : StoreEvent
 
     data class SignedOut(

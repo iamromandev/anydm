@@ -129,6 +129,35 @@ class AnydmApiTest {
         }
 
     @Test
+    fun `a second copy is asked for on a page and on a file, never on a torrent`() =
+        runTest {
+            val client = api { json(ok(TASK), HttpStatusCode.Created) }
+            client.addUrl("https://x/a.iso", allowDuplicate = true)
+            assertEquals("""{"url":"https://x/a.iso","allow_duplicate":true}""", bodyOf(seen.last()))
+            client.addMedia("https://youtu.be/x", "720", allowDuplicate = true)
+            assertEquals("""{"url":"https://youtu.be/x","preset":"720","allow_duplicate":true}""", bodyOf(seen.last()))
+            client.addTorrent("magnet:?xt=urn:btih:abc")
+            assertEquals("""{"torrent":"magnet:?xt=urn:btih:abc","files":[]}""", bodyOf(seen.last()))
+        }
+
+    @Test
+    fun `a refused duplicate carries the download it names`() =
+        runTest {
+            val body =
+                """{"status":"error","code":409,"message":"Already in your list: a (completed)",""" +
+                    """"details":[{"subject":"t1","description":"a","fields":["completed"]}]}"""
+            val error = assertFailsWith<ApiException> { api { json(body, HttpStatusCode.Conflict) }.addUrl("https://x/a.iso") }
+            assertEquals(Duplicate("t1", "a", "completed"), error.duplicate)
+        }
+
+    @Test
+    fun `one download is fetched by its id`() =
+        runTest {
+            api { json(ok(TASK)) }.task("t1")
+            assertEquals("/download/t1", seen.last().url.encodedPath)
+        }
+
+    @Test
     fun `a link no site supports becomes a direct download`() =
         runTest {
             val client =

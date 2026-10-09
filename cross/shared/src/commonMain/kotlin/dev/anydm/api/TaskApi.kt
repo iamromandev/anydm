@@ -20,10 +20,15 @@ interface TaskApi {
 
     fun events(): Flow<ServerEvent>
 
+    /** [allowDuplicate] adds a second copy of an address the list already holds, instead of a 409. */
     suspend fun addLink(
         url: String,
         preferred: String,
+        allowDuplicate: Boolean = false,
     ): TaskDto
+
+    /** One download, by id: a row the loaded page doesn't hold. */
+    suspend fun task(id: String): TaskDto
 
     suspend fun addTorrent(
         torrent: String,

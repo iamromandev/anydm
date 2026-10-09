@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import dev.anydm.desktop.chrome.Banner
 import dev.anydm.desktop.chrome.BannerHost
 import dev.anydm.desktop.chrome.BannerQueue
+import dev.anydm.desktop.chrome.DuplicateStrip
 import dev.anydm.desktop.chrome.Glyphs
 import dev.anydm.desktop.chrome.SourceList
 import dev.anydm.desktop.chrome.StatusBar
@@ -132,8 +133,22 @@ fun MainScreen(
             now = System.currentTimeMillis()
         }
     }
+    // An add the list already holds, until it is opened, added anyway, dismissed, or the link changes.
+    var duplicate by remember { mutableStateOf<StoreEvent.Duplicated?>(null) }
     LaunchedEffect(store) {
-        store.events.collect { event -> if (event is StoreEvent.Said) banners.push(Banner(event.notice.tone, event.notice.message)) }
+        store.events.collect { event ->
+            when (event) {
+                is StoreEvent.Said -> {
+                    banners.push(Banner(event.notice.tone, event.notice.message))
+                }
+
+                is StoreEvent.Duplicated -> {
+                    duplicate = event
+                }
+
+                else -> {}
+            }
+        }
     }
     LaunchedEffect(search) {
         search.events.collect { event -> if (event is StoreEvent.Said) banners.push(Banner(event.notice.tone, event.notice.message)) }
@@ -200,6 +215,30 @@ fun MainScreen(
             val added = if (value.startsWith("magnet:")) store.addTorrent(value) else store.add(value, prefs.defaultPreset)
             if (added) link = ""
             adding = false
+        }
+    }
+
+    /** Select the download the list already holds, loading it first if the page doesn't have it. */
+    fun openDuplicate(id: String) {
+        scope.launch {
+            if (store.reveal(id)) {
+                duplicate = null
+                view = MainView.LIST
+                selection = Selection(setOf(id), id, id)
+                keys.requestFocus()
+            } else {
+                banners.push(Banner(Tone.ERROR, "That download is no longer in your list"))
+            }
+        }
+    }
+
+    fun addAnyway(held: StoreEvent.Duplicated) {
+        val again = held.link ?: return
+        scope.launch {
+            if (store.add(again, prefs.defaultPreset, allowDuplicate = true)) {
+                duplicate = null
+                if (link.trim() == again) link = ""
+            }
         }
     }
 
@@ -384,7 +423,10 @@ fun MainScreen(
                 Toolbar(
                     inset = toolbarInset(),
                     link = link,
-                    onLink = { link = it },
+                    onLink = {
+                        link = it
+                        duplicate = null
+                    },
                     onSubmit = ::submitLink,
                     adding = adding,
                     preset = prefs.defaultPreset,
@@ -397,6 +439,14 @@ fun MainScreen(
                     onSettings = { showSettings = true },
                     onLinkFocus = { linkFocused = it },
                 )
+                duplicate?.let { held ->
+                    DuplicateStrip(
+                        held = held.held,
+                        onOpen = { openDuplicate(held.held.id) },
+                        onDismiss = { duplicate = null },
+                        onAddAnyway = if (held.link != null) ({ addAnyway(held) }) else null,
+                    )
+                }
                 Row(Modifier.weight(1f).torrentDrop(::addTorrentFile)) {
                     SourceList(
                         items = sourceItems(state.summary),
