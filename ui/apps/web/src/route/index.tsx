@@ -48,6 +48,10 @@ import {
     addEntriesPage,
     dropVideo,
     listCategories,
+    createCategory,
+    updateCategory,
+    orderCategories,
+    deleteCategory,
     moveToCategory,
     DOWNLOADS_CATEGORY_ID,
     type CategoryItem,
@@ -689,6 +693,55 @@ export default component$(() => {
         await loadCategories();
     });
 
+    /**
+     * The Settings section's edits. Each one reloads the list, so the sidebar,
+     * the pickers and the counts show the new state. A refusal is said in a
+     * toast, and the form keeps what was typed.
+     */
+    const handleCategoryCreate = $(async (name: string, folder: string) => {
+        try {
+            await createCategory(name, folder);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return false;
+        }
+        await loadCategories();
+        return true;
+    });
+
+    const handleCategoryUpdate = $(
+        async (id: string, patch: { name?: string; folder?: string }) => {
+            try {
+                await updateCategory(id, patch);
+            } catch (err) {
+                notify("error", errorMessage(err));
+                return false;
+            }
+            await loadCategories();
+            // A rename shows on every row in it.
+            await syncTask();
+            return true;
+        },
+    );
+
+    const handleCategoryOrder = $(async (ids: string[]) => {
+        try {
+            store.categories = await orderCategories(ids);
+        } catch (err) {
+            notify("error", errorMessage(err));
+        }
+    });
+
+    const handleCategoryDelete = $(async (id: string) => {
+        try {
+            await deleteCategory(id);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return;
+        }
+        await loadCategories();
+    });
+
     /** The add forms' choice, remembered for the next visit. */
     const handleAddCategoryChange = $((id: string) => {
         store.addCategory = id;
@@ -705,8 +758,10 @@ export default component$(() => {
         store.serverSettings = server;
     });
 
-    const handleSettingsClose = $(() => {
+    const handleSettingsClose = $(async () => {
         store.settingsOpen = false;
+        // Another client's edits to the categories show up once Settings closes.
+        await loadCategories();
     });
 
     const handleApiKeySave = $((key: string) => {
@@ -1326,6 +1381,10 @@ export default component$(() => {
             onCategoryChange={handleCategoryChange}
             onAddCategoryChange={handleAddCategoryChange}
             onMoveCategory={handleMoveCategory}
+            onCategoryCreate={handleCategoryCreate}
+            onCategoryUpdate={handleCategoryUpdate}
+            onCategoryOrder={handleCategoryOrder}
+            onCategoryDelete={handleCategoryDelete}
             onSearchChange={handleSearchChange}
             addModalOpen={store.addModalOpen}
             onAddModalClose={handleAddModalClose}

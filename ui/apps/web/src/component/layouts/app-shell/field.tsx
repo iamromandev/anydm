@@ -128,6 +128,13 @@ export interface AppShellProps {
     onAddCategoryChange: (id: string) => void;
     /** Move a row to another category; the dialog closes once it has answered. */
     onMoveCategory: (taskId: string, categoryId: string) => Promise<void>;
+    onCategoryCreate: (name: string, folder: string) => Promise<boolean>;
+    onCategoryUpdate: (
+        id: string,
+        patch: { name?: string; folder?: string },
+    ) => Promise<boolean>;
+    onCategoryOrder: (ids: string[]) => Promise<void>;
+    onCategoryDelete: (id: string) => Promise<void>;
     onSearchChange: (query: string) => void;
     onAddModalClose: () => void;
     onAddClick: () => void;
@@ -242,6 +249,10 @@ export const AppShell = component$<AppShellProps>(
         onCategoryChange,
         onAddCategoryChange,
         onMoveCategory,
+        onCategoryCreate,
+        onCategoryUpdate,
+        onCategoryOrder,
+        onCategoryDelete,
         onSearchChange,
         onAddModalClose,
         onAddClick,
@@ -291,6 +302,8 @@ export const AppShell = component$<AppShellProps>(
             add box: `.app-shell-content` has `contain: layout`, which would
             pin a fixed overlay to the content column. */
         const picker = useSignal<PickerTarget | null>(null);
+        // The category waiting on its delete confirmation, if any.
+        const confirmingCategory = useSignal<CategoryItem | null>(null);
         // The row whose category is being changed, while its dialog is open.
         const moving = useSignal<string | null>(null);
 
@@ -646,6 +659,26 @@ export const AppShell = component$<AppShellProps>(
                     onConfirm={handleSourceDeleteConfirm}
                 />
 
+                <ConfirmDialog
+                    prompt={
+                        confirmingCategory.value
+                            ? {
+                                  heading: `Delete ${confirmingCategory.value.name}?`,
+                                  body: "Its folder and files stay on disk.",
+                                  confirmLabel: "Delete",
+                              }
+                            : null
+                    }
+                    onCancel={$(() => {
+                        confirmingCategory.value = null;
+                    })}
+                    onConfirm={$(async () => {
+                        const category = confirmingCategory.value;
+                        confirmingCategory.value = null;
+                        if (category) await onCategoryDelete(category.id);
+                    })}
+                />
+
                 {batch.value && (
                     <BatchModal
                         key={`batch-${batch.value.seq}`}
@@ -681,6 +714,13 @@ export const AppShell = component$<AppShellProps>(
                     prefs={prefs}
                     sort={sort}
                     server={serverSettings}
+                    categories={categories}
+                    onCategoryCreate={onCategoryCreate}
+                    onCategoryUpdate={onCategoryUpdate}
+                    onCategoryOrder={onCategoryOrder}
+                    onCategoryDelete={$((category: CategoryItem) => {
+                        confirmingCategory.value = category;
+                    })}
                     onClose={onSettingsClose}
                     onPrefsChange={onPrefsChange}
                     onSortChange={onSortChange}
