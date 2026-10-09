@@ -12,13 +12,22 @@ from src.core.base import BaseService
 from src.core.common import now
 from src.core.error import Error
 from src.core.success import Meta
+from src.core.type import Code, ErrorType
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import CollectionRepo, DownloadRepo, FileRepo, PositionRepo, SegmentRepo
 from src.data.schema.play import PlaybackSchema
-from src.data.schema.transfer import CollectionSchema, DownloadSchema, DownloadSummarySchema
+from src.data.schema.transfer import (
+    BatchItemSchema,
+    BatchPreviewSchema,
+    BatchResult,
+    CollectionSchema,
+    DownloadSchema,
+    DownloadSummarySchema,
+)
 from src.data.type import DOWNLOAD_GROUPS, DownloadSort, DownloadStatus, Platform, Preset
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, folder_listing, match_sidecars
+from src.lib.pattern import MAX_ITEMS, PatternError, expand
 from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.entry_plan import plan_fields
@@ -39,6 +48,9 @@ from src.service.download.views import DownloadViews
 #: only a torrent can be seeding and the engine accepts pausing one; failed is in
 #: both the resume set and the clear set, because a failure is equally "try
 #: again" and "give up on this".
+#: How many links of a batch are looked at at once: each page is an extraction.
+BATCH_CONCURRENCY = 4
+
 BULK_SCOPES: dict[str, frozenset[DownloadStatus]] = {
     "pause_all": frozenset({DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.SEEDING}),
     "resume_all": frozenset({DownloadStatus.PAUSED, DownloadStatus.FAILED}),
@@ -160,6 +172,101 @@ class DownloadService(BaseService):
         download = await self._repo.create_direct(url=url, download={"status": DownloadStatus.PENDING}, filename=name)
         self._control.wake()
         return await self._published(download)
+
+    def batch_links(self, lines: list[str] | None, pattern: str | None) -> list[str]:
+        """The links a batch names: a list's lines trimmed, blanks dropped, or a pattern expanded.
+
+        400 for a pattern that cannot be expanded, and for more than ``MAX_ITEMS`` links either way.
+        """
+        try:
+            links = [line.strip() for line in lines if line.strip()] if lines is not None else expand(pattern or "")
+        except PatternError as error:
+            raise Error.bad_request(message=str(error)) from error
+        if not links:
+            raise Error.bad_request(message="There are no links to add")
+        if len(links) > MAX_ITEMS:
+            raise Error.bad_request(message=f"A batch is at most {MAX_ITEMS:,} links; this has {len(links):,}")
+        return links
+
+    def preview_batch(self, lines: list[str] | None, pattern: str | None) -> BatchPreviewSchema:
+        """What a batch would add, without adding anything."""
+        links = self.batch_links(lines, pattern)
+        return BatchPreviewSchema(count=len(links), urls=links)
+
+    async def add_batch(
+        self,
+        lines: list[str] | None,
+        pattern: str | None,
+        preset: Preset,
+        *,
+        allow_duplicate: bool = False,
+    ) -> list[BatchItemSchema]:
+        """Add each link as the add box would, and say what became of every one.
+
+        A failing link is its own result and never stops the rest. A link the
+        list holds is ``duplicate``, and so is one repeated within the batch,
+        unless ``allow_duplicate`` asks for second copies.
+        """
+        links = self.batch_links(lines, pattern)
+        first: dict[str, int] = {}
+        unique: list[str] = []
+        for link in links:
+            if allow_duplicate or link not in first:
+                first.setdefault(link, len(unique))
+                unique.append(link)
+        gate = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+        async def one(link: str) -> BatchItemSchema:
+            async with gate:
+                return await self._add_link(link, preset, allow_duplicate)
+
+        done = await asyncio.gather(*(one(link) for link in unique))
+        if allow_duplicate:
+            return list(done)
+        results: list[BatchItemSchema] = []
+        seen: set[str] = set()
+        for link in links:
+            original = done[first[link]]
+            if link in seen:
+                results.append(
+                    BatchItemSchema(
+                        url=link,
+                        result=BatchResult.DUPLICATE,
+                        download_id=original.download_id,
+                        message="Repeated in this batch",
+                    )
+                )
+            else:
+                seen.add(link)
+                results.append(original)
+        return results
+
+    async def _add_link(self, link: str, preset: Preset, allow_duplicate: bool) -> BatchItemSchema:
+        """One link through the normal add: a magnet is a torrent, a page is downloaded from its
+        site, and a link no site supports is a direct file."""
+        try:
+            if link.lower().startswith("magnet:"):
+                # The engine holds a torrent once, so a second copy is not asked for.
+                download = await self._torrents.enqueue(link, [])
+            else:
+                try:
+                    download = await self.enqueue_media(link, preset, allow_duplicate=allow_duplicate)
+                except Error as error:
+                    if error.type != ErrorType.UNSUPPORTED_URL:
+                        raise
+                    download = await self.enqueue_url(link, allow_duplicate=allow_duplicate)
+        except Error as error:
+            held = error.details[0].subject if error.code == Code.CONFLICT and error.details else None
+            if held is not None:
+                return BatchItemSchema(
+                    url=link, result=BatchResult.DUPLICATE, download_id=uuid.UUID(held), message=error.message
+                )
+            return BatchItemSchema(url=link, result=BatchResult.ERROR, message=error.message)
+        except Exception:
+            # One link must not take the other 999 with it; the log has the cause.
+            logger.exception(f"batch add failed for {link}")
+            return BatchItemSchema(url=link, result=BatchResult.ERROR, message="Could not add this link")
+        return BatchItemSchema(url=link, result=BatchResult.ADDED, download_id=download.id)
 
     async def list_items(
         self, page: int, page_size: int, group: str = "all", sort: str = "-created_at"

@@ -147,9 +147,14 @@ class FakeTorrentService:
         self.paused: list[uuid.UUID] = []
         self.resumed: list[uuid.UUID] = []
         self.canceled: list[tuple[uuid.UUID, bool]] = []
+        self.enqueued: list[str] = []
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         return Path(f"/t/file{index}.mkv"), f"file{index}.mkv", "video/x-matroska"
+
+    async def enqueue(self, raw: str, files: Any) -> Any:
+        self.enqueued.append(raw)
+        return SimpleNamespace(id=uuid.uuid4())
 
     async def media_file_index(self, download_id: uuid.UUID, wanted: int | None = None) -> int:
         return 7 if wanted is None else wanted
