@@ -34,6 +34,8 @@ class StubDownloads:
         self.files: list[tuple[uuid.UUID, int | None]] = []
         #: Each direct add: the address and whether a duplicate was allowed.
         self.added: list[tuple[str, bool]] = []
+        #: The category each direct add was asked to save in.
+        self.categories: list[Any] = []
         #: What the next direct add raises, as the real service does for an address it holds.
         self.held: Any = None
         #: Each batch add: its lines, pattern, preset and whether duplicates were allowed.
@@ -41,6 +43,7 @@ class StubDownloads:
 
     async def enqueue_url(self, url: str, *, allow_duplicate: bool = False, category_id: Any = None) -> DownloadSchema:
         self.added.append((url, allow_duplicate))
+        self.categories.append(category_id)
         if self.held is not None and not allow_duplicate:
             raise already_held(self.held)
         return DownloadSchema(
@@ -50,7 +53,9 @@ class StubDownloads:
     def preview_batch(self, lines: Any, pattern: Any) -> BatchPreviewSchema:
         return BatchPreviewSchema(count=2, urls=["https://x.test/a1", "https://x.test/a2"])
 
-    async def add_batch(self, lines: Any, pattern: Any, preset: Any, *, allow_duplicate: bool = False) -> Any:
+    async def add_batch(
+        self, lines: Any, pattern: Any, preset: Any, *, allow_duplicate: bool = False, category_id: Any = None
+    ) -> Any:
         self.batches.append((lines, pattern, preset, allow_duplicate))
         return [
             BatchItemSchema(url="https://x.test/a1", result=BatchResult.ADDED, download_id=uuid.uuid4()),
@@ -202,3 +207,11 @@ async def test_a_preview_names_the_links_and_is_not_swallowed_by_the_download_id
     assert response.status_code == 200
     assert response.json()["data"] == {"count": 2, "urls": ["https://x.test/a1", "https://x.test/a2"]}
     assert downloads.batches == []
+
+
+@pytest.mark.asyncio
+async def test_a_direct_add_passes_the_category_it_names(http: httpx.AsyncClient, downloads: StubDownloads) -> None:
+    category = uuid.uuid4()
+    await http.post("/download/url", json={"url": "https://cdn.test/a.iso", "category_id": str(category)})
+    await http.post("/download/url", json={"url": "https://cdn.test/b.iso"})
+    assert downloads.categories == [category, None]

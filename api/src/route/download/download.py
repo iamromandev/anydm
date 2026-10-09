@@ -57,7 +57,10 @@ async def enqueue_media(
     409 when the list already holds the page, naming that download; ``allow_duplicate`` adds it anyway.
     """
     data = await download_service.enqueue_media(
-        payload.url.strip(), payload.preset, allow_duplicate=payload.allow_duplicate
+        payload.url.strip(),
+        payload.preset,
+        allow_duplicate=payload.allow_duplicate,
+        category_id=payload.category_id,
     )
     return Success.created(data=data).to_resp()
 
@@ -71,7 +74,9 @@ async def enqueue_url(
 
     409 when the list already holds the address, naming that download; ``allow_duplicate`` adds it anyway.
     """
-    data = await download_service.enqueue_url(payload.url.strip(), allow_duplicate=payload.allow_duplicate)
+    data = await download_service.enqueue_url(
+        payload.url.strip(), allow_duplicate=payload.allow_duplicate, category_id=payload.category_id
+    )
     return Success.created(data=data).to_resp()
 
 
@@ -98,7 +103,11 @@ async def add_batch(
     one failing link never stops the rest. The answer is 200 whatever the mix.
     """
     data = await download_service.add_batch(
-        payload.lines, payload.pattern, payload.preset, allow_duplicate=payload.allow_duplicate
+        payload.lines,
+        payload.pattern,
+        payload.preset,
+        allow_duplicate=payload.allow_duplicate,
+        category_id=payload.category_id,
     )
     return Success.ok(data=data).to_resp()
 
