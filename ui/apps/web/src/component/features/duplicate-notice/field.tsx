@@ -20,6 +20,9 @@ export const DuplicateNotice = component$<DuplicateNoticeProps>(
             <span class="duplicate-notice-text">
                 Already in your list: {duplicate.title}
                 {duplicate.status ? ` (${duplicate.status})` : ""}
+                {duplicate.collectionId
+                    ? `, in ${duplicate.collectionTitle || "a playlist"}`
+                    : ""}
             </span>
             <span class="duplicate-notice-actions">
                 <button

@@ -143,7 +143,7 @@ export interface AppShellProps {
     onStopSeeding: (id: string) => void;
     onAdd: (input: AddInput) => void;
     /** Bring a download the list already holds into view, outlined. */
-    onOpenDownload: (id: string) => void;
+    onOpenDownload: (id: string, collectionId?: string) => void;
     /** The row Open just brought into view. */
     highlightId: string;
     onResolve: (torrent: string) => Promise<ResolvedTorrent>;
@@ -657,11 +657,11 @@ export const AppShell = component$<AppShellProps>(
                     open={addModalOpen}
                     onClose={onAddModalClose}
                     onAdd={onAdd}
-                    onOpen={$((id: string) => {
+                    onOpen={$((id: string, collectionId?: string) => {
                         // The modal can open over any view; the row is in the list.
                         view.value = "list";
                         onAddModalClose();
-                        onOpenDownload(id);
+                        onOpenDownload(id, collectionId);
                     })}
                     onResolve={onResolve}
                     onPlay={$(

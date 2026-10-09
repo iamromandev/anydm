@@ -50,6 +50,25 @@
     font-size: 0.8125rem;
 }
 
+/* The video Open brought into view; the same outline as a found row. */
+.group-entry--found {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    animation: group-entry-found 2.4s ease-out forwards;
+}
+
+@keyframes group-entry-found {
+    to {
+        outline-color: transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .group-entry--found {
+        animation: none;
+    }
+}
+
 .group-entry-index {
     width: 2.5rem;
     flex: none;

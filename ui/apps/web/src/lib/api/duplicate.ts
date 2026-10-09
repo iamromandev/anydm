@@ -10,8 +10,16 @@
 import { ApiError } from "./envelope";
 import type { AddType } from "./site";
 import type { UiTask } from "./download";
+import type { EntriesView } from "./group";
 
-export type Duplicate = { id: string; title: string; status: string };
+export type Duplicate = {
+    id: string;
+    title: string;
+    status: string;
+    /** Set when a playlist or channel holds it: the download is one of its videos. */
+    collectionId?: string;
+    collectionTitle?: string;
+};
 
 /** What an add is asked to do; `allowDuplicate` is Add anyway. */
 export type AddInput = {
@@ -32,11 +40,34 @@ export function duplicateOf(err: unknown): Duplicate | null {
     if (!(err instanceof ApiError) || Number(err.code) !== 409) return null;
     const detail = err.details?.[0];
     if (!detail?.subject) return null;
+    // A video a playlist or channel holds adds a second detail for the collection.
+    const collection = err.details?.find(
+        (d) => d.fields?.[0] === "collection" && d.subject,
+    );
     return {
         id: detail.subject,
         title: detail.description ?? "",
         status: detail.fields?.[0] ?? "",
+        ...(collection && {
+            collectionId: collection.subject,
+            collectionTitle: collection.description ?? "",
+        }),
     };
+}
+
+/**
+ * Where a video stands in a group's Entries list, which loads a page at a time:
+ * `found` once it is held, `more` while a page is left to fetch, `absent` when
+ * every page is in and it is not there.
+ */
+export function entryStanding(
+    view: EntriesView | undefined,
+    id: string,
+): "found" | "more" | "absent" {
+    if (view?.rows.some((row) => row.id === id)) return "found";
+    return view && (view.page === 0 || view.page < view.totalPages)
+        ? "more"
+        : "absent";
 }
 
 /**

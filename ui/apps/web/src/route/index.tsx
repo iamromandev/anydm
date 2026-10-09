@@ -32,6 +32,7 @@ import {
     addLink,
     directRequest,
     duplicateOf,
+    entryStanding,
     withRowOnTop,
     type AddInput,
     placeRows,
@@ -1106,26 +1107,68 @@ export default component$(() => {
      * may be on none of what is loaded: reset to every download, and fetch the
      * one row if page 1 still lacks it.
      */
-    const handleOpenDownload = $(async (id: string) => {
+    const handleOpenDownload = $(async (id: string, collectionId?: string) => {
         store.filter = "all";
         store.searchQuery = "";
         store.page = 1;
         store.totalPages = 1;
         await loadPage(1);
-        if (!store.tasks.some((task) => task.id === id)) {
-            const row = await getApi<any>(`/download/${id}`).catch(() => null);
+        // A video a playlist holds is not a row of the list: its group is, and
+        // the video is in the group's Entries.
+        const rowId = collectionId ?? id;
+        if (!store.tasks.some((task) => task.id === rowId)) {
+            const row = await getApi<any>(
+                collectionId ? `/collection/${rowId}` : `/download/${rowId}`,
+            ).catch(() => null);
             if (row === null) {
                 notify("error", "That download is no longer in your list");
                 return;
             }
             store.tasks = withRowOnTop(store.tasks, normalizeApiTask(row));
         }
+        if (collectionId) {
+            if (!store.entries[collectionId]) {
+                store.entries = {
+                    ...store.entries,
+                    [collectionId]: EMPTY_ENTRIES,
+                };
+            }
+            // Entries come a page at a time: fetch on until the video is in.
+            // A page that fails to advance ends the wait, not the loop's guard.
+            let standing = entryStanding(store.entries[collectionId], id);
+            while (standing === "more") {
+                const fetched = store.entries[collectionId]?.page ?? 0;
+                await loadEntries(collectionId);
+                if ((store.entries[collectionId]?.page ?? 0) <= fetched) break;
+                standing = entryStanding(store.entries[collectionId], id);
+            }
+            if (standing !== "found") {
+                notify("error", "That video is no longer in the playlist");
+                return;
+            }
+        }
         store.highlightId = id;
-        setTimeout(() => {
-            document
-                .getElementById(`download-${id}`)
-                ?.scrollIntoView({ block: "center", behavior: "smooth" });
-        }, 50);
+        // The row may not have rendered yet (a group's videos come in a
+        // hundred at a time), so look again for a second before giving up.
+        let tries = 0;
+        const scrollToRow = () => {
+            const row = document.getElementById(`download-${id}`);
+            if (row) {
+                // Instant inside a group: two nested smooth scrolls (the
+                // Entries list, then the page) cancel each other.
+                const show = () =>
+                    row.scrollIntoView({
+                        block: "center",
+                        behavior: collectionId ? "auto" : "smooth",
+                    });
+                show();
+                // Again once the page has settled around a long Entries list.
+                if (collectionId) setTimeout(show, 250);
+            } else if (tries++ < 20) {
+                setTimeout(scrollToRow, 50);
+            }
+        };
+        setTimeout(scrollToRow, 50);
         setTimeout(() => {
             if (store.highlightId === id) store.highlightId = "";
         }, 2600);

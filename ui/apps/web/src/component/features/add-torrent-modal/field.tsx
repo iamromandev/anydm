@@ -37,7 +37,7 @@ export interface AddTorrentModalProps {
     ) => void | Promise<void>;
     onAdd: (input: AddInput) => Promise<void> | void;
     /** Show a download the list already holds, from a refused add. */
-    onOpen: (id: string) => void;
+    onOpen: (id: string, collectionId?: string) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -184,7 +184,7 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
             const held = store.duplicate;
             if (!held) return;
             store.duplicate = null;
-            onOpen(held.id);
+            onOpen(held.id, held.collectionId);
         });
 
         const addSecondCopy = $(async () => {
