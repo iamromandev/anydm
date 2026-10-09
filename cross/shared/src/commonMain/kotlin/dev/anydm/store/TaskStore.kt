@@ -1,5 +1,7 @@
 package dev.anydm.store
 
+import dev.anydm.api.ApiException
+import dev.anydm.api.Duplicate
 import dev.anydm.api.ServerEvent
 import dev.anydm.api.TaskApi
 import dev.anydm.api.Unauthorized
@@ -128,22 +130,34 @@ class TaskStore(
         }
     }
 
+    /**
+     * Add a link. One the list already holds is not an error: it is [StoreEvent.Duplicated], and the
+     * answer is false. [allowDuplicate] sends it again as a second copy.
+     */
     suspend fun add(
         link: String,
         preferredPreset: String,
-    ): Boolean = act { merge(listOf(api.addLink(link, preferredPreset).toTask())) }.also { if (it) loadSummary() }
+        allowDuplicate: Boolean = false,
+    ): Boolean =
+        actOrHeld(link) { merge(listOf(api.addLink(link, preferredPreset, allowDuplicate).toTask())) }.also { if (it) loadSummary() }
 
-    /** A torrent already in the list comes back as that same download, and is said to be there. */
+    /** A torrent the list already holds is [StoreEvent.Duplicated] with no link: it can be opened, not added again. */
     suspend fun addTorrent(torrent: String): Boolean =
-        act {
-            val held =
-                state.value.tasks
-                    .map { it.id }
-                    .toSet()
-            val added = api.addTorrent(torrent).toTask()
-            merge(listOf(added))
-            if (added.id in held) say(Notice(Tone.INFO, ALREADY_HELD))
-        }.also { if (it) loadSummary() }
+        actOrHeld(null) { merge(listOf(api.addTorrent(torrent).toTask())) }.also { if (it) loadSummary() }
+
+    /**
+     * Show a download the list already holds: every download, with its row loaded, fetched on its own
+     * when the first page doesn't have it. False if the API no longer knows it.
+     */
+    suspend fun reveal(id: String): Boolean {
+        mutableState.update { it.copy(filter = ListFilter.ALL, page = 1, totalPages = 1) }
+        loadPage(1)
+        if (state.value.tasks.none { it.id == id }) {
+            val row = read { api.task(id) } ?: return false
+            merge(listOf(row.toTask()))
+        }
+        return true
+    }
 
     /** A playlist row is a collection, which the API acts on by its own routes. */
     private fun isCollection(id: String): Boolean = state.value.tasks.any { it.id == id && it.kind == TaskKind.PLAYLIST }
@@ -185,6 +199,25 @@ class TaskStore(
             say(Notice(Tone.ERROR, error.message ?: "Something went wrong"))
             false
         }
+
+    /** [act], except that a refused duplicate is told to the UI as an event, not as an error. */
+    private suspend fun actOrHeld(
+        link: String?,
+        block: suspend () -> Unit,
+    ): Boolean {
+        var held: Duplicate? = null
+        val done =
+            act {
+                try {
+                    block()
+                } catch (error: ApiException) {
+                    held = error.duplicate ?: throw error
+                }
+            }
+        val duplicate = held ?: return done
+        mutableEvents.emit(StoreEvent.Duplicated(duplicate, link))
+        return false
+    }
 
     private suspend fun refresh() {
         loadPage(1)

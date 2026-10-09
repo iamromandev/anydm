@@ -51,6 +51,7 @@ private fun detailsOf(json: JsonObject): List<ErrorDetail> =
             ErrorDetail(
                 (detail["subject"] as? JsonPrimitive)?.contentOrNull,
                 (detail["description"] as? JsonPrimitive)?.contentOrNull,
+                (detail["fields"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             )
         }
     }

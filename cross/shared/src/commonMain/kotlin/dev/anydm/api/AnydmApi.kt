@@ -108,12 +108,31 @@ class AnydmApi(
         }
     }
 
+    override suspend fun task(id: String): TaskDto = decode(call(HttpMethod.Get, listOf("download", id)).data)
+
     suspend fun addMedia(
         url: String,
         preset: String,
-    ): TaskDto = decode(call(HttpMethod.Post, listOf("download", "media"), body = obj("url" to url, "preset" to preset)).data)
+        allowDuplicate: Boolean = false,
+    ): TaskDto =
+        decode(
+            call(
+                HttpMethod.Post,
+                listOf("download", "media"),
+                body = withDuplicate(obj("url" to url, "preset" to preset), allowDuplicate),
+            ).data,
+        )
 
-    suspend fun addUrl(url: String): TaskDto = decode(call(HttpMethod.Post, listOf("download", "url"), body = obj("url" to url)).data)
+    suspend fun addUrl(
+        url: String,
+        allowDuplicate: Boolean = false,
+    ): TaskDto = decode(call(HttpMethod.Post, listOf("download", "url"), body = withDuplicate(obj("url" to url), allowDuplicate)).data)
+
+    /** The API holds a torrent once, so only a page or a file takes this. */
+    private fun withDuplicate(
+        body: JsonObject,
+        allowDuplicate: Boolean,
+    ): JsonObject = if (allowDuplicate) JsonObject(body + ("allow_duplicate" to JsonPrimitive(true))) else body
 
     /** A magnet link, or a `.torrent` file base64-encoded. An empty list takes every file. */
     override suspend fun addTorrent(
@@ -136,12 +155,13 @@ class AnydmApi(
     override suspend fun addLink(
         url: String,
         preferred: String,
+        allowDuplicate: Boolean,
     ): TaskDto {
         val found =
             try {
                 extract(url)
             } catch (error: ApiException) {
-                if (error.type == "unsupported_url") return addUrl(url)
+                if (error.type == "unsupported_url") return addUrl(url, allowDuplicate)
                 throw error
             }
         return when (found) {
@@ -153,7 +173,7 @@ class AnydmApi(
                 val preset =
                     choosePreset(found.media.presets, preferred)
                         ?: throw ApiException("Nothing on this page can be downloaded yet", null, null)
-                addMedia(url, preset)
+                addMedia(url, preset, allowDuplicate)
             }
         }
     }

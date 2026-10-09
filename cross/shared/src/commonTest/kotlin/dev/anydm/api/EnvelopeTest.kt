@@ -37,6 +37,31 @@ class EnvelopeTest {
     }
 
     @Test
+    fun `a 409 naming a download maps to a duplicate`() {
+        val error =
+            assertFailsWith<ApiException> {
+                unwrap(
+                    409,
+                    """{"status":"error","code":409,"message":"Already in your list: Clip (completed)",
+                        |"details":[{"subject":"d1","description":"Clip","fields":["completed"]}]}
+                    """.trimMargin(),
+                )
+            }
+        assertEquals(Duplicate("d1", "Clip", "completed"), error.duplicate)
+        assertEquals("Already in your list: Clip (completed)", error.message)
+    }
+
+    @Test
+    fun `a 409 that names nothing, and other failures, are not duplicates`() {
+        assertNull(assertFailsWith<ApiException> { unwrap(409, """{"status":"error","code":409,"message":"Task is paused"}""") }.duplicate)
+        assertNull(
+            assertFailsWith<ApiException> {
+                unwrap(400, """{"status":"error","code":400,"message":"no","details":[{"subject":"d1"}]}""")
+            }.duplicate,
+        )
+    }
+
+    @Test
     fun `no body is fine on a 204, and anything unreadable says its status`() {
         assertNull(unwrap(204, "").data)
         assertEquals("Request failed (HTTP 502)", assertFailsWith<ApiException> { unwrap(502, "<html>bad gateway</html>") }.message)
