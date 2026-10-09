@@ -65,6 +65,7 @@ fun choosePlayer(): String? {
 fun SettingsWindow(
     settings: SettingsStore,
     onChangeServer: () -> Unit,
+    onManageCategories: () -> Unit = {},
     onClose: () -> Unit,
 ) {
     val prefs by settings.settings.collectAsState()
@@ -84,10 +85,16 @@ fun SettingsWindow(
     ) {
         DesktopTheme {
             Box(Modifier.fillMaxSize().background(LocalTokens.current.content)) {
-                SettingsContent(prefs, { change -> settings.update(change) }, ::choosePlayer) {
-                    onClose()
-                    onChangeServer()
-                }
+                SettingsContent(
+                    prefs,
+                    { change -> settings.update(change) },
+                    ::choosePlayer,
+                    {
+                        onClose()
+                        onChangeServer()
+                    },
+                    onManageCategories,
+                )
             }
         }
     }
@@ -99,6 +106,7 @@ fun SettingsContent(
     onChange: ((Settings) -> Settings) -> Unit,
     onChoosePlayer: () -> String?,
     onChangeServer: () -> Unit,
+    onManageCategories: () -> Unit = {},
 ) {
     val t = LocalTokens.current
     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -125,6 +133,7 @@ fun SettingsContent(
             Checkbox(prefs.confirmBeforeRemove, null)
             Text("Ask before removing a download", color = t.text)
         }
+        PushButton("Categories…", onClick = onManageCategories)
         HorizontalDivider(color = t.separator)
         Section("Server")
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

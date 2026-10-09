@@ -161,6 +161,12 @@ object Glyphs {
             lineTo(11f, 4.8f)
             lineTo(8.2f, 4.8f)
         }
+    val ChevronUp =
+        glyph("chevron-up") {
+            moveTo(4f, 10f)
+            lineTo(8f, 6f)
+            lineTo(12f, 10f)
+        }
     val ChevronRight =
         glyph("chevron-right") {
             moveTo(6f, 4f)

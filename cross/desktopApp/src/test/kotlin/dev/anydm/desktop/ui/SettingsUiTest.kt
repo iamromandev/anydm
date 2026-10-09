@@ -47,4 +47,23 @@ class SettingsUiTest {
             onNodeWithText("Change server…").performClick()
             assertEquals(1, changedServer)
         }
+
+    @Test
+    fun `Categories opens the manager`() =
+        runComposeUiTest {
+            var opened = 0
+            setContent {
+                DesktopTheme(dark = false) {
+                    SettingsContent(
+                        Settings(),
+                        onChange = {},
+                        onChoosePlayer = { null },
+                        onChangeServer = {},
+                        onManageCategories = { opened += 1 },
+                    )
+                }
+            }
+            onNodeWithText("Categories…").performClick()
+            assertEquals(1, opened)
+        }
 }

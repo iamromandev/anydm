@@ -125,6 +125,7 @@ fun MainScreen(
         if (categoryState.loaded && filter != null && categoryState.categories.none { it.id == filter }) store.setCategoryFilter(null)
     }
     var moving by remember { mutableStateOf<Task?>(null) }
+    var managingCategories by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val banners = remember { BannerQueue(System::currentTimeMillis) }
     var link by remember { mutableStateOf("") }
@@ -597,7 +598,14 @@ fun MainScreen(
                 scope.launch { if (store.moveToCategory(task.id, categoryId)) categories.load() }
             }
         }
-        if (showSettings) SettingsWindow(settings, onChangeServer = onSignOut) { showSettings = false }
+        if (showSettings) {
+            SettingsWindow(settings, onChangeServer = onSignOut, onManageCategories = { managingCategories = true }) {
+                showSettings = false
+            }
+        }
+        if (managingCategories) {
+            CategoriesWindow(categories) { managingCategories = false }
+        }
         if (clearing) {
             ClearFinishedDialog(onCancel = { clearing = false }) {
                 clearing = false
