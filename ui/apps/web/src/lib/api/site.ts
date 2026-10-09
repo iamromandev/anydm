@@ -201,12 +201,15 @@ export async function addLink(
     preferred: string,
     post: Post = postApi,
     allowDuplicate = false,
+    categoryId?: string,
 ): Promise<void> {
     const found = await lookupLink(url, post);
+    const category = categoryId ? { category_id: categoryId } : {};
     if (found.kind === "file") {
         await post("/download/url", {
             url,
             ...(allowDuplicate && { allow_duplicate: true }),
+            ...category,
         });
         return;
     }
@@ -223,5 +226,6 @@ export async function addLink(
         url,
         preset,
         ...(allowDuplicate && { allow_duplicate: true }),
+        ...category,
     });
 }

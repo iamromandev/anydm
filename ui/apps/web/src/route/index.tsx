@@ -47,8 +47,17 @@ import {
     EMPTY_ENTRIES,
     addEntriesPage,
     dropVideo,
+    listCategories,
+    createCategory,
+    updateCategory,
+    orderCategories,
+    deleteCategory,
+    moveToCategory,
+    DOWNLOADS_CATEGORY_ID,
+    type CategoryItem,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
+import { loadCategoryChoice, saveCategoryChoice } from "@/lib/category-choice";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
 import {
     FALLBACK_POLL_MS,
@@ -135,6 +144,12 @@ export default component$(() => {
         // From the event stream's `disk` frames; null until the first arrives.
         disk: null as Disk | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
+        // The categories from the API, loaded once and again after an edit.
+        categories: [] as CategoryItem[],
+        // The sidebar's category filter: an id, or null for every category.
+        category: null as string | null,
+        // Where the add forms save new downloads.
+        addCategory: DOWNLOADS_CATEGORY_ID as string,
         searchQuery: "" as string,
         // The row Open just brought into view, outlined for a moment.
         highlightId: "" as string,
@@ -199,6 +214,24 @@ export default component$(() => {
     });
 
     /**
+     * The categories, and the add forms' choice among them: the one remembered
+     * while it still exists, else Downloads. A category the list shows but the
+     * filter no longer has is dropped from the filter.
+     */
+    const loadCategories = $(async () => {
+        const listed = await listCategories().catch(() => null);
+        if (listed === null) return;
+        store.categories = listed;
+        store.addCategory = loadCategoryChoice(listed);
+        if (
+            store.category !== null &&
+            !listed.some((category) => category.id === store.category)
+        ) {
+            store.category = null;
+        }
+    });
+
+    /**
      * Ask for the counts again. A burst of frames (a playlist paused, a bulk
      * action) costs at most two requests: while one is in flight, later asks
      * only mark that it should run once more when it lands.
@@ -215,9 +248,13 @@ export default component$(() => {
         try {
             do {
                 store.summaryAgain = false;
-                const summary = await getApi<any>("/download/summary").catch(
-                    () => null,
-                );
+                // The counts follow the category filter, unlike the status filter's.
+                const narrowed = store.category
+                    ? `?category=${encodeURIComponent(store.category)}`
+                    : "";
+                const summary = await getApi<any>(
+                    `/download/summary${narrowed}`,
+                ).catch(() => null);
                 if (summary) store.summary = normalizeSummary(summary);
             } while (store.summaryAgain);
         } finally {
@@ -284,9 +321,12 @@ export default component$(() => {
      * `await`: a stream frame applied in between would be overwritten.
      */
     const loadPage = $(async (page: number) => {
+        const narrowed = store.category
+            ? `&category=${encodeURIComponent(store.category)}`
+            : "";
         const query =
             `page=${page}&page_size=${PAGE_SIZE}` +
-            `&group=${store.filter}&sort=${store.sort}`;
+            `&group=${store.filter}&sort=${store.sort}${narrowed}`;
         const since = store.streamSeq;
         const result = await getPageApi<any[]>(`/download?${query}`).catch(
             () => null,
@@ -440,6 +480,7 @@ export default component$(() => {
                 store.settingsOpen = true;
             });
             syncTask();
+            loadCategories();
             refreshSearchAvailability();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
@@ -615,6 +656,98 @@ export default component$(() => {
         await loadPage(1);
     });
 
+    /**
+     * A new category in the sidebar: a new list, and new counts, since the
+     * counts follow the category where the status counts did not.
+     */
+    const handleCategoryChange = $(async (id: string | null) => {
+        store.category = id;
+        store.page = 1;
+        store.totalPages = 1;
+        await loadPage(1);
+        await loadSummary();
+    });
+
+    /**
+     * Move a row to another category. The row is replaced from the answer, in
+     * one synchronous read-then-write of the list, so a stream frame landing
+     * meanwhile cannot undo it.
+     */
+    const handleMoveCategory = $(async (taskId: string, categoryId: string) => {
+        const task = store.tasks.find((t) => t.id === taskId);
+        if (!task) return;
+        let updated: any;
+        try {
+            updated = await moveToCategory(
+                { id: taskId, collection: task.kind === "playlist" },
+                categoryId,
+            );
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return;
+        }
+        store.tasks = store.tasks.map((t) =>
+            t.id === taskId ? normalizeApiTask(updated) : t,
+        );
+        await loadSummary();
+        await loadCategories();
+    });
+
+    /**
+     * The Settings section's edits. Each one reloads the list, so the sidebar,
+     * the pickers and the counts show the new state. A refusal is said in a
+     * toast, and the form keeps what was typed.
+     */
+    const handleCategoryCreate = $(async (name: string, folder: string) => {
+        try {
+            await createCategory(name, folder);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return false;
+        }
+        await loadCategories();
+        return true;
+    });
+
+    const handleCategoryUpdate = $(
+        async (id: string, patch: { name?: string; folder?: string }) => {
+            try {
+                await updateCategory(id, patch);
+            } catch (err) {
+                notify("error", errorMessage(err));
+                return false;
+            }
+            await loadCategories();
+            // A rename shows on every row in it.
+            await syncTask();
+            return true;
+        },
+    );
+
+    const handleCategoryOrder = $(async (ids: string[]) => {
+        try {
+            store.categories = await orderCategories(ids);
+        } catch (err) {
+            notify("error", errorMessage(err));
+        }
+    });
+
+    const handleCategoryDelete = $(async (id: string) => {
+        try {
+            await deleteCategory(id);
+        } catch (err) {
+            notify("error", errorMessage(err));
+            return;
+        }
+        await loadCategories();
+    });
+
+    /** The add forms' choice, remembered for the next visit. */
+    const handleAddCategoryChange = $((id: string) => {
+        store.addCategory = id;
+        saveCategoryChoice(id);
+    });
+
     const handleSettingsOpen = $(async () => {
         store.settingsOpen = true;
         // Fetched on opening rather than on load: nothing else needs it, and
@@ -625,8 +758,10 @@ export default component$(() => {
         store.serverSettings = server;
     });
 
-    const handleSettingsClose = $(() => {
+    const handleSettingsClose = $(async () => {
         store.settingsOpen = false;
+        // Another client's edits to the categories show up once Settings closes.
+        await loadCategories();
     });
 
     const handleApiKeySave = $((key: string) => {
@@ -1061,13 +1196,18 @@ export default component$(() => {
     );
 
     const handleAdd = $(async (input: AddInput) => {
+        // Where the form said to save; Downloads when it said nothing.
+        const category = input.categoryId ?? store.addCategory;
         try {
             // unwrap() throws with the service's own message on either
             // envelope, so there is no response.ok check to write here.
             if (input.type === "site" || input.type === "url") {
                 // For a page, the add box already asked the API about it
                 // and picked a preset it offers.
-                const request = directRequest(input);
+                const request = directRequest({
+                    ...input,
+                    categoryId: category,
+                });
                 await postApi(request.path, request.body);
             } else if (input.type === "link") {
                 // A link nobody has looked at yet: ask, then route it.
@@ -1076,11 +1216,12 @@ export default component$(() => {
                     input.preset || store.prefs.defaultPreset,
                     postApi,
                     input.allowDuplicate,
+                    category,
                 );
             } else {
                 const known = new Set(store.tasks.map((task) => task.id));
                 const notice = heldTorrentNotice(
-                    await addTorrent(input.value, input.files ?? []),
+                    await addTorrent(input.value, input.files ?? [], category),
                     known,
                 );
                 if (notice) notify("info", notice);
@@ -1109,6 +1250,8 @@ export default component$(() => {
      */
     const handleOpenDownload = $(async (id: string, collectionId?: string) => {
         store.filter = "all";
+        // The row may sit in another category, so the category filter goes too.
+        store.category = null;
         store.searchQuery = "";
         store.page = 1;
         store.totalPages = 1;
@@ -1232,6 +1375,16 @@ export default component$(() => {
             onSidebarToggle={toggleSidebar}
             onSidebarCollapseToggle={toggleSidebarCollapse}
             onFilterChange={handleFilterChange}
+            categories={store.categories}
+            category={store.category}
+            addCategory={store.addCategory}
+            onCategoryChange={handleCategoryChange}
+            onAddCategoryChange={handleAddCategoryChange}
+            onMoveCategory={handleMoveCategory}
+            onCategoryCreate={handleCategoryCreate}
+            onCategoryUpdate={handleCategoryUpdate}
+            onCategoryOrder={handleCategoryOrder}
+            onCategoryDelete={handleCategoryDelete}
             onSearchChange={handleSearchChange}
             addModalOpen={store.addModalOpen}
             onAddModalClose={handleAddModalClose}

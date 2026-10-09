@@ -11,3 +11,4 @@ export * from "./site";
 export * from "./group";
 export * from "./search";
 export * from "./source";
+export * from "./category";

@@ -28,6 +28,8 @@ export type AddInput = {
     preset?: string;
     files?: number[];
     allowDuplicate?: boolean;
+    /** The category to save in; Downloads when left out. */
+    categoryId?: string;
 };
 
 /**
@@ -88,7 +90,10 @@ export function directRequest(input: AddInput): {
     path: string;
     body: Record<string, unknown>;
 } {
-    const allow = input.allowDuplicate ? { allow_duplicate: true } : {};
+    const allow = {
+        ...(input.allowDuplicate ? { allow_duplicate: true } : {}),
+        ...(input.categoryId ? { category_id: input.categoryId } : {}),
+    };
     if (input.type === "site") {
         return {
             path: "/download/media",

@@ -67,10 +67,12 @@ export async function addBatch(
     source: BatchSource,
     preset: string,
     post: Post = postApi,
+    categoryId?: string,
 ): Promise<BatchItem[]> {
     const raw = await post<any[]>("/download/batch", {
         ...batchBody(source),
         preset,
+        ...(categoryId ? { category_id: categoryId } : {}),
     });
     return (Array.isArray(raw) ? raw : []).map(normalizeBatchItem);
 }

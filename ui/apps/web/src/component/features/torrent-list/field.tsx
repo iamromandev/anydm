@@ -7,13 +7,15 @@ import { GroupCard } from "@/component/features/group-card";
 import { StartDoors } from "@/component/features/start-doors";
 import { showDoors } from "@/component/features/start-doors/present";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
-import { isActive, isSeeding, type EntriesView } from "@/lib/api";
+import { inCategory, isActive, isSeeding, type EntriesView } from "@/lib/api";
 import { matchesSearch } from "@/lib/search";
 import "./field.css";
 
 export interface TorrentListProps {
     tasks: TorrentTask[];
     filter: TorrentFilter;
+    /** The category the list is narrowed to, or null for every category. */
+    category: string | null;
     searchQuery: string;
     /** The row Open just brought into view, outlined for a moment. */
     highlightId?: string;
@@ -30,6 +32,8 @@ export interface TorrentListProps {
     onPlay: (id: string) => void;
     onRemove: (id: string) => void;
     onStopSeeding: (id: string) => void;
+    /** Open the picker for a row's category. */
+    onMoveCategory: (id: string) => void;
     /** Each open group's Entries list, by group id (v0.5). */
     entries: Record<string, EntriesView>;
     onToggleEntries: (id: string) => void;
@@ -56,6 +60,7 @@ export const TorrentList = component$<TorrentListProps>(
     ({
         tasks,
         filter,
+        category,
         searchQuery,
         highlightId = "",
         now,
@@ -68,6 +73,7 @@ export const TorrentList = component$<TorrentListProps>(
         onPlay,
         onRemove,
         onStopSeeding,
+        onMoveCategory,
         entries,
         onToggleEntries,
         onLoadMoreEntries,
@@ -86,6 +92,8 @@ export const TorrentList = component$<TorrentListProps>(
 
         const filteredTasks = tasks.filter((task) => {
             if (!matchesSearch(task, searchQuery)) return false;
+            // Checked here too: live frames arrive for every row, whatever the filter.
+            if (!inCategory(task, category)) return false;
 
             switch (filter) {
                 case "downloading":
@@ -185,6 +193,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onPause={onPause}
                                     onResume={onResume}
                                     onRemove={onRemove}
+                                    onMoveCategory={onMoveCategory}
                                     onPauseVideo={onPauseVideo}
                                     onResumeVideo={onResumeVideo}
                                     onPlayVideo={onPlay}
@@ -203,6 +212,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onPlay={onPlay}
                                     onRemove={onRemove}
                                     onStopSeeding={onStopSeeding}
+                                    onMoveCategory={onMoveCategory}
                                 />
                             )}
                         </div>

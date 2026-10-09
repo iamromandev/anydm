@@ -348,3 +348,9 @@
         min-height: 44px;
     }
 }
+
+.add-torrent-category {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.5rem 1rem 0;
+}

@@ -27,6 +27,8 @@ import {
     type PlaylistRequest,
 } from "@/lib/api/playlist";
 import { PRESET_OPTIONS, type Preset } from "@/lib/prefs";
+import type { CategoryItem } from "@/lib/api/category";
+import { CategorySelect } from "@/component/shared/category-select";
 import {
     filterEntries,
     canTick,
@@ -74,6 +76,10 @@ export interface PlaylistPickerProps {
     onPlayAll?: (items: QueueItem[], start: number) => void;
     /** The preset the footer starts on. */
     defaultPreset: Preset;
+    /** Every category, for the picker in the footer. */
+    categories: CategoryItem[];
+    /** Where the group saves at first; the footer can change it for this group. */
+    addCategory: string;
     /** Add the ticked videos as one group; the shell closes the picker. */
     onAdd: (request: PlaylistRequest) => Promise<void>;
 }
@@ -86,6 +92,8 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
         onPlay,
         onPlayAll,
         defaultPreset,
+        categories,
+        addCategory,
         onAdd,
     }) => {
         const listing = useSignal<ListingState>(EMPTY_LISTING);
@@ -105,6 +113,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
             anchor: null as number | null,
             query: "",
             preset: defaultPreset as Preset,
+            category: addCategory,
             adding: false,
             /** "Tick newest [N]" (part 3). */
             newest: 50,
@@ -243,6 +252,7 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
                 store.preset,
                 listing.value.entries,
                 selected.value,
+                store.category,
             );
             if (request.entries.length === 0) return;
             store.adding = true;
@@ -511,6 +521,13 @@ export const PlaylistPicker = component$<PlaylistPickerProps>(
 
                     <div class="playlist-picker-footer">
                         <div class="playlist-picker-choice">
+                            <CategorySelect
+                                categories={categories}
+                                value={store.category}
+                                onChange$={$((id: string) => {
+                                    store.category = id;
+                                })}
+                            />
                             <select
                                 class="playlist-picker-preset"
                                 aria-label="Quality"

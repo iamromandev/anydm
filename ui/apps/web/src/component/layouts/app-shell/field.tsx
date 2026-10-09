@@ -7,6 +7,7 @@ import {
     isActive,
     isSeeding,
     type AddInput,
+    type CategoryItem,
     type EntriesView,
     type ResolvedTorrent,
     type TaskSummary,
@@ -48,6 +49,7 @@ import { HeroInput } from "@/component/features/hero-input";
 import { StatusLine } from "@/component/features/status-line";
 import { PlayerModal } from "@/component/features/player-modal";
 import { PlaylistPicker } from "@/component/features/playlist-picker";
+import { CategoryMove } from "@/component/features/category-move";
 import { RemoveDialog } from "@/component/features/remove-dialog";
 import {
     SettingsModal,
@@ -116,6 +118,23 @@ export interface AppShellProps {
     onSidebarToggle: () => void;
     onSidebarCollapseToggle: () => void;
     onFilterChange: (filter: string) => void;
+    /** Every category, for the sidebar, the add forms and the Settings section. */
+    categories: CategoryItem[];
+    /** The sidebar's category filter: an id, or null for every category. */
+    category: string | null;
+    /** Where the add forms save new downloads. */
+    addCategory: string;
+    onCategoryChange: (id: string | null) => void;
+    onAddCategoryChange: (id: string) => void;
+    /** Move a row to another category; the dialog closes once it has answered. */
+    onMoveCategory: (taskId: string, categoryId: string) => Promise<void>;
+    onCategoryCreate: (name: string, folder: string) => Promise<boolean>;
+    onCategoryUpdate: (
+        id: string,
+        patch: { name?: string; folder?: string },
+    ) => Promise<boolean>;
+    onCategoryOrder: (ids: string[]) => Promise<void>;
+    onCategoryDelete: (id: string) => Promise<void>;
     onSearchChange: (query: string) => void;
     onAddModalClose: () => void;
     onAddClick: () => void;
@@ -224,6 +243,16 @@ export const AppShell = component$<AppShellProps>(
         onSidebarToggle,
         onSidebarCollapseToggle,
         onFilterChange,
+        categories,
+        category,
+        addCategory,
+        onCategoryChange,
+        onAddCategoryChange,
+        onMoveCategory,
+        onCategoryCreate,
+        onCategoryUpdate,
+        onCategoryOrder,
+        onCategoryDelete,
         onSearchChange,
         onAddModalClose,
         onAddClick,
@@ -273,6 +302,10 @@ export const AppShell = component$<AppShellProps>(
             add box: `.app-shell-content` has `contain: layout`, which would
             pin a fixed overlay to the content column. */
         const picker = useSignal<PickerTarget | null>(null);
+        // The category waiting on its delete confirmation, if any.
+        const confirmingCategory = useSignal<CategoryItem | null>(null);
+        // The row whose category is being changed, while its dialog is open.
+        const moving = useSignal<string | null>(null);
 
         /** The list, Search, or Sources. Held here with Search's own state, so the
             query and results survive switching away and back. */
@@ -435,6 +468,12 @@ export const AppShell = component$<AppShellProps>(
                             view.value = "list";
                             onFilterChange(f);
                         })}
+                        categories={categories}
+                        category={category}
+                        onCategoryChange={$((id: string | null) => {
+                            view.value = "list";
+                            onCategoryChange(id);
+                        })}
                         search={{
                             enabled: searchEnabled,
                             active: view.value === "search",
@@ -508,6 +547,9 @@ export const AppShell = component$<AppShellProps>(
                                 <HeroInput
                                     compact={counts.all > 0}
                                     defaultPreset={prefs.defaultPreset}
+                                    categories={categories}
+                                    addCategory={addCategory}
+                                    onAddCategoryChange={onAddCategoryChange}
                                     onSubmit={$(async (input: AddInput) => {
                                         await onAdd(input);
                                     })}
@@ -554,6 +596,10 @@ export const AppShell = component$<AppShellProps>(
                                         loadingMore={loadingMore}
                                         onLoadMore={onLoadMore}
                                         filter={filter}
+                                        category={category}
+                                        onMoveCategory={$((id: string) => {
+                                            moving.value = id;
+                                        })}
                                         searchQuery={searchQuery}
                                         highlightId={highlightId}
                                         onPause={onPause}
@@ -618,6 +664,8 @@ export const AppShell = component$<AppShellProps>(
                         key={`batch-${batch.value.seq}`}
                         initialText={batch.value.text}
                         defaultPreset={prefs.defaultPreset}
+                        categories={categories}
+                        addCategory={addCategory}
                         onClose={$(() => {
                             batch.value = null;
                         })}
@@ -646,12 +694,42 @@ export const AppShell = component$<AppShellProps>(
                     prefs={prefs}
                     sort={sort}
                     server={serverSettings}
+                    categories={categories}
+                    onCategoryCreate={onCategoryCreate}
+                    onCategoryUpdate={onCategoryUpdate}
+                    onCategoryOrder={onCategoryOrder}
+                    onCategoryDelete={$((category: CategoryItem) => {
+                        confirmingCategory.value = category;
+                    })}
                     onClose={onSettingsClose}
                     onPrefsChange={onPrefsChange}
                     onSortChange={onSortChange}
                     apiKey={apiKey}
                     apiKeyMessage={apiKeyMessage}
                     onApiKeySave={onApiKeySave}
+                />
+
+                {/* After Settings: the two share a z-index, and the later one
+                    is drawn on top, so this confirmation opened from inside
+                    Settings must come after it. */}
+                <ConfirmDialog
+                    prompt={
+                        confirmingCategory.value
+                            ? {
+                                  heading: `Delete ${confirmingCategory.value.name}?`,
+                                  body: "Its folder and files stay on disk.",
+                                  confirmLabel: "Delete",
+                              }
+                            : null
+                    }
+                    onCancel={$(() => {
+                        confirmingCategory.value = null;
+                    })}
+                    onConfirm={$(async () => {
+                        const category = confirmingCategory.value;
+                        confirmingCategory.value = null;
+                        if (category) await onCategoryDelete(category.id);
+                    })}
                 />
 
                 <RemoveDialog
@@ -680,6 +758,24 @@ export const AppShell = component$<AppShellProps>(
                     onClose={onPlayerModalClose}
                 />
 
+                <CategoryMove
+                    task={
+                        moving.value
+                            ? (tasks.find((t) => t.id === moving.value) ?? null)
+                            : null
+                    }
+                    categories={categories}
+                    onClose={$(() => {
+                        moving.value = null;
+                    })}
+                    onMove={$(async (categoryId: string) => {
+                        const id = moving.value;
+                        if (!id) return;
+                        await onMoveCategory(id, categoryId);
+                        moving.value = null;
+                    })}
+                />
+
                 {/* After the player: remounted by key for each search result,
                     and a remounted component placed before the player broke
                     it (Qwik 2 beta.43, see the picker below). */}
@@ -689,6 +785,9 @@ export const AppShell = component$<AppShellProps>(
                     open={addModalOpen}
                     onClose={onAddModalClose}
                     onAdd={onAdd}
+                    categories={categories}
+                    addCategory={addCategory}
+                    onAddCategoryChange={onAddCategoryChange}
                     onOpen={$((id: string, collectionId?: string) => {
                         // The modal can open over any view; the row is in the list.
                         view.value = "list";
@@ -730,6 +829,8 @@ export const AppShell = component$<AppShellProps>(
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
                         onPlayAll={onPlayQueue}
                         defaultPreset={prefs.defaultPreset}
+                        categories={categories}
+                        addCategory={addCategory}
                         onAdd={$(async (request: PlaylistRequest) => {
                             await onAddPlaylist(request);
                             picker.value = null;

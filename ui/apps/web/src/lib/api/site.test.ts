@@ -354,3 +354,35 @@ describe("addLink, for lists", () => {
         ]);
     });
 });
+
+describe("a category on a link", () => {
+    it("is sent with a direct download", async () => {
+        const { post, calls } = fakePost({
+            "/extract": unsupported,
+            "/download/url": {},
+        });
+
+        await addLink("https://files.test/a.bin", "best", post, false, "c1");
+
+        expect(calls[1].body).toEqual({
+            url: "https://files.test/a.bin",
+            category_id: "c1",
+        });
+    });
+
+    it("is sent with a site download, after the second-copy flag", async () => {
+        const { post, calls } = fakePost({
+            "/extract": VIMEO,
+            "/download/media": {},
+        });
+
+        await addLink("https://vimeo.com/1", "720", post, true, "c1");
+
+        expect(calls[1].body).toEqual({
+            url: "https://vimeo.com/1",
+            preset: "720",
+            allow_duplicate: true,
+            category_id: "c1",
+        });
+    });
+});

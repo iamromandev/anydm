@@ -41,6 +41,8 @@ import { looksLikeMany } from "@/lib/api/batch";
 import { detectKind, isPlayableKind } from "./kind";
 import type { InputKind } from "./kind";
 import { PRESET_OPTIONS } from "@/lib/prefs";
+import type { CategoryItem } from "@/lib/api/category";
+import { CategorySelect } from "@/component/shared/category-select";
 import "./field.css";
 
 export type { InputKind };
@@ -62,6 +64,11 @@ export interface HeroInputProps {
     onChoose?: (target: PickerTarget) => void;
     /** Leave out the welcome title and subtitle: for a person who has downloads already. */
     compact?: boolean;
+    /** Every category, for the picker that shows once there is a link to add. */
+    categories: CategoryItem[];
+    /** Where new downloads save; the picker starts on it. */
+    addCategory: string;
+    onAddCategoryChange: (id: string) => void;
 }
 
 type LookupStatus =
@@ -75,6 +82,9 @@ function magnetName(value: string): string {
 export const HeroInput = component$<HeroInputProps>(
     ({
         defaultPreset,
+        categories,
+        addCategory,
+        onAddCategoryChange,
         onSubmit,
         onOpen,
         onMany,
@@ -461,6 +471,17 @@ export const HeroInput = component$<HeroInputProps>(
                                 </option>
                             ))}
                         </select>
+                    )}
+
+                    {store.value.trim() !== "" && (
+                        <CategorySelect
+                            class="hero-input-category"
+                            categories={categories}
+                            value={addCategory}
+                            onChange$={$((id: string) =>
+                                onAddCategoryChange(id),
+                            )}
+                        />
                     )}
 
                     <div class="hero-input-divider" aria-hidden="true" />

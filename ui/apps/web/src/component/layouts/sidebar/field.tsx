@@ -9,11 +9,17 @@ import {
     LuSearch,
     LuGlobe,
 } from "@/component/core/icons";
+import type { CategoryItem } from "@/lib/api/category";
 import "./field.css";
 
 export interface SidebarProps {
     filter: SidebarFilter;
     onFilterChange: (filter: SidebarFilter) => void;
+    /** Every category, listed under the status filters. */
+    categories: CategoryItem[];
+    /** The category the list is narrowed to, or null for every category. */
+    category: string | null;
+    onCategoryChange: (id: string | null) => void;
     counts: SidebarCounts;
     collapsed?: boolean;
     open?: boolean;
@@ -65,6 +71,9 @@ export const Sidebar = component$<SidebarProps>(
     ({
         filter,
         onFilterChange,
+        categories,
+        category,
+        onCategoryChange,
         counts,
         collapsed = false,
         open = true,
@@ -162,6 +171,28 @@ export const Sidebar = component$<SidebarProps>(
                             <span class="sidebar-filter-count">
                                 {counts[f.id]}
                             </span>
+                        </button>
+                    ))}
+                </nav>
+
+                <h3 class="sidebar-heading">Categories</h3>
+                <nav class="sidebar-nav" aria-label="Categories">
+                    <button
+                        type="button"
+                        class={`sidebar-filter ${!search?.active && category === null ? "sidebar-filter--active" : ""}`}
+                        onClick$={() => onCategoryChange(null)}
+                    >
+                        <span class="sidebar-filter-label">All categories</span>
+                    </button>
+                    {categories.map((c) => (
+                        <button
+                            key={c.id}
+                            type="button"
+                            class={`sidebar-filter ${!search?.active && category === c.id ? "sidebar-filter--active" : ""}`}
+                            onClick$={() => onCategoryChange(c.id)}
+                        >
+                            <span class="sidebar-filter-label">{c.name}</span>
+                            <span class="sidebar-filter-count">{c.count}</span>
                         </button>
                     ))}
                 </nav>

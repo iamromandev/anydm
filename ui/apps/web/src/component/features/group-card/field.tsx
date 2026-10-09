@@ -8,11 +8,13 @@ import {
     LuPlay,
     LuRotateCcw,
     LuTrash,
+    LuFolderInput,
 } from "@/component/core/icons";
 import { CopyButton } from "@/component/features/torrent-card";
 import { SpeedDisplay } from "@/component/shared/speed-display";
 import {
     canPause,
+    canMoveCategory,
     canPlayTask,
     canResume,
     countsLine,
@@ -41,6 +43,8 @@ export interface GroupCardProps {
     onPause: (id: string) => void;
     onResume: (id: string) => void;
     onRemove: (id: string) => void;
+    /** Open the picker for the group's category. */
+    onMoveCategory: (id: string) => void;
     onPauseVideo: (id: string) => void;
     onResumeVideo: (id: string) => void;
     /** A finished video, from its file. */
@@ -68,6 +72,7 @@ export const GroupCard = component$<GroupCardProps>(
         onPause,
         onResume,
         onRemove,
+        onMoveCategory,
         onPauseVideo,
         onResumeVideo,
         onPlayVideo,
@@ -252,6 +257,21 @@ export const GroupCard = component$<GroupCardProps>(
                                     aria-hidden="true"
                                 />
                             )}
+                        </button>
+                    )}
+                    {canMoveCategory(task) && (
+                        <button
+                            type="button"
+                            class="action-btn"
+                            aria-label="Move to category"
+                            title="Move to category"
+                            onClick$={() => onMoveCategory(task.id)}
+                        >
+                            <LuFolderInput
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
                         </button>
                     )}
                     <button

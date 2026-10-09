@@ -1,5 +1,7 @@
-import { component$ } from "@qwik.dev/core";
+import { component$, $ } from "@qwik.dev/core";
 import { LuX } from "@/component/core/icons";
+import type { CategoryItem } from "@/lib/api/category";
+import { CategoryManager } from "@/component/features/category-manager";
 import { AUDIO_LANGUAGES } from "@/lib/audio";
 import { PRESET_OPTIONS, type Prefs, type Preset } from "@/lib/prefs";
 import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
@@ -23,6 +25,16 @@ export interface SettingsModalProps {
     /** Why the key is being asked for. Set when the API has answered 401. */
     apiKeyMessage: string | null;
     onApiKeySave: (key: string) => void;
+    /** Every category, for the Categories section. */
+    categories: CategoryItem[];
+    onCategoryCreate: (name: string, folder: string) => Promise<boolean>;
+    onCategoryUpdate: (
+        id: string,
+        patch: { name?: string; folder?: string },
+    ) => Promise<boolean>;
+    onCategoryOrder: (ids: string[]) => Promise<void>;
+    /** Asks first; the shell owns the confirmation. */
+    onCategoryDelete: (category: CategoryItem) => void;
 }
 
 export const SettingsModal = component$<SettingsModalProps>(
@@ -37,6 +49,11 @@ export const SettingsModal = component$<SettingsModalProps>(
         apiKey,
         apiKeyMessage,
         onApiKeySave,
+        categories,
+        onCategoryCreate,
+        onCategoryUpdate,
+        onCategoryOrder,
+        onCategoryDelete,
     }) => {
         if (!open) return null;
 
@@ -244,6 +261,25 @@ export const SettingsModal = component$<SettingsModalProps>(
                         </section>
 
                         {!apiKeyMessage && access}
+
+                        <CategoryManager
+                            categories={categories}
+                            onCreate$={$((name: string, folder: string) =>
+                                onCategoryCreate(name, folder),
+                            )}
+                            onUpdate$={$(
+                                (
+                                    id: string,
+                                    patch: { name?: string; folder?: string },
+                                ) => onCategoryUpdate(id, patch),
+                            )}
+                            onOrder$={$((ids: string[]) =>
+                                onCategoryOrder(ids),
+                            )}
+                            onDelete$={$((category: CategoryItem) =>
+                                onCategoryDelete(category),
+                            )}
+                        />
 
                         <section class="settings-section">
                             <h3 class="settings-section-title">Server</h3>
