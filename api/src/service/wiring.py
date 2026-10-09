@@ -6,6 +6,7 @@ import httpx
 from src.config import get_settings
 from src.data.repo import (
     AttemptDatabaseRepo,
+    CategoryDatabaseRepo,
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
@@ -17,6 +18,7 @@ from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
 from src.lib.site.client import get_site_client
 from src.lib.torrent.client import RqbitClient
+from src.service.category import CategoryService as CategoryService
 from src.service.download.collection_service import CollectionService as CollectionService
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -69,6 +71,10 @@ def get_search_client() -> httpx.AsyncClient:
 
 
 @lru_cache
+def get_category_service() -> CategoryService:
+    return CategoryService(CategoryDatabaseRepo(), Path(get_settings().download_dir))
+
+
 def get_source_service() -> SourceService:
     return SourceService(SourceDatabaseRepo(), get_search_client(), get_settings().search_timeout_s)
 

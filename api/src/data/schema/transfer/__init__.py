@@ -3,6 +3,13 @@ from .batch import BatchLinks as BatchLinks
 from .batch import BatchPreviewSchema as BatchPreviewSchema
 from .batch import BatchRequest as BatchRequest
 from .batch import BatchResult as BatchResult
+from .category import CategoryCreate as CategoryCreate
+from .category import CategoryListSchema as CategoryListSchema
+from .category import CategoryMoveRequest as CategoryMoveRequest
+from .category import CategoryOrderRequest as CategoryOrderRequest
+from .category import CategoryPatch as CategoryPatch
+from .category import CategoryRefSchema as CategoryRefSchema
+from .category import CategorySchema as CategorySchema
 from .download import BulkActionRequest as BulkActionRequest
 from .download import BulkResultSchema as BulkResultSchema
 from .download import CollectionCountsSchema as CollectionCountsSchema

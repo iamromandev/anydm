@@ -149,6 +149,12 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
     - `GET /extract/entries?url=…&limit=…` — the videos a playlist or a channel's tab lists, as server-sent events while the site pages through them: `entries` frames of up to 100 (`index`, `id`, `url`, `title`, `duration`, `thumbnail`, `timestamp`, `available`, and `have`: `complete`, `queued` or `failed` when a download already holds that video), then `done` with the `count`, or `failed` with the error. `limit` is 1–10,000, the default. Nothing is kept, and closing the stream stops the listing. Takes `api_key` in the query, since an `EventSource` sends no header
     - `GET /settings` — how this API is configured, secrets left out, and the running yt-dlp version; read-only, since changing a setting means editing `api/.env` and restarting
     - `GET /system/disk` — total and free bytes on `DOWNLOAD_DIR`'s disk, and `DOWNLOAD_MIN_FREE_BYTES`. The UI reads the same numbers from `disk` frames on `GET /download/events`
+  - Categories: named save folders under `DOWNLOAD_DIR`
+    - `GET /category` — every category by position: `{id, name, slug, folder, position, builtin, count}`, `folder` relative to `DOWNLOAD_DIR` (`""` is its root) and `count` the list items in it. Downloads is built in: its folder is fixed and it can't be deleted
+    - `POST /category` — add one: `{name, folder}`; answers 201. A taken name answers 409; a folder outside `DOWNLOAD_DIR` answers 400. Changing a folder later moves nothing: placed downloads keep their own
+    - `POST /category/order` — `{ids}`, every category exactly once, in the new order; otherwise 422
+    - `PATCH /category/{id}` — rename it, point it at another folder, or both
+    - `DELETE /category/{id}` — delete a category; answers 204. One still holding downloads answers 409 with how many
   - Downloads
     - `POST /download/media` — enqueue a download from any supported page (YouTube, Vimeo, X, Reddit, SoundCloud, …) for a preset. A page already in the list is refused with 409, naming that download in the error's first detail (`subject` its id, `description` its title, `fields` its status). A video a playlist or channel holds counts too, and adds a second detail for the collection (`subject` its id, `description` its title, `fields` `["collection"]`); `allow_duplicate: true` adds a second copy
     - `POST /download/url` — enqueue a direct URL download. An address already in the list, however it is spelled, is refused with 409; `allow_duplicate: true` adds it anyway
