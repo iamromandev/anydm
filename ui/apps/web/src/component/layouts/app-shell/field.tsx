@@ -7,6 +7,7 @@ import {
     isActive,
     isSeeding,
     type AddInput,
+    type CategoryItem,
     type EntriesView,
     type ResolvedTorrent,
     type TaskSummary,
@@ -116,6 +117,14 @@ export interface AppShellProps {
     onSidebarToggle: () => void;
     onSidebarCollapseToggle: () => void;
     onFilterChange: (filter: string) => void;
+    /** Every category, for the sidebar, the add forms and the Settings section. */
+    categories: CategoryItem[];
+    /** The sidebar's category filter: an id, or null for every category. */
+    category: string | null;
+    /** Where the add forms save new downloads. */
+    addCategory: string;
+    onCategoryChange: (id: string | null) => void;
+    onAddCategoryChange: (id: string) => void;
     onSearchChange: (query: string) => void;
     onAddModalClose: () => void;
     onAddClick: () => void;
@@ -224,6 +233,11 @@ export const AppShell = component$<AppShellProps>(
         onSidebarToggle,
         onSidebarCollapseToggle,
         onFilterChange,
+        categories,
+        category,
+        addCategory,
+        onCategoryChange,
+        onAddCategoryChange,
         onSearchChange,
         onAddModalClose,
         onAddClick,
@@ -435,6 +449,12 @@ export const AppShell = component$<AppShellProps>(
                             view.value = "list";
                             onFilterChange(f);
                         })}
+                        categories={categories}
+                        category={category}
+                        onCategoryChange={$((id: string | null) => {
+                            view.value = "list";
+                            onCategoryChange(id);
+                        })}
                         search={{
                             enabled: searchEnabled,
                             active: view.value === "search",
@@ -508,6 +528,9 @@ export const AppShell = component$<AppShellProps>(
                                 <HeroInput
                                     compact={counts.all > 0}
                                     defaultPreset={prefs.defaultPreset}
+                                    categories={categories}
+                                    addCategory={addCategory}
+                                    onAddCategoryChange={onAddCategoryChange}
                                     onSubmit={$(async (input: AddInput) => {
                                         await onAdd(input);
                                     })}
@@ -554,6 +577,7 @@ export const AppShell = component$<AppShellProps>(
                                         loadingMore={loadingMore}
                                         onLoadMore={onLoadMore}
                                         filter={filter}
+                                        category={category}
                                         searchQuery={searchQuery}
                                         highlightId={highlightId}
                                         onPause={onPause}
@@ -618,6 +642,8 @@ export const AppShell = component$<AppShellProps>(
                         key={`batch-${batch.value.seq}`}
                         initialText={batch.value.text}
                         defaultPreset={prefs.defaultPreset}
+                        categories={categories}
+                        addCategory={addCategory}
                         onClose={$(() => {
                             batch.value = null;
                         })}
@@ -689,6 +715,9 @@ export const AppShell = component$<AppShellProps>(
                     open={addModalOpen}
                     onClose={onAddModalClose}
                     onAdd={onAdd}
+                    categories={categories}
+                    addCategory={addCategory}
+                    onAddCategoryChange={onAddCategoryChange}
                     onOpen={$((id: string, collectionId?: string) => {
                         // The modal can open over any view; the row is in the list.
                         view.value = "list";
@@ -730,6 +759,8 @@ export const AppShell = component$<AppShellProps>(
                         onPlay={$((url: string) => onPlayClick(url, "site"))}
                         onPlayAll={onPlayQueue}
                         defaultPreset={prefs.defaultPreset}
+                        categories={categories}
+                        addCategory={addCategory}
                         onAdd={$(async (request: PlaylistRequest) => {
                             await onAddPlaylist(request);
                             picker.value = null;

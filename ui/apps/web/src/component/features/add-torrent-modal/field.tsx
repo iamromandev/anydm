@@ -15,6 +15,8 @@ import {
     LuPlay,
 } from "@/component/core/icons";
 import type { ResolvedTorrent } from "@/lib/api";
+import type { CategoryItem } from "@/lib/api/category";
+import { CategorySelect } from "@/component/shared/category-select";
 import type { AddInitial } from "@/lib/api/search";
 import { hasMediaExtension, mediaFiles, type PlayableFile } from "@/lib/media";
 import "./field.css";
@@ -36,6 +38,11 @@ export interface AddTorrentModalProps {
         files?: PlayableFile[],
     ) => void | Promise<void>;
     onAdd: (input: AddInput) => Promise<void> | void;
+    /** Every category, for the picker in the footer. */
+    categories: CategoryItem[];
+    /** Where the add saves; the picker starts on it. */
+    addCategory: string;
+    onAddCategoryChange: (id: string) => void;
     /** Show a download the list already holds, from a refused add. */
     onOpen: (id: string, collectionId?: string) => void;
 }
@@ -59,7 +66,18 @@ function formatBytes(bytes: number): string {
 }
 
 export const AddTorrentModal = component$<AddTorrentModalProps>(
-    ({ open, initial, onClose, onResolve, onPlay, onAdd, onOpen }) => {
+    ({
+        open,
+        initial,
+        onClose,
+        onResolve,
+        onPlay,
+        onAdd,
+        categories,
+        addCategory,
+        onAddCategoryChange,
+        onOpen,
+    }) => {
         const store = useStore({
             inputType: (initial?.type ?? "magnet") as "magnet" | "file" | "url",
             inputValue: (initial?.value ?? "") as string,
@@ -534,6 +552,16 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                             />
                         </div>
                     )}
+
+                    <div class="add-torrent-category">
+                        <CategorySelect
+                            categories={categories}
+                            value={addCategory}
+                            onChange$={$((id: string) =>
+                                onAddCategoryChange(id),
+                            )}
+                        />
+                    </div>
 
                     <footer class="modal-footer">
                         <button

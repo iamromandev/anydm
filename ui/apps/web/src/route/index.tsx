@@ -47,8 +47,12 @@ import {
     EMPTY_ENTRIES,
     addEntriesPage,
     dropVideo,
+    listCategories,
+    DOWNLOADS_CATEGORY_ID,
+    type CategoryItem,
 } from "@/lib/api";
 import { parseDisk, type Disk } from "@/lib/api/disk";
+import { loadCategoryChoice, saveCategoryChoice } from "@/lib/category-choice";
 import { loadApiKey, saveApiKey } from "@/lib/api/key";
 import {
     FALLBACK_POLL_MS,
@@ -135,6 +139,12 @@ export default component$(() => {
         // From the event stream's `disk` frames; null until the first arrives.
         disk: null as Disk | null,
         filter: "all" as "all" | "downloading" | "seeding" | "completed",
+        // The categories from the API, loaded once and again after an edit.
+        categories: [] as CategoryItem[],
+        // The sidebar's category filter: an id, or null for every category.
+        category: null as string | null,
+        // Where the add forms save new downloads.
+        addCategory: DOWNLOADS_CATEGORY_ID as string,
         searchQuery: "" as string,
         // The row Open just brought into view, outlined for a moment.
         highlightId: "" as string,
@@ -199,6 +209,24 @@ export default component$(() => {
     });
 
     /**
+     * The categories, and the add forms' choice among them: the one remembered
+     * while it still exists, else Downloads. A category the list shows but the
+     * filter no longer has is dropped from the filter.
+     */
+    const loadCategories = $(async () => {
+        const listed = await listCategories().catch(() => null);
+        if (listed === null) return;
+        store.categories = listed;
+        store.addCategory = loadCategoryChoice(listed);
+        if (
+            store.category !== null &&
+            !listed.some((category) => category.id === store.category)
+        ) {
+            store.category = null;
+        }
+    });
+
+    /**
      * Ask for the counts again. A burst of frames (a playlist paused, a bulk
      * action) costs at most two requests: while one is in flight, later asks
      * only mark that it should run once more when it lands.
@@ -215,9 +243,13 @@ export default component$(() => {
         try {
             do {
                 store.summaryAgain = false;
-                const summary = await getApi<any>("/download/summary").catch(
-                    () => null,
-                );
+                // The counts follow the category filter, unlike the status filter's.
+                const narrowed = store.category
+                    ? `?category=${encodeURIComponent(store.category)}`
+                    : "";
+                const summary = await getApi<any>(
+                    `/download/summary${narrowed}`,
+                ).catch(() => null);
                 if (summary) store.summary = normalizeSummary(summary);
             } while (store.summaryAgain);
         } finally {
@@ -284,9 +316,12 @@ export default component$(() => {
      * `await`: a stream frame applied in between would be overwritten.
      */
     const loadPage = $(async (page: number) => {
+        const narrowed = store.category
+            ? `&category=${encodeURIComponent(store.category)}`
+            : "";
         const query =
             `page=${page}&page_size=${PAGE_SIZE}` +
-            `&group=${store.filter}&sort=${store.sort}`;
+            `&group=${store.filter}&sort=${store.sort}${narrowed}`;
         const since = store.streamSeq;
         const result = await getPageApi<any[]>(`/download?${query}`).catch(
             () => null,
@@ -440,6 +475,7 @@ export default component$(() => {
                 store.settingsOpen = true;
             });
             syncTask();
+            loadCategories();
             refreshSearchAvailability();
             // One clock for every toast, rather than a timer per toast: an
             // expiry is a deadline, and a sweep is how a deadline is noticed.
@@ -613,6 +649,24 @@ export default component$(() => {
         store.page = 1;
         store.totalPages = 1;
         await loadPage(1);
+    });
+
+    /**
+     * A new category in the sidebar: a new list, and new counts, since the
+     * counts follow the category where the status counts did not.
+     */
+    const handleCategoryChange = $(async (id: string | null) => {
+        store.category = id;
+        store.page = 1;
+        store.totalPages = 1;
+        await loadPage(1);
+        await loadSummary();
+    });
+
+    /** The add forms' choice, remembered for the next visit. */
+    const handleAddCategoryChange = $((id: string) => {
+        store.addCategory = id;
+        saveCategoryChoice(id);
     });
 
     const handleSettingsOpen = $(async () => {
@@ -1061,13 +1115,18 @@ export default component$(() => {
     );
 
     const handleAdd = $(async (input: AddInput) => {
+        // Where the form said to save; Downloads when it said nothing.
+        const category = input.categoryId ?? store.addCategory;
         try {
             // unwrap() throws with the service's own message on either
             // envelope, so there is no response.ok check to write here.
             if (input.type === "site" || input.type === "url") {
                 // For a page, the add box already asked the API about it
                 // and picked a preset it offers.
-                const request = directRequest(input);
+                const request = directRequest({
+                    ...input,
+                    categoryId: category,
+                });
                 await postApi(request.path, request.body);
             } else if (input.type === "link") {
                 // A link nobody has looked at yet: ask, then route it.
@@ -1076,11 +1135,12 @@ export default component$(() => {
                     input.preset || store.prefs.defaultPreset,
                     postApi,
                     input.allowDuplicate,
+                    category,
                 );
             } else {
                 const known = new Set(store.tasks.map((task) => task.id));
                 const notice = heldTorrentNotice(
-                    await addTorrent(input.value, input.files ?? []),
+                    await addTorrent(input.value, input.files ?? [], category),
                     known,
                 );
                 if (notice) notify("info", notice);
@@ -1109,6 +1169,8 @@ export default component$(() => {
      */
     const handleOpenDownload = $(async (id: string, collectionId?: string) => {
         store.filter = "all";
+        // The row may sit in another category, so the category filter goes too.
+        store.category = null;
         store.searchQuery = "";
         store.page = 1;
         store.totalPages = 1;
@@ -1232,6 +1294,11 @@ export default component$(() => {
             onSidebarToggle={toggleSidebar}
             onSidebarCollapseToggle={toggleSidebarCollapse}
             onFilterChange={handleFilterChange}
+            categories={store.categories}
+            category={store.category}
+            addCategory={store.addCategory}
+            onCategoryChange={handleCategoryChange}
+            onAddCategoryChange={handleAddCategoryChange}
             onSearchChange={handleSearchChange}
             addModalOpen={store.addModalOpen}
             onAddModalClose={handleAddModalClose}

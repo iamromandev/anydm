@@ -13,6 +13,8 @@ import {
 } from "@/lib/api/batch";
 import { PRESET_OPTIONS } from "@/lib/prefs";
 import { errorMessage } from "@/lib/toast";
+import type { CategoryItem } from "@/lib/api/category";
+import { CategorySelect } from "@/component/shared/category-select";
 import "./field.css";
 
 /** How long typing has to pause before the preview is asked for again. */
@@ -23,6 +25,10 @@ export interface BatchModalProps {
     initialText?: string;
     /** What the quality select starts at, from the person's preferences. */
     defaultPreset: string;
+    /** Every category, for the picker beside the quality select. */
+    categories: CategoryItem[];
+    /** Where the batch saves at first; the picker can change it for this batch. */
+    addCategory: string;
     onClose: () => void;
     /** After an add landed: the page asks for its counts again. */
     onAdded: () => void;
@@ -57,12 +63,21 @@ function sourceOf(fields: {
  * added, then answers for every link.
  */
 export const BatchModal = component$<BatchModalProps>(
-    ({ initialText = "", defaultPreset, onClose, onAdded, onOpen }) => {
+    ({
+        initialText = "",
+        defaultPreset,
+        categories,
+        addCategory,
+        onClose,
+        onAdded,
+        onOpen,
+    }) => {
         const store = useStore({
             kind: "list" as BatchSource["kind"],
             list: initialText,
             pattern: "",
             preset: defaultPreset,
+            category: addCategory,
             previewing: false,
             preview: null as BatchPreview | null,
             previewError: "",
@@ -122,7 +137,12 @@ export const BatchModal = component$<BatchModalProps>(
             store.adding = true;
             store.addError = "";
             try {
-                store.results = await addBatch(sourceOf(store), store.preset);
+                store.results = await addBatch(
+                    sourceOf(store),
+                    store.preset,
+                    undefined,
+                    store.category,
+                );
                 onAdded();
             } catch (err) {
                 store.addError = errorMessage(err);
@@ -339,6 +359,13 @@ export const BatchModal = component$<BatchModalProps>(
                             )}
 
                             <footer class="batch-modal-actions">
+                                <CategorySelect
+                                    categories={categories}
+                                    value={store.category}
+                                    onChange$={$((id: string) => {
+                                        store.category = id;
+                                    })}
+                                />
                                 <select
                                     class="batch-modal-select"
                                     aria-label="Quality for links on a site"

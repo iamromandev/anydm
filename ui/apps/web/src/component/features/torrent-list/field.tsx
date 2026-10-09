@@ -7,13 +7,15 @@ import { GroupCard } from "@/component/features/group-card";
 import { StartDoors } from "@/component/features/start-doors";
 import { showDoors } from "@/component/features/start-doors/present";
 import { LuDownload, LuSearchX } from "@/component/core/icons";
-import { isActive, isSeeding, type EntriesView } from "@/lib/api";
+import { inCategory, isActive, isSeeding, type EntriesView } from "@/lib/api";
 import { matchesSearch } from "@/lib/search";
 import "./field.css";
 
 export interface TorrentListProps {
     tasks: TorrentTask[];
     filter: TorrentFilter;
+    /** The category the list is narrowed to, or null for every category. */
+    category: string | null;
     searchQuery: string;
     /** The row Open just brought into view, outlined for a moment. */
     highlightId?: string;
@@ -56,6 +58,7 @@ export const TorrentList = component$<TorrentListProps>(
     ({
         tasks,
         filter,
+        category,
         searchQuery,
         highlightId = "",
         now,
@@ -86,6 +89,8 @@ export const TorrentList = component$<TorrentListProps>(
 
         const filteredTasks = tasks.filter((task) => {
             if (!matchesSearch(task, searchQuery)) return false;
+            // Checked here too: live frames arrive for every row, whatever the filter.
+            if (!inCategory(task, category)) return false;
 
             switch (filter) {
                 case "downloading":
