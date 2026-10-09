@@ -17,6 +17,9 @@ data class Duplicate(
     val id: String,
     val title: String,
     val status: String,
+    /** Set when a playlist or channel holds it: the download is one of that collection's videos. */
+    val collectionId: String? = null,
+    val collectionTitle: String? = null,
 )
 
 /** What the API said went wrong: its own message, status code, and error type (`unsupported_url`, ...). */
@@ -35,7 +38,14 @@ open class ApiException(
             if (code != 409) return null
             val detail = details.firstOrNull()
             val id = detail?.subject ?: return null
-            return Duplicate(id, detail.description.orEmpty(), detail.fields.firstOrNull().orEmpty())
+            val collection = details.firstOrNull { it.fields.firstOrNull() == "collection" && it.subject != null }
+            return Duplicate(
+                id,
+                detail.description.orEmpty(),
+                detail.fields.firstOrNull().orEmpty(),
+                collection?.subject,
+                collection?.description,
+            )
         }
 }
 

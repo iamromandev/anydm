@@ -359,6 +359,48 @@ class TaskStoreTest {
         }
 
     @Test
+    fun `revealing a video a playlist holds opens its group and finds the video among its entries`() =
+        runTest {
+            api.pages[1] = page(dto("a"), totalPages = 3)
+            api.rows["g"] = TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading")
+            api.entries["g"] =
+                listOf(TaskDto(id = "v1", collectionId = "g", position = 1), TaskDto(id = "v2", collectionId = "g", position = 2))
+            api.stream = { awaitCancellation() }
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertTrue(store.reveal("v2", collectionId = "g"))
+            assertEquals(listOf("g"), api.collectionCalls)
+            assertTrue(api.taskCalls.isEmpty())
+            assertTrue(
+                "g" in
+                    store.state.value.tasks
+                        .map { it.id },
+            )
+            assertEquals(
+                listOf("v1", "v2"),
+                store.state.value.entries["g"]
+                    ?.map { it.id },
+            )
+        }
+
+    @Test
+    fun `a video no longer in its playlist, or a playlist gone, is not revealed`() =
+        runTest {
+            api.pages[1] = page(dto("a"))
+            api.rows["g"] = TaskDto(type = "collection", id = "g", kind = "playlist", status = "downloading")
+            api.entries["g"] = listOf(TaskDto(id = "v1", collectionId = "g", position = 1))
+            api.stream = { awaitCancellation() }
+            val store = store()
+            store.start()
+            runCurrent()
+
+            assertFalse(store.reveal("v9", collectionId = "g"))
+            assertFalse(store.reveal("v1", collectionId = "missing"))
+        }
+
+    @Test
     fun `revealing a row past the first page fetches it on its own, and says so when it is gone`() =
         runTest {
             api.pages[1] = page(dto("a"), totalPages = 3)

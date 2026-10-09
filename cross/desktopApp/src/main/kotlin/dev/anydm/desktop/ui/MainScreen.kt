@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.anydm.api.Duplicate
 import dev.anydm.desktop.chrome.Banner
 import dev.anydm.desktop.chrome.BannerHost
 import dev.anydm.desktop.chrome.BannerQueue
@@ -219,9 +220,10 @@ fun MainScreen(
     }
 
     /** Select the download the list already holds, loading it first if the page doesn't have it. */
-    fun openDuplicate(id: String) {
+    fun openDuplicate(held: Duplicate) {
+        val id = held.id
         scope.launch {
-            if (store.reveal(id)) {
+            if (store.reveal(id, held.collectionId)) {
                 duplicate = null
                 view = MainView.LIST
                 selection = Selection(setOf(id), id, id)
@@ -442,7 +444,7 @@ fun MainScreen(
                 duplicate?.let { held ->
                     DuplicateStrip(
                         held = held.held,
-                        onOpen = { openDuplicate(held.held.id) },
+                        onOpen = { openDuplicate(held.held) },
                         onDismiss = { duplicate = null },
                         onAddAnyway = if (held.link != null) ({ addAnyway(held) }) else null,
                     )

@@ -21,6 +21,14 @@ class DuplicateStripUiTest {
         }
 
     @Test
+    fun `a video a playlist holds names its playlist`() =
+        runComposeUiTest {
+            val inList = held.copy(collectionId = "g1", collectionTitle = "Talks")
+            setContent { DesktopTheme(dark = false) { DuplicateStrip(inList, onOpen = {}, onDismiss = {}, onAddAnyway = {}) } }
+            onNodeWithText("Already in your list: Old clip (completed), in Talks").assertExists()
+        }
+
+    @Test
     fun `Open and Add anyway each run their own action`() =
         runComposeUiTest {
             var opened = 0

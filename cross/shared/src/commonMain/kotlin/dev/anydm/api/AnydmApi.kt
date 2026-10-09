@@ -110,6 +110,8 @@ class AnydmApi(
 
     override suspend fun task(id: String): TaskDto = decode(call(HttpMethod.Get, listOf("download", id)).data)
 
+    override suspend fun collection(id: String): TaskDto = decode(call(HttpMethod.Get, listOf("collection", id)).data)
+
     suspend fun addMedia(
         url: String,
         preset: String,

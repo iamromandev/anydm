@@ -23,7 +23,8 @@ import dev.anydm.desktop.theme.LocalTokens
 /** What an add says when the list already holds it. */
 fun duplicateMessage(held: Duplicate): String {
     val status = if (held.status.isEmpty()) "" else " (${held.status})"
-    return "Already in your list: ${held.title}$status"
+    val playlist = if (held.collectionId == null) "" else ", in ${held.collectionTitle?.takeIf { it.isNotEmpty() } ?: "a playlist"}"
+    return "Already in your list: ${held.title}$status$playlist"
 }
 
 /**
