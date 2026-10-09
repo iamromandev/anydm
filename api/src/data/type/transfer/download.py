@@ -19,6 +19,8 @@ class Platform(StrEnum):
 
 
 class Folder(StrEnum):
+    """The fixed folders before categories. Kept only because migration 0007 imports it; nothing else may."""
+
     DOWNLOADS = "downloads"
     VIDEOS = "videos"
     MOVIES = "movies"

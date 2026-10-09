@@ -1,4 +1,7 @@
 from .attempt import AttemptStatus as AttemptStatus
+from .category import DOWNLOADS_ID as DOWNLOADS_ID
+from .category import SEEDED_CATEGORIES as SEEDED_CATEGORIES
+from .category import slugify as slugify
 from .download import ACTIVE_STATUSES as ACTIVE_STATUSES
 from .download import DOWNLOAD_GROUPS as DOWNLOAD_GROUPS
 from .download import OTHER_FOLDER as OTHER_FOLDER
@@ -7,7 +10,6 @@ from .download import CollectionKind as CollectionKind
 from .download import DownloadGroup as DownloadGroup
 from .download import DownloadSort as DownloadSort
 from .download import DownloadStatus as DownloadStatus
-from .download import Folder as Folder
 from .download import Platform as Platform
 from .media import CONTAINER_KINDS as CONTAINER_KINDS
 from .media import MediaKind as MediaKind

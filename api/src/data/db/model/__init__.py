@@ -11,6 +11,7 @@ from .torrent import Torrent as Torrent
 from .torrent import TorrentFile as TorrentFile
 from .torrent import Tracker as Tracker
 from .transfer import Attempt as Attempt
+from .transfer import Category as Category
 from .transfer import Download as Download
 from .transfer import File as File
 from .transfer import Media as Media
