@@ -49,14 +49,29 @@ def collection_folder(title: str, ref_id: str) -> str:
 
 
 def container_folder(collection: Any) -> str:
-    """``collection_folder`` for a container loaded with ``RELATED``: its title and id from what it was added from."""
+    """A collection's folder: stored since categories, else derived from its title and site id.
+
+    Derived on read only for a collection from before categories, whose row has no folder.
+    """
+    if getattr(collection, "folder", None):
+        return collection.folder
     described = describe(collection)
     return collection_folder(described.title, described.ref)
 
 
 def standalone_folder(download_id: uuid.UUID) -> str:
-    """Where a standalone download's finished file lives, relative to ``DOWNLOAD_DIR``."""
+    """Where a standalone download's finished file lived before categories: ``<download_id>``."""
     return str(download_id)
+
+
+def placed_folder(download: Any) -> str:
+    """Where a standalone download's file is: its stored folder, else the ``<download_id>`` folder from before categories."""
+    return download.folder or standalone_folder(download.id)
+
+
+def short_id(download_id: uuid.UUID) -> str:
+    """The first eight characters of an id: what tells two files of one name apart."""
+    return str(download_id)[:8]
 
 
 def collection_destination(root: Path, folder: str, filename: str, video_id: str) -> Path:

@@ -17,7 +17,8 @@ from src.data.schema.transfer import CollectionCountsSchema, CollectionSchema
 from src.data.type import CollectionKind, DownloadStatus, MediaKind
 from src.lib.event import EventHub
 from src.service.download.live import LiveStats
-from src.service.download.paths import collection_folder
+from src.service.download.paths import container_folder
+from src.service.download.views import category_ref
 
 #: Statuses that mean "still to do": waiting, queued or downloading.
 _ACTIVE = frozenset({DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
@@ -66,7 +67,8 @@ class CollectionTotals:
             extractor=described.provider,
             external_id=described.ref,
             title=described.title,
-            folder=collection_folder(described.title, described.ref),
+            folder=container_folder(collection),
+            category=category_ref(collection),
             preset=described.media.preset,
             status=collection_status(row[1] for row in rows),
             # Videos done over videos: sizes aren't known until each starts.

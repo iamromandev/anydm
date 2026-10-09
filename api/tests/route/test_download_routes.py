@@ -57,7 +57,9 @@ class StubDownloads:
             BatchItemSchema(url="https://x.test/a2", result=BatchResult.ERROR, message="no"),
         ]
 
-    async def list_items(self, page: int, page_size: int, group: str = "all", sort: str = "-created_at") -> Any:
+    async def list_items(
+        self, page: int, page_size: int, group: str = "all", sort: str = "-created_at", category: Any = None
+    ) -> Any:
         return [
             DownloadSchema(
                 id=uuid.uuid4(),

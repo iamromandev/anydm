@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from src.data.type import DownloadStatus, MediaKind, Platform, Preset, SourceKind
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.service.download.live import LiveStats
 from src.service.download.views import DownloadViews
 
@@ -53,6 +53,8 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         status=DownloadStatus.PENDING,
         folder=None,
         folder_id=None,
+        category_id=DOWNLOADS_ID,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         parent_id=None,
         start_at=None,
         download_limit_bps=None,

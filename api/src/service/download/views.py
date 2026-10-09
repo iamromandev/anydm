@@ -17,6 +17,7 @@ from src.data.repo.download.described import describe
 from src.data.repo.download.interface import FileRepo, PositionRepo
 from src.data.schema.play import PlaybackSchema
 from src.data.schema.transfer import (
+    CategoryRefSchema,
     DownloadFileSchema,
     DownloadSchema,
     LimitsSchema,
@@ -44,6 +45,12 @@ def _playback(position: Any) -> PlaybackSchema:
     )
 
 
+def category_ref(row: Any) -> CategoryRefSchema | None:
+    """The row's category as ``{id, name}``; none when the row was loaded without it."""
+    category = getattr(row, "category", None)
+    return CategoryRefSchema(id=category.id, name=category.name) if category is not None else None
+
+
 def download_schema(
     row: Any,
     *,
@@ -55,6 +62,8 @@ def download_schema(
 ) -> DownloadSchema:
     described = describe(row, files)
     media = described.media
+    if folder is None:
+        folder = getattr(row, "folder", None)
     if folder is None and row.status == DownloadStatus.COMPLETED and row.parent_id is None:
         if described.media_kind in CONTAINER_KINDS:
             folder = collection_folder(described.title, described.ref)
@@ -71,6 +80,7 @@ def download_schema(
         progress=percent(row.downloaded_size, row.total_size),
         collection_id=row.parent_id,
         folder=folder,
+        category=category_ref(row),
         limits=LimitsSchema(download_bps=row.speed_limit),
         total_size=row.total_size,
         downloaded_size=row.downloaded_size,

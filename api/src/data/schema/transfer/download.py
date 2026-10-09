@@ -8,6 +8,7 @@ from pydantic import Field
 
 from src.core.base import BaseSchema
 from src.data.schema.play.playback import PlaybackSchema
+from src.data.schema.transfer.category import CategoryRefSchema
 from src.data.type import BulkAction, CollectionKind, DownloadStatus, MediaKind, Platform, Preset
 
 
@@ -62,6 +63,7 @@ class DownloadSchema(BaseSchema):
     #: The collection it was added in; ``None`` for a standalone download.
     collection_id: uuid.UUID | None = None
     folder: str | None = None
+    category: CategoryRefSchema | None = None
     limits: LimitsSchema = Field(default_factory=LimitsSchema)
     total_size: int | None = None
     downloaded_size: int = 0
@@ -106,6 +108,7 @@ class CollectionSchema(BaseSchema):
     external_id: str
     title: str = ""
     folder: str
+    category: CategoryRefSchema | None = None
     preset: Preset
     status: DownloadStatus
     progress: int = 0

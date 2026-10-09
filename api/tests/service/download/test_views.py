@@ -122,3 +122,21 @@ async def test_many_batches_and_reads_live_numbers() -> None:
     schemas = await views.many([first, second])
     assert [len(s.files) for s in schemas] == [1, 0]
     assert schemas[1].live.speed_bps == 99
+
+
+def test_a_download_shows_its_category_and_its_stored_folder() -> None:
+    lectures = SimpleNamespace(id=uuid.uuid4(), name="Lectures", folder="edu")
+    stored = row(status=DownloadStatus.COMPLETED, category=lectures, folder="edu")
+    schema = download_schema(stored, files=[], playback={}, live=Live(), max_attempts=3)
+    assert schema.category is not None and (schema.category.id, schema.category.name) == (lectures.id, "Lectures")
+    assert schema.folder == "edu"
+
+
+def test_a_stored_folder_shows_before_the_file_lands() -> None:
+    placed = row(status=DownloadStatus.DOWNLOADING, folder="Release [deadbeef]")
+    assert download_schema(placed, files=[], playback={}, live=Live(), max_attempts=3).folder == "Release [deadbeef]"
+
+
+def test_a_row_loaded_without_its_category_has_none() -> None:
+    bare = row(status=DownloadStatus.DOWNLOADING)
+    assert download_schema(bare, files=[], playback={}, live=Live(), max_attempts=3).category is None

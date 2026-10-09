@@ -32,3 +32,22 @@ def test_final_path_strips_directory_components_from_the_filename() -> None:
     path = final_path(Path("/downloads"), download_id, "../../etc/passwd")
     assert path.parent == work_dir(Path("/downloads"), download_id)
     assert path.name == "passwd"
+
+
+def test_a_stored_collection_folder_wins_over_the_derived_one() -> None:
+    from types import SimpleNamespace
+
+    from src.service.download.paths import container_folder
+
+    stored = SimpleNamespace(folder="music/Talks [PL1]", id=uuid.uuid4())
+    assert container_folder(stored) == "music/Talks [PL1]"
+
+
+def test_a_standalone_download_is_where_its_row_says_or_its_id_folder_from_before_categories() -> None:
+    from types import SimpleNamespace
+
+    from src.service.download.paths import placed_folder
+
+    download_id = uuid.UUID(int=7)
+    assert placed_folder(SimpleNamespace(id=download_id, folder="videos")) == "videos"
+    assert placed_folder(SimpleNamespace(id=download_id, folder=None)) == str(download_id)

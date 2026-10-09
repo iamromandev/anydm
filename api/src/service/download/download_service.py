@@ -269,7 +269,12 @@ class DownloadService(BaseService):
         return BatchItemSchema(url=link, result=BatchResult.ADDED, download_id=download.id)
 
     async def list_items(
-        self, page: int, page_size: int, group: str = "all", sort: str = "-created_at"
+        self,
+        page: int,
+        page_size: int,
+        group: str = "all",
+        sort: str = "-created_at",
+        category: uuid.UUID | None = None,
     ) -> tuple[list[DownloadSchema | CollectionSchema], Meta]:
         """One page of the tagged list, narrowed to a sidebar filter, in the view's order.
 
@@ -283,7 +288,7 @@ class DownloadService(BaseService):
         if sort not in get_args(DownloadSort):
             raise Error.bad_request(message=f"Cannot sort by: {sort}")
         statuses = None if group == "all" else sorted(DOWNLOAD_GROUPS[group])
-        items, meta = await self._repo.list_items(page, page_size, statuses, sort, self._live.speeds())
+        items, meta = await self._repo.list_items(page, page_size, statuses, sort, self._live.speeds(), category)
         download_ids = [item_id for kind, item_id in items if kind == "download"]
         collection_ids = [item_id for kind, item_id in items if kind == "collection"]
         downloads = {s.id: s for s in await self._views.many(await self._repo.by_ids(download_ids))}
@@ -353,8 +358,8 @@ class DownloadService(BaseService):
             affected += 1
         return affected
 
-    async def summary(self) -> DownloadSummarySchema:
-        return await self._repo.summary()
+    async def summary(self, category: uuid.UUID | None = None) -> DownloadSummarySchema:
+        return await self._repo.summary(category)
 
     async def get(self, download_id: uuid.UUID) -> DownloadSchema:
         return await self._views.one(await self._require(download_id))
@@ -552,6 +557,8 @@ class DownloadService(BaseService):
         """The download's folder for its schema: derived when finished, else ``None``."""
         if download.status != DownloadStatus.COMPLETED:
             return None
+        if download.folder:
+            return download.folder
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
@@ -560,7 +567,9 @@ class DownloadService(BaseService):
         return standalone_folder(download.id)
 
     async def _disk_path(self, download: Any, filename: str) -> Path:
-        """The finished file on disk: its derived folder plus its file name."""
+        """The finished file on disk: its recorded folder, else the one derived from before categories."""
+        if download.folder:
+            return inside(self._root, download.folder) / Path(filename).name
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:

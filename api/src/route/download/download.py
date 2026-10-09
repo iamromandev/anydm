@@ -116,17 +116,21 @@ async def list_items(
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
     group: Annotated[DownloadGroup, Query(description="Which of the sidebar's filters to answer for")] = "all",
     sort: Annotated[DownloadSort, Query(description="Field to order by; prefix with - for descending")] = "-created_at",
+    category: Annotated[uuid.UUID | None, Query(description="Only the items in this category")] = None,
 ) -> Response:
     """Standalone downloads and collections as one list, each item tagged by ``type``."""
-    data, meta = await download_service.list_items(page=page, page_size=page_size, group=group, sort=sort)
+    data, meta = await download_service.list_items(
+        page=page, page_size=page_size, group=group, sort=sort, category=category
+    )
     return Success.ok(data=data, meta=meta).to_resp()
 
 
 @router.get(path="/download/summary", response_model=Success[DownloadSummarySchema])
 async def download_summary(
     download_service: Annotated[DownloadService, Depends(get_download_service)],
+    category: Annotated[uuid.UUID | None, Query(description="Count only the items in this category")] = None,
 ) -> Response:
-    return Success.ok(data=await download_service.summary()).to_resp()
+    return Success.ok(data=await download_service.summary(category)).to_resp()
 
 
 @router.get(path="/download/events")

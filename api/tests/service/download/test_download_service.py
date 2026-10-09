@@ -71,9 +71,10 @@ class FakeDownloadRepo:
         return self._add(download_row(url=added["url"], title=added["filename"], **added["download"]))
 
     async def list_items(
-        self, page: int, page_size: int, statuses: Any, sort: str, speeds: Any
+        self, page: int, page_size: int, statuses: Any, sort: str, speeds: Any, category: Any = None
     ) -> tuple[list[tuple[str, uuid.UUID]], Meta]:
         self.listed_statuses, self.listed_sort, self.listed_speeds = statuses, sort, speeds
+        self.listed_category = category
         return list(self.items), Meta(page=page, page_size=page_size, total=len(self.items), total_pages=1)
 
     async def by_ids(self, ids: list[uuid.UUID]) -> list[Any]:
@@ -545,6 +546,16 @@ async def test_listing_everything_asks_for_no_statuses_and_defaults_to_newest_fi
 
     assert h.repo.listed_statuses is None
     assert h.repo.listed_sort == "-created_at"
+
+
+@pytest.mark.asyncio
+async def test_listing_one_category_hands_its_id_to_the_repo() -> None:
+    h = _service()
+    music = uuid.uuid4()
+
+    await h.service.list_items(1, 10, category=music)
+
+    assert h.repo.listed_category == music
 
 
 @pytest.mark.asyncio

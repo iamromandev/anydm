@@ -1,6 +1,7 @@
 """The list, a download's schema and a collection's, read from the current models on Postgres."""
 
 import pytest
+from src.data.db.model import Category, Download
 from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo, FileDatabaseRepo, PositionDatabaseRepo
 from src.data.type import DownloadStatus, MediaKind, Platform, Preset
 from src.lib.event import EventHub
@@ -102,3 +103,19 @@ async def test_a_collection_reads_its_videos_in_listing_order_and_by_their_ids()
     assert schema.url == "https://www.youtube.com/playlist?list=PLtalks"
     assert (schema.preset, schema.status, schema.progress) == (Preset.P720, DownloadStatus.DOWNLOADING, 50)
     assert await DownloadDatabaseRepo().get_active_by_id(collection.id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_category_narrows_the_list_and_the_counts_to_its_items() -> None:
+    repo = DownloadDatabaseRepo()
+    lectures = await Category.create(name="Lectures", slug="lectures", folder="edu/lectures", position=99)
+    in_lectures = await a_site_download("m", title="In lectures")
+    await Download.filter(id=in_lectures.id).update(category_id=lectures.id)
+    await a_site_download("d", title="In downloads")
+
+    items, meta = await repo.list_items(1, 10, None, "-created_at", {}, lectures.id)
+    assert items == [("download", in_lectures.id)] and meta.total == 1
+
+    everything = await repo.summary()
+    narrowed = await repo.summary(lectures.id)
+    assert (everything.all, narrowed.all) == (2, 1)
