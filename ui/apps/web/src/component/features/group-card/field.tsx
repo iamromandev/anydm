@@ -33,6 +33,8 @@ export interface GroupCardProps {
     onToggleDetail: (id: string) => void;
     /** Its open Entries list, or undefined while shut. */
     entries: EntriesView | undefined;
+    /** The video Open just brought into view, outlined for a moment. */
+    highlightId?: string;
     onToggleEntries: (id: string) => void;
     onLoadMoreEntries: (id: string) => void;
     /** On the group: every video it applies to. */
@@ -60,6 +62,7 @@ export const GroupCard = component$<GroupCardProps>(
         expanded,
         onToggleDetail,
         entries,
+        highlightId = "",
         onToggleEntries,
         onLoadMoreEntries,
         onPause,
@@ -270,7 +273,8 @@ export const GroupCard = component$<GroupCardProps>(
                         {entries.rows.map((video) => (
                             <div
                                 key={video.id}
-                                class="group-entry"
+                                id={`download-${video.id}`}
+                                class={`group-entry ${video.id === highlightId ? "group-entry--found" : ""}`}
                                 role="listitem"
                             >
                                 <span class="group-entry-index">

@@ -5,6 +5,7 @@ import {
     canAddAnyway,
     directRequest,
     duplicateOf,
+    entryStanding,
     withRowOnTop,
 } from "./duplicate";
 import { ApiError, unwrap } from "./envelope";
@@ -37,6 +38,42 @@ describe("duplicateOf", () => {
             id: "d1",
             title: "Clip",
             status: "completed",
+        });
+    });
+
+    it("names the playlist when one of its videos is the download", () => {
+        let caught: unknown;
+        try {
+            unwrap({
+                status: "error",
+                code: 409,
+                message: "Already in your list: Clip (completed), in Talks",
+                details: [
+                    {
+                        subject: "v1",
+                        description: "Clip",
+                        fields: [
+                            "completed",
+                        ],
+                    },
+                    {
+                        subject: "g1",
+                        description: "Talks",
+                        fields: [
+                            "collection",
+                        ],
+                    },
+                ],
+            });
+        } catch (err) {
+            caught = err;
+        }
+        expect(duplicateOf(caught)).toEqual({
+            id: "v1",
+            title: "Clip",
+            status: "completed",
+            collectionId: "g1",
+            collectionTitle: "Talks",
         });
     });
 
@@ -104,6 +141,67 @@ describe("Add anyway", () => {
         expect(
             directRequest({ type: "url", value: "https://f.test/a" }).body,
         ).toEqual({ url: "https://f.test/a" });
+    });
+});
+
+describe("entryStanding", () => {
+    const row = (id: string) => ({ id }) as UiTask;
+    const view = (ids: string[], page: number, totalPages: number) => ({
+        rows: ids.map(row),
+        page,
+        totalPages,
+        loading: false,
+    });
+
+    it("finds a video the loaded pages hold", () => {
+        expect(
+            entryStanding(
+                view(
+                    [
+                        "a",
+                        "b",
+                    ],
+                    1,
+                    3,
+                ),
+                "b",
+            ),
+        ).toBe("found");
+    });
+
+    it("asks for more while a page is left", () => {
+        expect(
+            entryStanding(
+                view(
+                    [
+                        "a",
+                    ],
+                    1,
+                    3,
+                ),
+                "z",
+            ),
+        ).toBe("more");
+    });
+
+    it("asks for the first page of a list not yet fetched", () => {
+        expect(entryStanding(view([], 0, 1), "z")).toBe("more");
+    });
+
+    it("says absent once every page is in and the video is not there", () => {
+        expect(
+            entryStanding(
+                view(
+                    [
+                        "a",
+                    ],
+                    3,
+                    3,
+                ),
+                "z",
+            ),
+        ).toBe("absent");
+        expect(entryStanding(undefined, "z")).toBe("absent");
     });
 });
 

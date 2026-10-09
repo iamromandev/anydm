@@ -52,7 +52,7 @@ export interface HeroInputProps {
     defaultPreset: string;
     onSubmit: (input: AddInput) => void | Promise<void>;
     /** Show a download the list already holds, from a refused add. */
-    onOpen?: (id: string) => void;
+    onOpen?: (id: string, collectionId?: string) => void;
     onPlay?: (value: string, kind: string) => void | Promise<void>;
     /** Open the picker on a playlist, or on one of a channel's tabs. */
     onChoose?: (target: PickerTarget) => void;
@@ -306,7 +306,7 @@ export const HeroInput = component$<HeroInputProps>(
             const held = store.duplicate;
             if (!held) return;
             store.duplicate = null;
-            onOpen?.(held.id);
+            onOpen?.(held.id, held.collectionId);
         });
 
         const addSecondCopy = $(async () => {

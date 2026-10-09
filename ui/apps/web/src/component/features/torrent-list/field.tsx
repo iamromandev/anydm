@@ -179,6 +179,7 @@ export const TorrentList = component$<TorrentListProps>(
                                     onToggleDetail={toggleDetail}
                                     task={task}
                                     entries={entries[task.id]}
+                                    highlightId={highlightId}
                                     onToggleEntries={onToggleEntries}
                                     onLoadMoreEntries={onLoadMoreEntries}
                                     onPause={onPause}
