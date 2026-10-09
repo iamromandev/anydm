@@ -7,7 +7,7 @@ not benchmarks.
 import time
 
 import pytest
-from src.data.db.model import Download
+from src.data.db.model import Download, Media
 from src.data.repo import CollectionDatabaseRepo, DownloadDatabaseRepo
 from src.data.repo.download.interface.collection import EntryRow
 from src.data.type import DownloadStatus, MediaKind, Preset
@@ -88,7 +88,7 @@ async def test_the_totals_count_five_thousand_videos(db: None) -> None:
 
 
 async def test_the_list_counts_a_big_collection_quickly(db: None) -> None:
-    """The ``list_item`` view computes a collection's status and bytes from its videos."""
+    """A collection's status and bytes are computed from its videos, counted in one query."""
     await _big_collection()
 
     started = time.monotonic()
@@ -111,3 +111,22 @@ async def test_joining_a_big_collection_is_quick(db: None) -> None:
     assert len(held) == SIZE
     assert await Download.filter(parent_id=collection.id).count() == SIZE + 50
     assert elapsed < 3, f"{elapsed:.2f}s to join"
+
+
+async def test_the_list_pages_two_thousand_downloads_quickly(db: None) -> None:
+    """Built, sorted and paged in Python, so every top-level row is read: this bounds that cost."""
+    rows = [Download(status=DownloadStatus.COMPLETED) for _ in range(2_000)]
+    await Download.bulk_create(rows)
+    await Media.bulk_create(
+        [Media(download_id=row.id, title=f"Talk {n}", preset=Preset.P720) for n, row in enumerate(rows)]
+    )
+    repo = DownloadDatabaseRepo()
+
+    started = time.monotonic()
+    items, meta = await repo.list_items(40, 50, None, "title", {})
+    summary = await repo.summary()
+    elapsed = time.monotonic() - started
+
+    assert meta.total == 2_000 and len(items) == 50
+    assert summary.completed == 2_000
+    assert elapsed < 1, f"{elapsed:.2f}s for a page and the counts"

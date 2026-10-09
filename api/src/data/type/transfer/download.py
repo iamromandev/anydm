@@ -6,6 +6,7 @@ can be used directly in ``CharEnumField``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
 from tortoise.fields.base import StrEnum
@@ -67,6 +68,26 @@ OTHER_FOLDER = "Other"
 #: startup is an orphan by definition — this process is the only one that runs
 #: workers, and it has just started.
 ACTIVE_STATUSES = frozenset({DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
+
+#: Statuses that mean "still to do": waiting, queued or downloading.
+TODO_STATUSES = frozenset(
+    {DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING}
+)
+
+#: Statuses whose bytes are all down.
+DONE_STATUSES = frozenset({DownloadStatus.COMPLETED, DownloadStatus.SEEDING})
+
+
+def collection_status(statuses: Iterable[DownloadStatus]) -> DownloadStatus:
+    """A collection's status, from its videos': downloading while anything is left to do, then paused, failed or complete."""
+    seen = set(statuses)
+    if seen & TODO_STATUSES:
+        return DownloadStatus.DOWNLOADING
+    if DownloadStatus.PAUSED in seen:
+        return DownloadStatus.PAUSED
+    if DownloadStatus.FAILED in seen:
+        return DownloadStatus.FAILED
+    return DownloadStatus.COMPLETED
 
 
 #: How the list may be ordered. Spelled out both ways rather than as a field

@@ -57,11 +57,12 @@ Common root targets — run `make help` for the full list, `make -C api help` fo
 | Target | Description |
 |--------|-------------|
 | `make check` | Lint + typecheck both stacks |
+| `make seed` | Seed the built-in search sources and categories (same as `make api-seed`; needs `api-up`) |
 | `make api-test` | API unit tests |
 | `make api-test-all` | Every API test, integration included (needs `make api-up`); not the live-site ones |
 | `make api-test-live` | The live-site tests: real sites, over the internet |
-| `make api-migrate` | Run database migrations in the server container, then seed the built-in search sources |
-| `make api-seed` | Seed the built-in search sources only: adds any that are missing, never overwrites (needs `api-migrate` first) |
+| `make api-migrate` | Run database migrations in the server container, then seed the built-in search sources and categories |
+| `make api-seed` | Seed the built-in search sources and categories only: adds any that are missing, never overwrites (needs `api-migrate` first). Categories are seeded only here, never when the API starts, so a fresh database needs this before its first download; a built-in category you deleted comes back on the next run |
 | `make api-logs` / `api-ps` | Follow logs / list containers |
 | `make api-clean-volumes` | Drop the project's volumes (db, download, torrent) |
 | `make ui-build` | Production build for the UI |

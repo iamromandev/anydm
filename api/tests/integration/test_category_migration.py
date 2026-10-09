@@ -1,4 +1,4 @@
-"""After 0009 every download is in a category, and the list still answers."""
+"""Every download is in a category: the seeded ones are in place and the key is required."""
 
 import pytest
 from tortoise import Tortoise
@@ -15,15 +15,6 @@ async def test_the_seeded_categories_are_there_in_order_with_downloads_built_in(
     assert rows[0] == {"slug": "downloads", "folder": "", "builtin": True}
     assert len(rows) == 15 and not any(row["builtin"] for row in rows[1:])
 
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("db")
-async def test_the_list_view_exposes_category_id() -> None:
-    columns = await Tortoise.get_connection("default").execute_query_dict(
-        "SELECT column_name FROM information_schema.columns "
-        "WHERE table_schema = 'transfer' AND table_name = 'list_item'"
-    )
-    assert "category_id" in {row["column_name"] for row in columns}
 
 
 @pytest.mark.asyncio

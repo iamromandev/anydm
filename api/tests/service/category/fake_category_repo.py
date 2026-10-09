@@ -1,4 +1,4 @@
-"""An in-memory CategoryRepo seeded as the migration seeds the real one."""
+"""An in-memory CategoryRepo, holding the built-in categories as ``make seed`` leaves the real one."""
 
 import uuid
 from collections.abc import Sequence
@@ -9,9 +9,11 @@ from src.data.type import DOWNLOADS_ID, SEEDED_CATEGORIES
 
 
 class FakeCategoryRepo(CategoryRepo):
-    def __init__(self) -> None:
+    def __init__(self, *, seeded: bool = True) -> None:
         self.rows: dict[uuid.UUID, CategoryRow] = {}
         for position, (name, slug, folder) in enumerate(SEEDED_CATEGORIES):
+            if not seeded:
+                break
             key = DOWNLOADS_ID if slug == "downloads" else uuid.uuid4()
             self.rows[key] = CategoryRow(key, name, slug, folder, position, slug == "downloads")
         #: What ``usage`` answers; tests set it.
@@ -50,6 +52,12 @@ class FakeCategoryRepo(CategoryRepo):
         )
         self.rows[id] = row
         return row
+
+    async def seed(self, rows: Sequence[CategoryRow]) -> int:
+        stored = {row.slug for row in self.rows.values()}
+        fresh = [row for row in rows if row.slug not in stored]
+        self.rows.update({row.id: row for row in fresh})
+        return len(fresh)
 
     async def reorder(self, ids: Sequence[uuid.UUID]) -> None:
         for position, id in enumerate(ids):

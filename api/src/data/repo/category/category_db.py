@@ -35,6 +35,27 @@ class CategoryDatabaseRepo(CategoryRepo):
         position = last.position + 1 if last is not None else 0
         return _row(await Category.create(name=name, slug=slug, folder=folder, position=position))
 
+    async def seed(self, rows: Sequence[CategoryRow]) -> int:
+        stored = set(await Category.all().values_list("slug", flat=True))
+        fresh = [row for row in rows if row.slug not in stored]
+        if fresh:
+            # ignore_conflicts: two seeds at once must not fail on the unique name or slug.
+            await Category.bulk_create(
+                [
+                    Category(
+                        id=row.id,
+                        name=row.name,
+                        slug=row.slug,
+                        folder=row.folder,
+                        position=row.position,
+                        builtin=row.builtin,
+                    )
+                    for row in fresh
+                ],
+                ignore_conflicts=True,
+            )
+        return len(fresh)
+
     async def update(
         self, id: uuid.UUID, *, name: str | None = None, slug: str | None = None, folder: str | None = None
     ) -> CategoryRow | None:

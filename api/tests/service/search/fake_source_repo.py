@@ -29,7 +29,7 @@ class FakeSourceRepo(SourceRepo):
         self.rows[key] = row
         return row
 
-    async def insert_missing(self, rows: Sequence[SourceRow]) -> int:
+    async def seed(self, rows: Sequence[SourceRow]) -> int:
         added = 0
         for row in rows:
             if self._by_name(row.name) is None:
