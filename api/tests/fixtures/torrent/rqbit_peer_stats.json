@@ -1,0 +1,80 @@
+{
+ "peers": {
+  "79.234.94.100:7762": {
+   "counters": {
+    "incoming_connections": 0,
+    "fetched_bytes": 1769472,
+    "uploaded_bytes": 0,
+    "total_time_connecting_ms": 481,
+    "connection_attempts": 1,
+    "connections": 1,
+    "errors": 0,
+    "fetched_chunks": 108,
+    "downloaded_and_checked_pieces": 6,
+    "total_piece_download_ms": 44487,
+    "times_stolen_from_me": 4,
+    "times_i_stole": 0
+   },
+   "state": "live",
+   "conn_kind": "tcp",
+   "client_name": "qBittorrent/5.1.0"
+  },
+  "61.147.223.86:10787": {
+   "counters": {
+    "incoming_connections": 0,
+    "fetched_bytes": 0,
+    "uploaded_bytes": 0,
+    "total_time_connecting_ms": 0,
+    "connection_attempts": 1,
+    "connections": 0,
+    "errors": 1,
+    "fetched_chunks": 0,
+    "downloaded_and_checked_pieces": 0,
+    "total_piece_download_ms": 0,
+    "times_stolen_from_me": 0,
+    "times_i_stole": 0
+   },
+   "state": "queued",
+   "conn_kind": null,
+   "client_name": null
+  },
+  "121.238.98.157:20075": {
+   "counters": {
+    "incoming_connections": 0,
+    "fetched_bytes": 0,
+    "uploaded_bytes": 0,
+    "total_time_connecting_ms": 0,
+    "connection_attempts": 1,
+    "connections": 0,
+    "errors": 1,
+    "fetched_chunks": 0,
+    "downloaded_and_checked_pieces": 0,
+    "total_piece_download_ms": 0,
+    "times_stolen_from_me": 0,
+    "times_i_stole": 0
+   },
+   "state": "dead",
+   "conn_kind": null,
+   "client_name": null
+  },
+  "185.28.254.36:37369": {
+   "counters": {
+    "incoming_connections": 0,
+    "fetched_bytes": 2998272,
+    "uploaded_bytes": 0,
+    "total_time_connecting_ms": 230,
+    "connection_attempts": 1,
+    "connections": 1,
+    "errors": 0,
+    "fetched_chunks": 183,
+    "downloaded_and_checked_pieces": 10,
+    "total_piece_download_ms": 53029,
+    "times_stolen_from_me": 8,
+    "times_i_stole": 0
+   },
+   "state": "live",
+   "conn_kind": "tcp",
+   "client_name": null
+  }
+ }
+}

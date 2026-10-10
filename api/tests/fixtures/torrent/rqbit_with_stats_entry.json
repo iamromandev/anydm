@@ -1,0 +1,62 @@
+{
+ "torrents": [
+  {
+   "id": 0,
+   "info_hash": "01c137287d6f0ed05a56742dae794f632c79ff3d",
+   "name": "ubuntu-24.04.4-desktop-amd64.iso",
+   "output_folder": "/workdir/download/torrent",
+   "total_pieces": 25390,
+   "stats": {
+    "state": "live",
+    "file_progress": [
+     439922688
+    ],
+    "error": null,
+    "progress_bytes": 439922688,
+    "uploaded_bytes": 0,
+    "total_bytes": 6655619072,
+    "finished": false,
+    "live": {
+     "snapshot": {
+      "downloaded_and_checked_bytes": 439922688,
+      "fetched_bytes": 458960896,
+      "uploaded_bytes": 0,
+      "downloaded_and_checked_pieces": 1679,
+      "total_piece_download_ms": 6645365,
+      "peer_stats": {
+       "queued": 1187,
+       "connecting": 29,
+       "live": 99,
+       "live_tcp": 99,
+       "live_utp": 0,
+       "live_socks": 0,
+       "seen": 1542,
+       "dead": 227,
+       "not_needed": 0,
+       "steals": 590
+      }
+     },
+     "average_piece_download_time": {
+      "secs": 3,
+      "nanos": 957930316
+     },
+     "download_speed": {
+      "mbps": 22.083622932434082,
+      "human_readable": "22.08 MiB/s"
+     },
+     "upload_speed": {
+      "mbps": 0.0,
+      "human_readable": "0.00 MiB/s"
+     },
+     "time_remaining": {
+      "duration": {
+       "secs": 268,
+       "nanos": 479000000
+      },
+      "human_readable": "4m 28s"
+     }
+    }
+   }
+  }
+ ]
+}
