@@ -18,6 +18,7 @@
         "@qwik-ui/utils": "0.3.3",
         "@qwik.dev/core": "2.0.0-rc.2",
         "@qwik.dev/router": "2.0.0-rc.2",
+        "chart.js": "4.5.1",
         "class-variance-authority": "0.7.1",
         "hls.js": "1.7.3",
         "qwikset-icons-v2": "0.1.0"

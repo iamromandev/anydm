@@ -30,6 +30,14 @@ import {
     type SourceViewState,
 } from "@/component/features/source-view";
 import {
+    StatsView,
+    emptyStatsView,
+    rangeDates,
+    type RangeId,
+    type StatsViewState,
+} from "@/component/features/stats-view";
+import { getStats } from "@/lib/api/stats";
+import {
     SourceModal,
     type SourceModalMode,
 } from "@/component/features/source-modal";
@@ -307,12 +315,38 @@ export const AppShell = component$<AppShellProps>(
         // The row whose category is being changed, while its dialog is open.
         const moving = useSignal<string | null>(null);
 
-        /** The list, Search, or Sources. Held here with Search's own state, so the
+        /** The list, Search, Sources, or Stats. Held here with Search's own state, so the
             query and results survive switching away and back. */
-        const view = useSignal<"list" | "search" | "source">("list");
+        const view = useSignal<"list" | "search" | "source" | "stats">("list");
         const search = useStore<SearchState>(emptySearch());
         const sourceView = useStore<SourceViewState>(emptySourceView());
         const sourcesLoaded = useSignal(false);
+        const statsView = useStore<StatsViewState>(emptyStatsView());
+        /** Read a range's statistics: the days, the providers and the kinds. */
+        const loadStats = $(async (range: RangeId) => {
+            statsView.range = range;
+            statsView.loading = true;
+            statsView.failure = null;
+            const { start, end } = rangeDates(range, new Date());
+            try {
+                const [
+                    days,
+                    providers,
+                    kinds,
+                ] = await Promise.all([
+                    getStats(start, end, "day"),
+                    getStats(start, end, "provider"),
+                    getStats(start, end, "kind"),
+                ]);
+                statsView.days = days;
+                statsView.providers = providers;
+                statsView.kinds = kinds;
+            } catch (err) {
+                statsView.failure = errorMessage(err);
+            } finally {
+                statsView.loading = false;
+            }
+        });
         /** The add/edit dialog Task 9 renders; set here so the row buttons work. */
         const sourceDialog = useSignal<SourceModalMode | null>(null);
         /**
@@ -488,6 +522,14 @@ export const AppShell = component$<AppShellProps>(
                                 if (!sourcesLoaded.value) await loadSources();
                             }),
                         }}
+                        stats={{
+                            active: view.value === "stats",
+                            onOpen: $(async () => {
+                                view.value = "stats";
+                                // Read again on every opening: the numbers move while it is away.
+                                await loadStats(statsView.range);
+                            }),
+                        }}
                         counts={counts}
                         bulk={bulk}
                         onPauseAll={$(() => onBulk("pause_all"))}
@@ -499,7 +541,9 @@ export const AppShell = component$<AppShellProps>(
                     />
 
                     <div class="app-shell-content">
-                        {view.value === "source" ? (
+                        {view.value === "stats" ? (
+                            <StatsView state={statsView} onRange={loadStats} />
+                        ) : view.value === "source" ? (
                             <SourceView
                                 state={sourceView}
                                 onToggle={handleSourceToggle}

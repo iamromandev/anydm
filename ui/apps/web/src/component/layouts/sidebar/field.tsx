@@ -8,6 +8,7 @@ import {
     LuX,
     LuSearch,
     LuGlobe,
+    LuBarChart3,
 } from "@/component/core/icons";
 import type { CategoryItem } from "@/lib/api/category";
 import "./field.css";
@@ -33,6 +34,8 @@ export interface SidebarProps {
     search?: { enabled: boolean; active: boolean; onOpen: () => void };
     /** The Sources item: always shown, so a switched-off last source can be switched back on. */
     sources: { active: boolean; onOpen: () => void };
+    /** The Stats item: what was downloaded and uploaded over a range. */
+    stats: { active: boolean; onOpen: () => void };
 }
 
 export interface BulkAvailability {
@@ -84,6 +87,7 @@ export const Sidebar = component$<SidebarProps>(
         onClearFinished,
         search,
         sources,
+        stats,
     }) => {
         const store = useStore({
             downloadsExpanded: true,
@@ -125,6 +129,20 @@ export const Sidebar = component$<SidebarProps>(
                     >
                         <LuGlobe width="16" height="16" aria-hidden="true" />
                         <span class="sidebar-filter-label">Sources</span>
+                    </button>
+                </nav>
+                <nav class="sidebar-nav sidebar-nav--stats" aria-label="Stats">
+                    <button
+                        type="button"
+                        class={`sidebar-filter ${stats.active ? "sidebar-filter--active" : ""}`}
+                        onClick$={stats.onOpen}
+                    >
+                        <LuBarChart3
+                            width="16"
+                            height="16"
+                            aria-hidden="true"
+                        />
+                        <span class="sidebar-filter-label">Stats</span>
                     </button>
                 </nav>
 
