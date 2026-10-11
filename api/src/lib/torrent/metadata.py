@@ -96,7 +96,12 @@ def _total_size(info: Mapping[bytes, Any]) -> int:
 
 
 def _decode(data: bytes) -> Any:
-    value, offset = _bencode(data, 0)
+    try:
+        value, offset = _bencode(data, 0)
+    except (ValueError, IndexError) as exc:
+        # Truncated integers and lengths surface here, not in ``_bencode``'s
+        # own checks: ``bytes.index`` and ``int`` raise before they run.
+        raise torrent_error.invalid_source("not a bencoded torrent") from exc
     if offset != len(data):
         raise torrent_error.invalid_source("trailing bytes after the torrent")
     return value

@@ -287,6 +287,23 @@ class TestHaves:
         with pytest.raises(Error, match="torrent is not live"):
             await _client(handler).haves(HASH)
 
+    @pytest.mark.asyncio
+    async def test_a_count_that_is_not_a_number_is_a_rejection(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"\xa1", headers={"x-bitfield-len": "many"})
+
+        with pytest.raises(Error, match="piece count"):
+            await _client(handler).haves(HASH)
+
+    @pytest.mark.asyncio
+    async def test_a_missing_torrent_names_its_hash_not_the_endpoint(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, text="not found")
+
+        for call in ("haves", "fetch_metadata"):
+            with pytest.raises(Error, match=HASH):
+                await getattr(_client(handler), call)(HASH)
+
 
 class TestFetchMetadata:
     @pytest.mark.asyncio

@@ -83,6 +83,11 @@ class TestRejections:
         with pytest.raises(Error, match="Invalid torrent"):
             piece_specs(b"i9e")
 
+    def test_truncated_bytes_are_rejected_not_crash(self) -> None:
+        for blob in (b"i12", b"4x:abc", b"12abc", b"d4:infod6:lengthi12"):
+            with pytest.raises(Error, match="Invalid torrent"):
+                piece_specs(blob)
+
     def test_an_info_dict_without_pieces(self) -> None:
         with pytest.raises(Error, match="piece hashes"):
             piece_specs(bencode({b"info": {b"name": "x", b"piece length": 100, b"length": 100}}))

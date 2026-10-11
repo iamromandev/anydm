@@ -138,13 +138,17 @@ class RqbitClient:
             "GET",
             f"/torrents/{info_hash}/haves",
             headers={"Accept": "application/octet-stream"},
+            entity=info_hash,
         )
-        length = int(response.headers.get("x-bitfield-len") or 0)
+        try:
+            length = int(response.headers.get("x-bitfield-len") or 0)
+        except ValueError as exc:
+            raise torrent_error.engine_rejected("haves answered without a piece count") from exc
         return response.content, length
 
     async def fetch_metadata(self, info_hash: str) -> bytes:
         """The torrent file the engine holds for this hash, as it was added."""
-        response = await self._raw("GET", f"/torrents/{info_hash}/metadata")
+        response = await self._raw("GET", f"/torrents/{info_hash}/metadata", entity=info_hash)
         return response.content
 
     async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None:
@@ -216,18 +220,21 @@ class RqbitClient:
         path: str,
         *,
         headers: dict[str, str] | None = None,
+        entity: str = "",
     ) -> httpx.Response:
         """A response that is not JSON, translated the same way.
 
         Bitfields and torrent bytes must not be fed through ``_decoded``; a
-        number in the response would be read as a status there.
+        number in the response would be read as a status there. ``entity``
+        names the torrent a 404 is about: the path's last segment is the
+        endpoint, not the torrent.
         """
         try:
             response = await self._http.request(method, f"{self._base}{path}", headers=headers)
         except httpx.HTTPError as exc:
             raise torrent_error.engine_unavailable(str(exc)) from exc
         if response.status_code == httpx.codes.NOT_FOUND:
-            raise torrent_error.torrent_not_found(path.strip("/").split("/")[-1])
+            raise torrent_error.torrent_not_found(entity or path.strip("/").split("/")[-1])
         if response.status_code >= httpx.codes.BAD_REQUEST:
             raise torrent_error.engine_rejected(_message_of(response))
         return response

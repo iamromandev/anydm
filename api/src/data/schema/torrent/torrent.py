@@ -40,6 +40,8 @@ class TorrentResolveResponse(BaseSchema):
 class PiecesMapSchema(BaseSchema):
     """A torrent's piece map, compact: one base64 bitmap, not one object per piece."""
 
+    #: The nominal piece length — piece 0's size. Every piece but the last
+    #: has it; for a single-piece torrent it is the whole download.
     piece_size: int = 0
     count: int = 0
     done: str = ""

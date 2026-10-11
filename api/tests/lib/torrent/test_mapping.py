@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -211,3 +213,19 @@ class TestBitmapFromIndexes:
 
         assert seeded[0] == 0b1001_0000
         assert seeded[1] == 0b1000_0000
+
+    def test_the_spike_capture_decodes_consistently(self) -> None:
+        # The 25,390-piece Ubuntu bitmap saved by the #469 spike: its byte
+        # length matches the header, and every set bit names a real piece.
+        capture = json.loads((Path(__file__).parents[2] / "fixtures" / "torrent" / "rqbit_haves.json").read_text())
+        raw = bytes.fromhex(capture["bytes_hex"])
+
+        assert len(raw) == (capture["x_bitfield_len"] + 7) // 8
+        done = completed_since(bytes(len(raw)), raw)
+        assert len(done) == 1666
+        assert done == sorted(done)
+        assert all(0 <= index < capture["x_bitfield_len"] for index in done)
+        # Byte 40 of the capture is 0b11111100: MSB-first reads pieces
+        # 320-325 done and 326-327 missing; LSB-first would say the opposite.
+        assert 320 in done and 325 in done
+        assert 326 not in done and 327 not in done

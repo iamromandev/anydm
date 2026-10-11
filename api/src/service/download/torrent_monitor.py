@@ -262,6 +262,11 @@ class TorrentMonitor:
         except Error as error:
             logger.debug("{}|no piece bitmap for {}: {}", self._tag, info_hash, error.message)
             return
+        if len(bitmap) != (count + 7) // 8:
+            # The count header and the body disagree: without knowing which
+            # lies, any diff would mark the wrong pieces. Skip the tick.
+            logger.debug("{}|piece bitmap of {} is not {} pieces long", self._tag, info_hash, count)
+            return
 
         known = self._bitmaps.get(row.id)
         if known is None or self._counts.get(row.id) != count or len(known) != len(bitmap):
@@ -280,11 +285,15 @@ class TorrentMonitor:
         The backfill runs only when the bitmap already has pieces: a torrent
         with nothing on disk yet either has rows from ``enqueue`` or will get
         them the moment its first piece lands, and there is nothing to record
-        before then.
+        before then. When rows are still missing afterwards — a failed
+        backfill — the live bitmap is held without caching it, so the next
+        tick seeds again and retries rather than stranding the map forever.
         """
         rows = await self._piece_repo.list_for(row.id)
         if not rows and any(bitmap):
             rows = await self._backfill(row)
+        if not rows:
+            return bytes(bitmap)
         size = rows[0].size if rows else 0
         previous = bitmap_from([piece.index for piece in rows if piece.status == PieceStatus.COMPLETED], count)
         self._bitmaps[row.id] = previous

@@ -55,11 +55,17 @@ def _torrent_bytes(*, piece_length: int = 512, total: int = 1000) -> bytes:
 
 class FakeTorrentClient:
     def __init__(
-        self, *, details: TorrentDetails = DETAILS, fail: Error | None = None, metadata: bytes | None = None
+        self,
+        *,
+        details: TorrentDetails = DETAILS,
+        fail: Error | None = None,
+        metadata: bytes | None = None,
+        metadata_fail: Error | None = None,
     ) -> None:
         self.details = details
         self.fail = fail
         self.metadata_bytes = metadata if metadata is not None else _torrent_bytes()
+        self.metadata_fail = metadata_fail
         self.resolved: list[Any] = []
         self.added: list[dict[str, Any]] = []
         self.metadata: list[str] = []
@@ -84,6 +90,8 @@ class FakeTorrentClient:
         if self.fail:
             raise self.fail
         self.metadata.append(info_hash)
+        if self.metadata_fail:
+            raise self.metadata_fail
         return self.metadata_bytes
 
     async def pause(self, info_hash: str) -> None:
@@ -424,6 +432,49 @@ async def test_pieces_map_needs_a_held_download() -> None:
     with pytest.raises(Error) as caught:
         await _service().pieces_map(uuid.uuid4())
     assert caught.value.code == Code.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_a_pasted_file_that_is_not_a_torrent_fails_before_anything_is_created() -> None:
+    client, repo, pieces = FakeTorrentClient(), FakeDownloadRepo(), MemoryPieces()
+    encoded = base64.b64encode(b"d8:announce1:xe").decode()
+
+    with pytest.raises(Error) as caught:
+        await _service(client, repo=repo, pieces=pieces).enqueue(encoded, [])
+
+    assert caught.value.code == Code.BAD_REQUEST
+    assert client.resolved == [] and client.added == []
+    assert repo.created == [] and pieces.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_a_metadata_failure_for_a_magnet_creates_no_row() -> None:
+    client, repo = FakeTorrentClient(metadata_fail=torrent_error.engine_unavailable("gone")), FakeDownloadRepo()
+
+    with pytest.raises(Error) as caught:
+        await _service(client, repo=repo).enqueue(MAGNET, [])
+
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE
+    assert client.metadata == ["abc123"]
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_piece_write_failure_cancels_the_new_download_and_forgets_the_engine_torrent() -> None:
+    class FailingPieces(MemoryPieces):
+        async def replace(self, download_id: uuid.UUID, pieces: Any) -> None:
+            raise torrent_error.engine_unavailable("db gone")
+
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
+    service = _service(client, repo=repo, pieces=FailingPieces())
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue(MAGNET, [])
+
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE
+    (row,) = repo.rows.values()
+    assert (row.status, row.deleted_at is not None) == (DownloadStatus.CANCELLED, True)
+    assert client.deleted == ["abc123"]
 
 
 # --- control verbs ---------------------------------------------------------------------

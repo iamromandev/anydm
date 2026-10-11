@@ -128,10 +128,12 @@ piece is written when the torrent is added — from the pasted `.torrent`, or
 from the engine's metadata for a magnet — and each tick diffs rqbit's have
 bitmap against the last one held in memory, writing only newly completed
 pieces as one batched update (a tick with no changes writes nothing). The
-memory seeds from the table on first sight, so a restart recovers the map; a
-paused torrent keeps its stored one, since rqbit answers the bitmap for it but
-not per-peer stats. A change publishes one `pieces` frame per torrent per
-second, the same compact shape `GET /download/{download_id}/pieces` serves.
+memory seeds from the table on first sight, so a restart recovers the map. A
+paused torrent's bitmap comes back frozen, so its stored map does not move
+(per-peer stats, by contrast, answer 412 while paused — which is why the
+peers list in #471 degrades to the last snapshot). A change publishes one
+`pieces` frame per torrent per second, the same compact shape
+`GET /download/{download_id}/pieces` serves.
 
 Startup also requeues orphans: with one process, every row left `downloading`
 at boot belongs to a process that is gone, so it goes back in the queue and

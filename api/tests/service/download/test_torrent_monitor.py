@@ -69,12 +69,14 @@ class FakeClient:
         haves: dict[str, tuple[bytes, int]] | None = None,
         haves_fail: Error | None = None,
         metadata: bytes | None = None,
+        metadata_fail: Error | None = None,
     ) -> None:
         self.samples = samples or []
         self.fail = fail
         self.haves_map = haves or {}
         self.haves_fail = haves_fail
         self.metadata_bytes = metadata
+        self.metadata_fail = metadata_fail
         self.added: list[dict[str, Any]] = []
         self.limits: list[tuple[int, int]] = []
         self.limits_fail: Error | None = None
@@ -97,6 +99,8 @@ class FakeClient:
 
     async def fetch_metadata(self, info_hash: str) -> bytes:
         self.metadata_seen.append(info_hash)
+        if self.metadata_fail:
+            raise self.metadata_fail
         assert self.metadata_bytes is not None
         return self.metadata_bytes
 
@@ -443,6 +447,19 @@ class TestPieceSync:
         assert second["done"] == base64.b64encode(_bitmap(0, 1, 2)[0]).decode()
 
     @pytest.mark.asyncio
+    async def test_a_bitmap_whose_length_disagrees_with_its_count_is_skipped(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row, 0)
+        hub = RecordingHub()
+        client = FakeClient([_sample()], haves={HASH: (b"\xff", 16)})
+
+        await _monitor([row], client, pieces=pieces, hub=hub).tick()
+
+        assert pieces.completed == []
+        assert hub.named("pieces") == []
+
+    @pytest.mark.asyncio
     async def test_a_6000_piece_first_sight_is_a_single_write(self) -> None:
         row = _row()
         pieces = MemoryPieces()
@@ -469,5 +486,29 @@ class TestPieceSync:
         await _monitor([row], client, pieces=pieces).tick()
 
         assert client.metadata_seen == [HASH]
+        assert [(p.index, p.size) for p in pieces.by_download[row.id]] == [(0, 100), (1, 100), (2, 50)]
+        assert pieces.completed == [(row.id, [0])]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_backfill_is_retried_on_the_next_tick(self) -> None:
+        from tests.service.download.test_torrent_service import _torrent_bytes
+
+        row = _row()
+        pieces = MemoryPieces()
+        client = FakeClient(
+            [_sample()],
+            haves={HASH: _bitmap(0)},
+            metadata=_torrent_bytes(piece_length=100, total=250),
+            metadata_fail=torrent_error.engine_unavailable("gone"),
+        )
+        monitor = _monitor([row], client, pieces=pieces)
+
+        await monitor.tick()
+        assert row.id not in pieces.by_download
+        assert pieces.completed == []
+
+        client.metadata_fail = None
+        await monitor.tick()
+
         assert [(p.index, p.size) for p in pieces.by_download[row.id]] == [(0, 100), (1, 100), (2, 50)]
         assert pieces.completed == [(row.id, [0])]

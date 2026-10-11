@@ -117,6 +117,10 @@ class TorrentService(BaseService):
                 error_type=ErrorType.BAD_REQUEST,
             )
         source = parse_source(raw)
+        if source.blob is not None:
+            # Fail fast: a paste that is not a torrent must never reach the
+            # engine, let alone leave a row behind.
+            specs = piece_specs(source.blob)
 
         # Resolving before adding buys the rejection below: a selection naming a
         # file the torrent does not have would otherwise be a silently empty download.
@@ -144,6 +148,11 @@ class TorrentService(BaseService):
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
             output_folder=str(folder),
         )
+        if source.blob is None:
+            # Parsed before the row exists, so a failure leaves nothing
+            # behind: for a magnet the engine holds the metadata by now —
+            # ``add`` waits for it.
+            specs = piece_specs(await self._client.fetch_metadata(details.info_hash))
         download = await self._repo.create_torrent(
             # A base64 .torrent must never land here: reconciliation re-adds
             # from it, and an info-hash magnet is both small and re-addable.
@@ -154,14 +163,17 @@ class TorrentService(BaseService):
             download={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": relative},
             files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
-        # The piece map starts here, not on the monitor's first tick: a pasted
-        # .torrent already carries its metadata, and for a magnet the engine
-        # holds it by now — ``add`` waits for it. A restart therefore finds
-        # rows to load rather than an empty table.
-        blob = source.blob if source.blob is not None else await self._client.fetch_metadata(details.info_hash)
-        await self._piece_repo.replace(
-            download.id, [(spec.index, spec.size, spec.hash) for spec in piece_specs(blob)]
-        )
+        # The piece map starts here, not on the monitor's first tick: a
+        # restart therefore finds rows to load rather than an empty table.
+        try:
+            await self._piece_repo.replace(
+                download.id, [(spec.index, spec.size, spec.hash) for spec in specs]
+            )
+        except Error:
+            # A row without its pieces is a download that can never show a
+            # map: take it back down, engine torrent and all, then report.
+            await self.cancel(download.id)
+            raise
         return await self._published(download)
 
     async def pieces_map(self, download_id: uuid.UUID) -> PiecesMapSchema:
