@@ -40,7 +40,7 @@ async def test_a_site_download_is_its_page_s_catalog_rows_and_its_own() -> None:
 
     mirror = await Mirror.get(download_id=row.id).prefetch_related("source__url", "source__provider")
     assert (mirror.source.kind, mirror.source.provider.name, mirror.source.provider.slug) == (
-        SourceKind.CONTENT,
+        SourceKind.SITE,
         "Youtube",
         "youtube",
     )

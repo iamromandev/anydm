@@ -7,3 +7,4 @@ from .download import PieceDatabaseRepo as PieceDatabaseRepo
 from .download import PositionDatabaseRepo as PositionDatabaseRepo
 from .download import SegmentDatabaseRepo as SegmentDatabaseRepo
 from .search import SourceDatabaseRepo as SourceDatabaseRepo
+from .stat import StatDatabaseRepo as StatDatabaseRepo

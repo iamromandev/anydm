@@ -22,6 +22,7 @@ from src.service import (
     get_stream_sweeper,
     get_torrent_monitor,
     get_torrent_reaper,
+    get_traffic_recorder,
 )
 from src.service.source.seed import seed_missing_sources
 
@@ -69,6 +70,8 @@ async def lifespan(_app: FastAPI):
     await reaper.start()
     disk_monitor = get_disk_monitor()
     await disk_monitor.start()
+    recorder = get_traffic_recorder()
+    await recorder.start()
     guard = get_disk_guard()
     if guard.min_free_bytes:
         logger.info("lifespan|keeping {} bytes free in {}", guard.min_free_bytes, settings.download_dir)
@@ -77,6 +80,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        await recorder.stop()
         await disk_monitor.stop()
         await reaper.stop()
         await sweeper.stop()

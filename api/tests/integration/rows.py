@@ -43,7 +43,7 @@ async def a_site_download(
     video_id: str, *, title: str = "", playlist_index: int | None = None, **fields: Any
 ) -> Download:
     row = await a_download(
-        f"https://www.youtube.com/watch?v={video_id}", provider="Youtube", kind=SourceKind.CONTENT, **fields
+        f"https://www.youtube.com/watch?v={video_id}", provider="Youtube", kind=SourceKind.SITE, **fields
     )
     await Media.create(download=row, title=title, preset=Preset.P1080, playlist_index=playlist_index)
     return row
@@ -58,7 +58,7 @@ async def a_torrent_download(info_hash: str, *, name: str, **fields: Any) -> Dow
 
 async def a_collection(playlist_id: str = "PL1", *, title: str = "Talks", **fields: Any) -> Download:
     row = await a_download(
-        f"https://www.youtube.com/playlist?list={playlist_id}", provider="Youtube", kind=SourceKind.CONTENT, **fields
+        f"https://www.youtube.com/playlist?list={playlist_id}", provider="Youtube", kind=SourceKind.SITE, **fields
     )
     await Media.create(download=row, title=title, kind=MediaKind.PLAYLIST, preset=Preset.P720)
     return row

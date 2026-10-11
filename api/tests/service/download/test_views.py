@@ -13,7 +13,7 @@ from tests.service.download.described_rows import a_mirror, a_torrent
 def row(**overrides: Any) -> SimpleNamespace:
     base: dict[str, Any] = dict(
         id=uuid.uuid4(),
-        mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.CONTENT, "Youtube")],
+        mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.SITE, "Youtube")],
         uploaded_size=0,
         status=DownloadStatus.DOWNLOADING,
         folder=None,

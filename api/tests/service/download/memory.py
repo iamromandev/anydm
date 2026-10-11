@@ -23,7 +23,7 @@ from src.service.download.views import DownloadViews
 
 from tests.service.download.described_rows import a_mirror, a_torrent
 
-_KIND = {Platform.SITE: SourceKind.CONTENT, Platform.DIRECT: SourceKind.DIRECT, Platform.TORRENT: SourceKind.TORRENT}
+_KIND = {Platform.SITE: SourceKind.SITE, Platform.DIRECT: SourceKind.DIRECT, Platform.TORRENT: SourceKind.TORRENT}
 
 
 def _saving(row: SimpleNamespace) -> SimpleNamespace:

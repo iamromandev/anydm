@@ -14,6 +14,7 @@ from src.data.repo import (
     PositionDatabaseRepo,
     SegmentDatabaseRepo,
     SourceDatabaseRepo,
+    StatDatabaseRepo,
 )
 from src.lib.event import get_event_hub
 from src.lib.media.ffprobe import probe
@@ -44,6 +45,8 @@ from src.service.search import SearchService as SearchService
 from src.service.search.video_service import VideoSearchService as VideoSearchService
 from src.service.settings import SettingsService as SettingsService
 from src.service.source import SourceService as SourceService
+from src.service.stat import StatService as StatService
+from src.service.stat import TrafficRecorder as TrafficRecorder
 from src.service.stream import StreamIdleSweeper as StreamIdleSweeper
 from src.service.stream import StreamService as StreamService
 from src.service.stream import StreamSessionStore as StreamSessionStore
@@ -368,3 +371,13 @@ def get_torrent_reaper() -> TorrentReaper:
         poll_s=settings.torrent_reap_poll_s,
         enabled=settings.torrent_enabled,
     )
+
+
+def get_stat_service() -> StatService:
+    return StatService(StatDatabaseRepo())
+
+
+@lru_cache
+def get_traffic_recorder() -> TrafficRecorder:
+    """One recorder per process, because it is a singleton background loop."""
+    return TrafficRecorder(StatDatabaseRepo(), get_live_stats())

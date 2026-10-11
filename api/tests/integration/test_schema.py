@@ -5,6 +5,7 @@ pytestmark = pytest.mark.integration
 
 #: Where each table lives: the schema is its domain, as in the model folders.
 TABLES = {
+    "audit": {"traffic", "speed"},
     "catalog": {"provider", "source"},
     "config": {"preference"},
     "iam": {"user"},
@@ -21,7 +22,7 @@ async def test_every_table_is_in_its_domains_schema() -> None:
     conn = Tortoise.get_connection("default")
     rows = await conn.execute_query_dict(
         "SELECT schemaname, tablename FROM pg_tables "
-        "WHERE schemaname IN ('catalog', 'config', 'iam', 'play', 'shared', 'torrent', 'transfer')"
+        "WHERE schemaname IN ('audit', 'catalog', 'config', 'iam', 'play', 'shared', 'torrent', 'transfer')"
     )
     found: dict[str, set[str]] = {}
     for row in rows:

@@ -18,7 +18,7 @@ from src.lib.identity import site_ref, url_ref
 
 #: How each kind of source fetches its bytes.
 _PLATFORM = {
-    SourceKind.CONTENT: Platform.SITE,
+    SourceKind.SITE: Platform.SITE,
     SourceKind.DIRECT: Platform.DIRECT,
     SourceKind.TORRENT: Platform.TORRENT,
 }

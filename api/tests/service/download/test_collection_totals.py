@@ -50,7 +50,7 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     member = uuid.uuid4()
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.CONTENT, "Youtube")],
+        mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.SITE, "Youtube")],
         media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
         created_at=None,
     )
@@ -73,7 +73,7 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
 async def test_schemas_carry_the_watched_count() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
-        mirrors=[a_mirror("https://www.youtube.com/channel/UC/videos", SourceKind.CONTENT, "Youtube")],
+        mirrors=[a_mirror("https://www.youtube.com/channel/UC/videos", SourceKind.SITE, "Youtube")],
         media=SimpleNamespace(title="", kind=MediaKind.CHANNEL, preset=Preset.BEST),
         created_at=None,
     )
