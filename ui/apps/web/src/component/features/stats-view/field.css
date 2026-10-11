@@ -1,0 +1,210 @@
+.stats-view {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.stats-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.stats-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.stats-range {
+    margin-left: auto;
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: var(--color-card);
+    overflow: hidden;
+}
+
+.stats-range-btn {
+    border: 0;
+    background: transparent;
+    color: var(--color-foreground);
+    padding: 0.4rem 0.75rem;
+    min-height: 2.25rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.stats-range-btn + .stats-range-btn {
+    border-left: 1px solid var(--color-border);
+}
+
+.stats-range-btn--active {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.stats-range-btn:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: -2px;
+}
+
+.stats-failure {
+    border: 1px solid var(--color-warning);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.stats-empty,
+.stats-note {
+    color: color-mix(in srgb, var(--color-foreground) 55%, transparent);
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+.stats-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.stats-body[aria-busy="true"] {
+    opacity: 0.6;
+}
+
+.stats-tiles {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.5rem;
+}
+
+.stats-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    background: var(--color-card);
+    padding: 0.75rem;
+}
+
+.stats-tile-label {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--color-foreground) 60%, transparent);
+}
+
+.stats-tile-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.stats-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    background: var(--color-card);
+    padding: 0.75rem;
+    min-width: 0;
+}
+
+.stats-panel-title {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+/* Chart.js sizes the canvas to this box; a box without a height would collapse it. */
+.stats-chart {
+    position: relative;
+    height: 14rem;
+    width: 100%;
+}
+
+.stats-tops {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.75rem;
+}
+
+.stats-top {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.stats-top-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.2rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.stats-top-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stats-top-value {
+    color: color-mix(in srgb, var(--color-foreground) 65%, transparent);
+    font-variant-numeric: tabular-nums;
+}
+
+.stats-meter {
+    grid-column: 1 / -1;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: var(--color-muted);
+    overflow: hidden;
+}
+
+.stats-meter-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--color-primary);
+}
+
+/* Read by a screen reader, drawn nowhere: the chart's data as a table. */
+.stats-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 480px) {
+    .stats-range {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .stats-range-btn {
+        flex: 1;
+        min-height: 2.75rem;
+    }
+
+    .stats-chart {
+        height: 12rem;
+    }
+}
