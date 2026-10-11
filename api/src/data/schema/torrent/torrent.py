@@ -37,6 +37,19 @@ class TorrentResolveResponse(BaseSchema):
     files: list[FileSchema] = Field(default_factory=list)
 
 
+class PiecesMapSchema(BaseSchema):
+    """A torrent's piece map, compact: one base64 bitmap, not one object per piece."""
+
+    #: The nominal piece length — piece 0's size. Every piece but the last
+    #: has it; for a single-piece torrent it is the whole download.
+    piece_size: int = 0
+    count: int = 0
+    done: str = ""
+    #: Indexes of pieces currently in flight. Always empty: rqbit's bitmap is
+    #: binary — have or not — so no per-piece partial state exists to report.
+    downloading: list[int] = Field(default_factory=list)
+
+
 class TorrentDownloadRequest(BaseSchema):
     torrent: Annotated[
         str,

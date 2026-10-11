@@ -6,10 +6,13 @@ from typing import Any
 import pytest
 from src.core.common import now
 from src.data.db.model import Download, Torrent
-from src.data.repo import DownloadDatabaseRepo, FileDatabaseRepo, PositionDatabaseRepo
+from src.data.repo import DownloadDatabaseRepo, FileDatabaseRepo, PieceDatabaseRepo, PositionDatabaseRepo
 from src.data.type import DownloadStatus
+from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
+from src.lib.torrent import error as torrent_error
 from src.lib.torrent.folder import torrent_folder
+from src.lib.torrent.mapping import bitmap_from
 from src.lib.torrent.protocol import TorrentProgress
 from src.service.download.live import LiveStats
 from src.service.download.torrent_monitor import TorrentMonitor
@@ -24,12 +27,28 @@ MAGNET = f"magnet:?xt=urn:btih:{HASH}"
 class Engine:
     """Answers with ``samples``, and records what it is asked to add."""
 
-    def __init__(self, samples: list[TorrentProgress]) -> None:
+    def __init__(
+        self,
+        samples: list[TorrentProgress],
+        *,
+        haves: dict[str, tuple[bytes, int]] | None = None,
+        haves_fail: Any = None,
+    ) -> None:
         self.samples = samples
+        self.haves_map = haves or {}
+        self.haves_fail = haves_fail
         self.added: list[dict[str, Any]] = []
 
     async def list_progress(self) -> list[TorrentProgress]:
         return list(self.samples)
+
+    async def haves(self, info_hash: str) -> tuple[bytes, int]:
+        if self.haves_fail:
+            raise self.haves_fail
+        return self.haves_map.get(info_hash, (b"", 0))
+
+    async def fetch_metadata(self, info_hash: str) -> bytes:
+        raise AssertionError("no backfill expected in this test")
 
     async def add(self, source: Any, *, only_files: Any, output_folder: str) -> None:
         self.added.append({"source": source, "only_files": list(only_files), "output_folder": output_folder})
@@ -62,6 +81,7 @@ def _monitor(engine: Engine, root: Path) -> TorrentMonitor:
     return TorrentMonitor(
         repo=DownloadDatabaseRepo(),
         file_repo=FileDatabaseRepo(),
+        piece_repo=PieceDatabaseRepo(),
         client=engine,  # ty: ignore[invalid-argument-type]
         hub=EventHub(),
         live=live,
@@ -124,3 +144,40 @@ async def test_reconcile_re_adds_a_lost_torrent_from_its_magnet_and_selection(tm
     assert added["only_files"] == [0]
     assert added["output_folder"] == str((tmp_path / torrent_folder(Path("."), "Release", HASH).name).resolve())
     assert HASH in str(added["source"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_piece_rows_follow_the_bitmap_across_ticks_and_a_restart(tmp_path: Path) -> None:
+    row = await _torrent()
+    pieces = PieceDatabaseRepo()
+    await pieces.replace(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40), (2, 88, "c" * 40)])
+
+    await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 2], 3), 3)}), tmp_path).tick()
+    assert [(p.index, p.status) for p in await pieces.list_for(row.id)] == [
+        (0, PieceStatus.COMPLETED),
+        (1, PieceStatus.PENDING),
+        (2, PieceStatus.COMPLETED),
+    ]
+
+    # A new monitor — as after a restart — seeds from the table and writes only the delta.
+    await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 1, 2], 3), 3)}), tmp_path).tick()
+    assert [p.status for p in await pieces.list_for(row.id)] == [PieceStatus.COMPLETED] * 3
+
+    # Nothing moved: the rows are left alone.
+    before = [(p.updated_at, p.downloaded_bytes) for p in await pieces.list_for(row.id)]
+    await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 1, 2], 3), 3)}), tmp_path).tick()
+    assert [(p.updated_at, p.downloaded_bytes) for p in await pieces.list_for(row.id)] == before
+
+
+@pytest.mark.asyncio
+async def test_a_paused_torrent_keeps_its_piece_rows(tmp_path: Path) -> None:
+    row = await _torrent(status=DownloadStatus.PAUSED)
+    pieces = PieceDatabaseRepo()
+    await pieces.replace(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40)])
+
+    await _monitor(
+        Engine([_sample(state="paused")], haves_fail=torrent_error.engine_rejected("torrent is not live")),
+        tmp_path,
+    ).tick()
+
+    assert [p.status for p in await pieces.list_for(row.id)] == [PieceStatus.PENDING] * 2

@@ -10,6 +10,7 @@ from src.data.repo import (
     CollectionDatabaseRepo,
     DownloadDatabaseRepo,
     FileDatabaseRepo,
+    PieceDatabaseRepo,
     PositionDatabaseRepo,
     SegmentDatabaseRepo,
     SourceDatabaseRepo,
@@ -206,6 +207,7 @@ def get_torrent_service() -> TorrentService:
     return TorrentService(
         repo=DownloadDatabaseRepo(),
         file_repo=FileDatabaseRepo(),
+        piece_repo=PieceDatabaseRepo(),
         client=get_torrent_client(),
         hub=get_event_hub(),
         views=get_download_views(),
@@ -224,6 +226,7 @@ def get_torrent_monitor() -> TorrentMonitor:
     return TorrentMonitor(
         repo=DownloadDatabaseRepo(),
         file_repo=FileDatabaseRepo(),
+        piece_repo=PieceDatabaseRepo(),
         client=get_torrent_client(),
         hub=get_event_hub(),
         live=get_live_stats(),

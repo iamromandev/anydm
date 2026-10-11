@@ -8,8 +8,10 @@ import pytest
 from src.core.error import Error
 from src.core.type import Code
 from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Platform
+from src.data.type.torrent.piece import PieceStatus
 from src.lib.media.sidecar import TorrentFile
 from src.lib.torrent import error as torrent_error
+from src.lib.torrent.mapping import bitmap_from
 from src.lib.torrent.protocol import FileInfo, TorrentDetails
 from src.service.download.disk import DiskGuard
 from src.service.download.live import Live, LiveStats
@@ -18,9 +20,11 @@ from src.service.download.torrent_service import TorrentService
 from tests.service.category.fake_category_repo import FakeCategoryRepo
 from tests.service.download.memory import (
     MemoryFiles,
+    MemoryPieces,
     RecordingHub,
     download_row,
     memory_views,
+    piece_row,
 )
 
 MAGNET = "magnet:?xt=urn:btih:abc123"
@@ -37,12 +41,34 @@ DETAILS = TorrentDetails(
 )
 
 
+def _torrent_bytes(*, piece_length: int = 512, total: int = 1000) -> bytes:
+    """A minimal single-file .torrent: the pieces its size needs, fixed hashes, nothing else."""
+    count = max(1, -(-total // piece_length)) if total else 0
+    hashes = b"".join(bytes([index + 1]) * 20 for index in range(count))
+    info = (
+        f"d6:lengthi{total}e4:name9:video.mkv12:piece lengthi{piece_length}e6:pieces{len(hashes)}:".encode()
+        + hashes
+        + b"e"
+    )
+    return b"d4:info" + info + b"e"
+
+
 class FakeTorrentClient:
-    def __init__(self, *, details: TorrentDetails = DETAILS, fail: Error | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        details: TorrentDetails = DETAILS,
+        fail: Error | None = None,
+        metadata: bytes | None = None,
+        metadata_fail: Error | None = None,
+    ) -> None:
         self.details = details
         self.fail = fail
+        self.metadata_bytes = metadata if metadata is not None else _torrent_bytes()
+        self.metadata_fail = metadata_fail
         self.resolved: list[Any] = []
         self.added: list[dict[str, Any]] = []
+        self.metadata: list[str] = []
         self.paused: list[str] = []
         self.started: list[str] = []
         self.deleted: list[str] = []
@@ -59,6 +85,14 @@ class FakeTorrentClient:
             raise self.fail
         self.added.append({"source": source, "only_files": list(only_files), "output_folder": output_folder})
         return self.details
+
+    async def fetch_metadata(self, info_hash: str) -> bytes:
+        if self.fail:
+            raise self.fail
+        self.metadata.append(info_hash)
+        if self.metadata_fail:
+            raise self.metadata_fail
+        return self.metadata_bytes
 
     async def pause(self, info_hash: str) -> None:
         if self.fail:
@@ -115,6 +149,7 @@ def _service(
     *,
     repo: FakeDownloadRepo | None = None,
     files: MemoryFiles | None = None,
+    pieces: MemoryPieces | None = None,
     hub: RecordingHub | None = None,
     live: LiveStats | None = None,
     root: Path = ROOT,
@@ -129,6 +164,7 @@ def _service(
     return TorrentService(
         repo=repo,  # ty: ignore[invalid-argument-type]
         file_repo=files,  # ty: ignore[invalid-argument-type]
+        piece_repo=pieces or MemoryPieces(),  # ty: ignore[invalid-argument-type]
         client=client or FakeTorrentClient(),  # ty: ignore[invalid-argument-type]
         hub=hub or RecordingHub(),  # ty: ignore[invalid-argument-type]
         views=memory_views(files=files, live=live),
@@ -314,11 +350,37 @@ async def test_a_second_copy_of_a_torrent_is_refused_before_the_engine_is_asked(
 async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None:
     """A base64 .torrent must not be written into url: reconciliation re-adds from it."""
     repo = FakeDownloadRepo()
-    encoded = base64.b64encode(b"d8:announce1:xe").decode()
+    encoded = base64.b64encode(_torrent_bytes()).decode()
 
     await _service(repo=repo).enqueue(encoded, [0])
 
     assert repo.created[0]["url"] == "magnet:?xt=urn:btih:abc123"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_writes_one_pending_piece_row_per_piece_from_a_pasted_file() -> None:
+    client, pieces = FakeTorrentClient(), MemoryPieces()
+
+    await _service(client, pieces=pieces).enqueue(base64.b64encode(_torrent_bytes()).decode(), [])
+
+    assert client.metadata == []
+    (download_id,) = pieces.replaced
+    assert [(p.index, p.size, p.hash, p.status) for p in pieces.by_download[download_id]] == [
+        (0, 512, "01" * 20, PieceStatus.PENDING),
+        (1, 488, "02" * 20, PieceStatus.PENDING),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_reads_piece_rows_from_the_engine_for_a_magnet() -> None:
+    client, pieces = FakeTorrentClient(metadata=_torrent_bytes()), MemoryPieces()
+
+    await _service(client, pieces=pieces).enqueue(MAGNET, [])
+
+    assert client.metadata == ["abc123"]
+    (download_id,) = pieces.replaced
+    assert [(p.index, p.size) for p in pieces.by_download[download_id]] == [(0, 512), (1, 488)]
+    assert {p.status for p in pieces.by_download[download_id]} == {PieceStatus.PENDING}
 
 
 @pytest.mark.asyncio
@@ -337,6 +399,82 @@ async def test_enqueue_is_unavailable_when_torrents_are_disabled() -> None:
     with pytest.raises(Error) as caught:
         await _service(enabled=False).enqueue(MAGNET, [0])
     assert caught.value.code == Code.SERVICE_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_pieces_map_returns_the_compact_bitmap() -> None:
+    repo, pieces = FakeDownloadRepo(), MemoryPieces()
+    row = _torrent_row(repo)
+    pieces.by_download[row.id] = [
+        piece_row(0, 512, status=PieceStatus.COMPLETED),
+        piece_row(1, 512),
+        piece_row(2, 88, status=PieceStatus.COMPLETED),
+    ]
+
+    data = await _service(repo=repo, pieces=pieces).pieces_map(row.id)
+
+    assert (data.piece_size, data.count, data.downloading) == (512, 3, [])
+    assert data.done == base64.b64encode(bitmap_from([0, 2], 3)).decode()
+
+
+@pytest.mark.asyncio
+async def test_pieces_map_without_rows_is_an_empty_map() -> None:
+    repo = FakeDownloadRepo()
+    row = _torrent_row(repo)
+
+    data = await _service(repo=repo).pieces_map(row.id)
+
+    assert (data.piece_size, data.count, data.done, data.downloading) == (0, 0, "", [])
+
+
+@pytest.mark.asyncio
+async def test_pieces_map_needs_a_held_download() -> None:
+    with pytest.raises(Error) as caught:
+        await _service().pieces_map(uuid.uuid4())
+    assert caught.value.code == Code.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_a_pasted_file_that_is_not_a_torrent_fails_before_anything_is_created() -> None:
+    client, repo, pieces = FakeTorrentClient(), FakeDownloadRepo(), MemoryPieces()
+    encoded = base64.b64encode(b"d8:announce1:xe").decode()
+
+    with pytest.raises(Error) as caught:
+        await _service(client, repo=repo, pieces=pieces).enqueue(encoded, [])
+
+    assert caught.value.code == Code.BAD_REQUEST
+    assert client.resolved == [] and client.added == []
+    assert repo.created == [] and pieces.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_a_metadata_failure_for_a_magnet_creates_no_row() -> None:
+    client, repo = FakeTorrentClient(metadata_fail=torrent_error.engine_unavailable("gone")), FakeDownloadRepo()
+
+    with pytest.raises(Error) as caught:
+        await _service(client, repo=repo).enqueue(MAGNET, [])
+
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE
+    assert client.metadata == ["abc123"]
+    assert repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_piece_write_failure_cancels_the_new_download_and_forgets_the_engine_torrent() -> None:
+    class FailingPieces(MemoryPieces):
+        async def replace(self, download_id: uuid.UUID, pieces: Any) -> None:
+            raise torrent_error.engine_unavailable("db gone")
+
+    client, repo = FakeTorrentClient(), FakeDownloadRepo()
+    service = _service(client, repo=repo, pieces=FailingPieces())
+
+    with pytest.raises(Error) as caught:
+        await service.enqueue(MAGNET, [])
+
+    assert caught.value.code == Code.SERVICE_UNAVAILABLE
+    (row,) = repo.rows.values()
+    assert (row.status, row.deleted_at is not None) == (DownloadStatus.CANCELLED, True)
+    assert client.deleted == ["abc123"]
 
 
 # --- control verbs ---------------------------------------------------------------------

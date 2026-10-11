@@ -11,6 +11,7 @@ from sse_starlette import EventSourceResponse
 from src.core.success import Success
 from src.core.type import Code
 from src.data.schema.play import MediaInfoSchema, PlaybackRequest, PlaybackSchema
+from src.data.schema.torrent import PiecesMapSchema
 from src.data.schema.transfer import (
     BatchItemSchema,
     BatchLinks,
@@ -32,10 +33,12 @@ from src.service import (
     DiskGuard,
     DownloadService,
     StreamService,
+    TorrentService,
     get_category_mover,
     get_disk_guard,
     get_download_service,
     get_stream_service,
+    get_torrent_service,
 )
 
 router = APIRouter()
@@ -190,6 +193,19 @@ async def download_file(
     """
     path, filename, media_type = await download_service.resolve_file(download_id, file_index)
     return FileResponse(path=path, filename=filename, media_type=media_type)
+
+
+@router.get(path="/download/{download_id}/pieces", response_model=Success[PiecesMapSchema])
+async def download_pieces(
+    download_id: uuid.UUID,
+    torrent_service: Annotated[TorrentService, Depends(get_torrent_service)],
+) -> Response:
+    """A torrent's piece map, compact: one base64 bitmap, not one object per piece.
+
+    Built from the stored rows, so a paused torrent still answers — the
+    engine only reports on torrents it is running.
+    """
+    return Success.ok(data=await torrent_service.pieces_map(download_id)).to_resp()
 
 
 @router.put(path="/download/{download_id}/file/{file_index}/playback", response_model=Success[PlaybackSchema])

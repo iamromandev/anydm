@@ -13,7 +13,7 @@ here rather than at each call site:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.data.type import DownloadStatus
@@ -91,6 +91,30 @@ def progress_percent(downloaded: int, total: int) -> int:
     if total <= 0:
         return 0
     return max(0, min(100, int(downloaded * 100 // total)))
+
+
+def bitmap_from(indexes: Iterable[int], count: int) -> bytes:
+    """A bitfield in rqbit's own shape — ``Msb0`` order, piece 0 the top bit."""
+    bits = bytearray((count + 7) // 8)
+    for index in indexes:
+        if 0 <= index < count:
+            bits[index // 8] |= 1 << (7 - index % 8)
+    return bytes(bits)
+
+
+def completed_since(previous: bytes, current: bytes) -> list[int]:
+    """The pieces set in ``current`` but not in ``previous``.
+
+    Both are rqbit-shaped bitfields, and the engine only ever sets bits: a
+    torrent that starts over produces a whole new one, never a clearing.
+    """
+    changed: list[int] = []
+    for byte_index, (before, now) in enumerate(zip(previous, current, strict=True)):
+        flipped = now & ~before
+        for bit in range(8):
+            if flipped >> (7 - bit) & 1:
+                changed.append(byte_index * 8 + bit)
+    return changed
 
 
 def status_for(progress: TorrentProgress, current: DownloadStatus) -> DownloadStatus:

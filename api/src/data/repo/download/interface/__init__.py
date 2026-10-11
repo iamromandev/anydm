@@ -7,6 +7,7 @@ from .download import RELATED as RELATED
 from .download import DownloadRepo as DownloadRepo
 from .file import FileRepo as FileRepo
 from .file import FileRow as FileRow
+from .piece import PieceRepo as PieceRepo
 from .position import PositionRepo as PositionRepo
 from .segment import Reconciled as Reconciled
 from .segment import SegmentRepo as SegmentRepo

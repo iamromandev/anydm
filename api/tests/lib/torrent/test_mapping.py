@@ -1,9 +1,13 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from src.data.type import DownloadStatus
 from src.lib.torrent.mapping import (
+    bitmap_from,
     bps_from_mbps,
+    completed_since,
     eta_from,
     peers_from,
     progress_from_stats,
@@ -173,3 +177,55 @@ def test_a_canceled_row_is_never_revived() -> None:
 
 def test_a_failed_torrent_recovers_when_the_engine_does() -> None:
     assert status_for(_progress("live"), DownloadStatus.FAILED) == DownloadStatus.DOWNLOADING
+
+
+class TestBitmapBits:
+    """rqbit's bitfield is MSB-first: piece 0 is the top bit of the first byte."""
+
+    def test_completed_since_reports_only_newly_set_pieces(self) -> None:
+        before = bitmap_from([0, 1, 4], 8)
+        after = bitmap_from([1, 4, 6, 7], 8)
+
+        assert completed_since(before, after) == [6, 7]
+
+    def test_completed_since_is_empty_when_nothing_moved(self) -> None:
+        both = bitmap_from([2, 5], 10)
+
+        assert completed_since(both, both) == []
+
+    def test_bitmap_from_round_trips_through_the_bytes(self) -> None:
+        # 1010_0001: pieces 0, 2 and 7 of eight.
+        assert bitmap_from([0, 2, 7], 8) == b"\xa1"
+
+    def test_bitmap_from_pads_to_a_whole_final_byte(self) -> None:
+        # Piece 9 is the second bit of the second byte.
+        assert bitmap_from([9], 10) == b"\x00\x40"
+
+    def test_a_shrinking_bitmap_reports_nothing_new(self) -> None:
+        # The engine only ever sets bits; anything else is a re-added torrent.
+        assert completed_since(bitmap_from([0, 1], 8), bitmap_from([0], 8)) == []
+
+
+class TestBitmapFromIndexes:
+    def test_a_restart_seeds_the_same_bytes_the_engine_sent(self) -> None:
+        # Pieces 0 and 3 of the first byte, piece 8 opening the second.
+        seeded = bitmap_from([0, 3, 8], 25390)
+
+        assert seeded[0] == 0b1001_0000
+        assert seeded[1] == 0b1000_0000
+
+    def test_the_spike_capture_decodes_consistently(self) -> None:
+        # The 25,390-piece Ubuntu bitmap saved by the #469 spike: its byte
+        # length matches the header, and every set bit names a real piece.
+        capture = json.loads((Path(__file__).parents[2] / "fixtures" / "torrent" / "rqbit_haves.json").read_text())
+        raw = bytes.fromhex(capture["bytes_hex"])
+
+        assert len(raw) == (capture["x_bitfield_len"] + 7) // 8
+        done = completed_since(bytes(len(raw)), raw)
+        assert len(done) == 1666
+        assert done == sorted(done)
+        assert all(0 <= index < capture["x_bitfield_len"] for index in done)
+        # Byte 40 of the capture is 0b11111100: MSB-first reads pieces
+        # 320-325 done and 326-327 missing; LSB-first would say the opposite.
+        assert 320 in done and 325 in done
+        assert 326 not in done and 327 not in done
