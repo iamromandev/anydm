@@ -1,3 +1,5 @@
+from .audit import Speed as Speed
+from .audit import Traffic as Traffic
 from .catalog import Provider as Provider
 from .catalog import Source as Source
 from .config import Preference as Preference

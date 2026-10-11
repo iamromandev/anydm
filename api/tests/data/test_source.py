@@ -1,4 +1,4 @@
-"""The Source table: a URL used one way, and how it is read: DIRECT, CONTENT, or TORRENT."""
+"""The Source table: a URL used one way, and how it is read: DIRECT, SITE, or TORRENT."""
 
 from src.data.db.model.catalog.source import Source
 from src.data.type import SourceKind
@@ -45,7 +45,7 @@ def test_source_db_fields_cover_the_schema() -> None:
 
 
 def test_source_kind_is_the_three_ways() -> None:
-    assert (SourceKind.DIRECT, SourceKind.CONTENT, SourceKind.TORRENT) == ("direct", "content", "torrent")
+    assert (SourceKind.DIRECT, SourceKind.SITE, SourceKind.TORRENT) == ("direct", "site", "torrent")
 
 
 def test_source_schema_is_catalog() -> None:

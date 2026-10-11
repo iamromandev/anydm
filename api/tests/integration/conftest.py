@@ -16,7 +16,7 @@ from src.service.category.seed import seed_missing_categories
 from tortoise import Tortoise
 
 _TABLES = (
-    "config.preference, iam.user, play.playback_position, "
+    "audit.traffic, audit.speed, config.preference, iam.user, play.playback_position, "
     "transfer.segment, transfer.attempt, transfer.mirror, transfer.file, transfer.media, transfer.download, "
     "transfer.category, torrent.torrent, catalog.source, catalog.provider, shared.url, shared.tag"
 )

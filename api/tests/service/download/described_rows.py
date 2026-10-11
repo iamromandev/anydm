@@ -30,7 +30,7 @@ def a_torrent(info_hash: str, name: str = "T") -> SimpleNamespace:
 def a_site_row(url: str, *, provider: str, title: str, kind: Any, preset: Any, **fields: Any) -> SimpleNamespace:
     """A site download or collection container as a read would load it."""
     return SimpleNamespace(
-        mirrors=[a_mirror(url, SourceKind.CONTENT, provider)],
+        mirrors=[a_mirror(url, SourceKind.SITE, provider)],
         media=SimpleNamespace(
             title=title, kind=kind, preset=preset, video_format=None, audio_format=None, playlist_index=None
         ),

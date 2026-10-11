@@ -105,7 +105,7 @@ class FakeCollectionRepo:
     def known(self, collection_id: uuid.UUID) -> uuid.UUID:
         self.rows[collection_id] = SimpleNamespace(
             id=collection_id,
-            mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.CONTENT, "Youtube")],
+            mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.SITE, "Youtube")],
             media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
             created_at=None,
         )

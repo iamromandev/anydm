@@ -30,7 +30,7 @@ async def loaded(row: Download) -> Download:
 
 @pytest.mark.asyncio
 async def test_a_site_download_is_its_media_and_its_page(sqlite: None) -> None:
-    row = await a_download("Youtube", "https://youtu.be/dQw4w9WgXcQ", SourceKind.CONTENT)
+    row = await a_download("Youtube", "https://youtu.be/dQw4w9WgXcQ", SourceKind.SITE)
     await Media.create(download=row, title="Never", kind=MediaKind.VIDEO, preset=Preset.P1080)
 
     described = describe(await loaded(row))
@@ -45,7 +45,7 @@ async def test_a_site_download_is_its_media_and_its_page(sqlite: None) -> None:
 @pytest.mark.asyncio
 async def test_a_playlist_is_named_by_its_listing_id(sqlite: None) -> None:
     # Stored under the site's name; its address is the tab extractor's.
-    row = await a_download("Youtube", "https://www.youtube.com/playlist?list=PL123", SourceKind.CONTENT)
+    row = await a_download("Youtube", "https://www.youtube.com/playlist?list=PL123", SourceKind.SITE)
     await Media.create(download=row, title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST)
 
     assert describe(await loaded(row)).ref == "PL123"

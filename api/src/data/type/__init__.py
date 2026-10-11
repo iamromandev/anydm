@@ -1,3 +1,4 @@
+from .audit import StatGroup as StatGroup
 from .catalog import ProviderStatus as ProviderStatus
 from .catalog import SourceKind as SourceKind
 from .config import PreferenceKey as PreferenceKey

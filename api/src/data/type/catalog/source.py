@@ -10,8 +10,8 @@ from tortoise.fields.base import StrEnum
 
 
 class SourceKind(StrEnum):
-    """One way a Source uses its URL: the file itself, the page around it, or a torrent."""
+    """One way a Source uses its URL: the file itself, the page of a site around it, or a torrent."""
 
     DIRECT = "direct"
-    CONTENT = "content"
+    SITE = "site"
     TORRENT = "torrent"

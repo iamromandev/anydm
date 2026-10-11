@@ -164,7 +164,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
     ) -> Download:
         async with in_transaction() as conn:
             source = await source_row(
-                await provider_row(provider, conn), await url_row(url, conn), SourceKind.CONTENT, conn
+                await provider_row(provider, conn), await url_row(url, conn), SourceKind.SITE, conn
             )
             row = await self._added(source, download, conn)
             await Media.create(using_db=conn, download=row, **media)

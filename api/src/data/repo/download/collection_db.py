@@ -53,7 +53,7 @@ class CollectionDatabaseRepo(CollectionRepo):
     ) -> Download:
         async with in_transaction() as conn:
             owner = await provider_row(provider, conn)
-            source = await source_row(owner, await url_row(url, conn), SourceKind.CONTENT, conn)
+            source = await source_row(owner, await url_row(url, conn), SourceKind.SITE, conn)
             row = await Download.create(using_db=conn, **collection)
             await Mirror.create(using_db=conn, download=row, source=source)
             await Media.create(using_db=conn, download=row, **media)
@@ -78,7 +78,7 @@ class CollectionDatabaseRepo(CollectionRepo):
         urls = await url_rows((entry.url for entry in entries), conn)
         hashes = [address_hash(entry.url) for entry in entries]
         sources = await source_rows(
-            provider, list({urls[h].id: urls[h] for h in hashes}.values()), SourceKind.CONTENT, conn
+            provider, list({urls[h].id: urls[h] for h in hashes}.values()), SourceKind.SITE, conn
         )
         downloads = [Download(**entry.download, parent_id=collection_id) for entry in entries]
         await Download.bulk_create(downloads, batch_size=500, using_db=conn)
