@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +23,17 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import DownloadRepo, FileRepo
+from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
 from src.data.type import DownloadStatus
+from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
-from src.lib.torrent.mapping import status_for
+from src.lib.torrent.mapping import bitmap_from, completed_since, status_for
+from src.lib.torrent.metadata import piece_specs
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.download.folders import inside
 from src.service.download.live import Live, LiveStats
-from src.service.download.views import DownloadViews, progress_frame
+from src.service.download.views import DownloadViews, pieces_frame, progress_frame
 
 
 class TorrentMonitor:
@@ -37,6 +41,7 @@ class TorrentMonitor:
         self,
         repo: DownloadRepo,
         file_repo: FileRepo,
+        piece_repo: PieceRepo,
         client: TorrentClient,
         hub: EventHub,
         live: LiveStats,
@@ -46,9 +51,11 @@ class TorrentMonitor:
         enabled: bool,
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._repo = repo
         self._file_repo = file_repo
+        self._piece_repo = piece_repo
         self._client = client
         self._hub = hub
         self._live = live
@@ -63,6 +70,17 @@ class TorrentMonitor:
         self._reconciled = False
         self._download_limit = download_limit_bps
         self._upload_limit = upload_limit_bps
+        #: The last bitmap per download, and what its frame was built from.
+        #: Seeded from the piece table on first sight — which is also how a
+        #: restart recovers the map — never guessed.
+        self._bitmaps: dict[Any, bytes] = {}
+        self._counts: dict[Any, int] = {}
+        self._sizes: dict[Any, int] = {}
+        #: When each torrent's last ``pieces`` frame went out, for the
+        #: one-per-second throttle. A torrent finishing a burst of pieces must
+        #: not emit a frame per tick.
+        self._pieces_sent_at: dict[Any, float] = {}
+        self._clock = clock or time.monotonic
         #: rqbit keeps its limits in memory, so a restart forgets them. Cleared
         #: whenever the engine stops answering, which is how a restart looks
         #: from here, so the next tick that reaches it pushes them again.
@@ -132,6 +150,7 @@ class TorrentMonitor:
             sample = by_hash.get(_hash(row))
             if sample is not None:
                 await self._apply(row, sample)
+                await self._sync_pieces(row)
 
     async def _push_limits(self) -> None:
         """Send the caps even when both are unlimited, to clear a stale one.
@@ -225,6 +244,78 @@ class TorrentMonitor:
                 total_bytes=sample.total_bytes or None,
                 live=live,
                 files=list(enumerate(sample.file_progress)),
+            ),
+        )
+
+    async def _sync_pieces(self, row: Any) -> None:
+        """Mirror the engine's have bitmap onto the piece rows, and announce it.
+
+        Only newly set pieces are written, as one batched update; a tick with
+        no changes writes nothing at all. A torrent the engine will not report
+        on — paused — keeps its stored map exactly as it is.
+        """
+        info_hash = _hash(row)
+        if not info_hash:
+            return
+        try:
+            bitmap, count = await self._client.haves(info_hash)
+        except Error as error:
+            logger.debug("{}|no piece bitmap for {}: {}", self._tag, info_hash, error.message)
+            return
+
+        known = self._bitmaps.get(row.id)
+        if known is None or self._counts.get(row.id) != count or len(known) != len(bitmap):
+            known = await self._seed(row, count, bitmap)
+        new = completed_since(known, bitmap)
+        if not new:
+            return
+        await self._piece_repo.complete(row.id, new)
+        current = bytes(bitmap)
+        self._bitmaps[row.id] = current
+        self._announce_pieces(row, current)
+
+    async def _seed(self, row: Any, count: int, bitmap: bytes) -> bytes:
+        """The last known bitmap from the piece table, backfilling rows a restart predates.
+
+        The backfill runs only when the bitmap already has pieces: a torrent
+        with nothing on disk yet either has rows from ``enqueue`` or will get
+        them the moment its first piece lands, and there is nothing to record
+        before then.
+        """
+        rows = await self._piece_repo.list_for(row.id)
+        if not rows and any(bitmap):
+            rows = await self._backfill(row)
+        size = rows[0].size if rows else 0
+        previous = bitmap_from([piece.index for piece in rows if piece.status == PieceStatus.COMPLETED], count)
+        self._bitmaps[row.id] = previous
+        self._counts[row.id] = count
+        self._sizes[row.id] = size
+        return previous
+
+    async def _backfill(self, row: Any) -> list[Any]:
+        """Piece rows for a torrent added before they existed, read once from the engine's metadata."""
+        try:
+            blob = await self._client.fetch_metadata(_hash(row))
+            await self._piece_repo.replace(row.id, [(spec.index, spec.size, spec.hash) for spec in piece_specs(blob)])
+        except Error as error:
+            logger.warning("{}|could not backfill pieces for {}: {}", self._tag, _hash(row), error.message)
+            return []
+        logger.info("{}|backfilled piece rows for {}", self._tag, _hash(row))
+        return await self._piece_repo.list_for(row.id)
+
+    def _announce_pieces(self, row: Any, bitmap: bytes) -> None:
+        """One ``pieces`` frame per torrent per second, at most."""
+        moment = self._clock()
+        if moment - self._pieces_sent_at.get(row.id, float("-inf")) < 1.0:
+            return
+        self._pieces_sent_at[row.id] = moment
+        self._hub.publish(
+            "pieces",
+            pieces_frame(
+                row.id,
+                piece_size=self._sizes.get(row.id, 0),
+                count=self._counts.get(row.id, 0),
+                bitmap=bitmap,
             ),
         )
 

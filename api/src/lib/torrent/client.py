@@ -126,6 +126,27 @@ class RqbitClient:
             rows.append(progress_from_stats(str(entry.get("info_hash") or ""), stats))
         return rows
 
+    async def haves(self, info_hash: str) -> tuple[bytes, int]:
+        """The bitmap of have pieces, and how many pieces it is over.
+
+        The binary form is a separate content type from rqbit's default: asked
+        for any other way, ``/haves`` answers with an SVG rather than bytes.
+        The piece count rides in a header, because the bitmap's own length is
+        padded out to a whole final byte.
+        """
+        response = await self._raw(
+            "GET",
+            f"/torrents/{info_hash}/haves",
+            headers={"Accept": "application/octet-stream"},
+        )
+        length = int(response.headers.get("x-bitfield-len") or 0)
+        return response.content, length
+
+    async def fetch_metadata(self, info_hash: str) -> bytes:
+        """The torrent file the engine holds for this hash, as it was added."""
+        response = await self._raw("GET", f"/torrents/{info_hash}/metadata")
+        return response.content
+
     async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None:
         """Replace both session-wide caps; ``0`` lifts one.
 
@@ -188,6 +209,28 @@ class RqbitClient:
         except httpx.HTTPError as exc:
             raise torrent_error.engine_unavailable(str(exc)) from exc
         return self._decoded(response)
+
+    async def _raw(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """A response that is not JSON, translated the same way.
+
+        Bitfields and torrent bytes must not be fed through ``_decoded``; a
+        number in the response would be read as a status there.
+        """
+        try:
+            response = await self._http.request(method, f"{self._base}{path}", headers=headers)
+        except httpx.HTTPError as exc:
+            raise torrent_error.engine_unavailable(str(exc)) from exc
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise torrent_error.torrent_not_found(path.strip("/").split("/")[-1])
+        if response.status_code >= httpx.codes.BAD_REQUEST:
+            raise torrent_error.engine_rejected(_message_of(response))
+        return response
 
     def _decoded(self, response: httpx.Response) -> dict[str, Any]:
         if response.status_code == httpx.codes.NOT_FOUND:

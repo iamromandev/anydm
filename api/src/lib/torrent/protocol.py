@@ -85,6 +85,18 @@ class TorrentClient(Protocol):
         """One sample per torrent the engine holds."""
         ...
 
+    async def haves(self, info_hash: str) -> tuple[bytes, int]:
+        """The have bitmap and the piece count it is over.
+
+        The bitmap is one bit per piece, ``Msb0`` order, one eighth of a byte
+        per piece rounded up. 412 for a torrent that is not live.
+        """
+        ...
+
+    async def fetch_metadata(self, info_hash: str) -> bytes:
+        """The ``.torrent`` for a torrent the engine holds, byte for byte."""
+        ...
+
     async def set_rate_limits(self, *, download_bps: int, upload_bps: int) -> None:
         """Cap the engine's total throughput. ``0`` means unlimited."""
         ...

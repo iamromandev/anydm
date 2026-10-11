@@ -8,6 +8,7 @@ broke every task's validation.
 
 from __future__ import annotations
 
+import base64
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
@@ -166,6 +167,23 @@ def progress_frame(
     if files is not None:
         frame["files"] = [{"index": index, "downloaded_bytes": done} for index, done in files]
     return frame
+
+
+def pieces_frame(download_id: uuid.UUID, *, piece_size: int, count: int, bitmap: bytes) -> dict[str, Any]:
+    """The piece map as one snapshot, shared by the route and the monitor's throttled frame.
+
+    A snapshot rather than a delta: a slow browser drops old frames, and a
+    delta it missed would leave its map wrong with no way to recover.
+    """
+    return {
+        "id": str(download_id),
+        "piece_size": piece_size,
+        "count": count,
+        "done": base64.b64encode(bitmap).decode(),
+        # rqbit's bitmap is binary — have or not — so no per-piece partial
+        # state exists to report; reserved for the engine exposing it.
+        "downloading": [],
+    }
 
 
 class DownloadViews:

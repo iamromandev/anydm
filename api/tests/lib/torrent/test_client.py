@@ -8,6 +8,7 @@ from src.lib.torrent.client import RqbitClient
 from src.lib.torrent.source import TorrentSource
 
 MAGNET = "magnet:?xt=urn:btih:abc"
+HASH = "abc123"
 MIB = 1024 * 1024
 
 DETAILS: dict[str, Any] = {
@@ -256,3 +257,47 @@ async def test_zero_is_sent_as_null_because_rqbit_refuses_zero() -> None:
     await _client(handler).set_rate_limits(download_bps=0, upload_bps=0)
 
     assert httpx.Response(200, content=seen["body"]).json() == {"download_bps": None, "upload_bps": None}
+
+
+class TestHaves:
+    """The piece bitmap, in the two shapes rqbit can answer with."""
+
+    @pytest.mark.asyncio
+    async def test_the_bitfield_is_asked_for_as_bytes(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            # Without an explicit binary Accept, rqbit answers with an SVG.
+            seen["accept"] = request.headers.get("accept")
+            return httpx.Response(200, content=b"\xa1", headers={"x-bitfield-len": "25390"})
+
+        bitmap, count = await _client(handler).haves(HASH)
+
+        assert seen["path"] == f"/torrents/{HASH}/haves"
+        assert seen["accept"] == "application/octet-stream"
+        assert bitmap == b"\xa1"
+        assert count == 25390
+
+    @pytest.mark.asyncio
+    async def test_a_paused_torrent_raises_naming_the_state(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(412, json={"human_readable": "torrent is not live", "status": 412})
+
+        with pytest.raises(Error, match="torrent is not live"):
+            await _client(handler).haves(HASH)
+
+
+class TestFetchMetadata:
+    @pytest.mark.asyncio
+    async def test_the_original_torrent_bytes_come_back(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            return httpx.Response(200, content=b"d4:infod...e")
+
+        blob = await _client(handler).fetch_metadata(HASH)
+
+        assert seen["path"] == f"/torrents/{HASH}/metadata"
+        assert blob == b"d4:infod...e"

@@ -22,13 +22,16 @@ from src.core.error import Error
 from src.core.type import Code, ErrorType
 from src.data.repo.category import CategoryRepo
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import DownloadRepo, FileRepo
-from src.data.schema.torrent import FileSchema, TorrentResolveResponse
+from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
+from src.data.schema.torrent import FileSchema, PiecesMapSchema, TorrentResolveResponse
 from src.data.schema.transfer import DownloadSchema
 from src.data.type import DownloadStatus
+from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import torrent_folder
+from src.lib.torrent.mapping import bitmap_from
+from src.lib.torrent.metadata import piece_specs
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
 from src.service.category.pick import pick_category
@@ -36,7 +39,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
-from src.service.download.views import DownloadViews
+from src.service.download.views import DownloadViews, pieces_frame
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
 
 
@@ -45,6 +48,7 @@ class TorrentService(BaseService):
         self,
         repo: DownloadRepo,
         file_repo: FileRepo,
+        piece_repo: PieceRepo,
         client: TorrentClient,
         hub: EventHub,
         views: DownloadViews,
@@ -57,6 +61,7 @@ class TorrentService(BaseService):
         super().__init__()
         self._repo = repo
         self._file_repo = file_repo
+        self._piece_repo = piece_repo
         self._client = client
         self._hub = hub
         self._views = views
@@ -149,7 +154,35 @@ class TorrentService(BaseService):
             download={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": relative},
             files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
+        # The piece map starts here, not on the monitor's first tick: a pasted
+        # .torrent already carries its metadata, and for a magnet the engine
+        # holds it by now — ``add`` waits for it. A restart therefore finds
+        # rows to load rather than an empty table.
+        blob = source.blob if source.blob is not None else await self._client.fetch_metadata(details.info_hash)
+        await self._piece_repo.replace(
+            download.id, [(spec.index, spec.size, spec.hash) for spec in piece_specs(blob)]
+        )
         return await self._published(download)
+
+    async def pieces_map(self, download_id: uuid.UUID) -> PiecesMapSchema:
+        """The piece map, compact: one base64 bitmap, not one object per piece.
+
+        Built from the stored rows, so a paused torrent still has its map —
+        the engine only answers for torrents it is running.
+        """
+        download = await self._require(download_id)
+        rows = await self._piece_repo.list_for(download.id)
+        frame = pieces_frame(
+            download.id,
+            piece_size=rows[0].size if rows else 0,
+            count=len(rows),
+            bitmap=bitmap_from(
+                [row.index for row in rows if row.status == PieceStatus.COMPLETED], len(rows)
+            ),
+        )
+        return PiecesMapSchema(
+            piece_size=frame["piece_size"], count=frame["count"], done=frame["done"], downloading=[]
+        )
 
     def _validated_selection(self, details: TorrentDetails, files: Sequence[int]) -> set[int]:
         """The chosen indexes, or every index when nothing was chosen."""

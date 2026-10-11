@@ -204,3 +204,40 @@ def memory_views(
         live=live or LiveStats(),
         max_attempts=3,
     )
+
+
+def piece_row(index: int = 0, size: int = 512, **overrides: Any) -> SimpleNamespace:
+    from src.data.type.torrent.piece import PieceStatus
+
+    fields: dict[str, Any] = dict(
+        index=index,
+        size=size,
+        hash="ab" * 20,
+        status=PieceStatus.PENDING,
+        downloaded_bytes=0,
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+class MemoryPieces:
+    def __init__(self) -> None:
+        self.by_download: dict[uuid.UUID, list[SimpleNamespace]] = {}
+        self.replaced: list[uuid.UUID] = []
+        self.completed: list[tuple[uuid.UUID, list[int]]] = []
+
+    async def replace(self, download_id: uuid.UUID, pieces: Sequence[tuple[int, int, str]]) -> None:
+        self.replaced.append(download_id)
+        self.by_download[download_id] = [piece_row(index, size, hash=digest) for index, size, digest in pieces]
+
+    async def list_for(self, download_id: uuid.UUID) -> list[SimpleNamespace]:
+        return sorted(self.by_download.get(download_id, []), key=lambda p: p.index)
+
+    async def complete(self, download_id: uuid.UUID, indexes: Sequence[int]) -> None:
+        from src.data.type.torrent.piece import PieceStatus
+
+        self.completed.append((download_id, list(indexes)))
+        for p in self.by_download.get(download_id, []):
+            if p.index in set(indexes):
+                p.status = PieceStatus.COMPLETED
+                p.downloaded_bytes = p.size

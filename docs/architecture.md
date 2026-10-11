@@ -123,6 +123,16 @@ restart forgets them. The monitor pushes them on the first tick that reaches
 the engine, and pushes them again whenever the engine has stopped answering
 since, because from the API an unreachable engine is how a restart looks.
 
+The monitor also keeps each torrent's piece map. One `torrent.Piece` row per
+piece is written when the torrent is added — from the pasted `.torrent`, or
+from the engine's metadata for a magnet — and each tick diffs rqbit's have
+bitmap against the last one held in memory, writing only newly completed
+pieces as one batched update (a tick with no changes writes nothing). The
+memory seeds from the table on first sight, so a restart recovers the map; a
+paused torrent keeps its stored one, since rqbit answers the bitmap for it but
+not per-peer stats. A change publishes one `pieces` frame per torrent per
+second, the same compact shape `GET /download/{download_id}/pieces` serves.
+
 Startup also requeues orphans: with one process, every row left `downloading`
 at boot belongs to a process that is gone, so it goes back in the queue and
 resumes from its `.part` file.
@@ -246,7 +256,7 @@ There is one `EventHub` for the whole process. Both SSE endpoints subscribe to
 it and filter:
 
 - `GET /download/events` sends a full task snapshot and one `disk` frame on
-  connect, then `task` and `progress` frames as they happen, and `disk` from
+  connect, then `task`, `progress` and `pieces` frames as they happen, and `disk` from
   the disk monitor. The status bar's free-space stat reads those.
 - `GET /stream/events` carries `stream_status` frames, including the swarm
   numbers for a torrent-backed session.

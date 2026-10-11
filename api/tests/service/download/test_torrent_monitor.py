@@ -4,12 +4,13 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.data.type import DownloadStatus, Platform
+from src.data.type.torrent.piece import PieceStatus
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.protocol import TorrentProgress
 from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_monitor import TorrentMonitor
 
-from tests.service.download.memory import MemoryFiles, RecordingHub, download_row, memory_views
+from tests.service.download.memory import MemoryFiles, MemoryPieces, RecordingHub, download_row, memory_views
 
 HASH = "abc"
 
@@ -60,12 +61,25 @@ class FakeRepo:
 
 
 class FakeClient:
-    def __init__(self, samples: list[TorrentProgress] | None = None, *, fail: Error | None = None) -> None:
+    def __init__(
+        self,
+        samples: list[TorrentProgress] | None = None,
+        *,
+        fail: Error | None = None,
+        haves: dict[str, tuple[bytes, int]] | None = None,
+        haves_fail: Error | None = None,
+        metadata: bytes | None = None,
+    ) -> None:
         self.samples = samples or []
         self.fail = fail
+        self.haves_map = haves or {}
+        self.haves_fail = haves_fail
+        self.metadata_bytes = metadata
         self.added: list[dict[str, Any]] = []
         self.limits: list[tuple[int, int]] = []
         self.limits_fail: Error | None = None
+        self.haves_seen: list[str] = []
+        self.metadata_seen: list[str] = []
 
     async def ping(self) -> bool:
         return self.fail is None
@@ -74,6 +88,17 @@ class FakeClient:
         if self.fail:
             raise self.fail
         return list(self.samples)
+
+    async def haves(self, info_hash: str) -> tuple[bytes, int]:
+        self.haves_seen.append(info_hash)
+        if self.haves_fail:
+            raise self.haves_fail
+        return self.haves_map.get(info_hash, (b"", 0))
+
+    async def fetch_metadata(self, info_hash: str) -> bytes:
+        self.metadata_seen.append(info_hash)
+        assert self.metadata_bytes is not None
+        return self.metadata_bytes
 
     async def add(self, source: Any, *, only_files: Any, output_folder: str) -> Any:
         self.added.append({"only_files": list(only_files), "output_folder": output_folder})
@@ -90,17 +115,20 @@ def _monitor(
     client: FakeClient,
     *,
     files: MemoryFiles | None = None,
+    pieces: MemoryPieces | None = None,
     hub: RecordingHub | None = None,
     live: LiveStats | None = None,
     root: Path = Path("/workdir/download"),
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
+    clock: Any = None,
 ) -> TorrentMonitor:
     files = files or MemoryFiles()
     live = live or LiveStats()
     return TorrentMonitor(
         repo=FakeRepo(rows),  # ty: ignore[invalid-argument-type]
         file_repo=files,  # ty: ignore[invalid-argument-type]
+        piece_repo=pieces or MemoryPieces(),  # ty: ignore[invalid-argument-type]
         client=client,  # ty: ignore[invalid-argument-type]
         hub=hub or RecordingHub(),  # ty: ignore[invalid-argument-type]
         live=live,
@@ -110,6 +138,7 @@ def _monitor(
         enabled=True,
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
+        clock=clock,
     )
 
 
@@ -293,3 +322,152 @@ async def test_a_refused_limit_does_not_stop_the_mirroring() -> None:
     await _monitor([row], client, download_limit_bps=1024).tick()
 
     assert row.downloaded_size == 500
+
+
+def _bitmap(*done: int, count: int = 8) -> tuple[bytes, int]:
+    from src.lib.torrent.mapping import bitmap_from
+
+    return bitmap_from(list(done), count), count
+
+
+def _seeded(pieces: MemoryPieces, row: Any, *done: int, count: int = 8) -> None:
+    """Piece rows as ``enqueue`` would have written them, some already done."""
+    from tests.service.download.memory import piece_row
+
+    pieces.by_download[row.id] = [
+        piece_row(index, 100, status=PieceStatus.COMPLETED if index in done else PieceStatus.PENDING)
+        for index in range(count)
+    ]
+
+
+class TestPieceSync:
+    @pytest.mark.asyncio
+    async def test_a_tick_writes_only_newly_completed_pieces_in_one_batched_write(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row, 0, 1)
+        client = FakeClient([_sample()], haves={HASH: _bitmap(0, 1, 2, 5)})
+
+        await _monitor([row], client, pieces=pieces).tick()
+
+        assert pieces.completed == [(row.id, [2, 5])]
+        assert [p.index for p in pieces.by_download[row.id] if p.status == PieceStatus.PENDING] == [3, 4, 6, 7]
+
+    @pytest.mark.asyncio
+    async def test_a_tick_with_no_changes_writes_nothing_and_sends_no_frame(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row, 0, 3)
+        hub = RecordingHub()
+        client = FakeClient([_sample()], haves={HASH: _bitmap(0, 3)})
+
+        await _monitor([row], client, pieces=pieces, hub=hub).tick()
+
+        assert pieces.completed == []
+        assert hub.named("pieces") == []
+
+    @pytest.mark.asyncio
+    async def test_first_sight_seeds_from_the_table_so_only_the_delta_is_written(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row, 0)
+        client = FakeClient([_sample()], haves={HASH: _bitmap(0, 2)})
+
+        await _monitor([row], client, pieces=pieces).tick()
+
+        assert pieces.completed == [(row.id, [2])]
+
+    @pytest.mark.asyncio
+    async def test_a_new_monitor_after_a_restart_writes_only_the_delta(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row)
+        haves = {HASH: _bitmap(0, 1)}
+
+        await _monitor([row], FakeClient([_sample()], haves=haves), pieces=pieces).tick()
+        await _monitor([row], FakeClient([_sample()], haves={HASH: _bitmap(0, 1, 4)}), pieces=pieces).tick()
+
+        assert pieces.completed == [(row.id, [0, 1]), (row.id, [4])]
+
+    @pytest.mark.asyncio
+    async def test_a_paused_torrent_keeps_its_stored_map(self) -> None:
+        row = _row(status=DownloadStatus.PAUSED)
+        pieces = MemoryPieces()
+        _seeded(pieces, row, 0)
+        hub = RecordingHub()
+        client = FakeClient(
+            [_sample(state="paused")],
+            haves_fail=torrent_error.engine_rejected("torrent is not live"),
+        )
+
+        await _monitor([row], client, pieces=pieces, hub=hub).tick()
+
+        assert row.status == DownloadStatus.PAUSED
+        assert pieces.completed == []
+        assert hub.named("pieces") == []
+        assert client.haves_seen == [HASH]
+
+    @pytest.mark.asyncio
+    async def test_a_change_publishes_one_snapshot_frame_per_second(self) -> None:
+        import base64
+
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row)
+        hub = RecordingHub()
+        now = [1000.0]
+        client = FakeClient([_sample()], haves={HASH: _bitmap(0)})
+        monitor = _monitor(
+            [row],
+            client,
+            pieces=pieces,
+            hub=hub,
+            clock=lambda: now[0],
+        )
+
+        await monitor.tick()
+        client.haves_map = {HASH: _bitmap(0, 1)}
+        await monitor.tick()
+        now[0] += 1.0
+        client.haves_map = {HASH: _bitmap(0, 1, 2)}
+        await monitor.tick()
+
+        (first, second) = hub.named("pieces")
+        assert first == {
+            "id": str(row.id),
+            "piece_size": 100,
+            "count": 8,
+            "done": base64.b64encode(_bitmap(0)[0]).decode(),
+            "downloading": [],
+        }
+        assert second["done"] == base64.b64encode(_bitmap(0, 1, 2)[0]).decode()
+
+    @pytest.mark.asyncio
+    async def test_a_6000_piece_first_sight_is_a_single_write(self) -> None:
+        row = _row()
+        pieces = MemoryPieces()
+        _seeded(pieces, row, count=6000)
+        client = FakeClient([_sample()], haves={HASH: _bitmap(*range(6000), count=6000)})
+
+        await _monitor([row], client, pieces=pieces).tick()
+
+        assert len(pieces.completed) == 1
+        assert len(pieces.completed[0][1]) == 6000
+
+    @pytest.mark.asyncio
+    async def test_rows_a_restart_predates_are_backfilled_from_the_engine(self) -> None:
+        from tests.service.download.test_torrent_service import _torrent_bytes
+
+        row = _row()
+        pieces = MemoryPieces()
+        client = FakeClient(
+            [_sample()],
+            haves={HASH: _bitmap(0)},
+            metadata=_torrent_bytes(piece_length=100, total=250),
+        )
+
+        await _monitor([row], client, pieces=pieces).tick()
+
+        assert client.metadata_seen == [HASH]
+        assert [(p.index, p.size) for p in pieces.by_download[row.id]] == [(0, 100), (1, 100), (2, 50)]
+        assert pieces.completed == [(row.id, [0])]
