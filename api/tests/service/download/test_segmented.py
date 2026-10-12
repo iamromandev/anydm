@@ -95,7 +95,7 @@ async def test_on_probe_learns_the_size_before_anything_is_written(tmp_path: Pat
     seen: list[tuple[int, int]] = []
     probed: list[int | None] = []
 
-    async def refuse(total: int | None, content_type: str | None) -> None:
+    async def refuse(total: int | None) -> None:
         probed.append(total)
         raise Error.conflict(message="no room")
 

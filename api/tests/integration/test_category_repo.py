@@ -147,14 +147,3 @@ async def test_the_seeded_rules_are_stored_and_a_category_keeps_the_rules_it_is_
     assert cleared is not None and cleared.mime_prefixes == ()
     assert await repo.get(made.id) == cleared
 
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("db")
-async def test_a_download_is_not_automatic_until_told_so() -> None:
-    from tests.integration.rows import a_download
-
-    plain = await a_download("https://example.com/a.bin")
-    auto = await a_download("https://example.com/b.bin", category_auto=True)
-
-    assert (await Download.get(id=plain.id)).category_auto is False
-    assert (await Download.get(id=auto.id)).category_auto is True

@@ -148,7 +148,7 @@ class DownloadService(BaseService):
         # minimum alone, and the worker checks again once the probe knows.
         self._require_space(plan.expected_bytes)
         planned = plan_fields(info, plan, preset=preset, title=info.title, number="")
-        category, auto = await pick_or_match(
+        category = await pick_or_match(
             self._categories, category_id, filename=planned.filename, audio_only=preset == Preset.MP3
         )
         download = await self._repo.create_site(
@@ -156,12 +156,7 @@ class DownloadService(BaseService):
             # link and a playlist's entry for the same video are then one address.
             url=page,
             provider=info.extractor,
-            download={
-                "status": DownloadStatus.PENDING,
-                "total_size": planned.total_bytes,
-                "category_id": category.id,
-                "category_auto": auto,
-            },
+            download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes, "category_id": category.id},
             media={
                 "title": planned.title,
                 "kind": planned.media_kind,
@@ -190,11 +185,9 @@ class DownloadService(BaseService):
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
-        category, auto = await pick_or_match(self._categories, category_id, filename=name)
+        category = await pick_or_match(self._categories, category_id, filename=name)
         download = await self._repo.create_direct(
-            url=url,
-            download={"status": DownloadStatus.PENDING, "category_id": category.id, "category_auto": auto},
-            filename=name,
+            url=url, download={"status": DownloadStatus.PENDING, "category_id": category.id}, filename=name
         )
         self._control.wake()
         return await self._published(download)

@@ -19,25 +19,14 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.core.type import Code, ErrorType
-from src.data.repo.category import CategoryRepo
 from src.data.repo.download.described import describe
 from src.data.repo.download.interface import AttemptRepo, CollectionRepo, DownloadRepo, FileRepo, Opened, SegmentRepo
-from src.data.type import (
-    ACTIVE_STATUSES,
-    DOWNLOADS_ID,
-    AttemptStatus,
-    DownloadStatus,
-    MediaKind,
-    MirrorStatus,
-    Platform,
-    SegmentPart,
-)
+from src.data.type import ACTIVE_STATUSES, AttemptStatus, DownloadStatus, MediaKind, MirrorStatus, Platform, SegmentPart
 from src.lib.event import EventHub
 from src.lib.site import error as site_error
 from src.lib.site.client import Resolved, SiteClient
 from src.lib.site.entry_plan import is_unplanned, leading_number, plan_fields, plan_for
 from src.lib.site.subtitles import fetch_subtitle
-from src.service.category.match import match_category
 from src.service.download import retry as retry_policy
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -94,10 +83,8 @@ class DownloadWorker:
         disk: DiskGuard | None = None,
         fragments: FragmentDownloader | None = None,
         subtitle_fetcher: SubtitleFetcher = fetch_subtitle,
-        categories: CategoryRepo | None = None,
     ) -> None:
         self._name = name
-        self._categories = categories
         self._repo = repo
         self._segment_repo = segment_repo
         self._attempts = attempts
@@ -394,14 +381,13 @@ class DownloadWorker:
 
         already = await self._segment_repo.progress(download_id, part)
 
-        async def on_probe(total: int | None, content_type: str | None = None) -> None:
+        async def on_probe(total: int | None) -> None:
             # The first moment a direct download's size is known. Counting what
             # the segment watermarks say is already on disk; an unsegmented
             # resume has none, so it is checked as if starting over, which errs
             # toward refusing.
             if self._disk is not None and total:
                 self._disk.require(max(0, total - already))
-            await self._file_by_type(download, content_type)
 
         await self._engine.fetch(
             UrlSource(provider),
@@ -472,26 +458,6 @@ class DownloadWorker:
                 segments=sample.segments or None,
             ),
         )
-
-    async def _file_by_type(self, download: Any, content_type: str | None) -> None:
-        """File a direct download by the Content-Type its server sent, when its address said nothing (#174).
-
-        Only one nobody chose a category for, and that its filename left in
-        Downloads. The files move to the category's folder when it completes,
-        which reads the category again, so nothing is on disk to move yet.
-        """
-        if self._categories is None or not content_type:
-            return
-        if not getattr(download, "category_auto", False) or download.category_id != DOWNLOADS_ID:
-            return
-        if describe(download).platform != Platform.DIRECT:
-            return
-        match = match_category(await self._categories.list_all(), None, content_type)
-        if match is None:
-            return
-        await self._repo.set_category(download.id, match.id, None)
-        download.category_id = match.id
-        logger.info("{}|filed {} under {} by its Content-Type {}", self._name, download.id, match.name, content_type)
 
     async def _save_subtitles(self, download: Any, url: str, destination: Path) -> None:
         """A site video's subtitles beside it (#102). Never fails the download: it's already done."""

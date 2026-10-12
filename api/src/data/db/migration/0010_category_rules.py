@@ -43,11 +43,6 @@ class Migration(migrations.Migration):
             name='mime_prefixes',
             field=fields.JSONField(default=list, description='Content-Type prefixes that do the same (``video/``); an extension is tried first.', db_default=[], encoder=JSON_DUMPS, decoder=loads),
         ),
-        ops.AddField(
-            model_name='Download',
-            name='category_auto',
-            field=fields.BooleanField(default=False, description='True when nobody chose the category, so it came from the file type and may still be refined (#174).', db_default=False),
-        ),
         ops.AlterField(
             model_name='Source',
             name='kind',

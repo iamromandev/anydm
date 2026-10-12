@@ -29,17 +29,17 @@ async def pick_or_match(
     *,
     filename: str | None = None,
     audio_only: bool = False,
-) -> tuple[CategoryRow, bool]:
-    """The category an add lands in, and whether it was worked out rather than chosen.
+) -> CategoryRow:
+    """The category an add lands in.
 
     A choice always wins. Without one, an audio-only download goes to Music and
     anything else to the category its filename says; nothing that matches stays in Downloads.
     """
     if category_id is not None or repo is None:
-        return await pick_category(repo, category_id), category_id is None
+        return await pick_category(repo, category_id)
     rows = await repo.list_all()
     if audio_only:
         music = next((row for row in rows if row.slug == MUSIC_SLUG), None)
         if music is not None:
-            return music, True
-    return match_category(rows, filename) or await pick_category(repo, None), True
+            return music
+    return match_category(rows, filename) or await pick_category(repo, None)

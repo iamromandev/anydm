@@ -1261,29 +1261,26 @@ async def test_a_direct_link_with_no_category_is_filed_by_its_extension() -> Non
 
     await h.service.enqueue_url("https://files.test/ubuntu-24.04.iso")
 
-    download = h.repo.created[-1]["download"]
-    assert (download["category_id"], download["category_auto"]) == (categories.named("software").id, True)
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("software").id
 
 
 @pytest.mark.asyncio
-async def test_a_direct_link_with_an_unknown_extension_stays_in_downloads_and_awaits_its_content_type() -> None:
+async def test_a_direct_link_with_an_unknown_extension_stays_in_downloads() -> None:
     h = _service(categories=FakeCategoryRepo())
 
     await h.service.enqueue_url("https://files.test/get?id=7")
 
-    download = h.repo.created[-1]["download"]
-    assert (download["category_id"], download["category_auto"]) == (DOWNLOADS_ID, True)
+    assert h.repo.created[-1]["download"]["category_id"] == DOWNLOADS_ID
 
 
 @pytest.mark.asyncio
-async def test_a_chosen_category_wins_over_the_extension_and_is_not_automatic() -> None:
+async def test_a_chosen_category_wins_over_the_extension() -> None:
     categories = FakeCategoryRepo()
     h = _service(categories=categories)
 
     await h.service.enqueue_url("https://files.test/ubuntu.iso", category_id=categories.named("games").id)
 
-    download = h.repo.created[-1]["download"]
-    assert (download["category_id"], download["category_auto"]) == (categories.named("games").id, False)
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("games").id
 
 
 @pytest.mark.asyncio
@@ -1293,8 +1290,7 @@ async def test_an_mp3_preset_goes_to_music() -> None:
 
     await h.service.enqueue_media(YOUTUBE, Preset.MP3)
 
-    download = h.repo.created[-1]["download"]
-    assert (download["category_id"], download["category_auto"]) == (categories.named("music").id, True)
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("music").id
 
 
 @pytest.mark.asyncio

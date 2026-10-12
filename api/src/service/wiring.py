@@ -314,7 +314,6 @@ def build_worker_pool() -> WorkerPool:
             live=get_live_stats(),
             views=get_download_views(),
             totals=get_collection_totals(),
-            categories=CategoryDatabaseRepo(),
         )
         for index in range(settings.download_workers)
     ]
