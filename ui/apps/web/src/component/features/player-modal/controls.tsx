@@ -1,4 +1,4 @@
-import { $, component$, useOnWindow, useSignal } from "@qwik.dev/core";
+import { useEffect, useRef, useState } from "react";
 import {
     LuCaptions,
     LuCheck,
@@ -90,603 +90,577 @@ const PLAYBACK_RATES = [
     2,
 ];
 
-const MenuOption = component$<{
+function MenuOption({
+    checked,
+    label,
+    disabled,
+    onPick,
+}: {
     checked: boolean;
     label: string;
     disabled?: boolean;
-    onPick$: () => void;
-}>(({ checked, label, disabled, onPick$ }) => (
-    <button
-        type="button"
-        role="menuitemradio"
-        aria-checked={checked}
-        class="player-controls-menu-option"
-        disabled={disabled}
-        onClick$={onPick$}
-    >
-        <LuCheck
-            class="player-controls-menu-tick"
-            width="16"
-            height="16"
-            aria-hidden="true"
-        />
-        <span class="player-controls-menu-label">{label}</span>
-    </button>
-));
+    onPick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={checked}
+            className="player-controls-menu-option"
+            disabled={disabled}
+            onClick={onPick}
+        >
+            <LuCheck
+                className="player-controls-menu-tick"
+                width="16"
+                height="16"
+                aria-hidden="true"
+            />
+            <span className="player-controls-menu-label">{label}</span>
+        </button>
+    );
+}
 
-export const PlayerControls = component$<PlayerControlsProps>(
-    ({
-        paused,
-        currentTime,
-        duration,
-        volume,
-        muted,
-        playbackRate,
-        fullscreen,
-        segments,
-        onTogglePlay,
-        onSeek,
-        onSkip,
-        skipSeconds,
-        onVolumeChange,
-        onToggleMute,
-        onPlaybackRateChange,
-        onToggleFullscreen,
-        files,
-        currentFileIndex,
-        onPickFile,
-        onPreviousFile,
-        onNextFile,
-        hasPreviousFile,
-        hasNextFile,
-        showSteps,
-        audioTracks,
-        audioTrack,
-        audioPending,
-        onPickAudio,
-        subtitleTracks,
-        subtitleTrack,
-        onPickSubtitle,
-        quality,
-        qualityPending,
-        onPickQuality,
-    }) => {
-        const trackRef = useSignal<HTMLDivElement>();
-        const isDragging = useSignal(false);
-        const hoverRatio = useSignal<number | null>(null);
-        // The settings menu: closed, or open on its list of rows ("main") or
-        // on one row's options.
-        const menuOpen = useSignal(false);
-        const menuPage = useSignal<SettingsPage | "main">("main");
-        // The track captions came back to last time they were switched off.
-        const lastSubtitle = useSignal<number | null>(null);
+export function PlayerControls({
+    paused,
+    currentTime,
+    duration,
+    volume,
+    muted,
+    playbackRate,
+    fullscreen,
+    segments,
+    onTogglePlay,
+    onSeek,
+    onSkip,
+    skipSeconds,
+    onVolumeChange,
+    onToggleMute,
+    onPlaybackRateChange,
+    onToggleFullscreen,
+    files,
+    currentFileIndex,
+    onPickFile,
+    onPreviousFile,
+    onNextFile,
+    hasPreviousFile,
+    hasNextFile,
+    showSteps,
+    audioTracks,
+    audioTrack,
+    audioPending,
+    onPickAudio,
+    subtitleTracks,
+    subtitleTrack,
+    onPickSubtitle,
+    quality,
+    qualityPending,
+    onPickQuality,
+}: PlayerControlsProps) {
+    const trackRef = useRef<HTMLDivElement>(null);
+    // Read only by the window listeners and the track's own handlers, so a
+    // ref: nothing is drawn differently while dragging.
+    const isDragging = useRef(false);
+    const [
+        hoverRatio,
+        setHoverRatio,
+    ] = useState<number | null>(null);
+    // The settings menu: closed, or open on its list of rows ("main") or
+    // on one row's options.
+    const [
+        menuOpen,
+        setMenuOpen,
+    ] = useState(false);
+    const [
+        menuPage,
+        setMenuPage,
+    ] = useState<SettingsPage | "main">("main");
+    // The track captions came back to last time they were switched off.
+    const [
+        lastSubtitle,
+        setLastSubtitle,
+    ] = useState<number | null>(null);
 
-        // Drag can carry the pointer off the track element itself, so these
-        // listen on the window rather than the track — a native <input
-        // type=range> gets this for free, but the three-segment fill this
-        // scrubber renders needs a plain div instead.
-        useOnWindow(
-            "pointermove",
-            $((event: Event) => {
-                if (!isDragging.value) {
-                    return;
-                }
-                const rect = trackRef.value?.getBoundingClientRect();
-                if (!rect) {
-                    return;
-                }
-                const ratio = seekRatioFromPointerX({
-                    clientX: (event as PointerEvent).clientX,
-                    rectLeft: rect.left,
-                    rectWidth: rect.width,
-                });
-                onSeek(ratio * duration);
-            }),
-        );
+    // The window listeners below are set up once; they read the seek
+    // target and length as they are when the pointer moves.
+    const latest = useRef({ onSeek, duration });
+    latest.current = { onSeek, duration };
 
+    // Drag can carry the pointer off the track element itself, so these
+    // listen on the window rather than the track — a native <input
+    // type=range> gets this for free, but the three-segment fill this
+    // scrubber renders needs a plain div instead.
+    useEffect(() => {
+        const onMove = (event: PointerEvent) => {
+            if (!isDragging.current) return;
+            const rect = trackRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const ratio = seekRatioFromPointerX({
+                clientX: event.clientX,
+                rectLeft: rect.left,
+                rectWidth: rect.width,
+            });
+            latest.current.onSeek(ratio * latest.current.duration);
+        };
         // A press anywhere but the menu and its gear dismisses the menu.
-        useOnWindow(
-            "pointerdown",
-            $((event: Event) => {
-                const target = event.target as Element | null;
-                if (
-                    !target?.closest?.(".player-controls-menu, [aria-haspopup]")
-                ) {
-                    menuOpen.value = false;
-                }
-            }),
-        );
+        const onDown = (event: PointerEvent) => {
+            const target = event.target as Element | null;
+            if (!target?.closest?.(".player-controls-menu, [aria-haspopup]")) {
+                setMenuOpen(false);
+            }
+        };
+        const onUp = () => {
+            isDragging.current = false;
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerdown", onDown);
+        window.addEventListener("pointerup", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerdown", onDown);
+            window.removeEventListener("pointerup", onUp);
+        };
+    }, []);
 
-        useOnWindow(
-            "pointerup",
-            $(() => {
-                isDragging.value = false;
-            }),
-        );
-
-        return (
-            <div class="player-controls">
+    return (
+        <div className="player-controls">
+            <div
+                ref={trackRef}
+                className="player-controls-track"
+                onPointerDown={(event) => {
+                    isDragging.current = true;
+                    const rect = trackRef.current?.getBoundingClientRect();
+                    if (!rect) {
+                        return;
+                    }
+                    const ratio = seekRatioFromPointerX({
+                        clientX: event.clientX,
+                        rectLeft: rect.left,
+                        rectWidth: rect.width,
+                    });
+                    onSeek(ratio * duration);
+                }}
+                onPointerMove={(event) => {
+                    const rect = (
+                        event.currentTarget as HTMLDivElement
+                    ).getBoundingClientRect();
+                    setHoverRatio(
+                        seekRatioFromPointerX({
+                            clientX: event.clientX,
+                            rectLeft: rect.left,
+                            rectWidth: rect.width,
+                        }),
+                    );
+                }}
+                onPointerLeave={() => {
+                    setHoverRatio(null);
+                }}
+            >
                 <div
-                    ref={trackRef}
-                    class="player-controls-track"
-                    onPointerDown$={(event: PointerEvent) => {
-                        isDragging.value = true;
-                        const rect = trackRef.value?.getBoundingClientRect();
-                        if (!rect) {
-                            return;
-                        }
-                        const ratio = seekRatioFromPointerX({
-                            clientX: event.clientX,
-                            rectLeft: rect.left,
-                            rectWidth: rect.width,
-                        });
-                        onSeek(ratio * duration);
+                    className="player-controls-fill player-controls-fill--swarm"
+                    style={{ width: `${segments.swarmPercent}%` }}
+                />
+                <div
+                    className="player-controls-fill player-controls-fill--buffered"
+                    style={{ width: `${segments.bufferedPercent}%` }}
+                />
+                <div
+                    className="player-controls-fill player-controls-fill--played"
+                    style={{ width: `${segments.playedPercent}%` }}
+                />
+                <div
+                    className="player-controls-thumb"
+                    style={{ left: `${segments.playedPercent}%` }}
+                />
+                {hoverRatio !== null && (
+                    <div
+                        className="player-controls-tooltip"
+                        style={{ left: `${hoverRatio * 100}%` }}
+                    >
+                        {formatClockTime(hoverRatio * duration)}
+                    </div>
+                )}
+            </div>
+
+            <div className="player-controls-row">
+                {showSteps && (
+                    <button
+                        type="button"
+                        className="player-controls-button"
+                        onClick={onPreviousFile}
+                        disabled={!hasPreviousFile}
+                        aria-label="Previous file"
+                    >
+                        <LuSkipBack width="18" height="18" aria-hidden="true" />
+                    </button>
+                )}
+
+                {onSkip && duration > 0 && (
+                    <button
+                        type="button"
+                        className="player-controls-button"
+                        onClick={() => onSkip(-1)}
+                        aria-label={`Back ${skipSeconds ?? 10} seconds`}
+                    >
+                        <LuRewind width="18" height="18" aria-hidden="true" />
+                    </button>
+                )}
+
+                <button
+                    type="button"
+                    className="player-controls-button"
+                    onClick={onTogglePlay}
+                    aria-label={paused ? "Play" : "Pause"}
+                >
+                    {paused ? (
+                        <LuPlay width="18" height="18" aria-hidden="true" />
+                    ) : (
+                        <LuPause width="18" height="18" aria-hidden="true" />
+                    )}
+                </button>
+
+                {onSkip && duration > 0 && (
+                    <button
+                        type="button"
+                        className="player-controls-button"
+                        onClick={() => onSkip(1)}
+                        aria-label={`Forward ${skipSeconds ?? 10} seconds`}
+                    >
+                        <LuFastForward
+                            width="18"
+                            height="18"
+                            aria-hidden="true"
+                        />
+                    </button>
+                )}
+
+                {showSteps && (
+                    <button
+                        type="button"
+                        className="player-controls-button"
+                        onClick={onNextFile}
+                        disabled={!hasNextFile}
+                        aria-label="Next file"
+                    >
+                        <LuSkipForward
+                            width="18"
+                            height="18"
+                            aria-hidden="true"
+                        />
+                    </button>
+                )}
+
+                <button
+                    type="button"
+                    className="player-controls-button"
+                    onClick={onToggleMute}
+                    aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+                >
+                    {muted || volume === 0 ? (
+                        <LuVolumeX width="18" height="18" aria-hidden="true" />
+                    ) : (
+                        <LuVolume2 width="18" height="18" aria-hidden="true" />
+                    )}
+                </button>
+
+                <input
+                    type="range"
+                    className="player-controls-volume"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={(e) => {
+                        onVolumeChange(
+                            Number((e.target as HTMLInputElement).value),
+                        );
                     }}
-                    onPointerMove$={(event: PointerEvent) => {
-                        const rect = (
-                            event.currentTarget as HTMLDivElement
-                        ).getBoundingClientRect();
-                        hoverRatio.value = seekRatioFromPointerX({
-                            clientX: event.clientX,
-                            rectLeft: rect.left,
-                            rectWidth: rect.width,
-                        });
-                    }}
-                    onPointerLeave$={() => {
-                        hoverRatio.value = null;
+                    aria-label="Volume"
+                />
+
+                <span className="player-controls-time">
+                    {formatClockTime(currentTime)} / {formatClockTime(duration)}
+                </span>
+
+                <span className="player-controls-spacer" />
+
+                {subtitleTracks && subtitleTracks.length > 0 && (
+                    <button
+                        type="button"
+                        className="player-controls-button"
+                        aria-pressed={(subtitleTrack ?? null) !== null}
+                        aria-label="Subtitles"
+                        onClick={() => {
+                            if (subtitleTrack != null) {
+                                setLastSubtitle(subtitleTrack);
+                                onPickSubtitle?.(null);
+                                return;
+                            }
+                            const next = subtitleToToggleOn(
+                                subtitleTracks,
+                                lastSubtitle,
+                                null,
+                            );
+                            if (next !== null) onPickSubtitle?.(next);
+                        }}
+                    >
+                        <LuCaptions width="18" height="18" aria-hidden="true" />
+                    </button>
+                )}
+
+                <button
+                    type="button"
+                    className="player-controls-button"
+                    aria-label="Settings"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    onClick={() => {
+                        setMenuPage("main");
+                        setMenuOpen(!menuOpen);
                     }}
                 >
-                    <div
-                        class="player-controls-fill player-controls-fill--swarm"
-                        style={{ width: `${segments.swarmPercent}%` }}
-                    />
-                    <div
-                        class="player-controls-fill player-controls-fill--buffered"
-                        style={{ width: `${segments.bufferedPercent}%` }}
-                    />
-                    <div
-                        class="player-controls-fill player-controls-fill--played"
-                        style={{ width: `${segments.playedPercent}%` }}
-                    />
-                    <div
-                        class="player-controls-thumb"
-                        style={{ left: `${segments.playedPercent}%` }}
-                    />
-                    {hoverRatio.value !== null && (
-                        <div
-                            class="player-controls-tooltip"
-                            style={{ left: `${hoverRatio.value * 100}%` }}
-                        >
-                            {formatClockTime(hoverRatio.value * duration)}
-                        </div>
+                    <LuSettings width="18" height="18" aria-hidden="true" />
+                </button>
+
+                <button
+                    type="button"
+                    className="player-controls-button"
+                    onClick={onToggleFullscreen}
+                    aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+                >
+                    {fullscreen ? (
+                        <LuMinimize width="18" height="18" aria-hidden="true" />
+                    ) : (
+                        <LuMaximize width="18" height="18" aria-hidden="true" />
                     )}
-                </div>
-
-                <div class="player-controls-row">
-                    {showSteps && (
-                        <button
-                            type="button"
-                            class="player-controls-button"
-                            onClick$={onPreviousFile}
-                            disabled={!hasPreviousFile}
-                            aria-label="Previous file"
-                        >
-                            <LuSkipBack
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
-                    {onSkip && duration > 0 && (
-                        <button
-                            type="button"
-                            class="player-controls-button"
-                            onClick$={() => onSkip(-1)}
-                            aria-label={`Back ${skipSeconds ?? 10} seconds`}
-                        >
-                            <LuRewind
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
-                    <button
-                        type="button"
-                        class="player-controls-button"
-                        onClick$={onTogglePlay}
-                        aria-label={paused ? "Play" : "Pause"}
-                    >
-                        {paused ? (
-                            <LuPlay width="18" height="18" aria-hidden="true" />
-                        ) : (
-                            <LuPause
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        )}
-                    </button>
-
-                    {onSkip && duration > 0 && (
-                        <button
-                            type="button"
-                            class="player-controls-button"
-                            onClick$={() => onSkip(1)}
-                            aria-label={`Forward ${skipSeconds ?? 10} seconds`}
-                        >
-                            <LuFastForward
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
-                    {showSteps && (
-                        <button
-                            type="button"
-                            class="player-controls-button"
-                            onClick$={onNextFile}
-                            disabled={!hasNextFile}
-                            aria-label="Next file"
-                        >
-                            <LuSkipForward
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
-                    <button
-                        type="button"
-                        class="player-controls-button"
-                        onClick$={onToggleMute}
-                        aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
-                    >
-                        {muted || volume === 0 ? (
-                            <LuVolumeX
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        ) : (
-                            <LuVolume2
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        )}
-                    </button>
-
-                    <input
-                        type="range"
-                        class="player-controls-volume"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={volume}
-                        onInput$={(e: Event) => {
-                            onVolumeChange(
-                                Number((e.target as HTMLInputElement).value),
-                            );
-                        }}
-                        aria-label="Volume"
-                    />
-
-                    <span class="player-controls-time">
-                        {formatClockTime(currentTime)} /{" "}
-                        {formatClockTime(duration)}
-                    </span>
-
-                    <span class="player-controls-spacer" />
-
-                    {subtitleTracks && subtitleTracks.length > 0 && (
-                        <button
-                            type="button"
-                            class="player-controls-button"
-                            aria-pressed={(subtitleTrack ?? null) !== null}
-                            aria-label="Subtitles"
-                            onClick$={() => {
-                                if (subtitleTrack != null) {
-                                    lastSubtitle.value = subtitleTrack;
-                                    onPickSubtitle?.(null);
-                                    return;
-                                }
-                                const next = subtitleToToggleOn(
-                                    subtitleTracks,
-                                    lastSubtitle.value,
-                                    null,
-                                );
-                                if (next !== null) onPickSubtitle?.(next);
-                            }}
-                        >
-                            <LuCaptions
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        </button>
-                    )}
-
-                    <button
-                        type="button"
-                        class="player-controls-button"
-                        aria-label="Settings"
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen.value}
-                        onClick$={() => {
-                            menuPage.value = "main";
-                            menuOpen.value = !menuOpen.value;
-                        }}
-                    >
-                        <LuSettings width="18" height="18" aria-hidden="true" />
-                    </button>
-
-                    <button
-                        type="button"
-                        class="player-controls-button"
-                        onClick$={onToggleFullscreen}
-                        aria-label={
-                            fullscreen ? "Exit fullscreen" : "Fullscreen"
+                </button>
+            </div>
+            {menuOpen && (
+                <div
+                    className="player-controls-menu"
+                    role="menu"
+                    aria-label="Settings"
+                    onKeyDown={(e) => {
+                        // Keys typed in the menu are the menu's: they
+                        // must not reach the player's own shortcuts.
+                        e.stopPropagation();
+                        if (e.key !== "Escape") return;
+                        if (menuPage === "main") {
+                            setMenuOpen(false);
+                        } else {
+                            setMenuPage("main");
                         }
-                    >
-                        {fullscreen ? (
-                            <LuMinimize
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        ) : (
-                            <LuMaximize
-                                width="18"
-                                height="18"
-                                aria-hidden="true"
-                            />
-                        )}
-                    </button>
-                </div>
-                {menuOpen.value && (
-                    <div
-                        class="player-controls-menu"
-                        role="menu"
-                        aria-label="Settings"
-                        stoppropagation:keydown
-                        onKeyDown$={(e: KeyboardEvent) => {
-                            if (e.key !== "Escape") return;
-                            if (menuPage.value === "main") {
-                                menuOpen.value = false;
-                            } else {
-                                menuPage.value = "main";
-                            }
-                        }}
-                    >
-                        {menuPage.value === "main" ? (
-                            availablePages({
-                                files: files?.length ?? 0,
-                                audio: audioTracks?.length ?? 0,
-                                subtitles: subtitleTracks?.length ?? 0,
-                                quality: quality?.heights.length ?? 0,
-                            }).map((page) => (
+                    }}
+                >
+                    {menuPage === "main" ? (
+                        availablePages({
+                            files: files?.length ?? 0,
+                            audio: audioTracks?.length ?? 0,
+                            subtitles: subtitleTracks?.length ?? 0,
+                            quality: quality?.heights.length ?? 0,
+                        }).map((page) => (
+                            <button
+                                key={page}
+                                type="button"
+                                role="menuitem"
+                                className="player-controls-menu-row"
+                                onClick={() => {
+                                    setMenuPage(page);
+                                }}
+                            >
+                                <span className="player-controls-menu-label">
+                                    {SETTINGS_PAGE_TITLES[page]}
+                                </span>
+                                <span className="player-controls-menu-value">
+                                    {page === "speed" &&
+                                        formatRate(playbackRate)}
+                                    {page === "quality" &&
+                                        quality &&
+                                        (quality.chosen === null
+                                            ? defaultQualityLabel(quality)
+                                            : `${quality.chosen}p`)}
+                                    {page === "audio" &&
+                                        audioTracks &&
+                                        audioTracks
+                                            .filter(
+                                                (t) => t.index === audioTrack,
+                                            )
+                                            .map((t) =>
+                                                audioTrackLabel(t, audioTracks),
+                                            )
+                                            .join("")}
+                                    {page === "subtitles" &&
+                                        subtitleTracks &&
+                                        (subtitleTrack === null
+                                            ? "Off"
+                                            : subtitleTracks
+                                                  .filter(
+                                                      (t) =>
+                                                          t.index ===
+                                                          subtitleTrack,
+                                                  )
+                                                  .map((t) =>
+                                                      subtitleTrackLabel(
+                                                          t,
+                                                          subtitleTracks,
+                                                      ),
+                                                  )
+                                                  .join(""))}
+                                    {page === "files" &&
+                                        files &&
+                                        files
+                                            .filter(
+                                                (f) =>
+                                                    f.index ===
+                                                    currentFileIndex,
+                                            )
+                                            .map((f) => f.path.split("/").pop())
+                                            .join("")}
+                                </span>
+                                <LuChevronRight
+                                    width="16"
+                                    height="16"
+                                    aria-hidden="true"
+                                />
+                            </button>
+                        ))
+                    ) : (
+                        <>
+                            <div className="player-controls-menu-head">
                                 <button
-                                    key={page}
                                     type="button"
-                                    role="menuitem"
-                                    class="player-controls-menu-row"
-                                    onClick$={() => {
-                                        menuPage.value = page;
+                                    className="player-controls-button"
+                                    aria-label="Back to settings"
+                                    onClick={() => {
+                                        setMenuPage("main");
                                     }}
                                 >
-                                    <span class="player-controls-menu-label">
-                                        {SETTINGS_PAGE_TITLES[page]}
-                                    </span>
-                                    <span class="player-controls-menu-value">
-                                        {page === "speed" &&
-                                            formatRate(playbackRate)}
-                                        {page === "quality" &&
-                                            quality &&
-                                            (quality.chosen === null
-                                                ? defaultQualityLabel(quality)
-                                                : `${quality.chosen}p`)}
-                                        {page === "audio" &&
-                                            audioTracks &&
-                                            audioTracks
-                                                .filter(
-                                                    (t) =>
-                                                        t.index === audioTrack,
-                                                )
-                                                .map((t) =>
-                                                    audioTrackLabel(
-                                                        t,
-                                                        audioTracks,
-                                                    ),
-                                                )
-                                                .join("")}
-                                        {page === "subtitles" &&
-                                            subtitleTracks &&
-                                            (subtitleTrack === null
-                                                ? "Off"
-                                                : subtitleTracks
-                                                      .filter(
-                                                          (t) =>
-                                                              t.index ===
-                                                              subtitleTrack,
-                                                      )
-                                                      .map((t) =>
-                                                          subtitleTrackLabel(
-                                                              t,
-                                                              subtitleTracks,
-                                                          ),
-                                                      )
-                                                      .join(""))}
-                                        {page === "files" &&
-                                            files &&
-                                            files
-                                                .filter(
-                                                    (f) =>
-                                                        f.index ===
-                                                        currentFileIndex,
-                                                )
-                                                .map((f) =>
-                                                    f.path.split("/").pop(),
-                                                )
-                                                .join("")}
-                                    </span>
-                                    <LuChevronRight
+                                    <LuChevronLeft
                                         width="16"
                                         height="16"
                                         aria-hidden="true"
                                     />
                                 </button>
-                            ))
-                        ) : (
-                            <>
-                                <div class="player-controls-menu-head">
-                                    <button
-                                        type="button"
-                                        class="player-controls-button"
-                                        aria-label="Back to settings"
-                                        onClick$={() => {
-                                            menuPage.value = "main";
-                                        }}
-                                    >
-                                        <LuChevronLeft
-                                            width="16"
-                                            height="16"
-                                            aria-hidden="true"
-                                        />
-                                    </button>
-                                    {SETTINGS_PAGE_TITLES[menuPage.value]}
-                                </div>
+                                {SETTINGS_PAGE_TITLES[menuPage]}
+                            </div>
 
-                                {menuPage.value === "speed" &&
-                                    PLAYBACK_RATES.map((rate) => (
+                            {menuPage === "speed" &&
+                                PLAYBACK_RATES.map((rate) => (
+                                    <MenuOption
+                                        key={rate}
+                                        checked={rate === playbackRate}
+                                        label={formatRate(rate)}
+                                        onPick={() => {
+                                            onPlaybackRateChange(rate);
+                                            setMenuPage("main");
+                                        }}
+                                    />
+                                ))}
+
+                            {menuPage === "quality" && quality && (
+                                <>
+                                    <MenuOption
+                                        checked={quality.chosen === null}
+                                        disabled={qualityPending}
+                                        label={defaultQualityLabel(quality)}
+                                        onPick={() => {
+                                            onPickQuality?.(null);
+                                            setMenuPage("main");
+                                        }}
+                                    />
+                                    {quality.heights.map((height) => (
                                         <MenuOption
-                                            key={rate}
-                                            checked={rate === playbackRate}
-                                            label={formatRate(rate)}
-                                            onPick$={() => {
-                                                onPlaybackRateChange(rate);
-                                                menuPage.value = "main";
+                                            key={height}
+                                            checked={height === quality.chosen}
+                                            disabled={qualityPending}
+                                            label={`${height}p`}
+                                            onPick={() => {
+                                                onPickQuality?.(height);
+                                                setMenuPage("main");
                                             }}
                                         />
                                     ))}
+                                    <p className="player-controls-menu-note">
+                                        {qualityPending
+                                            ? "Switching…"
+                                            : "Changing quality restarts the stream where you are."}
+                                    </p>
+                                </>
+                            )}
 
-                                {menuPage.value === "quality" && quality && (
-                                    <>
-                                        <MenuOption
-                                            checked={quality.chosen === null}
-                                            disabled={qualityPending}
-                                            label={defaultQualityLabel(quality)}
-                                            onPick$={() => {
-                                                onPickQuality?.(null);
-                                                menuPage.value = "main";
-                                            }}
-                                        />
-                                        {quality.heights.map((height) => (
-                                            <MenuOption
-                                                key={height}
-                                                checked={
-                                                    height === quality.chosen
-                                                }
-                                                disabled={qualityPending}
-                                                label={`${height}p`}
-                                                onPick$={() => {
-                                                    onPickQuality?.(height);
-                                                    menuPage.value = "main";
-                                                }}
-                                            />
-                                        ))}
-                                        <p class="player-controls-menu-note">
-                                            {qualityPending
+                            {menuPage === "audio" &&
+                                audioTracks?.map((track) => (
+                                    <MenuOption
+                                        key={track.index}
+                                        checked={track.index === audioTrack}
+                                        disabled={audioPending}
+                                        label={
+                                            audioPending &&
+                                            track.index === audioTrack
                                                 ? "Switching…"
-                                                : "Changing quality restarts the stream where you are."}
-                                        </p>
-                                    </>
-                                )}
+                                                : audioTrackLabel(
+                                                      track,
+                                                      audioTracks,
+                                                  )
+                                        }
+                                        onPick={() => {
+                                            onPickAudio?.(track.index);
+                                            setMenuPage("main");
+                                        }}
+                                    />
+                                ))}
 
-                                {menuPage.value === "audio" &&
-                                    audioTracks?.map((track) => (
+                            {menuPage === "subtitles" && subtitleTracks && (
+                                <>
+                                    <MenuOption
+                                        checked={subtitleTrack === null}
+                                        label="Off"
+                                        onPick={() => {
+                                            onPickSubtitle?.(null);
+                                            setMenuPage("main");
+                                        }}
+                                    />
+                                    {subtitleTracks.map((track) => (
                                         <MenuOption
                                             key={track.index}
-                                            checked={track.index === audioTrack}
-                                            disabled={audioPending}
-                                            label={
-                                                audioPending &&
-                                                track.index === audioTrack
-                                                    ? "Switching…"
-                                                    : audioTrackLabel(
-                                                          track,
-                                                          audioTracks,
-                                                      )
-                                            }
-                                            onPick$={() => {
-                                                onPickAudio?.(track.index);
-                                                menuPage.value = "main";
-                                            }}
-                                        />
-                                    ))}
-
-                                {menuPage.value === "subtitles" &&
-                                    subtitleTracks && (
-                                        <>
-                                            <MenuOption
-                                                checked={subtitleTrack === null}
-                                                label="Off"
-                                                onPick$={() => {
-                                                    onPickSubtitle?.(null);
-                                                    menuPage.value = "main";
-                                                }}
-                                            />
-                                            {subtitleTracks.map((track) => (
-                                                <MenuOption
-                                                    key={track.index}
-                                                    checked={
-                                                        track.index ===
-                                                        subtitleTrack
-                                                    }
-                                                    disabled={!track.text}
-                                                    label={subtitleTrackLabel(
-                                                        track,
-                                                        subtitleTracks,
-                                                    )}
-                                                    onPick$={() => {
-                                                        onPickSubtitle?.(
-                                                            track.index,
-                                                        );
-                                                        menuPage.value = "main";
-                                                    }}
-                                                />
-                                            ))}
-                                        </>
-                                    )}
-
-                                {menuPage.value === "files" &&
-                                    files?.map((file) => (
-                                        <MenuOption
-                                            key={file.index}
                                             checked={
-                                                file.index === currentFileIndex
+                                                track.index === subtitleTrack
                                             }
-                                            label={
-                                                file.path.split("/").pop() ??
-                                                file.path
-                                            }
-                                            onPick$={() => {
-                                                onPickFile?.(file.index);
-                                                menuOpen.value = false;
+                                            disabled={!track.text}
+                                            label={subtitleTrackLabel(
+                                                track,
+                                                subtitleTracks,
+                                            )}
+                                            onPick={() => {
+                                                onPickSubtitle?.(track.index);
+                                                setMenuPage("main");
                                             }}
                                         />
                                     ))}
-                            </>
-                        )}
-                    </div>
-                )}
-            </div>
-        );
-    },
-);
+                                </>
+                            )}
+
+                            {menuPage === "files" &&
+                                files?.map((file) => (
+                                    <MenuOption
+                                        key={file.index}
+                                        checked={
+                                            file.index === currentFileIndex
+                                        }
+                                        label={
+                                            file.path.split("/").pop() ??
+                                            file.path
+                                        }
+                                        onPick={() => {
+                                            onPickFile?.(file.index);
+                                            setMenuOpen(false);
+                                        }}
+                                    />
+                                ))}
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}

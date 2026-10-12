@@ -1,4 +1,3 @@
-import { component$ } from "@qwik.dev/core";
 import {
     LuAlertCircle,
     LuAlertTriangle,
@@ -26,26 +25,26 @@ const ICONS: Record<ToastTone, any> = {
  * same moment as its first message is announced unreliably, and this one exists
  * precisely to be heard.
  */
-export const Toaster = component$<ToasterProps>(({ toasts, onDismiss }) => {
+export function Toaster({ toasts, onDismiss }: ToasterProps) {
     return (
-        <div class="toaster" role="status" aria-live="polite">
+        <div className="toaster" role="status" aria-live="polite">
             {toasts.map((toast) => {
                 const Icon = ICONS[toast.tone];
                 return (
                     <div
                         key={toast.id}
-                        class={`toast toast--${toast.tone}`}
+                        className={`toast toast--${toast.tone}`}
                         data-testid="toast"
                     >
-                        <span class="toast-icon" aria-hidden="true">
+                        <span className="toast-icon" aria-hidden="true">
                             <Icon width="16" height="16" />
                         </span>
-                        <p class="toast-message">{toast.message}</p>
+                        <p className="toast-message">{toast.message}</p>
                         <button
                             type="button"
-                            class="toast-dismiss"
+                            className="toast-dismiss"
                             aria-label="Dismiss notification"
-                            onClick$={() => onDismiss(toast.id)}
+                            onClick={() => onDismiss(toast.id)}
                         >
                             <LuX width="14" height="14" aria-hidden="true" />
                         </button>
@@ -54,4 +53,4 @@ export const Toaster = component$<ToasterProps>(({ toasts, onDismiss }) => {
             })}
         </div>
     );
-});
+}

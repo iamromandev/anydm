@@ -1,4 +1,4 @@
-import { component$, useStore, useVisibleTask$ } from "@qwik.dev/core";
+import { useEffect, useRef, useState } from "react";
 import { diskTone, type Disk, type DiskTone } from "@/lib/api/disk";
 import { connectionLabel, type Connection } from "@/lib/connection";
 import { HISTORY_LIMIT, appendSample, emptyHistory } from "./history";
@@ -42,243 +42,247 @@ const SPARK_PAD = 3;
 /** How often a sparkline point is taken. */
 const SAMPLE_MS = 1000;
 
-export const StatusBar = component$<StatusBarProps>(
-    ({
-        downloadSpeed,
-        uploadSpeed,
-        totalDownloaded,
-        totalPeers,
-        connection,
-        disk,
-    }) => {
-        const history = useStore(emptyHistory());
-        const tone = disk ? diskTone(disk) : "ok";
+export function StatusBar({
+    downloadSpeed,
+    uploadSpeed,
+    totalDownloaded,
+    totalPeers,
+    connection,
+    disk,
+}: StatusBarProps) {
+    const [
+        history,
+        setHistory,
+    ] = useState(emptyHistory);
+    const tone = disk ? diskTone(disk) : "ok";
 
-        /**
-         * `document-ready` rather than the default: the footer is fixed to the
-         * bottom of every page, so gating it on an intersection buys nothing —
-         * and the observer does not fire for it at all, which is half of why
-         * these sparklines were empty.
-         *
-         * The timer is the other half. Sampling from tracked props ran this
-         * once and never again, leaving one point where a line needs two.
-         */
-        useVisibleTask$(
-            ({ cleanup }) => {
-                const sample = () => {
-                    const next = appendSample(
-                        history,
-                        downloadSpeed,
-                        uploadSpeed,
-                    );
-                    history.download = next.download;
-                    history.upload = next.upload;
-                    history.max = next.max;
+    // The timer reads the speeds as they are when it fires, not as they
+    // were when it was set: sampling from the props alone would take one
+    // point and never another, leaving one point where a line needs two.
+    const latest = useRef({ downloadSpeed, uploadSpeed });
+    latest.current = { downloadSpeed, uploadSpeed };
+
+    useEffect(() => {
+        const sample = () =>
+            setHistory((held) => {
+                const next = appendSample(
+                    held,
+                    latest.current.downloadSpeed,
+                    latest.current.uploadSpeed,
+                );
+                return {
+                    download: next.download,
+                    upload: next.upload,
+                    max: next.max,
                 };
+            });
 
-                sample();
-                const timer = setInterval(sample, SAMPLE_MS);
-                cleanup(() => clearInterval(timer));
-            },
-            { strategy: "document-ready" },
-        );
+        sample();
+        const timer = setInterval(sample, SAMPLE_MS);
+        return () => clearInterval(timer);
+    }, []);
 
-        const downActive = downloadSpeed > 0;
-        const upActive = uploadSpeed > 0;
+    const downActive = downloadSpeed > 0;
+    const upActive = uploadSpeed > 0;
 
-        return (
-            <footer
-                class={`speed-meter ${downActive || upActive ? "speed-meter--active" : ""}`}
-                role="status"
-                aria-live="polite"
-            >
-                <div class="speed-meter-gauges">
-                    <SpeedGauge
-                        label="Download"
-                        value={formatSpeed(downloadSpeed)}
-                        active={downActive}
-                        tone="down"
-                        history={history.download}
-                        max={history.max}
-                        icon={
-                            <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
-                            >
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="7 10 12 15 17 10" />
-                                <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
-                        }
-                    />
-                    <SpeedGauge
-                        label="Upload"
-                        value={formatSpeed(uploadSpeed)}
-                        active={upActive}
-                        tone="up"
-                        history={history.upload}
-                        max={history.max}
-                        icon={
-                            <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
-                            >
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="17 8 12 3 7 8" />
-                                <line x1="12" y1="3" x2="12" y2="15" />
-                            </svg>
-                        }
-                    />
-                </div>
-
-                <div class="speed-meter-divider" aria-hidden="true" />
-
-                <div class="speed-meter-stats">
-                    {disk && (
-                        <span
-                            class={`speed-meter-stat speed-meter-disk speed-meter-disk--${tone}`}
-                            aria-label={`Free disk space ${formatBytes(disk.freeBytes)}${DISK_TONE_LABEL[tone]}`}
-                            title={
-                                disk.minFreeBytes > 0
-                                    ? `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}. Downloads stop below ${formatBytes(disk.minFreeBytes)}.`
-                                    : `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}.`
-                            }
-                        >
-                            <svg
-                                width="12"
-                                height="12"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
-                            >
-                                <line x1="22" y1="12" x2="2" y2="12" />
-                                <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-                                <line x1="6" y1="16" x2="6.01" y2="16" />
-                                <line x1="10" y1="16" x2="10.01" y2="16" />
-                            </svg>
-                            <span class="speed-meter-stat-value">
-                                {formatBytes(disk.freeBytes)}
-                            </span>
-                            <span class="speed-meter-stat-label">Free</span>
-                        </span>
-                    )}
-                    <span
-                        class="speed-meter-stat speed-meter-stat--total"
-                        aria-label={`Downloaded total ${formatBytes(totalDownloaded)}`}
-                    >
+    return (
+        <footer
+            className={`speed-meter ${downActive || upActive ? "speed-meter--active" : ""}`}
+            role="status"
+            aria-live="polite"
+        >
+            <div className="speed-meter-gauges">
+                <SpeedGauge
+                    label="Download"
+                    value={formatSpeed(downloadSpeed)}
+                    active={downActive}
+                    tone="down"
+                    history={history.download}
+                    max={history.max}
+                    icon={
                         <svg
-                            width="12"
-                            height="12"
+                            width="14"
+                            height="14"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             aria-hidden="true"
                         >
-                            <ellipse cx="12" cy="5" rx="7" ry="3" />
-                            <path d="M5 5v8c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
-                            <path d="M5 13v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
-                        <span class="speed-meter-stat-value">
-                            {formatBytes(totalDownloaded)}
-                        </span>
-                        <span class="speed-meter-stat-label">Total</span>
-                    </span>
-                    <span
-                        class="speed-meter-stat"
-                        aria-label={`Connected peers ${totalPeers}`}
-                    >
+                    }
+                />
+                <SpeedGauge
+                    label="Upload"
+                    value={formatSpeed(uploadSpeed)}
+                    active={upActive}
+                    tone="up"
+                    history={history.upload}
+                    max={history.max}
+                    icon={
                         <svg
-                            width="12"
-                            height="12"
+                            width="14"
+                            height="14"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             aria-hidden="true"
                         >
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                            <circle cx="9" cy="7" r="4" />
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
                         </svg>
-                        <span class="speed-meter-stat-value">{totalPeers}</span>
-                        <span class="speed-meter-stat-label">Peers</span>
-                    </span>
-                    <span
-                        class={`speed-meter-link speed-meter-link--${connection}`}
-                        title={`Live updates: ${connectionLabel(connection)}`}
-                    >
-                        <span class="speed-meter-link-dot" aria-hidden="true" />
-                        <span class="speed-meter-stat-label">
-                            {connectionLabel(connection)}
-                        </span>
-                    </span>
-                </div>
-            </footer>
-        );
-    },
-);
-
-export const SpeedGauge = component$<SpeedGaugeProps>(
-    ({ label, value, active, tone, history, max, icon }) => {
-        const points = sparkPoints(history, max, SPARK_WIDTH, SPARK_HEIGHT);
-        const area = points
-            ? `${points} ${SPARK_WIDTH},${SPARK_HEIGHT} 0,${SPARK_HEIGHT}`
-            : "";
-
-        return (
-            <div
-                class={`speed-gauge speed-gauge--${tone} ${active ? "speed-gauge--active" : "speed-gauge--idle"}`}
-                aria-label={`${label} ${value}`}
-            >
-                <span class="speed-gauge-icon">{icon}</span>
-                <span class="speed-gauge-meta">
-                    <span class="speed-gauge-value">{value}</span>
-                    <span class="speed-gauge-label">{label}</span>
-                </span>
-                <svg
-                    class="speed-gauge-spark"
-                    viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
-                >
-                    {area && <polygon points={area} />}
-                    {points && (
-                        <polyline
-                            points={points}
-                            vector-effect="non-scaling-stroke"
-                            fill="none"
-                        />
-                    )}
-                </svg>
-                <span class="speed-gauge-dot" aria-hidden="true" />
+                    }
+                />
             </div>
-        );
-    },
-);
+
+            <div className="speed-meter-divider" aria-hidden="true" />
+
+            <div className="speed-meter-stats">
+                {disk && (
+                    <span
+                        className={`speed-meter-stat speed-meter-disk speed-meter-disk--${tone}`}
+                        aria-label={`Free disk space ${formatBytes(disk.freeBytes)}${DISK_TONE_LABEL[tone]}`}
+                        title={
+                            disk.minFreeBytes > 0
+                                ? `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}. Downloads stop below ${formatBytes(disk.minFreeBytes)}.`
+                                : `${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}.`
+                        }
+                    >
+                        <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
+                            <line x1="22" y1="12" x2="2" y2="12" />
+                            <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+                            <line x1="6" y1="16" x2="6.01" y2="16" />
+                            <line x1="10" y1="16" x2="10.01" y2="16" />
+                        </svg>
+                        <span className="speed-meter-stat-value">
+                            {formatBytes(disk.freeBytes)}
+                        </span>
+                        <span className="speed-meter-stat-label">Free</span>
+                    </span>
+                )}
+                <span
+                    className="speed-meter-stat speed-meter-stat--total"
+                    aria-label={`Downloaded total ${formatBytes(totalDownloaded)}`}
+                >
+                    <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                    >
+                        <ellipse cx="12" cy="5" rx="7" ry="3" />
+                        <path d="M5 5v8c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+                        <path d="M5 13v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+                    </svg>
+                    <span className="speed-meter-stat-value">
+                        {formatBytes(totalDownloaded)}
+                    </span>
+                    <span className="speed-meter-stat-label">Total</span>
+                </span>
+                <span
+                    className="speed-meter-stat"
+                    aria-label={`Connected peers ${totalPeers}`}
+                >
+                    <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <span className="speed-meter-stat-value">{totalPeers}</span>
+                    <span className="speed-meter-stat-label">Peers</span>
+                </span>
+                <span
+                    className={`speed-meter-link speed-meter-link--${connection}`}
+                    title={`Live updates: ${connectionLabel(connection)}`}
+                >
+                    <span className="speed-meter-link-dot" aria-hidden="true" />
+                    <span className="speed-meter-stat-label">
+                        {connectionLabel(connection)}
+                    </span>
+                </span>
+            </div>
+        </footer>
+    );
+}
+
+export function SpeedGauge({
+    label,
+    value,
+    active,
+    tone,
+    history,
+    max,
+    icon,
+}: SpeedGaugeProps) {
+    const points = sparkPoints(history, max, SPARK_WIDTH, SPARK_HEIGHT);
+    const area = points
+        ? `${points} ${SPARK_WIDTH},${SPARK_HEIGHT} 0,${SPARK_HEIGHT}`
+        : "";
+
+    return (
+        <div
+            className={`speed-gauge speed-gauge--${tone} ${active ? "speed-gauge--active" : "speed-gauge--idle"}`}
+            aria-label={`${label} ${value}`}
+        >
+            <span className="speed-gauge-icon">{icon}</span>
+            <span className="speed-gauge-meta">
+                <span className="speed-gauge-value">{value}</span>
+                <span className="speed-gauge-label">{label}</span>
+            </span>
+            <svg
+                className="speed-gauge-spark"
+                viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
+                preserveAspectRatio="none"
+                aria-hidden="true"
+            >
+                {area && <polygon points={area} />}
+                {points && (
+                    <polyline
+                        points={points}
+                        vectorEffect="non-scaling-stroke"
+                        fill="none"
+                    />
+                )}
+            </svg>
+            <span className="speed-gauge-dot" aria-hidden="true" />
+        </div>
+    );
+}
 
 function sparkPoints(
     data: number[],

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import { usePatch } from "@/hook/use-patch";
 import {
     addAnyway,
     canAddAnyway,
@@ -6,7 +8,6 @@ import {
     type Duplicate,
 } from "@/lib/api/duplicate";
 import { DuplicateNotice } from "@/component/features/duplicate-notice";
-import { component$, $, useStore, useVisibleTask$ } from "@qwik.dev/core";
 import {
     LuMagnet,
     LuX,
@@ -65,537 +66,582 @@ function formatBytes(bytes: number): string {
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-export const AddTorrentModal = component$<AddTorrentModalProps>(
-    ({
-        open,
-        initial,
-        onClose,
-        onResolve,
-        onPlay,
-        onAdd,
-        categories,
-        addCategory,
-        onAddCategoryChange,
-        onOpen,
-    }) => {
-        const store = useStore({
-            inputType: (initial?.type ?? "magnet") as "magnet" | "file" | "url",
-            inputValue: (initial?.value ?? "") as string,
-            autoResolved: false,
-            inputPreset: "best" as
-                "best" | "2160" | "1440" | "1080" | "720" | "480" | "mp3",
-            isAdding: false,
-            // Step two. `resolved` is null until the magnet has been inspected.
-            isResolving: false,
-            resolved: null as ResolvedTorrent | null,
-            selected: [] as number[],
-            resolveError: "" as string,
-            // A refused add that names a download the list already holds.
-            duplicate: null as Duplicate | null,
-            retry: null as AddInput | null,
-        });
+export function AddTorrentModal({
+    open,
+    initial,
+    onClose,
+    onResolve,
+    onPlay,
+    onAdd,
+    categories,
+    addCategory,
+    onAddCategoryChange,
+    onOpen,
+}: AddTorrentModalProps) {
+    const [
+        store,
+        patch,
+    ] = usePatch({
+        inputType: (initial?.type ?? "magnet") as "magnet" | "file" | "url",
+        inputValue: (initial?.value ?? "") as string,
+        inputPreset: "best" as
+            "best" | "2160" | "1440" | "1080" | "720" | "480" | "mp3",
+        isAdding: false,
+        // Step two. `resolved` is null until the magnet has been inspected.
+        isResolving: false,
+        resolved: null as ResolvedTorrent | null,
+        selected: [] as number[],
+        resolveError: "" as string,
+        // A refused add that names a download the list already holds.
+        duplicate: null as Duplicate | null,
+        retry: null as AddInput | null,
+    });
 
-        const handleResolve = $(async () => {
-            const value = store.inputValue.trim();
-            if (!value) return;
+    const handleResolve = async () => {
+        const value = store.inputValue.trim();
+        if (!value) return;
 
-            store.isResolving = true;
-            store.resolveError = "";
-            try {
-                const resolved = await onResolve(value);
-                store.resolved = resolved;
-                // Everything ticked. The picker is a way to remove files, not
-                // a puzzle to solve before downloading.
-                store.selected = resolved.files.map((file) => file.index);
-            } catch (err) {
-                store.resolveError =
+        patch({ isResolving: true });
+        patch({ resolveError: "" });
+        try {
+            const resolved = await onResolve(value);
+            patch({ resolved: resolved });
+            // Everything ticked. The picker is a way to remove files, not
+            // a puzzle to solve before downloading.
+            patch({ selected: resolved.files.map((file) => file.index) });
+        } catch (err) {
+            patch({
+                resolveError:
                     err instanceof Error
                         ? err.message
-                        : "Could not read that torrent";
-            } finally {
-                store.isResolving = false;
-            }
-        });
-
-        // A search result opens the dialog already filled in. The shell remounts
-        // it with a new key for each result, so this reads `initial` once, on
-        // mount; the guard stops a spurious re-run from resolving twice.
-        useVisibleTask$(
-            () => {
-                if (!open || !initial || store.autoResolved) return;
-                store.autoResolved = true;
-                void handleResolve();
-            },
-            { strategy: "document-ready" },
-        );
-
-        const toggleFile = $((index: number) => {
-            store.selected = store.selected.includes(index)
-                ? store.selected.filter((value) => value !== index)
-                : [
-                      ...store.selected,
-                      index,
-                  ];
-        });
-
-        const selectAll = $(() => {
-            store.selected = (store.resolved?.files ?? []).map(
-                (file) => file.index,
-            );
-        });
-
-        const selectNone = $(() => {
-            store.selected = [];
-        });
-
-        const resetTorrentStep = $(() => {
-            store.duplicate = null;
-            store.resolved = null;
-            store.selected = [];
-            store.resolveError = "";
-        });
-
-        /** Send an add; a refusal naming a download offers Open and Add anyway. */
-        const submit = $(async (input: AddInput) => {
-            // This modal collects input; the page owns the network call. It
-            // used to POST here *and* call onAdd, which POSTed again — every
-            // URL added created two tasks.
-            store.isAdding = true;
-            store.duplicate = null;
-            try {
-                await onAdd(input);
-                store.isAdding = false;
-                store.inputValue = "";
-                store.resolved = null;
-                store.selected = [];
-                store.resolveError = "";
-                onClose();
-            } catch (err) {
-                const held = duplicateOf(err);
-                if (held) {
-                    store.duplicate = held;
-                    store.retry = input;
-                } else {
-                    console.error(err);
-                }
-                store.isAdding = false;
-            }
-        });
-
-        const handleAdd = $(async () => {
-            const { inputType, inputValue, inputPreset, selected } = store;
-            if (!inputValue.trim()) {
-                return;
-            }
-
-            await submit({
-                // Its URL tab has no preview, so the page asks what the
-                // link is and routes it: a site page or a plain file.
-                type: inputType === "url" ? "link" : inputType,
-                value: inputValue,
-                preset: inputType !== "url" ? undefined : inputPreset,
-                files: inputType === "url" ? undefined : selected,
+                        : "Could not read that torrent",
             });
+        } finally {
+            patch({ isResolving: false });
+        }
+    };
+
+    // A search result opens the dialog already filled in. The shell remounts
+    // it with a new key for each result, so this reads `initial` once, on
+    // mount; the guard stops a spurious re-run from resolving twice.
+    const autoResolved = useRef(false);
+    useEffect(() => {
+        if (!open || !initial || autoResolved.current) return;
+        autoResolved.current = true;
+        void handleResolve();
+    }, []);
+
+    const toggleFile = (index: number) => {
+        patch((held) => ({
+            selected: held.selected.includes(index)
+                ? held.selected.filter((value) => value !== index)
+                : [
+                      ...held.selected,
+                      index,
+                  ],
+        }));
+    };
+
+    const selectAll = () => {
+        patch({
+            selected: (store.resolved?.files ?? []).map((file) => file.index),
         });
+    };
 
-        const openHeld = $(() => {
-            const held = store.duplicate;
-            if (!held) return;
-            store.duplicate = null;
-            onOpen(held.id, held.collectionId);
+    const selectNone = () => {
+        patch({ selected: [] });
+    };
+
+    const resetTorrentStep = () => {
+        patch({ duplicate: null });
+        patch({ resolved: null });
+        patch({ selected: [] });
+        patch({ resolveError: "" });
+    };
+
+    /** Send an add; a refusal naming a download offers Open and Add anyway. */
+    const submit = async (input: AddInput) => {
+        // This modal collects input; the page owns the network call. It
+        // used to POST here *and* call onAdd, which POSTed again — every
+        // URL added created two tasks.
+        patch({ isAdding: true });
+        patch({ duplicate: null });
+        try {
+            await onAdd(input);
+            patch({ isAdding: false });
+            patch({ inputValue: "" });
+            patch({ resolved: null });
+            patch({ selected: [] });
+            patch({ resolveError: "" });
+            onClose();
+        } catch (err) {
+            const held = duplicateOf(err);
+            if (held) {
+                patch({ duplicate: held });
+                patch({ retry: input });
+            } else {
+                console.error(err);
+            }
+            patch({ isAdding: false });
+        }
+    };
+
+    const handleAdd = async () => {
+        const { inputType, inputValue, inputPreset, selected } = store;
+        if (!inputValue.trim()) {
+            return;
+        }
+
+        await submit({
+            // Its URL tab has no preview, so the page asks what the
+            // link is and routes it: a site page or a plain file.
+            type: inputType === "url" ? "link" : inputType,
+            value: inputValue,
+            preset: inputType !== "url" ? undefined : inputPreset,
+            files: inputType === "url" ? undefined : selected,
         });
+    };
 
-        const addSecondCopy = $(async () => {
-            if (store.retry) await submit(addAnyway(store.retry));
-        });
+    const openHeld = () => {
+        const held = store.duplicate;
+        if (!held) return;
+        patch({ duplicate: null });
+        onOpen(held.id, held.collectionId);
+    };
 
-        // Compute button label - simple string ternary
-        const isTorrentTab =
-            store.inputType === "magnet" || store.inputType === "file";
-        const buttonLabel = store.isAdding ? "Adding…" : "Add";
+    const addSecondCopy = async () => {
+        if (store.retry) await submit(addAnyway(store.retry));
+    };
 
-        // Use string type for preset to avoid type narrowing issues with select
-        const presetValues = [
-            "best",
-            "2160",
-            "1440",
-            "1080",
-            "720",
-            "480",
-            "mp3",
-        ] as const;
-        type Preset = (typeof presetValues)[number];
+    // Compute button label - simple string ternary
+    const isTorrentTab =
+        store.inputType === "magnet" || store.inputType === "file";
+    const buttonLabel = store.isAdding ? "Adding…" : "Add";
 
-        // Spinner SVG shown when adding
-        const spinner = store.isAdding ? (
-            <svg
-                class="spin"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                aria-hidden="true"
-            >
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-        ) : null;
+    // Use string type for preset to avoid type narrowing issues with select
+    const presetValues = [
+        "best",
+        "2160",
+        "1440",
+        "1080",
+        "720",
+        "480",
+        "mp3",
+    ] as const;
+    type Preset = (typeof presetValues)[number];
 
-        return open ? (
-            <div
-                class="modal-overlay"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Add torrent"
-            >
-                <div class="modal-panel">
-                    <header class="modal-header">
-                        <h2 class="modal-title">Add Torrent</h2>
+    // Spinner SVG shown when adding
+    const spinner = store.isAdding ? (
+        <svg
+            className="spin"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+        >
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+    ) : null;
+
+    return open ? (
+        <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add torrent"
+        >
+            <div className="modal-panel">
+                <header className="modal-header">
+                    <h2 className="modal-title">Add Torrent</h2>
+                    <button
+                        type="button"
+                        className="modal-close"
+                        onClick={onClose}
+                        aria-label="Close modal"
+                    >
+                        <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            aria-hidden="true"
+                        >
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
+                </header>
+
+                <main className="modal-body">
+                    <section className="modal-tabs">
                         <button
                             type="button"
-                            class="modal-close"
-                            onClick$={onClose}
-                            aria-label="Close modal"
+                            className={`modal-tab ${store.inputType === "magnet" ? "modal-tab--active" : ""}`}
+                            onClick={() => {
+                                patch({ inputType: "magnet" });
+                                resetTorrentStep();
+                            }}
+                            aria-selected={store.inputType === "magnet"}
+                            role="tab"
+                        >
+                            <LuMagnet
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
+                            <span>Magnet Link</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`modal-tab ${store.inputType === "file" ? "modal-tab--active" : ""}`}
+                            onClick={() => {
+                                patch({ inputType: "file" });
+                                resetTorrentStep();
+                            }}
+                            aria-selected={store.inputType === "file"}
+                            role="tab"
                         >
                             <svg
-                                width="24"
-                                height="24"
+                                width="18"
+                                height="18"
                                 viewBox="0 0 24 24"
                                 fill="none"
                                 stroke="currentColor"
-                                stroke-width="2"
+                                strokeWidth="2"
                                 aria-hidden="true"
                             >
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                        </button>
-                    </header>
-
-                    <main class="modal-body">
-                        <section class="modal-tabs">
-                            <button
-                                type="button"
-                                class={`modal-tab ${store.inputType === "magnet" ? "modal-tab--active" : ""}`}
-                                onClick$={() => {
-                                    store.inputType = "magnet";
-                                    resetTorrentStep();
-                                }}
-                                aria-selected={store.inputType === "magnet"}
-                                role="tab"
-                            >
-                                <LuMagnet
+                                <rect
+                                    x="3"
+                                    y="3"
                                     width="18"
                                     height="18"
-                                    aria-hidden="true"
+                                    rx="2"
+                                    ry="2"
                                 />
-                                <span>Magnet Link</span>
-                            </button>
-                            <button
-                                type="button"
-                                class={`modal-tab ${store.inputType === "file" ? "modal-tab--active" : ""}`}
-                                onClick$={() => {
-                                    store.inputType = "file";
-                                    resetTorrentStep();
-                                }}
-                                aria-selected={store.inputType === "file"}
-                                role="tab"
-                            >
-                                <svg
-                                    width="18"
-                                    height="18"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    aria-hidden="true"
-                                >
-                                    <rect
-                                        x="3"
-                                        y="3"
-                                        width="18"
-                                        height="18"
-                                        rx="2"
-                                        ry="2"
-                                    />
-                                    <polyline points="17 8 21 12 17 16" />
-                                </svg>
-                                <span>.torrent File</span>
-                            </button>
-                            <button
-                                type="button"
-                                class={`modal-tab ${store.inputType === "url" ? "modal-tab--active" : ""}`}
-                                onClick$={() => {
-                                    store.inputType = "url";
-                                    store.duplicate = null;
-                                }}
-                                aria-selected={store.inputType === "url"}
-                                role="tab"
-                            >
-                                <svg
-                                    width="18"
-                                    height="18"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    aria-hidden="true"
-                                >
-                                    <circle cx="12" cy="12" r="10" />
-                                    <line x1="2" y1="12" x2="22" y2="12" />
-                                    <path d="M12 2a20 20 0 0 1 4 10 20 20 0 0 1-4 10 20 20 0 0 1-4-10 20 20 0 0 1 4-10z" />
-                                </svg>
-                                <span>Link (any site or file)</span>
-                            </button>
-                        </section>
-
-                        <div class="modal-input-section">
-                            {store.inputType === "magnet" && (
-                                <div class="magnet-input">
-                                    <input
-                                        type="text"
-                                        class="magnet-input-field"
-                                        placeholder="magnet:?xt=..."
-                                        value={store.inputValue}
-                                        onInput$={(e: Event) => {
-                                            const target =
-                                                e.target as HTMLInputElement;
-                                            store.inputValue = target.value;
-                                            resetTorrentStep();
-                                        }}
-                                        aria-label="Magnet link"
-                                    />
-                                </div>
-                            )}
-
-                            {store.inputType === "file" && (
-                                <div class="file-input">
-                                    <input
-                                        type="file"
-                                        class="file-input-field"
-                                        accept=".torrent"
-                                        onChange$={(e: Event) => {
-                                            const target =
-                                                e.target as HTMLInputElement;
-                                            if (
-                                                target.files &&
-                                                target.files[0]
-                                            ) {
-                                                const reader = new FileReader();
-                                                reader.onload = () => {
-                                                    const result =
-                                                        reader.result as string;
-                                                    const base64 =
-                                                        result?.split(",")[1] ||
-                                                        "";
-                                                    store.inputValue = base64;
-                                                    resetTorrentStep();
-                                                };
-                                                reader.readAsDataURL(
-                                                    target.files[0],
-                                                );
-                                            }
-                                        }}
-                                        aria-label="Select .torrent file"
-                                    />
-                                    <p class="file-input-hint">
-                                        Select a .torrent file
-                                    </p>
-                                </div>
-                            )}
-
-                            {store.inputType === "url" && (
-                                <div class="url-input-section">
-                                    <input
-                                        type="url"
-                                        class="url-input-field"
-                                        placeholder="A video page, or any file link"
-                                        value={store.inputValue}
-                                        onInput$={(e: Event) => {
-                                            const target =
-                                                e.target as HTMLInputElement;
-                                            store.inputValue = target.value;
-                                            store.duplicate = null;
-                                        }}
-                                        aria-label="Video URL"
-                                    />
-                                    <select
-                                        class="url-preset-select"
-                                        value={store.inputPreset}
-                                        onChange$={(e: Event) => {
-                                            const target =
-                                                e.target as HTMLSelectElement;
-                                            store.inputPreset =
-                                                target.value as Preset;
-                                        }}
-                                    >
-                                        <option value="best">
-                                            Best Quality
-                                        </option>
-                                        <option value="2160">4K (2160p)</option>
-                                        <option value="1440">1440p</option>
-                                        <option value="1080">1080p</option>
-                                        <option value="720">720p</option>
-                                        <option value="480">480p</option>
-                                        <option value="mp3">Audio (MP3)</option>
-                                    </select>
-                                </div>
-                            )}
-
-                            {isTorrentTab && store.resolveError && (
-                                <p class="modal-error">{store.resolveError}</p>
-                            )}
-
-                            {isTorrentTab && store.resolved && (
-                                <section class="torrent-files">
-                                    <header class="torrent-files-header">
-                                        <span>
-                                            {store.selected.length} of{" "}
-                                            {store.resolved.files.length} files
-                                        </span>
-                                        <span>
-                                            <button
-                                                type="button"
-                                                class="link-btn"
-                                                onClick$={selectAll}
-                                            >
-                                                All
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="link-btn"
-                                                onClick$={selectNone}
-                                            >
-                                                None
-                                            </button>
-                                        </span>
-                                    </header>
-                                    <ul class="torrent-files-list">
-                                        {store.resolved.files.map((file) => (
-                                            <li
-                                                key={file.index}
-                                                class="torrent-file"
-                                            >
-                                                <label>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={store.selected.includes(
-                                                            file.index,
-                                                        )}
-                                                        onChange$={() =>
-                                                            toggleFile(
-                                                                file.index,
-                                                            )
-                                                        }
-                                                    />
-                                                    <span class="torrent-file-path">
-                                                        {file.path}
-                                                    </span>
-                                                    <span class="torrent-file-size">
-                                                        {formatBytes(
-                                                            file.sizeBytes,
-                                                        )}
-                                                    </span>
-                                                </label>
-                                                {hasMediaExtension(
-                                                    file.path,
-                                                ) && (
-                                                    <button
-                                                        type="button"
-                                                        class="torrent-file-play"
-                                                        aria-label={`Play ${file.path}`}
-                                                        onClick$={$(() =>
-                                                            onPlay(
-                                                                store.inputValue,
-                                                                store.inputType ===
-                                                                    "file"
-                                                                    ? "torrent"
-                                                                    : "magnet",
-                                                                file.index,
-                                                                mediaFiles(
-                                                                    store
-                                                                        .resolved
-                                                                        ?.files ??
-                                                                        [],
-                                                                ),
-                                                            ),
-                                                        )}
-                                                    >
-                                                        <LuPlay
-                                                            width="14"
-                                                            height="14"
-                                                            aria-hidden="true"
-                                                        />
-                                                    </button>
-                                                )}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </section>
-                            )}
-                        </div>
-                    </main>
-
-                    {store.duplicate && (
-                        <div class="modal-duplicate">
-                            <DuplicateNotice
-                                duplicate={store.duplicate}
-                                busy={store.isAdding}
-                                onOpen={openHeld}
-                                onAddAnyway={
-                                    store.retry &&
-                                    canAddAnyway(store.retry.type)
-                                        ? addSecondCopy
-                                        : undefined
-                                }
-                            />
-                        </div>
-                    )}
-
-                    <div class="add-torrent-category">
-                        <CategorySelect
-                            categories={categories}
-                            value={addCategory}
-                            onChange$={$((id: string) =>
-                                onAddCategoryChange(id),
-                            )}
-                        />
-                    </div>
-
-                    <footer class="modal-footer">
+                                <polyline points="17 8 21 12 17 16" />
+                            </svg>
+                            <span>.torrent File</span>
+                        </button>
                         <button
                             type="button"
-                            class="modal-btn modal-btn--secondary"
-                            onClick$={onClose}
-                            disabled={store.isAdding}
+                            className={`modal-tab ${store.inputType === "url" ? "modal-tab--active" : ""}`}
+                            onClick={() => {
+                                patch({ inputType: "url" });
+                                patch({ duplicate: null });
+                            }}
+                            aria-selected={store.inputType === "url"}
+                            role="tab"
                         >
-                            Cancel
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="2" y1="12" x2="22" y2="12" />
+                                <path d="M12 2a20 20 0 0 1 4 10 20 20 0 0 1-4 10 20 20 0 0 1-4-10 20 20 0 0 1 4-10z" />
+                            </svg>
+                            <span>Link (any site or file)</span>
                         </button>
-                        {isTorrentTab && !store.resolved ? (
+                    </section>
+
+                    <div className="modal-input-section">
+                        {store.inputType === "magnet" && (
+                            <div className="magnet-input">
+                                <input
+                                    type="text"
+                                    className="magnet-input-field"
+                                    placeholder="magnet:?xt=..."
+                                    value={store.inputValue}
+                                    onChange={(e) => {
+                                        const target =
+                                            e.target as HTMLInputElement;
+                                        patch({ inputValue: target.value });
+                                        resetTorrentStep();
+                                    }}
+                                    aria-label="Magnet link"
+                                />
+                            </div>
+                        )}
+
+                        {store.inputType === "file" && (
+                            <div className="file-input">
+                                <input
+                                    type="file"
+                                    className="file-input-field"
+                                    accept=".torrent"
+                                    onChange={(e) => {
+                                        const target =
+                                            e.target as HTMLInputElement;
+                                        if (target.files && target.files[0]) {
+                                            const reader = new FileReader();
+                                            reader.onload = () => {
+                                                const result =
+                                                    reader.result as string;
+                                                const base64 =
+                                                    result?.split(",")[1] || "";
+                                                patch({ inputValue: base64 });
+                                                resetTorrentStep();
+                                            };
+                                            reader.readAsDataURL(
+                                                target.files[0],
+                                            );
+                                        }
+                                    }}
+                                    aria-label="Select .torrent file"
+                                />
+                                <p className="file-input-hint">
+                                    Select a .torrent file
+                                </p>
+                            </div>
+                        )}
+
+                        {store.inputType === "url" && (
+                            <div className="url-input-section">
+                                <input
+                                    type="url"
+                                    className="url-input-field"
+                                    placeholder="A video page, or any file link"
+                                    value={store.inputValue}
+                                    onChange={(e) => {
+                                        const target =
+                                            e.target as HTMLInputElement;
+                                        patch({ inputValue: target.value });
+                                        patch({ duplicate: null });
+                                    }}
+                                    aria-label="Video URL"
+                                />
+                                <select
+                                    className="url-preset-select"
+                                    value={store.inputPreset}
+                                    onChange={(e) => {
+                                        const target =
+                                            e.target as HTMLSelectElement;
+                                        patch({
+                                            inputPreset: target.value as Preset,
+                                        });
+                                    }}
+                                >
+                                    <option value="best">Best Quality</option>
+                                    <option value="2160">4K (2160p)</option>
+                                    <option value="1440">1440p</option>
+                                    <option value="1080">1080p</option>
+                                    <option value="720">720p</option>
+                                    <option value="480">480p</option>
+                                    <option value="mp3">Audio (MP3)</option>
+                                </select>
+                            </div>
+                        )}
+
+                        {isTorrentTab && store.resolveError && (
+                            <p className="modal-error">{store.resolveError}</p>
+                        )}
+
+                        {isTorrentTab && store.resolved && (
+                            <section className="torrent-files">
+                                <header className="torrent-files-header">
+                                    <span>
+                                        {store.selected.length} of{" "}
+                                        {store.resolved.files.length} files
+                                    </span>
+                                    <span>
+                                        <button
+                                            type="button"
+                                            className="link-btn"
+                                            onClick={selectAll}
+                                        >
+                                            All
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="link-btn"
+                                            onClick={selectNone}
+                                        >
+                                            None
+                                        </button>
+                                    </span>
+                                </header>
+                                <ul className="torrent-files-list">
+                                    {store.resolved.files.map((file) => (
+                                        <li
+                                            key={file.index}
+                                            className="torrent-file"
+                                        >
+                                            <label>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={store.selected.includes(
+                                                        file.index,
+                                                    )}
+                                                    onChange={() =>
+                                                        toggleFile(file.index)
+                                                    }
+                                                />
+                                                <span className="torrent-file-path">
+                                                    {file.path}
+                                                </span>
+                                                <span className="torrent-file-size">
+                                                    {formatBytes(
+                                                        file.sizeBytes,
+                                                    )}
+                                                </span>
+                                            </label>
+                                            {hasMediaExtension(file.path) && (
+                                                <button
+                                                    type="button"
+                                                    className="torrent-file-play"
+                                                    aria-label={`Play ${file.path}`}
+                                                    onClick={() =>
+                                                        onPlay(
+                                                            store.inputValue,
+                                                            store.inputType ===
+                                                                "file"
+                                                                ? "torrent"
+                                                                : "magnet",
+                                                            file.index,
+                                                            mediaFiles(
+                                                                store.resolved
+                                                                    ?.files ??
+                                                                    [],
+                                                            ),
+                                                        )
+                                                    }
+                                                >
+                                                    <LuPlay
+                                                        width="14"
+                                                        height="14"
+                                                        aria-hidden="true"
+                                                    />
+                                                </button>
+                                            )}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+                        )}
+                    </div>
+                </main>
+
+                {store.duplicate && (
+                    <div className="modal-duplicate">
+                        <DuplicateNotice
+                            duplicate={store.duplicate}
+                            busy={store.isAdding}
+                            onOpen={openHeld}
+                            onAddAnyway={
+                                store.retry && canAddAnyway(store.retry.type)
+                                    ? addSecondCopy
+                                    : undefined
+                            }
+                        />
+                    </div>
+                )}
+
+                <div className="add-torrent-category">
+                    <CategorySelect
+                        categories={categories}
+                        value={addCategory}
+                        onChange={(id: string) => onAddCategoryChange(id)}
+                    />
+                </div>
+
+                <footer className="modal-footer">
+                    <button
+                        type="button"
+                        className="modal-btn modal-btn--secondary"
+                        onClick={onClose}
+                        disabled={store.isAdding}
+                    >
+                        Cancel
+                    </button>
+                    {isTorrentTab && !store.resolved ? (
+                        <button
+                            type="button"
+                            className="modal-btn modal-btn--primary"
+                            onClick={handleResolve}
+                            disabled={
+                                store.isResolving || !store.inputValue.trim()
+                            }
+                        >
+                            <span className="button-text">
+                                {store.isResolving
+                                    ? "Fetching…"
+                                    : "Fetch Files"}
+                            </span>
+                            {store.isResolving && (
+                                <svg
+                                    className="spin"
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    aria-hidden="true"
+                                    style={{ marginLeft: "0.5rem" }}
+                                >
+                                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                </svg>
+                            )}
+                        </button>
+                    ) : (
+                        <>
+                            {isTorrentTab && (
+                                <button
+                                    type="button"
+                                    className="modal-btn modal-btn--secondary"
+                                    onClick={() =>
+                                        onPlay(
+                                            store.inputValue,
+                                            store.inputType === "file"
+                                                ? "torrent"
+                                                : "magnet",
+                                            null,
+                                            mediaFiles(
+                                                store.resolved?.files ?? [],
+                                            ),
+                                        )
+                                    }
+                                >
+                                    <LuPlay
+                                        width="16"
+                                        height="16"
+                                        aria-hidden="true"
+                                    />
+                                    <span className="button-text">Play</span>
+                                </button>
+                            )}
                             <button
                                 type="button"
-                                class="modal-btn modal-btn--primary"
-                                onClick$={handleResolve}
+                                className="modal-btn modal-btn--primary"
+                                onClick={handleAdd}
                                 disabled={
-                                    store.isResolving ||
-                                    !store.inputValue.trim()
+                                    store.isAdding ||
+                                    (isTorrentTab &&
+                                        store.selected.length === 0)
                                 }
                             >
-                                <span class="button-text">
-                                    {store.isResolving
-                                        ? "Fetching…"
-                                        : "Fetch Files"}
+                                <span className="button-text">
+                                    {buttonLabel}
                                 </span>
-                                {store.isResolving && (
+                                {spinner && (
                                     <svg
-                                        class="spin"
+                                        className="spin"
                                         width="16"
                                         height="16"
                                         viewBox="0 0 24 24"
                                         fill="none"
                                         stroke="currentColor"
-                                        stroke-width="2"
+                                        strokeWidth="2"
                                         aria-hidden="true"
                                         style={{ marginLeft: "0.5rem" }}
                                     >
@@ -603,67 +649,10 @@ export const AddTorrentModal = component$<AddTorrentModalProps>(
                                     </svg>
                                 )}
                             </button>
-                        ) : (
-                            <>
-                                {isTorrentTab && (
-                                    <button
-                                        type="button"
-                                        class="modal-btn modal-btn--secondary"
-                                        onClick$={$(() =>
-                                            onPlay(
-                                                store.inputValue,
-                                                store.inputType === "file"
-                                                    ? "torrent"
-                                                    : "magnet",
-                                                null,
-                                                mediaFiles(
-                                                    store.resolved?.files ?? [],
-                                                ),
-                                            ),
-                                        )}
-                                    >
-                                        <LuPlay
-                                            width="16"
-                                            height="16"
-                                            aria-hidden="true"
-                                        />
-                                        <span class="button-text">Play</span>
-                                    </button>
-                                )}
-                                <button
-                                    type="button"
-                                    class="modal-btn modal-btn--primary"
-                                    onClick$={handleAdd}
-                                    disabled={
-                                        store.isAdding ||
-                                        (isTorrentTab &&
-                                            store.selected.length === 0)
-                                    }
-                                >
-                                    <span class="button-text">
-                                        {buttonLabel}
-                                    </span>
-                                    {spinner && (
-                                        <svg
-                                            class="spin"
-                                            width="16"
-                                            height="16"
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            aria-hidden="true"
-                                            style={{ marginLeft: "0.5rem" }}
-                                        >
-                                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                                        </svg>
-                                    )}
-                                </button>
-                            </>
-                        )}
-                    </footer>
-                </div>
+                        </>
+                    )}
+                </footer>
             </div>
-        ) : null;
-    },
-);
+        </div>
+    ) : null;
+}

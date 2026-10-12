@@ -1,4 +1,4 @@
-import { component$, $, useStore } from "@qwik.dev/core";
+import { useCallback, useState } from "react";
 import {
     TorrentCard,
     type TorrentTask,
@@ -56,182 +56,177 @@ export type TorrentFilter =
     | `category:${string}`
     | `label:${string}`;
 
-export const TorrentList = component$<TorrentListProps>(
-    ({
-        tasks,
-        filter,
-        category,
-        searchQuery,
-        highlightId = "",
-        now,
-        hasMore,
-        loadingMore,
-        onLoadMore,
-        onPause,
-        onResume,
-        onDownloadFile,
-        onPlay,
-        onRemove,
-        onStopSeeding,
-        onMoveCategory,
-        entries,
-        onToggleEntries,
-        onLoadMoreEntries,
-        onPauseVideo,
-        onResumeVideo,
-        onRemoveVideo,
-        onPlayGroup,
-        torrentSearch,
-        onOpenSearch,
-    }) => {
-        // One card at a time: two open at once turns a list into a wall.
-        const store = useStore({ expandedId: "" as string });
-        const toggleDetail = $((id: string) => {
-            store.expandedId = store.expandedId === id ? "" : id;
-        });
+export function TorrentList({
+    tasks,
+    filter,
+    category,
+    searchQuery,
+    highlightId = "",
+    now,
+    hasMore,
+    loadingMore,
+    onLoadMore,
+    onPause,
+    onResume,
+    onDownloadFile,
+    onPlay,
+    onRemove,
+    onStopSeeding,
+    onMoveCategory,
+    entries,
+    onToggleEntries,
+    onLoadMoreEntries,
+    onPauseVideo,
+    onResumeVideo,
+    onRemoveVideo,
+    onPlayGroup,
+    torrentSearch,
+    onOpenSearch,
+}: TorrentListProps) {
+    // One card at a time: two open at once turns a list into a wall.
+    const [
+        expandedId,
+        setExpandedId,
+    ] = useState("");
+    // Stable, so a memoised card is not redrawn because the list was.
+    const toggleDetail = useCallback(
+        (id: string) => setExpandedId((open) => (open === id ? "" : id)),
+        [],
+    );
 
-        const filteredTasks = tasks.filter((task) => {
-            if (!matchesSearch(task, searchQuery)) return false;
-            // Checked here too: live frames arrive for every row, whatever the filter.
-            if (!inCategory(task, category)) return false;
+    const filteredTasks = tasks.filter((task) => {
+        if (!matchesSearch(task, searchQuery)) return false;
+        // Checked here too: live frames arrive for every row, whatever the filter.
+        if (!inCategory(task, category)) return false;
 
-            switch (filter) {
-                case "downloading":
-                    return isActive(task.status);
-                case "seeding":
-                    return isSeeding(task.status);
-                case "completed":
-                    return task.status === "completed";
-                case "all":
-                default:
-                    return true;
-            }
-        });
+        switch (filter) {
+            case "downloading":
+                return isActive(task.status);
+            case "seeding":
+                return isSeeding(task.status);
+            case "completed":
+                return task.status === "completed";
+            case "all":
+            default:
+                return true;
+        }
+    });
 
-        const getEmptyState = () => {
-            if (showDoors(tasks.length, searchQuery)) {
-                return (
-                    <StartDoors
-                        torrentSearch={torrentSearch}
-                        onBrowse={onOpenSearch}
-                    />
-                );
-            }
+    const getEmptyState = () => {
+        if (showDoors(tasks.length, searchQuery)) {
+            return (
+                <StartDoors
+                    torrentSearch={torrentSearch}
+                    onBrowse={onOpenSearch}
+                />
+            );
+        }
 
-            if (tasks.length === 0) {
-                return (
-                    <div class="torrent-list-empty">
-                        <div class="torrent-list-empty-icon">
-                            <LuDownload
-                                width="32"
-                                height="32"
-                                aria-hidden="true"
-                            />
-                        </div>
-                        <p>No downloads yet</p>
-                        <span>Paste a link above or drop a .torrent file</span>
+        if (tasks.length === 0) {
+            return (
+                <div className="torrent-list-empty">
+                    <div className="torrent-list-empty-icon">
+                        <LuDownload width="32" height="32" aria-hidden="true" />
                     </div>
-                );
-            }
-
-            if (filteredTasks.length === 0) {
-                const filterLabels: Record<string, string> = {
-                    all: "matching your search",
-                    downloading: "currently active",
-                    seeding: "seeding",
-                    completed: "completed",
-                };
-                const label = filterLabels[filter] || "matching your filters";
-                return (
-                    <div class="torrent-list-empty">
-                        <div class="torrent-list-empty-icon">
-                            <LuSearchX
-                                width="32"
-                                height="32"
-                                aria-hidden="true"
-                            />
-                        </div>
-                        <p>No downloads {label}</p>
-                        <span>
-                            {searchQuery && hasMore
-                                ? `Only the ${tasks.length} loaded downloads were searched. Load more to search further.`
-                                : "Try adjusting your filters or search"}
-                        </span>
-                    </div>
-                );
-            }
-
-            return null;
-        };
-
-        return (
-            <div
-                id="download-list"
-                class="torrent-list"
-                role="list"
-                aria-label="Downloads"
-            >
-                {getEmptyState()}
-                <div class="torrent-list-items" style={{ contain: "layout" }}>
-                    {filteredTasks.map((task) => (
-                        <div
-                            key={task.id}
-                            id={`download-${task.id}`}
-                            class={`torrent-list-item ${task.id === highlightId ? "torrent-list-item--found" : ""}`}
-                            style={{ contentVisibility: "auto" }}
-                        >
-                            {task.kind === "playlist" ? (
-                                <GroupCard
-                                    now={now}
-                                    expanded={store.expandedId === task.id}
-                                    onToggleDetail={toggleDetail}
-                                    task={task}
-                                    entries={entries[task.id]}
-                                    highlightId={highlightId}
-                                    onToggleEntries={onToggleEntries}
-                                    onLoadMoreEntries={onLoadMoreEntries}
-                                    onPause={onPause}
-                                    onResume={onResume}
-                                    onRemove={onRemove}
-                                    onMoveCategory={onMoveCategory}
-                                    onPauseVideo={onPauseVideo}
-                                    onResumeVideo={onResumeVideo}
-                                    onPlayVideo={onPlay}
-                                    onRemoveVideo={onRemoveVideo}
-                                    onPlayGroup={onPlayGroup}
-                                />
-                            ) : (
-                                <TorrentCard
-                                    now={now}
-                                    expanded={store.expandedId === task.id}
-                                    onToggleDetail={toggleDetail}
-                                    task={task}
-                                    onPause={onPause}
-                                    onResume={onResume}
-                                    onDownloadFile={onDownloadFile}
-                                    onPlay={onPlay}
-                                    onRemove={onRemove}
-                                    onStopSeeding={onStopSeeding}
-                                    onMoveCategory={onMoveCategory}
-                                />
-                            )}
-                        </div>
-                    ))}
+                    <p>No downloads yet</p>
+                    <span>Paste a link above or drop a .torrent file</span>
                 </div>
+            );
+        }
 
-                {hasMore && (
-                    <div class="torrent-list-more">
-                        <button
-                            type="button"
-                            class="torrent-list-more-btn"
-                            onClick$={onLoadMore}
-                            disabled={loadingMore}
-                        >
-                            {loadingMore ? "Loading…" : "Load more"}
-                        </button>
+        if (filteredTasks.length === 0) {
+            const filterLabels: Record<string, string> = {
+                all: "matching your search",
+                downloading: "currently active",
+                seeding: "seeding",
+                completed: "completed",
+            };
+            const label = filterLabels[filter] || "matching your filters";
+            return (
+                <div className="torrent-list-empty">
+                    <div className="torrent-list-empty-icon">
+                        <LuSearchX width="32" height="32" aria-hidden="true" />
                     </div>
-                )}
+                    <p>No downloads {label}</p>
+                    <span>
+                        {searchQuery && hasMore
+                            ? `Only the ${tasks.length} loaded downloads were searched. Load more to search further.`
+                            : "Try adjusting your filters or search"}
+                    </span>
+                </div>
+            );
+        }
+
+        return null;
+    };
+
+    return (
+        <div
+            id="download-list"
+            className="torrent-list"
+            role="list"
+            aria-label="Downloads"
+        >
+            {getEmptyState()}
+            <div className="torrent-list-items" style={{ contain: "layout" }}>
+                {filteredTasks.map((task) => (
+                    <div
+                        key={task.id}
+                        id={`download-${task.id}`}
+                        className={`torrent-list-item ${task.id === highlightId ? "torrent-list-item--found" : ""}`}
+                        style={{ contentVisibility: "auto" }}
+                    >
+                        {task.kind === "playlist" ? (
+                            <GroupCard
+                                now={now}
+                                expanded={expandedId === task.id}
+                                onToggleDetail={toggleDetail}
+                                task={task}
+                                entries={entries[task.id]}
+                                highlightId={highlightId}
+                                onToggleEntries={onToggleEntries}
+                                onLoadMoreEntries={onLoadMoreEntries}
+                                onPause={onPause}
+                                onResume={onResume}
+                                onRemove={onRemove}
+                                onMoveCategory={onMoveCategory}
+                                onPauseVideo={onPauseVideo}
+                                onResumeVideo={onResumeVideo}
+                                onPlayVideo={onPlay}
+                                onRemoveVideo={onRemoveVideo}
+                                onPlayGroup={onPlayGroup}
+                            />
+                        ) : (
+                            <TorrentCard
+                                now={now}
+                                expanded={expandedId === task.id}
+                                onToggleDetail={toggleDetail}
+                                task={task}
+                                onPause={onPause}
+                                onResume={onResume}
+                                onDownloadFile={onDownloadFile}
+                                onPlay={onPlay}
+                                onRemove={onRemove}
+                                onStopSeeding={onStopSeeding}
+                                onMoveCategory={onMoveCategory}
+                            />
+                        )}
+                    </div>
+                ))}
             </div>
-        );
-    },
-);
+
+            {hasMore && (
+                <div className="torrent-list-more">
+                    <button
+                        type="button"
+                        className="torrent-list-more-btn"
+                        onClick={onLoadMore}
+                        disabled={loadingMore}
+                    >
+                        {loadingMore ? "Loading…" : "Load more"}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}

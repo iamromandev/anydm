@@ -1,4 +1,3 @@
-import { component$ } from "@qwik.dev/core";
 import "./field.css";
 
 export interface ConfirmDialogProps {
@@ -15,33 +14,37 @@ export interface ConfirmDialogProps {
  * carries a checkbox about its files. If a third of these appears, the chrome
  * the two share is worth extracting; two is not yet a pattern.
  */
-export const ConfirmDialog = component$<ConfirmDialogProps>(
-    ({ prompt, onCancel, onConfirm }) => {
+export function ConfirmDialog({
+    prompt,
+    onCancel,
+    onConfirm,
+}: ConfirmDialogProps) {
+    {
         if (!prompt) return null;
 
         return (
             <div
-                class="confirm-dialog-overlay"
+                className="confirm-dialog-overlay"
                 role="dialog"
                 aria-modal="true"
                 aria-label={prompt.heading}
             >
-                <div class="confirm-dialog">
-                    <h2 class="confirm-dialog-heading">{prompt.heading}</h2>
-                    <p class="confirm-dialog-body">{prompt.body}</p>
+                <div className="confirm-dialog">
+                    <h2 className="confirm-dialog-heading">{prompt.heading}</h2>
+                    <p className="confirm-dialog-body">{prompt.body}</p>
 
-                    <div class="confirm-dialog-actions">
+                    <div className="confirm-dialog-actions">
                         <button
                             type="button"
-                            class="confirm-dialog-btn"
-                            onClick$={onCancel}
+                            className="confirm-dialog-btn"
+                            onClick={onCancel}
                         >
                             Cancel
                         </button>
                         <button
                             type="button"
-                            class="confirm-dialog-btn confirm-dialog-btn--danger"
-                            onClick$={onConfirm}
+                            className="confirm-dialog-btn confirm-dialog-btn--danger"
+                            onClick={onConfirm}
                         >
                             {prompt.confirmLabel}
                         </button>
@@ -49,5 +52,5 @@ export const ConfirmDialog = component$<ConfirmDialogProps>(
                 </div>
             </div>
         );
-    },
-);
+    }
+}

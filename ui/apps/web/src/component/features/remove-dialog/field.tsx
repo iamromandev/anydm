@@ -1,4 +1,4 @@
-import { component$, useSignal } from "@qwik.dev/core";
+import { useState } from "react";
 import { removePrompt } from "./prompt";
 import "./field.css";
 
@@ -15,69 +15,76 @@ export interface RemoveDialogProps {
     onConfirm: (id: string, deleteFiles: boolean) => void;
 }
 
-export const RemoveDialog = component$<RemoveDialogProps>(
-    ({ task, onCancel, onConfirm }) => {
-        // Re-created with the dialog, so the box never arrives already ticked
-        // from the last time.
-        const deleteFiles = useSignal(false);
+export function RemoveDialog(props: RemoveDialogProps) {
+    // Mounted only while a task is being asked about, so the box never arrives
+    // already ticked from the last time.
+    return props.task ? (
+        <OpenRemoveDialog {...props} task={props.task} />
+    ) : null;
+}
 
-        if (!task) return null;
+function OpenRemoveDialog({
+    task,
+    onCancel,
+    onConfirm,
+}: RemoveDialogProps & { task: NonNullable<RemoveDialogProps["task"]> }) {
+    const [
+        deleteFiles,
+        setDeleteFiles,
+    ] = useState(false);
 
-        const prompt = removePrompt(task.status, task.videos);
+    const prompt = removePrompt(task.status, task.videos);
 
-        return (
-            <div
-                class="remove-dialog-overlay"
-                role="dialog"
-                aria-modal="true"
-                aria-label={prompt.heading}
-            >
-                <div class="remove-dialog">
-                    <h2 class="remove-dialog-heading">{prompt.heading}</h2>
-                    <p class="remove-dialog-title">{task.title}</p>
-                    <p class="remove-dialog-body">{prompt.body}</p>
+    return (
+        <div
+            className="remove-dialog-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label={prompt.heading}
+        >
+            <div className="remove-dialog">
+                <h2 className="remove-dialog-heading">{prompt.heading}</h2>
+                <p className="remove-dialog-title">{task.title}</p>
+                <p className="remove-dialog-body">{prompt.body}</p>
 
-                    {prompt.canKeepFiles && (
-                        <label class="remove-dialog-option">
-                            <input
-                                type="checkbox"
-                                checked={deleteFiles.value}
-                                onChange$={(_, el) => {
-                                    deleteFiles.value = el.checked;
-                                }}
-                            />
-                            <span>Also delete the downloaded files</span>
-                        </label>
-                    )}
+                {prompt.canKeepFiles && (
+                    <label className="remove-dialog-option">
+                        <input
+                            type="checkbox"
+                            checked={deleteFiles}
+                            onChange={({ currentTarget: el }) => {
+                                setDeleteFiles(el.checked);
+                            }}
+                        />
+                        <span>Also delete the downloaded files</span>
+                    </label>
+                )}
 
-                    <div class="remove-dialog-actions">
-                        <button
-                            type="button"
-                            class="remove-dialog-btn"
-                            onClick$={onCancel}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            class="remove-dialog-btn remove-dialog-btn--danger"
-                            onClick$={() =>
-                                onConfirm(
-                                    task.id,
-                                    // Nothing to keep means nothing to ask
-                                    // about: those removals always take the
-                                    // partial file with them.
-                                    prompt.canKeepFiles
-                                        ? deleteFiles.value
-                                        : true,
-                                )
-                            }
-                        >
-                            {prompt.confirmLabel}
-                        </button>
-                    </div>
+                <div className="remove-dialog-actions">
+                    <button
+                        type="button"
+                        className="remove-dialog-btn"
+                        onClick={onCancel}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        className="remove-dialog-btn remove-dialog-btn--danger"
+                        onClick={() =>
+                            onConfirm(
+                                task.id,
+                                // Nothing to keep means nothing to ask
+                                // about: those removals always take the
+                                // partial file with them.
+                                prompt.canKeepFiles ? deleteFiles : true,
+                            )
+                        }
+                    >
+                        {prompt.confirmLabel}
+                    </button>
                 </div>
             </div>
-        );
-    },
-);
+        </div>
+    );
+}

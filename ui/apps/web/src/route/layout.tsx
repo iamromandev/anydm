@@ -1,5 +1,6 @@
-import { component$, Slot } from "@qwik.dev/core";
+import { Outlet } from "react-router-dom";
+import "../style/global.css";
 
-export default component$(() => {
-    return <Slot />;
-});
+export function Layout() {
+    return <Outlet />;
+}

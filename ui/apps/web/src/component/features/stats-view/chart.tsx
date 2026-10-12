@@ -1,4 +1,4 @@
-import { component$, useSignal, useVisibleTask$ } from "@qwik.dev/core";
+import { useEffect, useRef } from "react";
 import { formatBytes, formatSpeed } from "@/component/core/utils";
 
 /** What a chart draws, as plain data: the view decides it, this only paints it. */
@@ -28,17 +28,22 @@ export interface ChartProps {
  * the chart is drawn again when the theme changes because its colours are read
  * from the theme's CSS variables at that moment.
  */
-export const Chart = component$<ChartProps>(({ spec }) => {
-    const canvas = useSignal<HTMLCanvasElement>();
+export function Chart({ spec }: ChartProps) {
+    const canvas = useRef<HTMLCanvasElement>(null);
+    // The view builds a fresh spec on every render, and renders on every
+    // stream frame; what the chart depends on is what the spec says.
+    const specKey = JSON.stringify(spec);
 
     // Starts as soon as the chart is on the page: the view only mounts it once
     // it is opened, so nothing here loads Chart.js for a person who never does.
-    useVisibleTask$(
-        async ({ track, cleanup }) => {
-            const current = track(() => spec);
-            const element = canvas.value;
-            if (!element) return;
+    useEffect(() => {
+        const element = canvas.current;
+        if (!element) return;
+        const current = JSON.parse(specKey) as ChartSpec;
+        let cancelled = false;
+        let stop: (() => void) | undefined;
 
+        void (async () => {
             const {
                 Chart: ChartJs,
                 BarController,
@@ -51,6 +56,8 @@ export const Chart = component$<ChartProps>(({ spec }) => {
                 PointElement,
                 Tooltip,
             } = await import("chart.js");
+            // Gone while Chart.js was loading: the page moved on.
+            if (cancelled) return;
             ChartJs.register(
                 BarController,
                 BarElement,
@@ -137,18 +144,24 @@ export const Chart = component$<ChartProps>(({ spec }) => {
             });
             const scheme = matchMedia("(prefers-color-scheme: dark)");
             scheme.addEventListener("change", draw);
-            cleanup(() => {
+            stop = () => {
                 observer.disconnect();
                 scheme.removeEventListener("change", draw);
                 chart?.destroy();
-            });
-        },
-        { strategy: "document-ready" },
-    );
+            };
+        })();
+
+        return () => {
+            cancelled = true;
+            stop?.();
+        };
+    }, [
+        specKey,
+    ]);
 
     return (
-        <div class="stats-chart">
+        <div className="stats-chart">
             <canvas ref={canvas} role="img" aria-label={spec.description} />
         </div>
     );
-});
+}

@@ -8,7 +8,7 @@ that says which spec to open.
 
 ```mermaid
 graph LR
-    UI["UI<br/>Qwik 2 · :3030"]
+    UI["UI<br/>React 19 · :3030"]
     CROSS["cross/ desktop client<br/>Kotlin · Compose"]
     API["API<br/>FastAPI · :8030"]
     PG[("Postgres<br/>:5430")]
