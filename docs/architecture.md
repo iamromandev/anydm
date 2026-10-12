@@ -124,11 +124,13 @@ the engine, and pushes them again whenever the engine has stopped answering
 since, because from the API an unreachable engine is how a restart looks.
 
 The monitor also keeps each torrent's piece map. One `torrent.Piece` row per
-piece is written when the torrent is added — from the pasted `.torrent`, or
-from the engine's metadata for a magnet — and each tick diffs rqbit's have
-bitmap against the last one held in memory, writing only newly completed
-pieces as one batched update (a tick with no changes writes nothing). The
-memory seeds from the table on first sight, so a restart recovers the map. A
+piece (index, size, hash) is written once per torrent when it is first added —
+from the pasted `.torrent`, or from the engine's metadata for a magnet — and
+which pieces a download has is one bitmap on the download, `Download.pieces`.
+Each tick compares rqbit's have bitmap with the last one held in memory and
+saves the new one as a single value only when a piece has been set (a tick with
+no changes writes nothing). The memory seeds from the saved bitmap on first
+sight, so a restart recovers the map. A
 paused torrent's bitmap comes back frozen, so its stored map does not move
 (per-peer stats, by contrast, answer 412 while paused — which is why the
 peers list in #471 degrades to the last snapshot). A change publishes one
@@ -273,6 +275,7 @@ so the UI needs no polling to recover.
 |---|---|
 | Segmented HTTP downloads | [2026-09-14](superpowers/specs/2026-09-14-segmented-downloads-design.md) |
 | Torrent downloads | [2026-09-15](superpowers/specs/2026-09-15-torrent-downloads-design.md) |
+| Torrents as shared content | [2026-10-12](superpowers/specs/2026-10-12-torrent-catalog-design.md) |
 | Direct-URL streaming | [2026-09-16](superpowers/specs/2026-09-16-direct-url-streaming-design.md) |
 | Torrent streaming | [2026-09-16](superpowers/specs/2026-09-16-torrent-streaming-design.md) |
 | Player controls | [2026-09-17](superpowers/specs/2026-09-17-custom-player-controls-design.md) |

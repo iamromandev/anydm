@@ -75,9 +75,9 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         site_detail=None,
     )
     fields.update(overrides)
-    torrents = [a_torrent(fields["ref_id"], fields["title"])] if fields["platform"] == Platform.TORRENT else []
+    torrent = a_torrent(fields["ref_id"], fields["title"]) if fields["platform"] == Platform.TORRENT else None
     fields.setdefault(
-        "mirrors", [a_mirror(fields["url"], _KIND[fields["platform"]], fields["provider"], torrents=torrents)]
+        "mirrors", [a_mirror(fields["url"], _KIND[fields["platform"]], fields["provider"], torrent=torrent)]
     )
     media = fields["site_detail"]
     if media is not None and "media" not in fields:
@@ -207,37 +207,37 @@ def memory_views(
 
 
 def piece_row(index: int = 0, size: int = 512, **overrides: Any) -> SimpleNamespace:
-    from src.data.type.torrent.piece import PieceStatus
-
     fields: dict[str, Any] = dict(
         index=index,
         size=size,
         hash="ab" * 20,
-        status=PieceStatus.PENDING,
-        downloaded_bytes=0,
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
 
 
 class MemoryPieces:
+    """The piece repo in memory: the torrent's piece list, and each download's saved bitmap."""
+
     def __init__(self) -> None:
         self.by_download: dict[uuid.UUID, list[SimpleNamespace]] = {}
-        self.replaced: list[uuid.UUID] = []
-        self.completed: list[tuple[uuid.UUID, list[int]]] = []
+        self.bitmaps: dict[uuid.UUID, bytes] = {}
+        self.ensured: list[uuid.UUID] = []
+        #: ``(download id, bitmap)`` of each ``save_bitmap``.
+        self.saved: list[tuple[uuid.UUID, bytes]] = []
 
-    async def replace(self, download_id: uuid.UUID, pieces: Sequence[tuple[int, int, str]]) -> None:
-        self.replaced.append(download_id)
+    async def ensure(self, download_id: uuid.UUID, pieces: Sequence[tuple[int, int, str]]) -> None:
+        self.ensured.append(download_id)
+        if self.by_download.get(download_id):
+            return
         self.by_download[download_id] = [piece_row(index, size, hash=digest) for index, size, digest in pieces]
 
     async def list_for(self, download_id: uuid.UUID) -> list[SimpleNamespace]:
         return sorted(self.by_download.get(download_id, []), key=lambda p: p.index)
 
-    async def complete(self, download_id: uuid.UUID, indexes: Sequence[int]) -> None:
-        from src.data.type.torrent.piece import PieceStatus
+    async def bitmap(self, download_id: uuid.UUID) -> bytes | None:
+        return self.bitmaps.get(download_id)
 
-        self.completed.append((download_id, list(indexes)))
-        for p in self.by_download.get(download_id, []):
-            if p.index in set(indexes):
-                p.status = PieceStatus.COMPLETED
-                p.downloaded_bytes = p.size
+    async def save_bitmap(self, download_id: uuid.UUID, bitmap: bytes) -> None:
+        self.saved.append((download_id, bitmap))
+        self.bitmaps[download_id] = bitmap

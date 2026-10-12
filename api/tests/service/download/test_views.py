@@ -70,7 +70,7 @@ def test_a_torrent_reports_its_hash_and_no_site() -> None:
     schema = download_schema(
         row(
             mirrors=[
-                a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent", torrents=[a_torrent("a" * 40)])
+                a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent", torrent=a_torrent("a" * 40))
             ],
             media=None,
             uploaded_size=9,

@@ -1,4 +1,4 @@
-"""Tracker/Peer/Piece: a torrent's trackers, peers, and pieces, each with status and progress."""
+"""Tracker/Peer/Piece: a torrent's trackers and pieces, and a download's peers."""
 
 from src.data.db.model.torrent.peer import Peer
 from src.data.db.model.torrent.piece import Piece
@@ -8,11 +8,11 @@ from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
-def _fk(model, name, related):
+def _fk(model, name, related, target="model.Torrent"):
     field = model._meta.fields_map[name]
     assert isinstance(field, ForeignKeyFieldInstance)
     assert field.null is False
-    assert field.model_name == "model.Torrent"
+    assert field.model_name == target
     assert field.related_name == related
     assert getattr(field, "on_delete", None) == "CASCADE"
 
@@ -30,7 +30,7 @@ def test_tracker_shape() -> None:
 
 
 def test_peer_shape() -> None:
-    _fk(Peer, "torrent", "peers")
+    _fk(Peer, "download", "peers", "model.Download")
     fields_map = Peer._meta.fields_map
     from tortoise import fields
 
@@ -44,7 +44,7 @@ def test_peer_shape() -> None:
     assert fields_map["downloaded_bytes"].default == 0
     assert fields_map["uploaded_bytes"].default == 0
     assert fields_map["last_seen_at"].null is True
-    assert any(frozenset(c) == frozenset({"torrent", "address", "port"}) for c in Peer.Meta.unique_together)
+    assert any(frozenset(c) == frozenset({"download", "address", "port"}) for c in Peer.Meta.unique_together)
 
 
 def test_piece_shape() -> None:
@@ -57,8 +57,8 @@ def test_piece_shape() -> None:
     assert isinstance(fields_map["size"], fields.BigIntField)
     assert isinstance(fields_map["hash"], CharField)
     assert fields_map["hash"].max_length == 64
-    assert fields_map["status"].default is PieceStatus.PENDING
-    assert fields_map["downloaded_bytes"].default == 0
+    # Which pieces a download has is its bitmap, not a column of the piece.
+    assert "status" not in fields_map and "downloaded_bytes" not in fields_map
     assert any(frozenset(c) == frozenset({"torrent", "index"}) for c in Piece.Meta.unique_together)
 
 

@@ -1,4 +1,5 @@
-"""A ``torrent.Piece``'s progress.
+"""A piece's progress, as ``torrent.Piece`` once kept it. Nothing stores it now (a download's ``pieces`` bitmap does);
+kept because migration 0006 imports it.
 
 These subclass Tortoise's ``StrEnum`` rather than the standard library's so they
 can be used directly in ``CharEnumField``.

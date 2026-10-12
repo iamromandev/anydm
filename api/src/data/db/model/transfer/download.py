@@ -35,6 +35,8 @@ class Download(Base):
         "model.Category", related_name="downloads", on_delete=fields.RESTRICT, db_index=True, db_default=DOWNLOADS_ID
     )
     folder: str | None = fields.TextField(null=True)
+    #: For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known.
+    pieces: bytes | None = fields.BinaryField(null=True)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
     downloaded_size: int = fields.BigIntField(default=0)

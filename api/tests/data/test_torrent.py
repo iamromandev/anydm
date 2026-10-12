@@ -1,5 +1,6 @@
-"""Torrent: one source's torrent, named, hashed, and measured."""
+"""Torrent: content identified by its info hash, named and measured; sources lead to it."""
 
+from src.data.db.model.catalog.source import Source
 from src.data.db.model.torrent.torrent import Torrent
 from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
@@ -8,17 +9,17 @@ from tortoise.fields.relational import ForeignKeyFieldInstance
 def test_torrent_has_the_schema_columns() -> None:
     names = set(Torrent._meta.db_fields)
     assert {"name", "info_hash", "total_bytes", "created_at", "updated_at"} <= names
-    assert "source" in Torrent._meta.fk_fields
+    assert "source" not in Torrent._meta.fields_map
     assert "deleted_at" not in names
 
 
-def test_torrent_source_is_a_cascade_fk() -> None:
-    field = Torrent._meta.fields_map["source"]
+def test_a_source_leads_to_a_torrent_and_several_can_lead_to_one() -> None:
+    field = Source._meta.fields_map["torrent"]
     assert isinstance(field, ForeignKeyFieldInstance)
-    assert field.null is False
-    assert field.model_name == "model.Source"
-    assert field.related_name == "torrents"
-    assert getattr(field, "on_delete", None) == "CASCADE"
+    assert field.null is True
+    assert field.model_name == "model.Torrent"
+    assert field.related_name == "sources"
+    assert getattr(field, "on_delete", None) == "SET NULL"
 
 
 def test_torrent_info_hash_is_unique_varchar_64() -> None:

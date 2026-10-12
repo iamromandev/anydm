@@ -8,7 +8,7 @@ from typing import Any
 from src.data.type import MirrorStatus, SourceKind
 
 
-def a_mirror(url: str, kind: SourceKind, provider: str, *, torrents: Any = (), priority: int = 0) -> SimpleNamespace:
+def a_mirror(url: str, kind: SourceKind, provider: str, *, torrent: Any = None, priority: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=MirrorStatus.AVAILABLE,
@@ -18,7 +18,7 @@ def a_mirror(url: str, kind: SourceKind, provider: str, *, torrents: Any = (), p
             url=SimpleNamespace(value=url),
             kind=kind,
             provider=SimpleNamespace(name=provider),
-            torrents=list(torrents),
+            torrent=torrent,
         ),
     )
 

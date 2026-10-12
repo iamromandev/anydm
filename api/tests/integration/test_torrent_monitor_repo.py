@@ -8,7 +8,6 @@ from src.core.common import now
 from src.data.db.model import Download, Torrent
 from src.data.repo import DownloadDatabaseRepo, FileDatabaseRepo, PieceDatabaseRepo, PositionDatabaseRepo
 from src.data.type import DownloadStatus
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.folder import torrent_folder
@@ -147,37 +146,34 @@ async def test_reconcile_re_adds_a_lost_torrent_from_its_magnet_and_selection(tm
 
 
 @pytest.mark.asyncio
-async def test_piece_rows_follow_the_bitmap_across_ticks_and_a_restart(tmp_path: Path) -> None:
+async def test_the_bitmap_follows_the_engine_across_ticks_and_a_restart(tmp_path: Path) -> None:
     row = await _torrent()
     pieces = PieceDatabaseRepo()
-    await pieces.replace(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40), (2, 88, "c" * 40)])
+    await pieces.ensure(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40), (2, 88, "c" * 40)])
 
     await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 2], 3), 3)}), tmp_path).tick()
-    assert [(p.index, p.status) for p in await pieces.list_for(row.id)] == [
-        (0, PieceStatus.COMPLETED),
-        (1, PieceStatus.PENDING),
-        (2, PieceStatus.COMPLETED),
-    ]
+    assert await pieces.bitmap(row.id) == bitmap_from([0, 2], 3)
 
-    # A new monitor — as after a restart — seeds from the table and writes only the delta.
+    # A new monitor, as after a restart, seeds from what is saved and writes only when more arrives.
     await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 1, 2], 3), 3)}), tmp_path).tick()
-    assert [p.status for p in await pieces.list_for(row.id)] == [PieceStatus.COMPLETED] * 3
+    assert await pieces.bitmap(row.id) == bitmap_from([0, 1, 2], 3)
 
-    # Nothing moved: the rows are left alone.
-    before = [(p.updated_at, p.downloaded_bytes) for p in await pieces.list_for(row.id)]
+    # Nothing moved: the row is left alone.
+    before = (await Download.get(id=row.id)).updated_at
     await _monitor(Engine([_sample()], haves={HASH: (bitmap_from([0, 1, 2], 3), 3)}), tmp_path).tick()
-    assert [(p.updated_at, p.downloaded_bytes) for p in await pieces.list_for(row.id)] == before
+    assert (await Download.get(id=row.id)).updated_at == before
 
 
 @pytest.mark.asyncio
-async def test_a_paused_torrent_keeps_its_piece_rows(tmp_path: Path) -> None:
+async def test_a_paused_torrent_keeps_its_saved_bitmap(tmp_path: Path) -> None:
     row = await _torrent(status=DownloadStatus.PAUSED)
     pieces = PieceDatabaseRepo()
-    await pieces.replace(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40)])
+    await pieces.ensure(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40)])
+    await pieces.save_bitmap(row.id, bitmap_from([0], 2))
 
     await _monitor(
         Engine([_sample(state="paused")], haves_fail=torrent_error.engine_rejected("torrent is not live")),
         tmp_path,
     ).tick()
 
-    assert [p.status for p in await pieces.list_for(row.id)] == [PieceStatus.PENDING] * 2
+    assert await pieces.bitmap(row.id) == bitmap_from([0], 2)

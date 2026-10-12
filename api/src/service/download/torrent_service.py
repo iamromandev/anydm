@@ -26,11 +26,9 @@ from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
 from src.data.schema.torrent import FileSchema, PiecesMapSchema, TorrentResolveResponse
 from src.data.schema.transfer import DownloadSchema
 from src.data.type import DownloadStatus
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import torrent_folder
-from src.lib.torrent.mapping import bitmap_from
 from src.lib.torrent.metadata import piece_specs
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
@@ -166,9 +164,7 @@ class TorrentService(BaseService):
         # The piece map starts here, not on the monitor's first tick: a
         # restart therefore finds rows to load rather than an empty table.
         try:
-            await self._piece_repo.replace(
-                download.id, [(spec.index, spec.size, spec.hash) for spec in specs]
-            )
+            await self._piece_repo.ensure(download.id, [(spec.index, spec.size, spec.hash) for spec in specs])
         except Error:
             # A row without its pieces is a download that can never show a
             # map: take it back down, engine torrent and all, then report.
@@ -179,18 +175,18 @@ class TorrentService(BaseService):
     async def pieces_map(self, download_id: uuid.UUID) -> PiecesMapSchema:
         """The piece map, compact: one base64 bitmap, not one object per piece.
 
-        Built from the stored rows, so a paused torrent still has its map —
+        Built from what is stored, so a paused torrent still has its map —
         the engine only answers for torrents it is running.
         """
         download = await self._require(download_id)
         rows = await self._piece_repo.list_for(download.id)
+        stored = await self._piece_repo.bitmap(download.id) or b""
+        size = (len(rows) + 7) // 8
         frame = pieces_frame(
             download.id,
             piece_size=rows[0].size if rows else 0,
             count=len(rows),
-            bitmap=bitmap_from(
-                [row.index for row in rows if row.status == PieceStatus.COMPLETED], len(rows)
-            ),
+            bitmap=stored if len(stored) == size else bytes(size),
         )
         return PiecesMapSchema(
             piece_size=frame["piece_size"], count=frame["count"], done=frame["done"], downloading=[]

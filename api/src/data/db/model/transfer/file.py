@@ -34,9 +34,14 @@ class File(LinkBase):
     downloaded_bytes: int = fields.BigIntField(default=0)
     selected: bool = fields.BooleanField(default=True)
     mime_type: str | None = fields.CharField(max_length=128, null=True)
+    #: For a torrent's file, the torrent's own row for it (its ``index`` is this one's); none otherwise.
+    torrent_file = fields.ForeignKeyField(
+        "model.TorrentFile", related_name="download_files", null=True, on_delete=fields.SET_NULL
+    )
 
     if TYPE_CHECKING:
         download_id: UUID
+        torrent_file_id: UUID | None
         playback_positions: fields.ReverseRelation[PlaybackPosition]
 
     def __str__(self) -> str:

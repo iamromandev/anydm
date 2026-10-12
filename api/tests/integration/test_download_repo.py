@@ -100,7 +100,11 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
     ]
     assert first.total_size == 10
 
-    # Removed, then added again from another magnet: the same torrent, one row.
+    # Each download's File points at the torrent's own row for that file.
+    parts = {part.index: part.id for part in await TorrentFile.filter(torrent=torrent)}
+    assert {f.index: f.torrent_file_id for f in await File.filter(download_id=first.id)} == parts
+
+    # Removed, then added again from another magnet: the same torrent and files, a source of its own.
     await Download.filter(id=first.id).update(deleted_at=now())
     assert await repo.by_info_hash("a" * 40) is None
     again = await repo.create_torrent(
@@ -112,8 +116,67 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
         files=[(0, "T/x.mkv", 10, True)],
     )
     assert await Torrent.all().count() == 1
+    assert await TorrentFile.filter(torrent=torrent).count() == 2
     found = await repo.by_info_hash("a" * 40)
     assert found is not None and found.id == again.id
+    assert {f.index: f.torrent_file_id for f in await File.filter(download_id=again.id)} == {0: parts[0]}
+
+
+@pytest.mark.asyncio
+async def test_two_links_for_one_torrent_are_two_sources_of_it() -> None:
+    repo = DownloadDatabaseRepo()
+    magnet = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "b" * 40,
+        info_hash="b" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+    await Download.filter(id=magnet.id).update(deleted_at=now())
+    by_file = await repo.create_torrent(
+        url="https://tracker.example/x.torrent",
+        info_hash="b" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+
+    torrent = await Torrent.get(info_hash="b" * 40)
+    sources = await Source.filter(torrent_id=torrent.id).prefetch_related("url")
+    assert sorted(source.url.value for source in sources) == [
+        "https://tracker.example/x.torrent",
+        "magnet:?xt=urn:btih:" + "b" * 40,
+    ]
+    mirror = await Mirror.get(download_id=by_file.id).prefetch_related("source__url")
+    assert mirror.source.url.value == "https://tracker.example/x.torrent"
+    assert mirror.source.torrent_id == torrent.id
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_added_again_adds_only_the_files_it_lacks() -> None:
+    repo = DownloadDatabaseRepo()
+    first = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "c" * 40,
+        info_hash="c" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+    await Download.filter(id=first.id).update(deleted_at=now())
+    await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "c" * 40,
+        info_hash="c" * 40,
+        name="T",
+        total_size=11,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True), (1, "T/x.nfo", 1, False)],
+    )
+
+    torrent = await Torrent.get(info_hash="c" * 40)
+    assert [(f.index, f.path) for f in await TorrentFile.filter(torrent=torrent)] == [(0, "T/x.mkv"), (1, "T/x.nfo")]
 
 
 @pytest.mark.asyncio

@@ -13,25 +13,25 @@ PieceRow = tuple[int, int, str]
 
 class PieceRepo(ABC):
     @abstractmethod
-    async def replace(self, download_id: uuid.UUID, pieces: Sequence[PieceRow]) -> None:
-        """Make the stored piece list exactly ``pieces``.
+    async def ensure(self, download_id: uuid.UUID, pieces: Sequence[PieceRow]) -> None:
+        """Give the download's torrent its piece list, unless it has one.
 
-        Delete then insert, as ``FileRepo.replace``: the list is written once
-        when the torrent is added, and this cannot leave a stale row behind.
+        The list describes the content, so it is written once per torrent: a torrent added
+        again, or reached from a second source, keeps the rows it has.
         """
         ...
 
     @abstractmethod
     async def list_for(self, download_id: uuid.UUID) -> list[Piece]:
-        """Every piece row, in index order."""
+        """The torrent's piece rows, in index order."""
         ...
 
     @abstractmethod
-    async def complete(self, download_id: uuid.UUID, indexes: Sequence[int]) -> None:
-        """Mark ``indexes`` completed, counting each piece's full size as downloaded.
+    async def bitmap(self, download_id: uuid.UUID) -> bytes | None:
+        """Which pieces the download has, one bit each in rqbit's order; none until it is first saved."""
+        ...
 
-        One batched write for the whole set: this runs every monitor tick, and
-        a write per piece per tick would be the database absorbing the full
-        transfer rate.
-        """
+    @abstractmethod
+    async def save_bitmap(self, download_id: uuid.UUID, bitmap: bytes) -> None:
+        """Record which pieces the download has. One write, whatever the number of pieces."""
         ...

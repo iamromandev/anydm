@@ -8,7 +8,6 @@ import pytest
 from src.core.error import Error
 from src.core.type import Code
 from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Platform
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.media.sidecar import TorrentFile
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.mapping import bitmap_from
@@ -358,16 +357,16 @@ async def test_a_torrent_file_upload_stores_a_magnet_for_its_info_hash() -> None
 
 
 @pytest.mark.asyncio
-async def test_enqueue_writes_one_pending_piece_row_per_piece_from_a_pasted_file() -> None:
+async def test_enqueue_writes_one_piece_row_per_piece_from_a_pasted_file() -> None:
     client, pieces = FakeTorrentClient(), MemoryPieces()
 
     await _service(client, pieces=pieces).enqueue(base64.b64encode(_torrent_bytes()).decode(), [])
 
     assert client.metadata == []
-    (download_id,) = pieces.replaced
-    assert [(p.index, p.size, p.hash, p.status) for p in pieces.by_download[download_id]] == [
-        (0, 512, "01" * 20, PieceStatus.PENDING),
-        (1, 488, "02" * 20, PieceStatus.PENDING),
+    (download_id,) = pieces.ensured
+    assert [(p.index, p.size, p.hash) for p in pieces.by_download[download_id]] == [
+        (0, 512, "01" * 20),
+        (1, 488, "02" * 20),
     ]
 
 
@@ -378,9 +377,8 @@ async def test_enqueue_reads_piece_rows_from_the_engine_for_a_magnet() -> None:
     await _service(client, pieces=pieces).enqueue(MAGNET, [])
 
     assert client.metadata == ["abc123"]
-    (download_id,) = pieces.replaced
+    (download_id,) = pieces.ensured
     assert [(p.index, p.size) for p in pieces.by_download[download_id]] == [(0, 512), (1, 488)]
-    assert {p.status for p in pieces.by_download[download_id]} == {PieceStatus.PENDING}
 
 
 @pytest.mark.asyncio
@@ -405,11 +403,8 @@ async def test_enqueue_is_unavailable_when_torrents_are_disabled() -> None:
 async def test_pieces_map_returns_the_compact_bitmap() -> None:
     repo, pieces = FakeDownloadRepo(), MemoryPieces()
     row = _torrent_row(repo)
-    pieces.by_download[row.id] = [
-        piece_row(0, 512, status=PieceStatus.COMPLETED),
-        piece_row(1, 512),
-        piece_row(2, 88, status=PieceStatus.COMPLETED),
-    ]
+    pieces.by_download[row.id] = [piece_row(0, 512), piece_row(1, 512), piece_row(2, 88)]
+    pieces.bitmaps[row.id] = bitmap_from([0, 2], 3)
 
     data = await _service(repo=repo, pieces=pieces).pieces_map(row.id)
 
@@ -444,7 +439,7 @@ async def test_a_pasted_file_that_is_not_a_torrent_fails_before_anything_is_crea
 
     assert caught.value.code == Code.BAD_REQUEST
     assert client.resolved == [] and client.added == []
-    assert repo.created == [] and pieces.replaced == []
+    assert repo.created == [] and pieces.ensured == []
 
 
 @pytest.mark.asyncio
@@ -462,7 +457,7 @@ async def test_a_metadata_failure_for_a_magnet_creates_no_row() -> None:
 @pytest.mark.asyncio
 async def test_a_piece_write_failure_cancels_the_new_download_and_forgets_the_engine_torrent() -> None:
     class FailingPieces(MemoryPieces):
-        async def replace(self, download_id: uuid.UUID, pieces: Any) -> None:
+        async def ensure(self, download_id: uuid.UUID, pieces: Any) -> None:
             raise torrent_error.engine_unavailable("db gone")
 
     client, repo = FakeTorrentClient(), FakeDownloadRepo()
@@ -767,3 +762,14 @@ async def test_an_unknown_category_refuses_a_torrent_before_the_engine_is_asked(
 
     assert int(raised.value.code) == 422
     assert client.added == []
+
+
+@pytest.mark.asyncio
+async def test_a_paused_torrent_with_no_saved_bitmap_has_an_empty_map_of_the_right_length() -> None:
+    repo, pieces = FakeDownloadRepo(), MemoryPieces()
+    row = _torrent_row(repo)
+    pieces.by_download[row.id] = [piece_row(index, 512) for index in range(10)]
+
+    data = await _service(repo=repo, pieces=pieces).pieces_map(row.id)
+
+    assert (data.count, data.done) == (10, base64.b64encode(bytes(2)).decode())
