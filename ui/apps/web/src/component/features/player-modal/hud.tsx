@@ -1,4 +1,3 @@
-import { component$ } from "@qwik.dev/core";
 import { swarmStatsView } from "./swarm-stats";
 import "./hud.css";
 
@@ -15,57 +14,55 @@ export interface PlayerHudProps {
     bufferedPercent: number;
 }
 
-export const PlayerHud = component$<PlayerHudProps>(
-    ({
-        connecting,
+export function PlayerHud({
+    connecting,
+    peersConnected,
+    downloadBps,
+    progressBytes,
+    totalBytes,
+    bufferedPercent,
+}: PlayerHudProps) {
+    const stats = swarmStatsView({
         peersConnected,
         downloadBps,
         progressBytes,
         totalBytes,
-        bufferedPercent,
-    }) => {
-        const stats = swarmStatsView({
-            peersConnected,
-            downloadBps,
-            progressBytes,
-            totalBytes,
-        });
+    });
 
-        return (
-            <div
-                class={`player-hud ${connecting ? "player-hud--connecting" : "player-hud--playing"}`}
-            >
-                <div class="player-hud-row">
-                    <span class="player-hud-label">Peers</span>
-                    <span class="player-hud-value">{stats.peersLabel}</span>
-                </div>
-                <div class="player-hud-row">
-                    <span class="player-hud-label">Speed</span>
-                    <span class="player-hud-value">{stats.speedLabel}</span>
-                </div>
-                <div class="player-hud-row">
-                    <span class="player-hud-label">Downloaded</span>
-                    <span class="player-hud-value">{stats.percent}%</span>
-                </div>
-                <div class="player-hud-bar">
-                    <div
-                        class="player-hud-bar-fill"
-                        style={{ width: `${stats.percent}%` }}
-                    />
-                </div>
-                {stats.etaLabel && (
-                    <div class="player-hud-row">
-                        <span class="player-hud-label">ETA</span>
-                        <span class="player-hud-value">{stats.etaLabel}</span>
-                    </div>
-                )}
-                <div class="player-hud-buffered-bar">
-                    <div
-                        class="player-hud-buffered-bar-fill"
-                        style={{ width: `${bufferedPercent}%` }}
-                    />
-                </div>
+    return (
+        <div
+            className={`player-hud ${connecting ? "player-hud--connecting" : "player-hud--playing"}`}
+        >
+            <div className="player-hud-row">
+                <span className="player-hud-label">Peers</span>
+                <span className="player-hud-value">{stats.peersLabel}</span>
             </div>
-        );
-    },
-);
+            <div className="player-hud-row">
+                <span className="player-hud-label">Speed</span>
+                <span className="player-hud-value">{stats.speedLabel}</span>
+            </div>
+            <div className="player-hud-row">
+                <span className="player-hud-label">Downloaded</span>
+                <span className="player-hud-value">{stats.percent}%</span>
+            </div>
+            <div className="player-hud-bar">
+                <div
+                    className="player-hud-bar-fill"
+                    style={{ width: `${stats.percent}%` }}
+                />
+            </div>
+            {stats.etaLabel && (
+                <div className="player-hud-row">
+                    <span className="player-hud-label">ETA</span>
+                    <span className="player-hud-value">{stats.etaLabel}</span>
+                </div>
+            )}
+            <div className="player-hud-buffered-bar">
+                <div
+                    className="player-hud-buffered-bar-fill"
+                    style={{ width: `${bufferedPercent}%` }}
+                />
+            </div>
+        </div>
+    );
+}

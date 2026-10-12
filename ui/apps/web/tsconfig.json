@@ -48,7 +48,6 @@
     "exclude": [
         "node_modules",
         "src/component/layouts/app-shell",
-        "src/component/features/player-modal",
         "src/route/index.tsx"
     ]
 }
