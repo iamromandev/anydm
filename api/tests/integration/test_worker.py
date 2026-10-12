@@ -124,7 +124,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
     assert (row.status, row.downloaded_size, row.total_size) == (DownloadStatus.COMPLETED, 500, 500)
     # One try through its one mirror, completed with every byte.
     attempt = await Attempt.get(mirror__download_id=row.id)
-    assert (attempt.status, attempt.downloaded_bytes, attempt.completed_at is not None) == (
+    assert (attempt.status, attempt.downloaded_size, attempt.completed_at is not None) == (
         AttemptStatus.COMPLETED,
         500,
         True,

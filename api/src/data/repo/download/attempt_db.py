@@ -27,7 +27,7 @@ class AttemptDatabaseRepo(AttemptRepo):
         download = await Download.get_or_none(id=opened.download_id)
         size = download.downloaded_size if download is not None else opened.started_size
         await Attempt.filter(id=opened.attempt_id).update(
-            status=status, completed_at=now(), downloaded_bytes=max(0, size - opened.started_size)
+            status=status, completed_at=now(), downloaded_size=max(0, size - opened.started_size)
         )
 
     async def spare(self, opened: Opened) -> bool:

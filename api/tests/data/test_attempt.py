@@ -7,7 +7,7 @@ from tortoise.fields.relational import ForeignKeyFieldInstance
 
 def test_attempt_has_the_schema_columns() -> None:
     names = set(Attempt._meta.db_fields)
-    assert {"status", "started_at", "completed_at", "downloaded_bytes", "created_at", "updated_at"} <= names
+    assert {"status", "started_at", "completed_at", "downloaded_size", "created_at", "updated_at"} <= names
     assert "mirror" in Attempt._meta.fk_fields
     assert "deleted_at" not in names
 
@@ -46,8 +46,8 @@ def test_attempt_columns_and_defaults() -> None:
     assert isinstance(fields_map["started_at"], fields.DatetimeField)
     assert isinstance(fields_map["completed_at"], fields.DatetimeField)
     assert fields_map["completed_at"].null is True
-    assert isinstance(fields_map["downloaded_bytes"], fields.BigIntField)
-    assert fields_map["downloaded_bytes"].default == 0
+    assert isinstance(fields_map["downloaded_size"], fields.BigIntField)
+    assert fields_map["downloaded_size"].default == 0
 
 
 def test_attempt_meta_is_transfer() -> None:

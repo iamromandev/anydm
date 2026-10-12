@@ -127,7 +127,7 @@ async def test_a_tick_writes_the_sizes_onto_the_download_its_files_and_its_torre
 
     await row.refresh_from_db()
     assert (row.downloaded_size, row.total_size, row.uploaded_size) == (300, 900, 40)
-    assert (await Torrent.get(info_hash=HASH)).total_bytes == 900
+    assert (await Torrent.get(info_hash=HASH)).total_size == 900
     files = await FileDatabaseRepo().list_for(row.id)
     assert [file.downloaded_bytes for file in files] == [300, 0]
 

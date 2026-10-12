@@ -92,7 +92,7 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
 
     assert await repo.by_info_hash("a" * 40) is not None
     torrent = await Torrent.get(info_hash="a" * 40)
-    assert (torrent.name, torrent.total_bytes) == ("T", 10)
+    assert (torrent.name, torrent.total_size) == ("T", 10)
     assert sorted(await TorrentFile.filter(torrent=torrent).values_list("path", flat=True)) == ["T/x.mkv", "T/x.nfo"]
     assert [(f.index, f.filename, f.selected) for f in await File.filter(download_id=first.id).order_by("index")] == [
         (0, "x.mkv", True),

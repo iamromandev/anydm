@@ -8,7 +8,7 @@ from tortoise.fields.relational import ForeignKeyFieldInstance
 
 def test_torrent_has_the_schema_columns() -> None:
     names = set(Torrent._meta.db_fields)
-    assert {"name", "info_hash", "total_bytes", "created_at", "updated_at"} <= names
+    assert {"name", "info_hash", "total_size", "created_at", "updated_at"} <= names
     assert "source" not in Torrent._meta.fields_map
     assert "deleted_at" not in names
 
@@ -35,8 +35,8 @@ def test_torrent_columns() -> None:
 
     fields_map = Torrent._meta.fields_map
     assert isinstance(fields_map["name"], fields.CharField)
-    assert isinstance(fields_map["total_bytes"], fields.BigIntField)
-    assert fields_map["total_bytes"].null is True
+    assert isinstance(fields_map["total_size"], fields.BigIntField)
+    assert fields_map["total_size"].null is True
 
 
 def test_torrent_meta_is_torrent() -> None:

@@ -19,7 +19,7 @@ class Torrent(LinkBase):
 
     name: str = fields.CharField(max_length=500)
     info_hash: str = fields.CharField(max_length=64, unique=True)
-    total_bytes: int | None = fields.BigIntField(null=True)
+    total_size: int | None = fields.BigIntField(null=True)
 
     def __str__(self) -> str:
         return f"[Torrent: {self.name}]"

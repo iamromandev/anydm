@@ -202,7 +202,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         async with in_transaction() as conn:
             torrent = await Torrent.filter(info_hash=info_hash).using_db(conn).first()
             if torrent is None:
-                torrent = await Torrent.create(using_db=conn, name=name, info_hash=info_hash, total_bytes=total_size)
+                torrent = await Torrent.create(using_db=conn, name=name, info_hash=info_hash, total_size=total_size)
             # The link as pasted gets its own source, whether or not the torrent is known: a magnet and a
             # .torrent address for one hash are two sources of one torrent.
             source = await source_row(
@@ -430,7 +430,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         )
 
     async def set_torrent_total(self, info_hash: str, total: int) -> None:
-        await Torrent.filter(info_hash=info_hash).update(total_bytes=total)
+        await Torrent.filter(info_hash=info_hash).update(total_size=total)
 
     async def held_at(self, url: str) -> Download | None:
         held = Download.filter(

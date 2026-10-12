@@ -18,7 +18,7 @@ class Attempt(LinkBase):
     status: AttemptStatus = fields.CharEnumField(
         enum_type=AttemptStatus, default=AttemptStatus.RUNNING
     )
-    downloaded_bytes: int = fields.BigIntField(default=0)
+    downloaded_size: int = fields.BigIntField(default=0)
     started_at: datetime = fields.DatetimeField(auto_now_add=True)
     completed_at: datetime | None = fields.DatetimeField(null=True)
 
