@@ -29,7 +29,7 @@ async def list_categories(manage: Manage) -> Response:
 @router.post(path="/category", response_model=Success[CategorySchema])
 async def create_category(payload: CategoryCreate, manage: Manage) -> Response:
     """Add a category with a folder under DOWNLOAD_DIR. Answers 201."""
-    return Success.created(data=await manage.create(payload.name, payload.folder)).to_resp()
+    return Success.created(data=await manage.create(payload.name, payload.folder, payload.extensions, payload.mime_prefixes)).to_resp()
 
 
 @router.post(path="/category/order", response_model=Success[CategoryListSchema])
@@ -41,7 +41,7 @@ async def order_categories(payload: CategoryOrderRequest, manage: Manage) -> Res
 @router.patch(path="/category/{id}", response_model=Success[CategorySchema])
 async def update_category(id: uuid.UUID, payload: CategoryPatch, manage: Manage) -> Response:
     """Rename a category or point it at another folder. Downloads already placed stay where they are."""
-    return Success.ok(data=await manage.update(id, payload.name, payload.folder)).to_resp()
+    return Success.ok(data=await manage.update(id, payload.name, payload.folder, payload.extensions, payload.mime_prefixes)).to_resp()
 
 
 @router.delete(path="/category/{id}")

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from src.data.repo.category import CategoryRepo, CategoryRow
-from src.data.type import DOWNLOADS_ID, SEEDED_CATEGORIES
+from src.data.type import CATEGORY_RULES, DOWNLOADS_ID, SEEDED_CATEGORIES
 
 
 class FakeCategoryRepo(CategoryRepo):
@@ -15,7 +15,9 @@ class FakeCategoryRepo(CategoryRepo):
             if not seeded:
                 break
             key = DOWNLOADS_ID if slug == "downloads" else uuid.uuid4()
-            self.rows[key] = CategoryRow(key, name, slug, folder, position, slug == "downloads")
+            self.rows[key] = CategoryRow(
+                key, name, slug, folder, position, slug == "downloads", *CATEGORY_RULES.get(slug, ((), ()))
+            )
         #: What ``usage`` answers; tests set it.
         self.counts: dict[uuid.UUID, int] = {}
         self.deleted: list[uuid.UUID] = []
@@ -33,13 +35,29 @@ class FakeCategoryRepo(CategoryRepo):
         wanted = name.strip().lower()
         return next((r for r in self.rows.values() if r.name.lower() == wanted or r.slug == wanted), None)
 
-    async def create(self, name: str, slug: str, folder: str) -> CategoryRow:
-        row = CategoryRow(uuid.uuid4(), name, slug, folder, len(self.rows), False)
+    async def create(
+        self,
+        name: str,
+        slug: str,
+        folder: str,
+        extensions: Sequence[str] = (),
+        mime_prefixes: Sequence[str] = (),
+    ) -> CategoryRow:
+        row = CategoryRow(
+            uuid.uuid4(), name, slug, folder, len(self.rows), False, tuple(extensions), tuple(mime_prefixes)
+        )
         self.rows[row.id] = row
         return row
 
     async def update(
-        self, id: uuid.UUID, *, name: str | None = None, slug: str | None = None, folder: str | None = None
+        self,
+        id: uuid.UUID,
+        *,
+        name: str | None = None,
+        slug: str | None = None,
+        folder: str | None = None,
+        extensions: Sequence[str] | None = None,
+        mime_prefixes: Sequence[str] | None = None,
     ) -> CategoryRow | None:
         row = self.rows.get(id)
         if row is None:
@@ -49,6 +67,8 @@ class FakeCategoryRepo(CategoryRepo):
             name=name if name is not None else row.name,
             slug=slug if slug is not None else row.slug,
             folder=folder if folder is not None else row.folder,
+            extensions=tuple(extensions) if extensions is not None else row.extensions,
+            mime_prefixes=tuple(mime_prefixes) if mime_prefixes is not None else row.mime_prefixes,
         )
         self.rows[id] = row
         return row

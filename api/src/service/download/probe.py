@@ -26,6 +26,8 @@ class Probe:
     total_bytes: int | None
     accepts_ranges: bool
     resolved_url: str
+    #: The server's Content-Type, lowercased and without parameters; none when it sent none.
+    content_type: str | None = None
 
 
 def _total_from_content_range(value: str | None) -> int | None:
@@ -41,12 +43,13 @@ async def probe(client: httpx.AsyncClient, url: str, headers: Mapping[str, str] 
     request_headers = {**(headers or {}), "Range": "bytes=0-0"}
     async with client.stream("GET", url, headers=request_headers, follow_redirects=True) as response:
         resolved = str(response.url)
+        content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower() or None
 
         # 416 means the range was understood and rejected. The size in
         # ``Content-Range`` is still good, but a server this particular is not
         # one to split a download across.
         if response.status_code == 416:
-            return Probe(_total_from_content_range(response.headers.get("content-range")), False, resolved)
+            return Probe(_total_from_content_range(response.headers.get("content-range")), False, resolved, content_type)
 
         if response.status_code >= 400:
             retry_able = response.status_code in _RETRYABLE_STATUSES
@@ -59,7 +62,7 @@ async def probe(client: httpx.AsyncClient, url: str, headers: Mapping[str, str] 
             )
 
         if response.status_code == 206:
-            return Probe(_total_from_content_range(response.headers.get("content-range")), True, resolved)
+            return Probe(_total_from_content_range(response.headers.get("content-range")), True, resolved, content_type)
 
         length = response.headers.get("content-length")
-        return Probe(int(length) if length and length.isdigit() else None, False, resolved)
+        return Probe(int(length) if length and length.isdigit() else None, False, resolved, content_type)

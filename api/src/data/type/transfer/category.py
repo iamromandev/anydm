@@ -28,6 +28,22 @@ SEEDED_CATEGORIES: tuple[tuple[str, str, str], ...] = (
     ("Other", "other", "other"),
 )
 
+#: The audio-only preset's category: a site's MP3 goes here whatever the extension says.
+MUSIC_SLUG = "music"
+
+#: What files a download into a seeded category by itself, by slug: ``(extensions, MIME prefixes)``.
+#: Only where a file type says enough; Movies, TV shows, Audiobooks, Podcasts, Photos, Games and Other
+#: share their types with these and stay manual.
+CATEGORY_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "videos": ((".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv"), ("video/",)),
+    "music": ((".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav"), ("audio/",)),
+    "documents": ((".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".ppt", ".pptx"), ()),
+    "ebooks": ((".epub", ".mobi", ".azw3"), ()),
+    "images": ((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"), ("image/",)),
+    "software": ((".iso", ".exe", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".apk"), ()),
+    "archives": ((".zip", ".rar", ".7z", ".tar", ".gz", ".xz", ".bz2"), ()),
+}
+
 _NOT_WORD = re.compile(r"[^\w]+")
 _RUNS = re.compile(r"_+")
 

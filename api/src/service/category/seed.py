@@ -3,7 +3,7 @@
 import uuid
 
 from src.data.repo.category import CategoryRepo, CategoryRow
-from src.data.type import DOWNLOADS_ID, SEEDED_CATEGORIES
+from src.data.type import CATEGORY_RULES, DOWNLOADS_ID, SEEDED_CATEGORIES
 
 
 async def seed_missing_categories(repo: CategoryRepo) -> int:
@@ -17,6 +17,7 @@ async def seed_missing_categories(repo: CategoryRepo) -> int:
                 folder,
                 position,
                 slug == "downloads",
+                *CATEGORY_RULES.get(slug, ((), ())),
             )
             for position, (name, slug, folder) in enumerate(SEEDED_CATEGORIES)
         ]

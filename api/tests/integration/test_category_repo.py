@@ -127,3 +127,34 @@ async def test_seed_adds_only_the_slugs_not_stored_and_leaves_the_rest() -> None
     assert await repo.get(games.id) == games
     kept = await repo.get(movies.id)
     assert kept is not None and kept.folder == "cinema"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("db")
+async def test_the_seeded_rules_are_stored_and_a_category_keeps_the_rules_it_is_given() -> None:
+    repo = CategoryDatabaseRepo()
+    seeded = {row.slug: row for row in await repo.list_all()}
+    assert ".iso" in seeded["software"].extensions and "video/" in seeded["videos"].mime_prefixes
+    assert seeded["movies"].extensions == () and seeded["downloads"].mime_prefixes == ()
+
+    made = await repo.create("Lectures", "lectures", "edu", [".mkv"], ["video/"])
+    assert (made.extensions, made.mime_prefixes) == ((".mkv",), ("video/",))
+
+    changed = await repo.update(made.id, extensions=[".pdf", ".epub"])
+    assert changed is not None
+    assert (changed.extensions, changed.mime_prefixes) == ((".pdf", ".epub"), ("video/",))
+    cleared = await repo.update(made.id, mime_prefixes=[])
+    assert cleared is not None and cleared.mime_prefixes == ()
+    assert await repo.get(made.id) == cleared
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("db")
+async def test_a_download_is_not_automatic_until_told_so() -> None:
+    from tests.integration.rows import a_download
+
+    plain = await a_download("https://example.com/a.bin")
+    auto = await a_download("https://example.com/b.bin", category_auto=True)
+
+    assert (await Download.get(id=plain.id)).category_auto is False
+    assert (await Download.get(id=auto.id)).category_auto is True

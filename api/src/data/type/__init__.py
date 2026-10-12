@@ -10,10 +10,12 @@ from .torrent import PeerStatus as PeerStatus
 from .torrent import PieceStatus as PieceStatus
 from .torrent import TrackerStatus as TrackerStatus
 from .transfer import ACTIVE_STATUSES as ACTIVE_STATUSES
+from .transfer import CATEGORY_RULES as CATEGORY_RULES
 from .transfer import CONTAINER_KINDS as CONTAINER_KINDS
 from .transfer import DONE_STATUSES as DONE_STATUSES
 from .transfer import DOWNLOAD_GROUPS as DOWNLOAD_GROUPS
 from .transfer import DOWNLOADS_ID as DOWNLOADS_ID
+from .transfer import MUSIC_SLUG as MUSIC_SLUG
 from .transfer import OTHER_FOLDER as OTHER_FOLDER
 from .transfer import SEEDED_CATEGORIES as SEEDED_CATEGORIES
 from .transfer import TODO_STATUSES as TODO_STATUSES

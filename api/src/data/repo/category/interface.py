@@ -16,6 +16,9 @@ class CategoryRow:
     folder: str
     position: int
     builtin: bool
+    #: What files a download here by itself: lowercase extensions with the dot, and Content-Type prefixes.
+    extensions: tuple[str, ...] = ()
+    mime_prefixes: tuple[str, ...] = ()
 
 
 #: The default category as code sees it, without a query.
@@ -42,13 +45,27 @@ class CategoryRepo(ABC):
         ...
 
     @abstractmethod
-    async def create(self, name: str, slug: str, folder: str) -> CategoryRow:
+    async def create(
+        self,
+        name: str,
+        slug: str,
+        folder: str,
+        extensions: Sequence[str] = (),
+        mime_prefixes: Sequence[str] = (),
+    ) -> CategoryRow:
         """A new category, placed after the last one."""
         ...
 
     @abstractmethod
     async def update(
-        self, id: uuid.UUID, *, name: str | None = None, slug: str | None = None, folder: str | None = None
+        self,
+        id: uuid.UUID,
+        *,
+        name: str | None = None,
+        slug: str | None = None,
+        folder: str | None = None,
+        extensions: Sequence[str] | None = None,
+        mime_prefixes: Sequence[str] | None = None,
     ) -> CategoryRow | None:
         """Change what is given; ``None`` when there is no such row."""
         ...

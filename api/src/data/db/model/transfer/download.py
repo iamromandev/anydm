@@ -36,6 +36,8 @@ class Download(Base):
     )
     #: Where its files are, relative to DOWNLOAD_DIR, once they have a place. Null on rows from before categories.
     folder: str | None = fields.TextField(null=True)
+    #: True when nobody chose the category, so it came from the file type and may still be refined (#174).
+    category_auto: bool = fields.BooleanField(default=False, db_default=False)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
     downloaded_size: int = fields.BigIntField(default=0)

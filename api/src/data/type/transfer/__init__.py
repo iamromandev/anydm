@@ -1,5 +1,7 @@
 from .attempt import AttemptStatus as AttemptStatus
+from .category import CATEGORY_RULES as CATEGORY_RULES
 from .category import DOWNLOADS_ID as DOWNLOADS_ID
+from .category import MUSIC_SLUG as MUSIC_SLUG
 from .category import SEEDED_CATEGORIES as SEEDED_CATEGORIES
 from .category import slugify as slugify
 from .download import ACTIVE_STATUSES as ACTIVE_STATUSES

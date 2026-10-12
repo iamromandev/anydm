@@ -72,6 +72,11 @@ class FlushRecordingRepo:
         self._refuse = person_got_there_first
         #: What ``get_active_by_id`` answers, by id: a row a test changed while the try ran.
         self.active: dict[uuid.UUID, Any] = {}
+        #: ``(download id, category id)`` of each ``set_category``.
+        self.categorized: list[tuple[uuid.UUID, uuid.UUID]] = []
+
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
+        self.categorized.append((download_id, category_id))
 
     async def end_try(self, download_id: uuid.UUID, fields: Any, *, over: Any = None) -> bool:
         self.over.append(frozenset(over or ()))
@@ -174,6 +179,7 @@ def worker(
     disk: Any = None,
     fragments: Any = None,
     segments: int = 4,
+    categories: Any = None,
 ) -> DownloadWorker:
     files = files or MemoryFiles()
     live = live or LiveStats()
@@ -198,4 +204,5 @@ def worker(
         totals=totals,
         disk=disk,
         fragments=fragments,
+        categories=categories,
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,7 +23,38 @@ def _view(row: CategoryRow, count: int = 0) -> CategorySchema:
         position=row.position,
         builtin=row.builtin,
         count=count,
+        extensions=list(row.extensions),
+        mime_prefixes=list(row.mime_prefixes),
     )
+
+
+_EXTENSION = re.compile(r"^\.[a-z0-9]+(?:\.[a-z0-9]+)*$")
+_MIME_PREFIX = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9.+-]*$")
+
+
+def clean_extensions(values: Sequence[str]) -> list[str]:
+    """Lowercase, with the dot (`MKV` and `.mkv` are the same), once each, in the order given."""
+    cleaned: list[str] = []
+    for value in values:
+        text = value.strip().lower()
+        text = text if text.startswith(".") else f".{text}"
+        if not _EXTENSION.match(text):
+            raise category_error.bad_extension(value)
+        if text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def clean_mime_prefixes(values: Sequence[str]) -> list[str]:
+    """Lowercase prefixes of a Content-Type; `video/*` means `video/`."""
+    cleaned: list[str] = []
+    for value in values:
+        text = value.strip().lower().removesuffix("*")
+        if not _MIME_PREFIX.match(text):
+            raise category_error.bad_mime_prefix(value)
+        if text not in cleaned:
+            cleaned.append(text)
+    return cleaned
 
 
 class CategoryService:
@@ -36,17 +68,39 @@ class CategoryService:
             categories=[_view(row, counts.get(row.id, 0)) for row in await self._repo.list_all()]
         )
 
-    async def create(self, name: str, folder: str) -> CategorySchema:
+    async def create(
+        self,
+        name: str,
+        folder: str,
+        extensions: Sequence[str] = (),
+        mime_prefixes: Sequence[str] = (),
+    ) -> CategorySchema:
         clean, slug = await self._named(name, None)
-        return _view(await self._repo.create(clean, slug, self._folder(folder)))
+        return _view(
+            await self._repo.create(
+                clean, slug, self._folder(folder), clean_extensions(extensions), clean_mime_prefixes(mime_prefixes)
+            )
+        )
 
-    async def update(self, id: uuid.UUID, name: str | None, folder: str | None) -> CategorySchema:
+    async def update(
+        self,
+        id: uuid.UUID,
+        name: str | None,
+        folder: str | None,
+        extensions: Sequence[str] | None = None,
+        mime_prefixes: Sequence[str] | None = None,
+    ) -> CategorySchema:
         row = await self._require(id)
         if folder is not None and row.builtin and self._folder(folder) != row.folder:
             raise category_error.builtin()
         clean, slug = await self._named(name, row) if name is not None else (None, None)
         updated = await self._repo.update(
-            id, name=clean, slug=slug, folder=self._folder(folder) if folder is not None else None
+            id,
+            name=clean,
+            slug=slug,
+            folder=self._folder(folder) if folder is not None else None,
+            extensions=clean_extensions(extensions) if extensions is not None else None,
+            mime_prefixes=clean_mime_prefixes(mime_prefixes) if mime_prefixes is not None else None,
         )
         assert updated is not None  # it existed a moment ago
         return _view(updated, (await self._repo.usage()).get(id, 0))

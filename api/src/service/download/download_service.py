@@ -33,7 +33,7 @@ from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.entry_plan import plan_fields
 from src.lib.site.format import select_plan
-from src.service.category.pick import pick_category
+from src.service.category.pick import pick_category, pick_or_match
 from src.service.download.collection_service import CollectionService, remove_collection_video_files
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -129,7 +129,9 @@ class DownloadService(BaseService):
         already in the list) fails here, as a 4xx they see immediately. What
         reaches the queue is a decision, not a guess.
         """
-        category = await pick_category(self._categories, category_id)
+        if category_id is not None:
+            # An unknown category fails now, before the extraction; the one a file type picks needs the plan.
+            await pick_category(self._categories, category_id)
         # The link as pasted, before an extraction it would only repeat.
         if not allow_duplicate:
             await self._refuse_held(url)
@@ -146,12 +148,20 @@ class DownloadService(BaseService):
         # minimum alone, and the worker checks again once the probe knows.
         self._require_space(plan.expected_bytes)
         planned = plan_fields(info, plan, preset=preset, title=info.title, number="")
+        category, auto = await pick_or_match(
+            self._categories, category_id, filename=planned.filename, audio_only=preset == Preset.MP3
+        )
         download = await self._repo.create_site(
             # The site's own page for the video, not the link as pasted: a short
             # link and a playlist's entry for the same video are then one address.
             url=page,
             provider=info.extractor,
-            download={"status": DownloadStatus.PENDING, "total_size": planned.total_bytes, "category_id": category.id},
+            download={
+                "status": DownloadStatus.PENDING,
+                "total_size": planned.total_bytes,
+                "category_id": category.id,
+                "category_auto": auto,
+            },
             media={
                 "title": planned.title,
                 "kind": planned.media_kind,
@@ -172,15 +182,19 @@ class DownloadService(BaseService):
     ) -> DownloadSchema:
         """Queue a plain HTTP download — anything that is not a media platform."""
         ensure_fetchable(url)
-        category = await pick_category(self._categories, category_id)
+        if category_id is not None:
+            await pick_category(self._categories, category_id)
         if not allow_duplicate:
             await self._refuse_held(url)
         # The size is not known until a worker probes the source, so only the
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
+        category, auto = await pick_or_match(self._categories, category_id, filename=name)
         download = await self._repo.create_direct(
-            url=url, download={"status": DownloadStatus.PENDING, "category_id": category.id}, filename=name
+            url=url,
+            download={"status": DownloadStatus.PENDING, "category_id": category.id, "category_auto": auto},
+            filename=name,
         )
         self._control.wake()
         return await self._published(download)

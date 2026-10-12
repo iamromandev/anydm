@@ -26,14 +26,17 @@ def _disk(free: int, min_free: int = GIB) -> DiskGuard:
 class FakeEngine:
     """Probes a source of ``total`` bytes, then writes a little and optionally fails."""
 
-    def __init__(self, *, total: int | None = None, fail: BaseException | None = None) -> None:
+    def __init__(
+        self, *, total: int | None = None, fail: BaseException | None = None, content_type: str | None = None
+    ) -> None:
         self.total = total
+        self.content_type = content_type
         self.fail = fail
         self.fetched = 0
 
     async def fetch(self, source: Any, dest: Path, **kwargs: Any) -> int:
         self.fetched += 1
-        await kwargs["on_probe"](self.total)
+        await kwargs["on_probe"](self.total, self.content_type)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"x" * 10)
         if self.fail is not None:

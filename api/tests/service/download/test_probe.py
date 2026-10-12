@@ -87,3 +87,25 @@ async def test_the_format_s_headers_go_with_the_probe_but_range_is_ours() -> Non
         await probe(client, "https://cdn.test/f", headers={"Referer": "https://site.test/", "Range": "bytes=5-"})
 
     assert seen == {"referer": "https://site.test/", "range": "bytes=0-0"}
+
+
+async def test_the_content_type_is_reported_lowercase_without_its_parameters() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            206, content=b"A", headers={"content-range": "bytes 0-0/9", "content-type": "Video/MP4; codecs=avc1"}
+        )
+
+    async with _client(handler) as client:
+        result = await probe(client, "https://cdn.test/f")
+
+    assert result.content_type == "video/mp4"
+
+
+async def test_no_content_type_is_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=httpx.ByteStream(b"x"))
+
+    async with _client(handler) as client:
+        result = await probe(client, "https://cdn.test/f")
+
+    assert result.content_type is None
