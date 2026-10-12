@@ -8,8 +8,8 @@ import { SORT_OPTIONS, type SortValue } from "@/lib/sort";
 import { serverLabel, serverValue } from "./server-value";
 import "./field.css";
 
-/** The server's own configuration, as the API reports it. */
-export type ServerSettings = Record<string, string | number | boolean>;
+import type { ServerSettings } from "@/lib/api/server-settings";
+export type { ServerSettings };
 
 export interface SettingsModalProps {
     open: boolean;
