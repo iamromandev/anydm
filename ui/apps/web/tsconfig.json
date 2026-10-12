@@ -17,7 +17,6 @@
         "incremental": true,
         "isolatedModules": true,
         "jsx": "react-jsx",
-        "jsxImportSource": "@qwik.dev/core",
         "noEmit": true,
         "outDir": "dist",
         "paths": {
@@ -37,11 +36,6 @@
                 "./src/component/features/*"
             ]
         },
-        "plugins": [
-            {
-                "name": "typescript-plugin-css-modules"
-            }
-        ],
         "types": [
             "bun"
         ]
@@ -52,6 +46,36 @@
         "./*.config.ts"
     ],
     "exclude": [
-        "node_modules"
+        "node_modules",
+        "src/component/shared/category-select",
+        "src/component/shared/confirm-dialog",
+        "src/component/shared/segment-bar",
+        "src/component/shared/speed-display",
+        "src/component/shared/theme-toggle",
+        "src/component/shared/toast",
+        "src/component/layouts/app-shell",
+        "src/component/layouts/sidebar",
+        "src/component/layouts/top-toolbar",
+        "src/component/features/add-torrent-modal",
+        "src/component/features/batch-modal",
+        "src/component/features/category-manager",
+        "src/component/features/category-move",
+        "src/component/features/duplicate-notice",
+        "src/component/features/group-card",
+        "src/component/features/hero-input",
+        "src/component/features/player-modal",
+        "src/component/features/playlist-picker",
+        "src/component/features/remove-dialog",
+        "src/component/features/search-view",
+        "src/component/features/settings-modal",
+        "src/component/features/source-modal",
+        "src/component/features/source-view",
+        "src/component/features/start-doors",
+        "src/component/features/stats-view",
+        "src/component/features/status-bar",
+        "src/component/features/status-line",
+        "src/component/features/torrent-card",
+        "src/component/features/torrent-list",
+        "src/route/index.tsx"
     ]
 }
