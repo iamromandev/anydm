@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from src.data.type import MirrorStatus, SourceKind
+from src.data.type import DOWNLOADS_ID, MirrorStatus, SourceKind
 
 
 def a_mirror(url: str, kind: SourceKind, provider: str, *, priority: int = 0) -> SimpleNamespace:
@@ -28,6 +28,8 @@ def a_torrent(info_hash: str, name: str = "T") -> SimpleNamespace:
 
 def a_site_row(url: str, *, provider: str, title: str, kind: Any, preset: Any, **fields: Any) -> SimpleNamespace:
     """A site download or collection container as a read would load it."""
+    fields.setdefault("category", SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""))
+    fields.setdefault("parent_id", None)
     return SimpleNamespace(
         mirrors=[a_mirror(url, SourceKind.SITE, provider)],
         torrent=None,

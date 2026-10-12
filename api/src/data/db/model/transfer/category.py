@@ -11,8 +11,8 @@ class Category(LinkBase):
     """A named save folder. A download is in exactly one; Downloads (``builtin``) is the default.
 
     ``extensions`` and ``mime_prefixes`` are the rules that file a download here by itself (#174).
-    ``folder`` is relative to ``DOWNLOAD_DIR``, ``""`` for its root. Changing it
-    affects downloads added afterwards: a placed download records its own folder.
+    ``folder`` is relative to ``DOWNLOAD_DIR``, ``""`` for its root. Where a download's
+    files are follows from it, so it can't change while the category holds downloads.
     """
 
     name: str = fields.CharField(max_length=64, unique=True)

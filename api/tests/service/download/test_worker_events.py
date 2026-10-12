@@ -116,8 +116,8 @@ async def test_completing_a_collection_video_moves_it_and_records_the_folder(tmp
     work.mkdir()
     (work / "01_Talk.mp4").write_bytes(b"12345")
 
-    destination, folder = await w._into_folder(row, work / "01_Talk.mp4")
-    await w._mark_complete(row, destination, folder)
+    destination = await w._into_folder(row, work / "01_Talk.mp4")
+    await w._mark_complete(row, destination)
 
     assert (tmp_path / "Talks [PL]" / "01_Talk.mp4").read_bytes() == b"12345"
     assert not work.exists()
@@ -136,10 +136,10 @@ async def test_a_standalone_download_moves_flat_into_its_category_folder(tmp_pat
     file = tmp_path / str(row.id) / "a.bin"
     file.write_bytes(b"x")
 
-    destination, folder = await worker(tmp_path, files=files)._into_folder(row, file)
+    destination = await worker(tmp_path, files=files)._into_folder(row, file)
 
     # Downloads is the root of DOWNLOAD_DIR, so the file lands there, and its work folder is gone.
-    assert (destination, folder) == (tmp_path / "a.bin", "")
+    assert destination == tmp_path / "a.bin"
     assert destination.is_file() and not (tmp_path / str(row.id)).exists()
 
 
@@ -157,9 +157,9 @@ async def test_the_category_is_read_again_before_the_file_is_placed(tmp_path: Pa
     file = tmp_path / str(row.id) / "a.bin"
     file.write_bytes(b"x")
 
-    destination, folder = await worker(tmp_path, files=files, repo=repo)._into_folder(row, file)
+    destination = await worker(tmp_path, files=files, repo=repo)._into_folder(row, file)
 
-    assert (destination, folder) == (tmp_path / "music" / "a.bin", "music")
+    assert destination == tmp_path / "music" / "a.bin"
 
 
 @pytest.mark.asyncio
@@ -171,7 +171,7 @@ async def test_a_name_already_taken_in_the_category_gets_the_short_id(tmp_path: 
     file = tmp_path / str(row.id) / "a.bin"
     file.write_bytes(b"x")
 
-    destination, folder = await worker(tmp_path, files=files)._into_folder(row, file)
+    destination = await worker(tmp_path, files=files)._into_folder(row, file)
 
     assert destination == tmp_path / f"a_{str(row.id)[:8]}.bin"
-    assert (tmp_path / "a.bin").read_bytes() == b"older" and folder == ""
+    assert (tmp_path / "a.bin").read_bytes() == b"older"

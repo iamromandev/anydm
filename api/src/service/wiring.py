@@ -143,6 +143,7 @@ def get_download_views() -> DownloadViews:
         live=get_live_stats(),
         max_attempts=get_settings().download_max_attempts,
         attempts=AttemptDatabaseRepo(),
+        downloads=DownloadDatabaseRepo(),
     )
 
 

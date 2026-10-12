@@ -100,3 +100,35 @@ async def test_a_category_in_use_cannot_be_deleted(tmp_path: Path) -> None:
     repo.counts = {}
     await service.delete(music.id)
     assert music.id in repo.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_category_that_holds_downloads_keeps_its_folder_because_their_files_follow_from_it(
+    tmp_path: Path,
+) -> None:
+    repo = FakeCategoryRepo()
+    music = repo.named("music")
+    repo.counts = {music.id: 2}
+    service = _service(tmp_path, repo)
+
+    await _refused(
+        service.update(music.id, None, "elsewhere"),
+        409,
+        "Music still holds 2 downloads, so its folder can't change; move them first",
+    )
+    assert repo.rows[music.id].folder == "music"
+
+    # The same folder written again, and a rename, change nothing under the files: both are allowed.
+    assert (await service.update(music.id, None, "music/")).folder == "music"
+    assert (await service.update(music.id, "Tunes", None)).name == "Tunes"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_category_can_be_pointed_at_another_folder(tmp_path: Path) -> None:
+    repo = FakeCategoryRepo()
+    music = repo.named("music")
+    repo.counts = {}
+
+    updated = await _service(tmp_path, repo).update(music.id, None, "tunes/pop")
+
+    assert updated.folder == "tunes/pop"

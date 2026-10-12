@@ -121,8 +121,8 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
-        """Point one download at a category; ``folder`` is written only when given."""
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID) -> None:
+        """Point one download at a category. Where its files are follows from that."""
         ...
 
     @abstractmethod

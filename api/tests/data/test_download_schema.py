@@ -1,4 +1,4 @@
-"""Download: its folder bucket, status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
+"""Download: its status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
 
 from src.data.db.model.transfer.download import Download
 from src.data.type import DOWNLOADS_ID, DownloadStatus
@@ -7,7 +7,6 @@ from src.data.type import DOWNLOADS_ID, DownloadStatus
 def test_download_has_the_diagram_columns() -> None:
     names = set(Download._meta.db_fields)
     assert {
-        "folder",
         "status",
         "total_size",
         "downloaded_size",
@@ -55,7 +54,6 @@ def test_download_required_vs_nullable() -> None:
     for name in ("category", "status", "downloaded_size", "uploaded_size", "priority", "attempts"):
         assert fields_map[name].null is False, name
     for name in (
-        "folder",
         "total_size",
         "speed_limit",
         "started_at",
@@ -71,7 +69,6 @@ def test_download_column_types_and_lengths() -> None:
     assert getattr(fields_map["status"], "enum_type", None) is DownloadStatus
     from tortoise import fields
 
-    assert isinstance(fields_map["folder"], fields.TextField)
     assert isinstance(fields_map["total_size"], fields.BigIntField)
     assert isinstance(fields_map["downloaded_size"], fields.BigIntField)
     assert isinstance(fields_map["uploaded_size"], fields.BigIntField)

@@ -37,6 +37,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
+from src.service.download.paths import folder_of
 from src.service.download.views import DownloadViews, pieces_frame
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
 
@@ -137,10 +138,10 @@ class TorrentService(BaseService):
             self._disk.require(total_bytes)
 
         # A folder of its own, under the category's: rqbit writes into exactly
-        # this folder, not one named after the torrent inside it (#107). Recorded
-        # on the row, so a later change to the category's folder can't lose it.
+        # this folder, not one named after the torrent inside it (#107). Where it
+        # is is derived from the category and the torrent, so a category's folder
+        # can't change while it holds downloads.
         folder = torrent_folder(inside(self._downloads, category.folder), details.name, details.info_hash)
-        relative = folder.relative_to(self._downloads).as_posix()
         await self._client.add(
             source,
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
@@ -158,7 +159,7 @@ class TorrentService(BaseService):
             info_hash=details.info_hash,
             name=details.name,
             total_size=total_bytes,
-            download={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": relative},
+            download={"status": DownloadStatus.PENDING, "category_id": category.id},
             files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
         # The piece map starts here, not on the monitor's first tick: a
@@ -213,7 +214,7 @@ class TorrentService(BaseService):
         Publishing here is what makes a torrent appear in every open browser
         the moment it is added, rather than on the monitor's next tick.
         """
-        schema = await self._views.one(download, folder=self._relative_folder(download))
+        schema = await self._views.one(download)
         self._hub.publish("download", schema.to_json())
         return schema
 
@@ -286,14 +287,8 @@ class TorrentService(BaseService):
         await self._published(download)
 
     def _folder(self, download: Any) -> Path:
-        """The torrent's folder on disk, as recorded when it was added (migration 0009 records the older ones)."""
-        if download.folder is None:
-            raise Error.internal(message=f"Torrent {download.id} has no recorded folder")
-        return inside(self._downloads, download.folder)
-
-    def _relative_folder(self, download: Any) -> str:
-        """The torrent's folder relative to the download root, for its schema."""
-        return download.folder or ""
+        """The torrent's folder on disk: under its category's, named from the torrent."""
+        return inside(self._downloads, folder_of(download) or "")
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.

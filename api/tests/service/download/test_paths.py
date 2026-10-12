@@ -1,7 +1,12 @@
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
-from src.service.download.paths import collection_relpath, final_path, part_path, work_dir
+from src.data.type import DownloadStatus, MediaKind, Platform, Preset
+from src.service.download.paths import collection_relpath, container_folder, final_path, folder_of, part_path, work_dir
+
+from tests.service.download.described_rows import a_site_row
+from tests.service.download.memory import download_row
 
 
 def test_a_collection_with_no_folder_sits_at_the_root() -> None:
@@ -34,28 +39,64 @@ def test_final_path_strips_directory_components_from_the_filename() -> None:
     assert path.name == "passwd"
 
 
-def test_a_stored_collection_folder_wins_over_the_derived_one() -> None:
-    from types import SimpleNamespace
-
-    from src.service.download.paths import container_folder
-
-    stored = SimpleNamespace(folder="music/Talks [PL1]", id=uuid.uuid4())
-    assert container_folder(stored) == "music/Talks [PL1]"
+def _category(folder: str) -> SimpleNamespace:
+    return SimpleNamespace(id=uuid.uuid4(), name="Music", folder=folder)
 
 
-def test_a_standalone_download_is_where_its_row_says_or_its_id_folder_from_before_categories() -> None:
-    from types import SimpleNamespace
+def test_a_collection_is_under_its_categorys_folder_named_from_its_title_and_id() -> None:
+    playlist = a_site_row(
+        "https://www.youtube.com/playlist?list=PL1",
+        provider="Youtube",
+        title="Talks",
+        kind=MediaKind.PLAYLIST,
+        preset=Preset.BEST,
+        category=_category("music"),
+    )
+    assert container_folder(playlist) == "music/Talks [PL1]"
+    assert folder_of(playlist) == "music/Talks [PL1]"
+    root = a_site_row(
+        "https://www.youtube.com/playlist?list=PL1",
+        provider="Youtube",
+        title="Talks",
+        kind=MediaKind.PLAYLIST,
+        preset=Preset.BEST,
+        category=_category(""),
+    )
+    assert folder_of(root) == "Talks [PL1]"
 
-    from src.service.download.paths import placed_folder
 
-    download_id = uuid.UUID(int=7)
-    assert placed_folder(SimpleNamespace(id=download_id, folder="videos")) == "videos"
-    assert placed_folder(SimpleNamespace(id=download_id, folder=None)) == str(download_id)
+def test_a_standalone_download_has_a_place_only_once_it_is_finished_and_it_is_its_categorys_folder() -> None:
+    for status, expected in ((DownloadStatus.DOWNLOADING, None), (DownloadStatus.COMPLETED, "videos")):
+        assert folder_of(download_row(status=status, category=_category("videos"))) == expected
+    # An empty folder is the download root, not an unset one.
+    assert folder_of(download_row(status=DownloadStatus.COMPLETED, category=_category(""))) == ""
 
 
-def test_an_empty_stored_folder_is_the_download_root_not_an_unset_one() -> None:
-    from types import SimpleNamespace
+def test_a_torrent_has_a_folder_of_its_own_under_its_category_from_the_moment_it_is_added() -> None:
+    row = download_row(
+        status=DownloadStatus.PENDING,
+        platform=Platform.TORRENT,
+        url="magnet:?xt=urn:btih:" + "a" * 40,
+        ref_id="a" * 40,
+        title="Release",
+        category=_category("movies"),
+    )
+    assert folder_of(row) == "movies/Release [aaaaaaaa]"
+    assert folder_of(download_row(platform=Platform.TORRENT, ref_id="b" * 40, title="Other", category=_category(""))) == (
+        "Other [bbbbbbbb]"
+    )
 
-    from src.service.download.paths import placed_folder
 
-    assert placed_folder(SimpleNamespace(id=uuid.UUID(int=7), folder="")) == ""
+def test_a_collections_video_is_in_its_collections_folder_and_nowhere_without_it() -> None:
+    playlist = a_site_row(
+        "https://www.youtube.com/playlist?list=PL1",
+        provider="Youtube",
+        title="Talks",
+        kind=MediaKind.PLAYLIST,
+        preset=Preset.BEST,
+        category=_category("music"),
+        id=uuid.uuid4(),
+    )
+    video = download_row(parent_id=playlist.id, status=DownloadStatus.COMPLETED, category=_category("videos"))
+    assert folder_of(video, playlist) == "music/Talks [PL1]"
+    assert folder_of(video) is None

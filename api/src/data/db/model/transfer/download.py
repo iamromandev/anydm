@@ -34,7 +34,6 @@ class Download(Base):
     category = fields.ForeignKeyField(
         "model.Category", related_name="downloads", on_delete=fields.RESTRICT, db_index=True, db_default=DOWNLOADS_ID
     )
-    folder: str | None = fields.TextField(null=True)
     #: For a torrent download, the torrent it is a transfer of; none for any other kind.
     torrent = fields.ForeignKeyField("model.Torrent", related_name="downloads", null=True, on_delete=fields.SET_NULL)
     #: For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known.

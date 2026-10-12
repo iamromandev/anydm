@@ -2,6 +2,7 @@ import base64
 import uuid
 from collections import namedtuple
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -119,6 +120,8 @@ class FakeDownloadRepo:
         self.rows: dict[uuid.UUID, Any] = {}
         self.created: list[dict[str, Any]] = []
         self.files: MemoryFiles | None = None
+        #: Set by ``_service``: what a row's category is, as a reload would show it.
+        self.categories: Any = None
 
     async def create_torrent(self, **added: Any) -> Any:
         self.created.append({**added, "files": list(added["files"])})
@@ -131,6 +134,9 @@ class FakeDownloadRepo:
             total_bytes=added["total_size"],
             **added["download"],
         )
+        if self.categories is not None:
+            chosen = self.categories.rows[row.category_id]
+            row.category = SimpleNamespace(id=chosen.id, name=chosen.name, folder=chosen.folder)
         self.rows[row.id] = row
         if self.files is not None:
             await self.files.replace(row.id, added["files"])
@@ -159,6 +165,7 @@ def _service(
     repo = repo or FakeDownloadRepo()
     files = files or MemoryFiles()
     repo.files = files
+    repo.categories = categories
     live = live or LiveStats()
     return TorrentService(
         repo=repo,  # ty: ignore[invalid-argument-type]
@@ -193,8 +200,6 @@ def _torrent_row(repo: FakeDownloadRepo, **overrides: Any) -> Any:
         "total_bytes": 1000,
         "provider": "torrent",
         "ref_id": "abc123",
-        #: Recorded when the torrent was added: its category's folder, here the root.
-        "folder": "Some Release [abc123]",
     }
     fields.update(overrides)
     row = download_row(**fields)
@@ -281,7 +286,6 @@ async def test_enqueue_adds_to_the_engine_and_records_the_folder_relative_to_the
     assert created["download"] == {
         "status": DownloadStatus.PENDING,
         "category_id": DOWNLOADS_ID,
-        "folder": "Some Release [abc123]",
     }
     assert (created["name"], created["url"], created["info_hash"]) == ("Some Release", MAGNET, "abc123")
     # Only the selected file counts towards the size the UI shows.
@@ -746,7 +750,6 @@ async def test_a_torrent_is_written_under_its_category_and_its_folder_is_recorde
     assert repo.created[0]["download"] == {
         "status": DownloadStatus.PENDING,
         "category_id": videos.id,
-        "folder": "videos/Some Release [abc123]",
     }
     assert schema.folder == "videos/Some Release [abc123]"
 

@@ -455,7 +455,7 @@ async def test_pausing_mid_download_keeps_the_partial_file(db: None, tmp_path: P
     assert (tmp_path / str(row.id) / "video.part").exists()
 
 
-async def test_a_finished_download_lands_in_its_category_and_records_the_folder(db: None, tmp_path: Path) -> None:
+async def test_a_finished_download_lands_in_its_categorys_folder(db: None, tmp_path: Path) -> None:
     from src.data.db.model import Category
 
     lectures = await Category.create(name="Lectures", slug="lectures", folder="edu/lectures", position=99)
@@ -468,5 +468,5 @@ async def test_a_finished_download_lands_in_its_category_and_records_the_folder(
     await _run(tmp_path, DownloadControl(), httpx.MockTransport(lambda request: httpx.Response(200, content=BIG)))
 
     await row.refresh_from_db()
-    assert (row.status, row.folder) == (DownloadStatus.COMPLETED, "edu/lectures")
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / "edu" / "lectures" / "f.bin").read_bytes() == BIG

@@ -93,6 +93,11 @@ class CategoryService:
         row = await self._require(id)
         if folder is not None and row.builtin and self._folder(folder) != row.folder:
             raise category_error.builtin()
+        if folder is not None and self._folder(folder) != row.folder:
+            # Where a download's files are follows from its category's folder, so it can't change under them.
+            held = (await self._repo.usage()).get(id, 0)
+            if held:
+                raise category_error.folder_in_use(row.name, held)
         clean, slug = await self._named(name, row) if name is not None else (None, None)
         updated = await self._repo.update(
             id,

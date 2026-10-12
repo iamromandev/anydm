@@ -32,6 +32,7 @@ from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.download.folders import inside
 from src.service.download.live import Live, LiveStats
+from src.service.download.paths import folder_of
 from src.service.download.views import DownloadViews, pieces_frame, progress_frame
 
 
@@ -166,10 +167,8 @@ class TorrentMonitor:
             logger.warning("{}|engine refused the rate limits: {}", self._tag, error.message)
 
     def _folder(self, row: Any) -> Path:
-        """The torrent's folder on disk, as recorded on its row when it was added."""
-        if row.folder is None:
-            raise Error.internal(message=f"Torrent {row.id} has no recorded folder")
-        return inside(self._downloads, row.folder)
+        """The torrent's folder on disk: under its category's, named from the torrent."""
+        return inside(self._downloads, folder_of(row) or "")
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.
@@ -234,8 +233,7 @@ class TorrentMonitor:
 
         # The full snapshot only when the status moved; every tick, the light frame.
         if "status" in changed:
-            folder = row.folder
-            self._hub.publish("download", (await self._views.one(row, folder=folder)).to_json())
+            self._hub.publish("download", (await self._views.one(row)).to_json())
         self._hub.publish(
             "progress",
             progress_frame(

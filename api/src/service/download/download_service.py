@@ -42,7 +42,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
-from src.service.download.paths import container_folder, remove_work_files, standalone_folder
+from src.service.download.paths import folder_of, remove_work_files
 from src.service.download.torrent_service import TorrentService
 from src.service.download.views import DownloadViews
 
@@ -577,29 +577,14 @@ class DownloadService(BaseService):
         if download.parent_id is not None:
             await self._totals.refresh(download.parent_id)
 
-    async def _folder_of(self, download: Any) -> str | None:
-        """The download's folder for its schema: derived when finished, else ``None``."""
-        if download.status != DownloadStatus.COMPLETED:
-            return None
-        if download.folder is not None:
-            return download.folder
-        if download.parent_id is not None:
-            collection = await self._collection_repo.get_active_by_id(download.parent_id)
-            if collection is None:
-                return None
-            return container_folder(collection)
-        return standalone_folder(download.id)
-
     async def _disk_path(self, download: Any, filename: str) -> Path:
-        """The finished file on disk: its recorded folder, else the one derived from before categories."""
-        if download.folder is not None:
-            return inside(self._root, download.folder) / Path(filename).name
+        """The finished file on disk, in the folder its category (or its collection) gives it."""
+        collection = None
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
                 raise Error.not_found(message="Collection not found")
-            return inside(self._root, container_folder(collection)) / Path(filename).name
-        return inside(self._root, standalone_folder(download.id)) / Path(filename).name
+        return inside(self._root, folder_of(download, collection) or "") / Path(filename).name
 
     async def _published(self, download: Any) -> DownloadSchema:
         """Serialise, announce and hand back.
@@ -607,7 +592,7 @@ class DownloadService(BaseService):
         Publishing here rather than only in the worker is what makes a change
         made through the API reach every open browser immediately.
         """
-        schema = await self._views.one(download, folder=await self._folder_of(download))
+        schema = await self._views.one(download)
         self._hub.publish("download", schema.to_json())
         return schema
 

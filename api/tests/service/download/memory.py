@@ -51,7 +51,6 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         provider="http",
         ref_id="x",
         status=DownloadStatus.PENDING,
-        folder=None,
         folder_id=None,
         category_id=DOWNLOADS_ID,
         category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),

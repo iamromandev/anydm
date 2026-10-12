@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from src.data.repo.download.described import describe
+from src.data.type import CONTAINER_KINDS, DownloadStatus, Platform
 from src.lib.folder import collection_dirname
+from src.lib.torrent.folder import torrent_folder
 
 
 def work_dir(root: Path, download_id: uuid.UUID) -> Path:
@@ -49,24 +51,34 @@ def collection_folder(title: str, ref_id: str) -> str:
 
 
 def container_folder(collection: Any) -> str:
-    """A collection's folder: stored since categories, else derived from its title and site id.
+    """A collection's folder: its category's folder, then its own directory named from its title and site id.
 
-    Derived on read only for a collection from before categories, whose row has no folder.
+    Derived, never stored: the same row always names the same directory, which is why a category's
+    folder cannot change while it holds downloads.
     """
-    if getattr(collection, "folder", None) is not None:
-        return collection.folder
     described = describe(collection)
-    return collection_folder(described.title, described.ref)
+    return collection_relpath(collection.category.folder, described.title, described.ref)
 
 
-def standalone_folder(download_id: uuid.UUID) -> str:
-    """Where a standalone download's finished file lived before categories: ``<download_id>``."""
-    return str(download_id)
+def folder_of(download: Any, collection: Any | None = None) -> str | None:
+    """Where a download's files are, relative to ``DOWNLOAD_DIR``; none until it has a place.
 
-
-def placed_folder(download: Any) -> str:
-    """Where a standalone download's file is: its stored folder, else the ``<download_id>`` folder from before categories."""
-    return download.folder if download.folder is not None else standalone_folder(download.id)
+    Derived from its category: a standalone download is placed flat in its category's folder when it
+    completes; a torrent has a folder of its own under it from the moment it is added; a collection's
+    directory is under it too, and a collection's video lives in its collection's (``collection``).
+    """
+    if download.parent_id is not None:
+        return container_folder(collection) if collection is not None else None
+    if getattr(download, "category", None) is None:
+        # Loaded without its category, so there is no telling.
+        return None
+    described = describe(download)
+    if described.media_kind in CONTAINER_KINDS:
+        return container_folder(download)
+    if described.platform == Platform.TORRENT:
+        torrent = download.torrent
+        return torrent_folder(Path(download.category.folder), torrent.name, torrent.info_hash).as_posix()
+    return download.category.folder if download.status == DownloadStatus.COMPLETED else None
 
 
 def short_id(download_id: uuid.UUID) -> str:

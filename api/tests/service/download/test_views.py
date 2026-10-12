@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from src.data.type import DownloadStatus, MediaKind, Preset, SourceKind
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Preset, SourceKind
 from src.service.download.live import Live, LiveStats
 from src.service.download.views import DownloadViews, download_schema, progress_frame
 
@@ -16,6 +16,7 @@ def row(**overrides: Any) -> SimpleNamespace:
         id=uuid.uuid4(),
         mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.SITE, "Youtube")],
         torrent=None,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         uploaded_size=0,
         status=DownloadStatus.DOWNLOADING,
         folder=None,
@@ -125,21 +126,30 @@ async def test_many_batches_and_reads_live_numbers() -> None:
     assert schemas[1].live.speed_bps == 99
 
 
-def test_a_download_shows_its_category_and_its_stored_folder() -> None:
+def test_a_download_shows_its_category_and_the_folder_that_follows_from_it() -> None:
     lectures = SimpleNamespace(id=uuid.uuid4(), name="Lectures", folder="edu")
-    stored = row(status=DownloadStatus.COMPLETED, category=lectures, folder="edu")
+    stored = row(status=DownloadStatus.COMPLETED, category=lectures)
     schema = download_schema(stored, files=[], playback={}, live=Live(), max_attempts=3)
     assert schema.category is not None and (schema.category.id, schema.category.name) == (lectures.id, "Lectures")
     assert schema.folder == "edu"
 
 
-def test_a_stored_folder_shows_before_the_file_lands() -> None:
-    placed = row(status=DownloadStatus.DOWNLOADING, folder="Release [deadbeef]")
-    assert download_schema(placed, files=[], playback={}, live=Live(), max_attempts=3).folder == "Release [deadbeef]"
+def test_a_torrent_shows_its_folder_before_the_file_lands() -> None:
+    torrent = row(
+        status=DownloadStatus.DOWNLOADING,
+        torrent=a_torrent("deadbeefcafe", "Release"),
+        mirrors=[a_mirror("magnet:?xt=urn:btih:deadbeefcafe", SourceKind.TORRENT, "torrent")],
+        media=None,
+        category=SimpleNamespace(id=uuid.uuid4(), name="Videos", folder="videos"),
+    )
+    assert download_schema(torrent, files=[], playback={}, live=Live(), max_attempts=3).folder == (
+        "videos/Release [deadbeef]"
+    )
 
 
 def test_a_row_loaded_without_its_category_has_none() -> None:
     bare = row(status=DownloadStatus.DOWNLOADING)
+    del bare.category
     assert download_schema(bare, files=[], playback={}, live=Live(), max_attempts=3).category is None
 
 

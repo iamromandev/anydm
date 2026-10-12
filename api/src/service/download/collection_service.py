@@ -94,7 +94,7 @@ class CollectionService(BaseService):
         collection = await self._repo.create_with_entries(
             url=request.url,
             provider=provider,
-            collection={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": path},
+            collection={"status": DownloadStatus.PENDING, "category_id": category.id},
             media={
                 "kind": MediaKind.CHANNEL if request.channel_tab else MediaKind.PLAYLIST,
                 "title": request.title,
@@ -177,8 +177,7 @@ class CollectionService(BaseService):
         """One page of a collection's videos, in the order they were added."""
         collection = await self._require(collection_id)
         rows, meta = await self._repo.downloads_page(collection_id, page, page_size)
-        folder = container_folder(collection)
-        return await self._views.many(rows, folders={row.id: folder for row in rows}), meta
+        return await self._views.many(rows, collections={collection.id: collection}), meta
 
     async def pause(self, collection_id: uuid.UUID) -> CollectionSchema:
         collection = await self._require(collection_id)

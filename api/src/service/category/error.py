@@ -62,5 +62,14 @@ def collection_video() -> Error:
     return _unprocessable("Move the collection this video belongs to")
 
 
+def folder_taken(category: str, name: str) -> Error:
+    return Error.conflict(message=f"{category} already holds a folder named {name}; move or rename it first")
+
+
+def folder_in_use(name: str, count: int) -> Error:
+    held = "1 download" if count == 1 else f"{count} downloads"
+    return Error.conflict(message=f"{name} still holds {held}, so its folder can't change; move them first")
+
+
 def collection_running() -> Error:
     return Error.conflict(message="A video in this collection is downloading; move it once that finishes")

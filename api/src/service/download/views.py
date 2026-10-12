@@ -15,7 +15,7 @@ from dataclasses import asdict
 from typing import Any
 
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import AttemptRepo, FileRepo, PositionRepo
+from src.data.repo.download.interface import AttemptRepo, DownloadRepo, FileRepo, PositionRepo
 from src.data.schema.play import PlaybackSchema
 from src.data.schema.transfer import (
     CategoryRefSchema,
@@ -26,9 +26,9 @@ from src.data.schema.transfer import (
     SiteSchema,
     TorrentInfoSchema,
 )
-from src.data.type import CONTAINER_KINDS, DownloadStatus, Platform
+from src.data.type import DownloadStatus
 from src.service.download.live import Live, LiveStats
-from src.service.download.paths import collection_folder, standalone_folder
+from src.service.download.paths import folder_of
 
 
 def percent(downloaded: int, total: int | None) -> int:
@@ -69,19 +69,12 @@ def download_schema(
     playback: Mapping[uuid.UUID, Any],
     live: Live,
     max_attempts: int,
-    folder: str | None = None,
+    collection: Any | None = None,
     error: tuple[str | None, str | None] = (None, None),
 ) -> DownloadSchema:
     described = describe(row, files)
     media = described.media
-    if folder is None:
-        folder = getattr(row, "folder", None)
-    if folder is None and row.status == DownloadStatus.COMPLETED and row.parent_id is None:
-        if described.media_kind in CONTAINER_KINDS:
-            folder = collection_folder(described.title, described.ref)
-        elif described.platform != Platform.TORRENT:
-            folder = standalone_folder(row.id)
-        # Torrents resolve via their service, which knows the download root.
+    folder = folder_of(row, collection)
     return DownloadSchema(
         id=row.id,
         url=described.url,
@@ -207,21 +200,25 @@ class DownloadViews:
         live: LiveStats,
         max_attempts: int,
         attempts: AttemptRepo | None = None,
+        downloads: DownloadRepo | None = None,
     ) -> None:
+        self._downloads = downloads
         self._attempts = attempts
         self._files = files
         self._positions = positions
         self._live = live
         self._max_attempts = max_attempts
 
-    async def one(self, row: Any, *, folder: str | None = None) -> DownloadSchema:
-        (schema,) = await self.many([row], folders={row.id: folder} if folder is not None else None)
+    async def one(self, row: Any, *, collections: Mapping[uuid.UUID, Any] | None = None) -> DownloadSchema:
+        (schema,) = await self.many([row], collections=collections)
         return schema
 
     async def many(
-        self, rows: Sequence[Any], *, folders: Mapping[uuid.UUID, str | None] | None = None
+        self, rows: Sequence[Any], *, collections: Mapping[uuid.UUID, Any] | None = None
     ) -> list[DownloadSchema]:
+        """``collections`` are the collections of any videos among ``rows`` the caller already holds; the rest are read."""
         ids = [row.id for row in rows]
+        owners = await self._owners(rows, collections or {})
         files = await self._files.list_for_downloads(ids)
         playback = await self._positions.by_files([file.id for group in files.values() for file in group])
         errors = await self._errors(rows)
@@ -232,11 +229,20 @@ class DownloadViews:
                 playback=playback,
                 live=self._live.get(row.id),
                 max_attempts=self._max_attempts,
-                folder=(folders or {}).get(row.id),
+                collection=owners.get(row.parent_id) if row.parent_id is not None else None,
                 error=errors.get(row.id, (None, None)),
             )
             for row in rows
         ]
+
+    async def _owners(self, rows: Sequence[Any], held: Mapping[uuid.UUID, Any]) -> dict[uuid.UUID, Any]:
+        """The collection of each video among ``rows``, read in one go for those not already held."""
+        owners = dict(held)
+        missing = {row.parent_id for row in rows if row.parent_id is not None and row.parent_id not in owners}
+        if missing and self._downloads is not None:
+            for owner in await self._downloads.by_ids(sorted(missing)):
+                owners[owner.id] = owner
+        return owners
 
     async def _errors(self, rows: Sequence[Any]) -> dict[uuid.UUID, tuple[str | None, str | None]]:
         """The newest try's error of each row that is showing one, in a single read."""

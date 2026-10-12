@@ -372,11 +372,8 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             completed=group("completed"),
         )
 
-    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
-        changes: dict[str, Any] = {"category_id": category_id}
-        if folder is not None:
-            changes["folder"] = folder
-        await Download.filter(id=download_id).update(**changes)
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID) -> None:
+        await Download.filter(id=download_id).update(category_id=category_id)
 
     async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:
         if not ids:
