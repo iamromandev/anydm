@@ -26,11 +26,9 @@ from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
 from src.data.schema.torrent import FileSchema, PiecesMapSchema, TorrentResolveResponse
 from src.data.schema.transfer import DownloadSchema
 from src.data.type import DownloadStatus
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
 from src.lib.media.sidecar import Sidecar, SidecarSource, TorrentFile, match_sidecars
 from src.lib.torrent.folder import torrent_folder
-from src.lib.torrent.mapping import bitmap_from
 from src.lib.torrent.metadata import piece_specs
 from src.lib.torrent.protocol import TorrentClient, TorrentDetails
 from src.lib.torrent.source import parse_source
@@ -39,6 +37,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
+from src.service.download.paths import folder_of
 from src.service.download.views import DownloadViews, pieces_frame
 from src.service.stream.torrent_source import MEDIA_EXTENSIONS
 
@@ -139,10 +138,10 @@ class TorrentService(BaseService):
             self._disk.require(total_bytes)
 
         # A folder of its own, under the category's: rqbit writes into exactly
-        # this folder, not one named after the torrent inside it (#107). Recorded
-        # on the row, so a later change to the category's folder can't lose it.
+        # this folder, not one named after the torrent inside it (#107). Where it
+        # is is derived from the category and the torrent, so a category's folder
+        # can't change while it holds downloads.
         folder = torrent_folder(inside(self._downloads, category.folder), details.name, details.info_hash)
-        relative = folder.relative_to(self._downloads).as_posix()
         await self._client.add(
             source,
             only_files=sorted(selected) if len(selected) != len(details.files) else [],
@@ -160,15 +159,13 @@ class TorrentService(BaseService):
             info_hash=details.info_hash,
             name=details.name,
             total_size=total_bytes,
-            download={"status": DownloadStatus.PENDING, "category_id": category.id, "folder": relative},
+            download={"status": DownloadStatus.PENDING, "category_id": category.id},
             files=[(file.index, file.path, file.size_bytes, file.index in selected) for file in details.files],
         )
         # The piece map starts here, not on the monitor's first tick: a
         # restart therefore finds rows to load rather than an empty table.
         try:
-            await self._piece_repo.replace(
-                download.id, [(spec.index, spec.size, spec.hash) for spec in specs]
-            )
+            await self._piece_repo.ensure(download.id, [(spec.index, spec.size, spec.hash) for spec in specs])
         except Error:
             # A row without its pieces is a download that can never show a
             # map: take it back down, engine torrent and all, then report.
@@ -179,18 +176,18 @@ class TorrentService(BaseService):
     async def pieces_map(self, download_id: uuid.UUID) -> PiecesMapSchema:
         """The piece map, compact: one base64 bitmap, not one object per piece.
 
-        Built from the stored rows, so a paused torrent still has its map —
+        Built from what is stored, so a paused torrent still has its map —
         the engine only answers for torrents it is running.
         """
         download = await self._require(download_id)
         rows = await self._piece_repo.list_for(download.id)
+        stored = await self._piece_repo.bitmap(download.id) or b""
+        size = (len(rows) + 7) // 8
         frame = pieces_frame(
             download.id,
             piece_size=rows[0].size if rows else 0,
             count=len(rows),
-            bitmap=bitmap_from(
-                [row.index for row in rows if row.status == PieceStatus.COMPLETED], len(rows)
-            ),
+            bitmap=stored if len(stored) == size else bytes(size),
         )
         return PiecesMapSchema(
             piece_size=frame["piece_size"], count=frame["count"], done=frame["done"], downloading=[]
@@ -217,7 +214,7 @@ class TorrentService(BaseService):
         Publishing here is what makes a torrent appear in every open browser
         the moment it is added, rather than on the monitor's next tick.
         """
-        schema = await self._views.one(download, folder=self._relative_folder(download))
+        schema = await self._views.one(download)
         self._hub.publish("download", schema.to_json())
         return schema
 
@@ -246,9 +243,7 @@ class TorrentService(BaseService):
         # the engine is moving bytes the moment it is started. The next monitor
         # tick corrects this to whatever the engine actually reports.
         download.status = DownloadStatus.DOWNLOADING
-        download.error = None
-        download.error_code = None
-        await download.save(update_fields=["status", "error", "error_code"])
+        await download.save(update_fields=["status"])
         return await self._published(download)
 
     async def stop_seeding(self, download_id: uuid.UUID) -> DownloadSchema:
@@ -292,14 +287,8 @@ class TorrentService(BaseService):
         await self._published(download)
 
     def _folder(self, download: Any) -> Path:
-        """The torrent's folder on disk, as recorded when it was added (migration 0009 records the older ones)."""
-        if download.folder is None:
-            raise Error.internal(message=f"Torrent {download.id} has no recorded folder")
-        return inside(self._downloads, download.folder)
-
-    def _relative_folder(self, download: Any) -> str:
-        """The torrent's folder relative to the download root, for its schema."""
-        return download.folder or ""
+        """The torrent's folder on disk: under its category's, named from the torrent."""
+        return inside(self._downloads, folder_of(download) or "")
 
     async def resolve_file(self, download_id: uuid.UUID, index: int) -> tuple[Path, str, str]:
         """One finished file out of a torrent, by its index.

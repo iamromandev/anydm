@@ -1,6 +1,6 @@
 """TorrentFile: one file inside a torrent, its path and its size."""
 
-from src.data.db.model.torrent.torrent import TorrentFile
+from src.data.db.model.transfer.torrent import TorrentFile
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
@@ -32,4 +32,4 @@ def test_torrent_file_columns() -> None:
 
 def test_torrent_file_meta_is_torrent() -> None:
     assert TorrentFile.Meta.table == "torrent_file"
-    assert TorrentFile.Meta.schema == "torrent"
+    assert TorrentFile.Meta.schema == "transfer"

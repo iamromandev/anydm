@@ -4,13 +4,13 @@ from typing import Any
 import pytest
 from src.core.error import Error
 from src.data.type import DownloadStatus, Platform
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.torrent import error as torrent_error
 from src.lib.torrent.protocol import TorrentProgress
 from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_monitor import TorrentMonitor
 
 from tests.service.download.memory import MemoryFiles, MemoryPieces, RecordingHub, download_row, memory_views
+from tests.service.download.workers import FakeAttempts
 
 HASH = "abc"
 
@@ -126,6 +126,7 @@ def _monitor(
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
     clock: Any = None,
+    attempts: Any = None,
 ) -> TorrentMonitor:
     files = files or MemoryFiles()
     live = live or LiveStats()
@@ -143,6 +144,7 @@ def _monitor(
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
         clock=clock,
+        attempts=attempts,
     )
 
 
@@ -186,11 +188,15 @@ async def test_a_finished_torrent_becomes_seeding_and_is_stamped() -> None:
 async def test_an_errored_torrent_carries_the_engine_message() -> None:
     row = _row(status=DownloadStatus.DOWNLOADING)
     sample = _sample(state="error", error="no space left on device")
+    attempts = FakeAttempts()
 
-    await _monitor([row], FakeClient([sample])).tick()
+    await _monitor([row], FakeClient([sample]), attempts=attempts).tick()
 
     assert row.status == DownloadStatus.FAILED
-    assert row.error == "no space left on device"
+    # A torrent has no tries of its own, so the reason is recorded as one, once.
+    assert attempts.failures == [(row.id, "no space left on device", None)]
+    await _monitor([row], FakeClient([sample]), attempts=attempts).tick()
+    assert len(attempts.failures) == 1
 
 
 @pytest.mark.asyncio
@@ -335,13 +341,12 @@ def _bitmap(*done: int, count: int = 8) -> tuple[bytes, int]:
 
 
 def _seeded(pieces: MemoryPieces, row: Any, *done: int, count: int = 8) -> None:
-    """Piece rows as ``enqueue`` would have written them, some already done."""
+    """The piece list as ``enqueue`` would have written it, and the bitmap of those already done."""
     from tests.service.download.memory import piece_row
 
-    pieces.by_download[row.id] = [
-        piece_row(index, 100, status=PieceStatus.COMPLETED if index in done else PieceStatus.PENDING)
-        for index in range(count)
-    ]
+    pieces.by_download[row.id] = [piece_row(index, 100) for index in range(count)]
+    if done:
+        pieces.bitmaps[row.id] = _bitmap(*done, count=count)[0]
 
 
 class TestPieceSync:
@@ -354,8 +359,7 @@ class TestPieceSync:
 
         await _monitor([row], client, pieces=pieces).tick()
 
-        assert pieces.completed == [(row.id, [2, 5])]
-        assert [p.index for p in pieces.by_download[row.id] if p.status == PieceStatus.PENDING] == [3, 4, 6, 7]
+        assert pieces.saved == [(row.id, _bitmap(0, 1, 2, 5)[0])]
 
     @pytest.mark.asyncio
     async def test_a_tick_with_no_changes_writes_nothing_and_sends_no_frame(self) -> None:
@@ -367,7 +371,7 @@ class TestPieceSync:
 
         await _monitor([row], client, pieces=pieces, hub=hub).tick()
 
-        assert pieces.completed == []
+        assert pieces.saved == []
         assert hub.named("pieces") == []
 
     @pytest.mark.asyncio
@@ -379,7 +383,7 @@ class TestPieceSync:
 
         await _monitor([row], client, pieces=pieces).tick()
 
-        assert pieces.completed == [(row.id, [2])]
+        assert pieces.saved == [(row.id, _bitmap(0, 2)[0])]
 
     @pytest.mark.asyncio
     async def test_a_new_monitor_after_a_restart_writes_only_the_delta(self) -> None:
@@ -391,7 +395,7 @@ class TestPieceSync:
         await _monitor([row], FakeClient([_sample()], haves=haves), pieces=pieces).tick()
         await _monitor([row], FakeClient([_sample()], haves={HASH: _bitmap(0, 1, 4)}), pieces=pieces).tick()
 
-        assert pieces.completed == [(row.id, [0, 1]), (row.id, [4])]
+        assert pieces.saved == [(row.id, _bitmap(0, 1)[0]), (row.id, _bitmap(0, 1, 4)[0])]
 
     @pytest.mark.asyncio
     async def test_a_paused_torrent_keeps_its_stored_map(self) -> None:
@@ -407,7 +411,7 @@ class TestPieceSync:
         await _monitor([row], client, pieces=pieces, hub=hub).tick()
 
         assert row.status == DownloadStatus.PAUSED
-        assert pieces.completed == []
+        assert pieces.saved == []
         assert hub.named("pieces") == []
         assert client.haves_seen == [HASH]
 
@@ -456,7 +460,7 @@ class TestPieceSync:
 
         await _monitor([row], client, pieces=pieces, hub=hub).tick()
 
-        assert pieces.completed == []
+        assert pieces.saved == []
         assert hub.named("pieces") == []
 
     @pytest.mark.asyncio
@@ -468,8 +472,8 @@ class TestPieceSync:
 
         await _monitor([row], client, pieces=pieces).tick()
 
-        assert len(pieces.completed) == 1
-        assert len(pieces.completed[0][1]) == 6000
+        assert len(pieces.saved) == 1
+        assert pieces.saved[0][1] == _bitmap(*range(6000), count=6000)[0]
 
     @pytest.mark.asyncio
     async def test_rows_a_restart_predates_are_backfilled_from_the_engine(self) -> None:
@@ -487,7 +491,7 @@ class TestPieceSync:
 
         assert client.metadata_seen == [HASH]
         assert [(p.index, p.size) for p in pieces.by_download[row.id]] == [(0, 100), (1, 100), (2, 50)]
-        assert pieces.completed == [(row.id, [0])]
+        assert pieces.saved == [(row.id, _bitmap(0)[0])]
 
     @pytest.mark.asyncio
     async def test_a_failed_backfill_is_retried_on_the_next_tick(self) -> None:
@@ -505,10 +509,10 @@ class TestPieceSync:
 
         await monitor.tick()
         assert row.id not in pieces.by_download
-        assert pieces.completed == []
+        assert pieces.saved == []
 
         client.metadata_fail = None
         await monitor.tick()
 
         assert [(p.index, p.size) for p in pieces.by_download[row.id]] == [(0, 100), (1, 100), (2, 50)]
-        assert pieces.completed == [(row.id, [0])]
+        assert pieces.saved == [(row.id, _bitmap(0)[0])]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,8 +15,8 @@ from src.lib.event import EventHub
 from src.service.category import error as category_error
 from src.service.category.pick import pick_category
 from src.service.download.folders import inside
-from src.service.download.paths import container_folder, placed_folder, short_id
-from src.service.download.placement import move_dir, move_file_with_sidecars
+from src.service.download.paths import collection_relpath, container_folder, folder_of, short_id
+from src.service.download.placement import move_file_with_sidecars
 
 _RUNNING = frozenset({DownloadStatus.DOWNLOADING, DownloadStatus.MUXING})
 
@@ -58,14 +57,10 @@ class CategoryMover:
         if category.id == download.category_id:
             return await self._published(download)
 
-        folder: str | None = None
         if download.status == DownloadStatus.COMPLETED:
-            folder = category.folder
-            await self._move_file(download, folder)
-        await self._downloads.set_category(download.id, category.id, folder)
+            await self._move_file(download, folder_of(download) or "", category.folder)
+        await self._downloads.set_category(download.id, category.id)
         download.category_id = category.id
-        if folder is not None:
-            download.folder = folder
         await download.fetch_related("category")
         return await self._published(download)
 
@@ -79,26 +74,29 @@ class CategoryMover:
         if category.id == collection.category_id:
             return await self._totals.refresh(collection_id)
 
+        described = describe(collection)
         source = inside(self._root, container_folder(collection))
-        parent = inside(self._root, category.folder)
-        if source.parent == parent:
+        target = inside(self._root, collection_relpath(category.folder, described.title, described.ref))
+        if source == target:
             # The two categories share a folder: the collection's directory stays where it is.
-            folder = container_folder(collection)
+            pass
+        elif target.exists():
+            # Where its files are is derived from its category, so it can't be set aside under another name.
+            raise category_error.folder_taken(category.name, target.name)
         elif source.is_dir():
-            folder = self._relative(move_dir(source, parent, short_id(collection.id)))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(target)
         else:
-            target = parent / source.name
             target.mkdir(parents=True, exist_ok=True)
-            folder = self._relative(target)
-        await self._collections.move_rows(collection_id, category.id, folder)
+        await self._collections.move_rows(collection_id, category.id)
         return await self._totals.refresh(collection_id)
 
-    async def _move_file(self, download: Any, folder: str) -> None:
-        """Move the finished file into ``folder``. One already there (a crash after the move) is left as it is."""
+    async def _move_file(self, download: Any, old: str, folder: str) -> None:
+        """Move the finished file from ``old`` into ``folder``. One already there (a crash after the move) is left as it is."""
         file = await self._files.single(download.id)
         if file is None:
             return
-        old_dir = inside(self._root, placed_folder(download))
+        old_dir = inside(self._root, old)
         new_dir = inside(self._root, folder)
         if old_dir == new_dir:
             return
@@ -107,15 +105,8 @@ class CategoryMover:
             moved = move_file_with_sidecars(source, new_dir, short_id(download.id))
             if moved.name != Path(file.path).name:
                 await self._files.rename_single(download.id, moved.name)
-            if download.folder is None:
-                # The ``<download_id>/`` directory from before categories, now empty.
-                with contextlib.suppress(OSError):
-                    old_dir.rmdir()
         elif not (new_dir / Path(file.path).name).is_file():
             raise Error.not_found(message="File is no longer on disk")
-
-    def _relative(self, path: Path) -> str:
-        return path.relative_to(self._root.resolve()).as_posix()
 
     async def _published(self, download: Any) -> DownloadSchema:
         schema = await self._views.one(download)

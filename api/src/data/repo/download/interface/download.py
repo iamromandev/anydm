@@ -18,7 +18,7 @@ from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DownloadStatus
 NOT_CONTAINER = Q(media__id__isnull=True) | Q(media__kind__not_in=list(CONTAINER_KINDS))
 
 #: The relations every read loads, so ``describe`` and a schema need no other query.
-RELATED = ("media", "category", "mirrors__source__url", "mirrors__source__provider", "mirrors__source__torrents")
+RELATED = ("media", "category", "mirrors__source__url", "mirrors__source__provider", "torrent")
 
 
 class DownloadRepo(CrudRepo[Download]):
@@ -59,8 +59,9 @@ class DownloadRepo(CrudRepo[Download]):
     ) -> Download:
         """A download of the torrent ``info_hash``, added from ``url`` (a magnet).
 
-        The ``Torrent`` and its files are recorded once: a known hash reuses its
-        row and its source, so a removed torrent added again is one torrent.
+        The ``Torrent`` and its files are recorded once: a known hash reuses its row, so a removed
+        torrent added again is one torrent. ``url`` gets a ``Source`` of its own, the download points
+        at the torrent, and each of its ``File`` rows points at the torrent's row for that file.
         """
         ...
 
@@ -120,8 +121,8 @@ class DownloadRepo(CrudRepo[Download]):
         ...
 
     @abstractmethod
-    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
-        """Point one download at a category; ``folder`` is written only when given."""
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID) -> None:
+        """Point one download at a category. Where its files are follows from that."""
         ...
 
     @abstractmethod

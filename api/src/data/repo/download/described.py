@@ -57,8 +57,8 @@ def describe(row: Any, files: Any = ()) -> Described:
     url = source.url.value if source is not None else ""
     platform = _PLATFORM[source.kind] if source is not None else (Platform.SITE if media else Platform.DIRECT)
     provider = source.provider.name if source is not None else ""
-    torrents = list(source.torrents) if source is not None else []
-    info_hash = torrents[0].info_hash if torrents else None
+    torrent = row.torrent
+    info_hash = torrent.info_hash if torrent is not None else None
 
     if platform == Platform.TORRENT:
         ref = info_hash or ""
@@ -69,7 +69,7 @@ def describe(row: Any, files: Any = ()) -> Described:
 
     title = (
         (media.title if media else "")
-        or (torrents[0].name if torrents else "")
+        or (torrent.name if torrent is not None else "")
         or next((file.filename for file in files), "")
         or _name_of(url)
     )

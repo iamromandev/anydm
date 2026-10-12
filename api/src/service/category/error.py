@@ -29,6 +29,14 @@ def name_meaningless() -> Error:
     return _unprocessable("A category name needs a letter or a digit")
 
 
+def bad_extension(value: str) -> Error:
+    return _unprocessable(f"{value!r} is not a file extension: use letters and digits after a dot, like .mkv")
+
+
+def bad_mime_prefix(value: str) -> Error:
+    return _unprocessable(f"{value!r} is not a Content-Type prefix: use a type like video/ or audio/")
+
+
 def builtin() -> Error:
     return _unprocessable("Downloads is built in: its folder can't change and it can't be deleted")
 
@@ -52,6 +60,15 @@ def torrent() -> Error:
 
 def collection_video() -> Error:
     return _unprocessable("Move the collection this video belongs to")
+
+
+def folder_taken(category: str, name: str) -> Error:
+    return Error.conflict(message=f"{category} already holds a folder named {name}; move or rename it first")
+
+
+def folder_in_use(name: str, count: int) -> Error:
+    held = "1 download" if count == 1 else f"{count} downloads"
+    return Error.conflict(message=f"{name} still holds {held}, so its folder can't change; move them first")
 
 
 def collection_running() -> Error:

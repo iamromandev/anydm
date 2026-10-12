@@ -1,4 +1,4 @@
-"""Download: its folder bucket, status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
+"""Download: its status, sizes, priority, speed cap, retry state, soft delete, and timestamps — nothing else."""
 
 from src.data.db.model.transfer.download import Download
 from src.data.type import DOWNLOADS_ID, DownloadStatus
@@ -7,7 +7,6 @@ from src.data.type import DOWNLOADS_ID, DownloadStatus
 def test_download_has_the_diagram_columns() -> None:
     names = set(Download._meta.db_fields)
     assert {
-        "folder",
         "status",
         "total_size",
         "downloaded_size",
@@ -19,13 +18,11 @@ def test_download_has_the_diagram_columns() -> None:
         "completed_at",
         "updated_at",
         "deleted_at",
-        "error",
-        "error_code",
         "attempts",
         "next_attempt_at",
     } <= names
-    # Its relations: the collection it belongs to, and the category it saves in.
-    assert Download._meta.fk_fields == {"parent", "category"}
+    # Its relations: the collection it belongs to, the category it saves in, and the torrent it transfers.
+    assert Download._meta.fk_fields == {"parent", "category", "torrent"}
 
 
 def test_download_dropped_the_old_columns() -> None:
@@ -57,14 +54,11 @@ def test_download_required_vs_nullable() -> None:
     for name in ("category", "status", "downloaded_size", "uploaded_size", "priority", "attempts"):
         assert fields_map[name].null is False, name
     for name in (
-        "folder",
         "total_size",
         "speed_limit",
         "started_at",
         "completed_at",
         "deleted_at",
-        "error",
-        "error_code",
         "next_attempt_at",
     ):
         assert fields_map[name].null is True, name
@@ -75,7 +69,6 @@ def test_download_column_types_and_lengths() -> None:
     assert getattr(fields_map["status"], "enum_type", None) is DownloadStatus
     from tortoise import fields
 
-    assert isinstance(fields_map["folder"], fields.TextField)
     assert isinstance(fields_map["total_size"], fields.BigIntField)
     assert isinstance(fields_map["downloaded_size"], fields.BigIntField)
     assert isinstance(fields_map["uploaded_size"], fields.BigIntField)
@@ -83,9 +76,8 @@ def test_download_column_types_and_lengths() -> None:
     assert isinstance(fields_map["speed_limit"], fields.BigIntField)
     assert isinstance(fields_map["started_at"], fields.DatetimeField)
     assert isinstance(fields_map["completed_at"], fields.DatetimeField)
-    assert isinstance(fields_map["error"], fields.TextField)
-    assert isinstance(fields_map["error_code"], fields.CharField)
-    assert fields_map["error_code"].max_length == 64
+    # Why a try failed is on the Attempt, not here.
+    assert "error" not in fields_map and "error_code" not in fields_map
     assert isinstance(fields_map["attempts"], fields.IntField)
     assert isinstance(fields_map["next_attempt_at"], fields.DatetimeField)
 

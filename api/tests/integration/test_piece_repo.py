@@ -1,8 +1,9 @@
-"""``PieceDatabaseRepo`` against Postgres: batched replace, listing, and the one batched completion write."""
+"""``PieceDatabaseRepo`` against Postgres: a torrent's piece list is written once, a download's bitmap is one value."""
 
 import pytest
+from src.core.common import now
+from src.data.db.model import Download, Piece
 from src.data.repo import PieceDatabaseRepo
-from src.data.type.torrent.piece import PieceStatus
 
 from tests.integration.rows import a_torrent_download
 
@@ -12,34 +13,49 @@ HASH = "e" * 40
 
 
 @pytest.mark.asyncio
-async def test_replace_is_idempotent_and_ordered() -> None:
+async def test_ensure_writes_the_list_once_and_lists_it_in_order() -> None:
     repo, row = PieceDatabaseRepo(), await a_torrent_download(HASH, name="Release")
-    pieces = [(1, 100, "b" * 40), (0, 512, "a" * 40)]
-    await repo.replace(row.id, pieces)
-    await repo.replace(row.id, pieces)
+    await repo.ensure(row.id, [(1, 100, "b" * 40), (0, 512, "a" * 40)])
+    await repo.ensure(row.id, [(0, 1, "c" * 40)])
+
     assert [(p.index, p.size, p.hash) for p in await repo.list_for(row.id)] == [
         (0, 512, "a" * 40),
         (1, 100, "b" * 40),
     ]
-    assert [p.status for p in await repo.list_for(row.id)] == [PieceStatus.PENDING, PieceStatus.PENDING]
 
 
 @pytest.mark.asyncio
-async def test_completed_pieces_count_their_full_size() -> None:
+async def test_the_bitmap_is_none_until_saved_then_one_value_that_is_replaced() -> None:
     repo, row = PieceDatabaseRepo(), await a_torrent_download(HASH, name="Release")
-    await repo.replace(row.id, [(0, 512, "a" * 40), (1, 512, "b" * 40), (2, 88, "c" * 40)])
+    assert await repo.bitmap(row.id) is None
 
-    await repo.complete(row.id, [2, 0])
-
-    finished = {p.index: p for p in await repo.list_for(row.id)}
-    assert (finished[0].status, finished[0].downloaded_bytes) == (PieceStatus.COMPLETED, 512)
-    assert (finished[2].status, finished[2].downloaded_bytes) == (PieceStatus.COMPLETED, 88)
-    assert finished[1].status == PieceStatus.PENDING
-    assert [p.index for p in await repo.list_for(row.id) if p.status == PieceStatus.COMPLETED] == [0, 2]
+    await repo.save_bitmap(row.id, b"\xa0")
+    assert await repo.bitmap(row.id) == b"\xa0"
+    await repo.save_bitmap(row.id, b"\xe0")
+    assert await repo.bitmap(row.id) == b"\xe0"
+    assert (await Download.get(id=row.id)).pieces == b"\xe0"
 
 
 @pytest.mark.asyncio
-async def test_a_download_without_pieces_reads_empty() -> None:
-    repo, row = PieceDatabaseRepo(), await a_torrent_download(HASH, name="Release")
-    assert await repo.list_for(row.id) == []
-    await repo.complete(row.id, [0])
+async def test_a_download_without_a_torrent_has_nothing() -> None:
+    from uuid import uuid4
+
+    repo = PieceDatabaseRepo()
+    assert await repo.list_for(uuid4()) == []
+    await repo.ensure(uuid4(), [(0, 1, "a" * 40)])
+    assert await repo.bitmap(uuid4()) is None
+    assert await Piece.all().count() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_second_download_of_the_torrent_shares_the_list_but_not_the_bitmap() -> None:
+    repo, first = PieceDatabaseRepo(), await a_torrent_download(HASH, name="Release")
+    await repo.ensure(first.id, [(0, 512, "a" * 40), (1, 512, "b" * 40)])
+    await repo.save_bitmap(first.id, b"\x80")
+    await Download.filter(id=first.id).update(deleted_at=now())
+
+    # The same torrent again: a new download pointing at it.
+    second = await Download.create(status="pending", torrent_id=first.torrent_id)
+
+    assert [p.index for p in await repo.list_for(second.id)] == [0, 1]
+    assert await repo.bitmap(second.id) is None

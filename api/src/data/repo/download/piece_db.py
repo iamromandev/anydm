@@ -4,9 +4,8 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from src.data.db.model import Piece, Torrent
+from src.data.db.model import Download, Piece
 from src.data.repo.download.interface.piece import PieceRepo, PieceRow
-from src.data.type.torrent.piece import PieceStatus
 
 #: One ``bulk_create`` per this many pieces. A 25,000-piece torrent is dozens
 #: of statements at most, and no single statement carries the whole table.
@@ -15,14 +14,13 @@ _BATCH = 1000
 
 class PieceDatabaseRepo(PieceRepo):
     async def _torrent_id(self, download_id: uuid.UUID) -> Any:
-        torrent = await Torrent.filter(source__mirrors__download_id=download_id).first()
-        return torrent.id if torrent is not None else None
+        download = await Download.filter(id=download_id).first()
+        return download.torrent_id if download is not None else None
 
-    async def replace(self, download_id: uuid.UUID, pieces: Sequence[PieceRow]) -> None:
+    async def ensure(self, download_id: uuid.UUID, pieces: Sequence[PieceRow]) -> None:
         torrent_id = await self._torrent_id(download_id)
-        if torrent_id is None:
+        if torrent_id is None or await Piece.filter(torrent_id=torrent_id).exists():
             return
-        await Piece.filter(torrent_id=torrent_id).delete()
         rows = [
             Piece(torrent_id=torrent_id, index=index, size=size, hash=digest) for index, size, digest in pieces
         ]
@@ -35,17 +33,9 @@ class PieceDatabaseRepo(PieceRepo):
             return []
         return await Piece.filter(torrent_id=torrent_id).order_by("index")
 
-    async def complete(self, download_id: uuid.UUID, indexes: Sequence[int]) -> None:
-        if not indexes:
-            return
-        torrent_id = await self._torrent_id(download_id)
-        if torrent_id is None:
-            return
-        changed: list[Piece] = []
-        for row in await Piece.filter(torrent_id=torrent_id, index__in=list(indexes)):
-            if row.status != PieceStatus.COMPLETED:
-                row.status = PieceStatus.COMPLETED
-                row.downloaded_bytes = row.size
-                changed.append(row)
-        if changed:
-            await Piece.bulk_update(changed, fields=["status", "downloaded_bytes"])
+    async def bitmap(self, download_id: uuid.UUID) -> bytes | None:
+        row = await Download.filter(id=download_id).first()
+        return row.pieces if row is not None else None
+
+    async def save_bitmap(self, download_id: uuid.UUID, bitmap: bytes) -> None:
+        await Download.filter(id=download_id).update(pieces=bitmap)

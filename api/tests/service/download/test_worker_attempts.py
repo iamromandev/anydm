@@ -35,12 +35,13 @@ async def test_a_download_with_every_mirror_spent_fails_without_fetching(tmp_pat
     files = MemoryFiles()
     row = await direct_row(files)
     row.mirrors[0].status = MirrorStatus.FAILED
-    engine = FailingEngine(_refused())
+    engine, attempts = FailingEngine(_refused()), FakeAttempts()
 
-    await worker(tmp_path, files=files, engine=engine, hub=RecordingHub()).run_task(row)
+    await worker(tmp_path, files=files, engine=engine, attempts=attempts, hub=RecordingHub()).run_task(row)
 
     assert (row.status, engine.fetched) == (DownloadStatus.FAILED, 0)
-    assert row.error == "No source left to try"
+    # No try could open, so the reason is recorded as a failed try of its own.
+    assert [(failure[1]) for failure in attempts.failures] == ["No source left to try"]
 
 
 @pytest.mark.asyncio
@@ -121,13 +122,18 @@ async def test_a_paused_download_is_not_failed_over_to_its_next_mirror(tmp_path:
 
 @pytest.mark.asyncio
 async def test_a_failure_still_in_the_worker_s_hands_is_written(tmp_path: Path) -> None:
-    files, repo = MemoryFiles(), FlushRecordingRepo()
+    files, repo, attempts = MemoryFiles(), FlushRecordingRepo(), FakeAttempts()
     row = await direct_row(files)
 
-    await worker(tmp_path, files=files, repo=repo, engine=FailingEngine(_refused()), hub=RecordingHub()).run_task(row)
+    await worker(
+        tmp_path, files=files, repo=repo, attempts=attempts, engine=FailingEngine(_refused()), hub=RecordingHub()
+    ).run_task(row)
 
     (ended,) = repo.ended
-    assert (ended["status"], ended["error_code"]) == (DownloadStatus.FAILED, "does_not_exist")
+    assert ended["status"] == DownloadStatus.FAILED
+    # The reason is on the try that failed, not on the download.
+    assert "error" not in ended and "error_code" not in ended
+    assert attempts.errors == [(AttemptStatus.FAILED, "Upstream returned status 404", "does_not_exist")]
 
 
 class HoldCheckingEngine:

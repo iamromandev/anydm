@@ -92,7 +92,7 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
 
     assert await repo.by_info_hash("a" * 40) is not None
     torrent = await Torrent.get(info_hash="a" * 40)
-    assert (torrent.name, torrent.total_bytes) == ("T", 10)
+    assert (torrent.name, torrent.total_size) == ("T", 10)
     assert sorted(await TorrentFile.filter(torrent=torrent).values_list("path", flat=True)) == ["T/x.mkv", "T/x.nfo"]
     assert [(f.index, f.filename, f.selected) for f in await File.filter(download_id=first.id).order_by("index")] == [
         (0, "x.mkv", True),
@@ -100,7 +100,11 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
     ]
     assert first.total_size == 10
 
-    # Removed, then added again from another magnet: the same torrent, one row.
+    # Each download's File points at the torrent's own row for that file.
+    parts = {part.index: part.id for part in await TorrentFile.filter(torrent=torrent)}
+    assert {f.index: f.torrent_file_id for f in await File.filter(download_id=first.id)} == parts
+
+    # Removed, then added again from another magnet: the same torrent and files, a source of its own.
     await Download.filter(id=first.id).update(deleted_at=now())
     assert await repo.by_info_hash("a" * 40) is None
     again = await repo.create_torrent(
@@ -112,8 +116,67 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
         files=[(0, "T/x.mkv", 10, True)],
     )
     assert await Torrent.all().count() == 1
+    assert await TorrentFile.filter(torrent=torrent).count() == 2
     found = await repo.by_info_hash("a" * 40)
     assert found is not None and found.id == again.id
+    assert {f.index: f.torrent_file_id for f in await File.filter(download_id=again.id)} == {0: parts[0]}
+
+
+@pytest.mark.asyncio
+async def test_two_links_for_one_torrent_lead_to_the_same_torrent_through_sources_of_their_own() -> None:
+    repo = DownloadDatabaseRepo()
+    magnet = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "b" * 40,
+        info_hash="b" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+    await Download.filter(id=magnet.id).update(deleted_at=now())
+    by_file = await repo.create_torrent(
+        url="https://tracker.example/x.torrent",
+        info_hash="b" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+
+    torrent = await Torrent.get(info_hash="b" * 40)
+    assert await Torrent.all().count() == 1
+    assert (await Download.get(id=magnet.id)).torrent_id == torrent.id
+    assert (await Download.get(id=by_file.id)).torrent_id == torrent.id
+    urls = [
+        (await Mirror.get(download_id=d.id).prefetch_related("source__url")).source.url.value for d in (magnet, by_file)
+    ]
+    assert urls == ["magnet:?xt=urn:btih:" + "b" * 40, "https://tracker.example/x.torrent"]
+    assert await Source.all().count() == 2
+
+
+@pytest.mark.asyncio
+async def test_a_torrent_added_again_adds_only_the_files_it_lacks() -> None:
+    repo = DownloadDatabaseRepo()
+    first = await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "c" * 40,
+        info_hash="c" * 40,
+        name="T",
+        total_size=10,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True)],
+    )
+    await Download.filter(id=first.id).update(deleted_at=now())
+    await repo.create_torrent(
+        url="magnet:?xt=urn:btih:" + "c" * 40,
+        info_hash="c" * 40,
+        name="T",
+        total_size=11,
+        download={"status": DownloadStatus.PENDING},
+        files=[(0, "T/x.mkv", 10, True), (1, "T/x.nfo", 1, False)],
+    )
+
+    torrent = await Torrent.get(info_hash="c" * 40)
+    assert [(f.index, f.path) for f in await TorrentFile.filter(torrent=torrent)] == [(0, "T/x.mkv"), (1, "T/x.nfo")]
 
 
 @pytest.mark.asyncio
@@ -170,15 +233,15 @@ async def test_a_try_s_outcome_is_written_only_over_a_row_still_in_the_worker_s_
     paused = await add_site(repo, status=DownloadStatus.PAUSED)
     removed = await add_site(repo, status=DownloadStatus.DOWNLOADING)
     await Download.filter(id=removed.id).update(deleted_at=now())
-    failed = {"status": DownloadStatus.PENDING, "error": "refused", "attempts": 1}
+    failed = {"status": DownloadStatus.PENDING, "next_attempt_at": now(), "attempts": 1}
 
     assert await repo.end_try(running.id, failed) is True
     assert await repo.end_try(paused.id, failed) is False
     assert await repo.end_try(removed.id, failed) is False
 
     rows = {row.id: row for row in await Download.filter(id__in=[running.id, paused.id, removed.id])}
-    assert (rows[running.id].status, rows[running.id].error) == (DownloadStatus.PENDING, "refused")
-    assert (rows[paused.id].status, rows[paused.id].error) == (DownloadStatus.PAUSED, None)
+    assert (rows[running.id].status, rows[running.id].attempts) == (DownloadStatus.PENDING, 1)
+    assert (rows[paused.id].status, rows[paused.id].attempts) == (DownloadStatus.PAUSED, 0)
     assert rows[removed.id].status == DownloadStatus.DOWNLOADING
     # Completion may also land over a pause: the file is whole.
     done = {"status": DownloadStatus.COMPLETED}

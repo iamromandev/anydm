@@ -67,7 +67,7 @@ async def test_delete_moves_removed_rows_to_downloads_and_keeps_live_ones_in_pla
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("db")
-async def test_set_category_moves_one_download_and_writes_its_folder_only_when_given() -> None:
+async def test_set_category_points_one_download_at_another_category() -> None:
     from src.data.repo import DownloadDatabaseRepo
 
     made = await CategoryDatabaseRepo().create("Lectures", "lectures", "edu")
@@ -76,18 +76,18 @@ async def test_set_category_moves_one_download_and_writes_its_folder_only_when_g
         url="https://cdn.test/a.bin", download={"status": DownloadStatus.COMPLETED}, filename="a.bin"
     )
 
-    await repo.set_category(row.id, made.id, "edu")
+    await repo.set_category(row.id, made.id)
     await row.refresh_from_db()
-    assert (row.category_id, row.folder) == (made.id, "edu")
+    assert row.category_id == made.id
 
-    await repo.set_category(row.id, DOWNLOADS_ID, None)
+    await repo.set_category(row.id, DOWNLOADS_ID)
     await row.refresh_from_db()
-    assert (row.category_id, row.folder) == (DOWNLOADS_ID, "edu")
+    assert row.category_id == DOWNLOADS_ID
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("db")
-async def test_move_rows_moves_a_collection_and_the_videos_that_have_a_place() -> None:
+async def test_move_rows_moves_a_collection_and_its_live_videos_to_the_category() -> None:
     from src.data.repo import CollectionDatabaseRepo
 
     from tests.integration.rows import a_collection, a_site_download
@@ -97,15 +97,12 @@ async def test_move_rows_moves_a_collection_and_the_videos_that_have_a_place() -
     done = await a_site_download("done", parent=collection, status=DownloadStatus.COMPLETED)
     waiting = await a_site_download("waiting", parent=collection, status=DownloadStatus.PAUSED)
 
-    await CollectionDatabaseRepo().move_rows(collection.id, made.id, "edu/talks")
+    await CollectionDatabaseRepo().move_rows(collection.id, made.id)
 
     await collection.refresh_from_db()
     await done.refresh_from_db()
     await waiting.refresh_from_db()
-    assert (collection.category_id, collection.folder) == (made.id, "edu/talks")
-    assert (done.category_id, done.folder) == (made.id, "edu/talks")
-    # Not finished, so it has no place yet: it takes the category and finds its folder when it does.
-    assert (waiting.category_id, waiting.folder) == (made.id, None)
+    assert (collection.category_id, done.category_id, waiting.category_id) == (made.id, made.id, made.id)
 
 
 @pytest.mark.asyncio
@@ -127,3 +124,23 @@ async def test_seed_adds_only_the_slugs_not_stored_and_leaves_the_rest() -> None
     assert await repo.get(games.id) == games
     kept = await repo.get(movies.id)
     assert kept is not None and kept.folder == "cinema"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("db")
+async def test_the_seeded_rules_are_stored_and_a_category_keeps_the_rules_it_is_given() -> None:
+    repo = CategoryDatabaseRepo()
+    seeded = {row.slug: row for row in await repo.list_all()}
+    assert ".iso" in seeded["software"].extensions and "video/" in seeded["videos"].mime_prefixes
+    assert seeded["movies"].extensions == () and seeded["downloads"].mime_prefixes == ()
+
+    made = await repo.create("Lectures", "lectures", "edu", [".mkv"], ["video/"])
+    assert (made.extensions, made.mime_prefixes) == ((".mkv",), ("video/",))
+
+    changed = await repo.update(made.id, extensions=[".pdf", ".epub"])
+    assert changed is not None
+    assert (changed.extensions, changed.mime_prefixes) == ((".pdf", ".epub"), ("video/",))
+    cleared = await repo.update(made.id, mime_prefixes=[])
+    assert cleared is not None and cleared.mime_prefixes == ()
+    assert await repo.get(made.id) == cleared
+

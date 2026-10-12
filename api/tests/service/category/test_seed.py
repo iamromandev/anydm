@@ -38,3 +38,13 @@ async def test_a_deleted_builtin_comes_back() -> None:
 
     assert await seed_missing_categories(repo) == 1
     assert repo.named("games").folder == "games"
+
+
+@pytest.mark.asyncio
+async def test_a_seeded_category_carries_its_rules_and_one_without_rules_carries_none() -> None:
+    repo = FakeCategoryRepo(seeded=False)
+    await seed_missing_categories(repo)
+
+    assert ".iso" in repo.named("software").extensions
+    assert "video/" in repo.named("videos").mime_prefixes
+    assert (repo.named("movies").extensions, repo.named("downloads").mime_prefixes) == ((), ())

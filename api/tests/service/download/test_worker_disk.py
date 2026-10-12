@@ -48,10 +48,15 @@ class FinishingPostProcessor:
         parts["file"].replace(destination)
 
 
-def _assert_waiting_for_space(row: Any) -> None:
+def _assert_waiting_for_space(row: Any, attempts: FakeAttempts) -> None:
     assert row.status == DownloadStatus.PENDING
-    assert row.error_code == "insufficient_storage"
-    assert row.error is not None and row.error.startswith("Not enough disk space")
+    # The reason is recorded on a try: the one that ended (cancelled, since the source was not at fault),
+    # or, when the check came before any try opened, a failed one recorded for it.
+    reasons = [(code, message) for _, message, code in attempts.errors]
+    reasons += [(code, message) for _, message, code in attempts.failures]
+    ((code, message),) = reasons
+    assert code == "insufficient_storage"
+    assert message is not None and message.startswith("Not enough disk space")
     # The re-check is 30 s out: long enough not to spin, short enough to notice.
     assert timedelta(seconds=25) < row.next_attempt_at - now() <= timedelta(seconds=30)
     # Waiting for space is not a failed try, so the retry budget is untouched.
@@ -60,51 +65,60 @@ def _assert_waiting_for_space(row: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_a_download_claimed_on_a_full_disk_waits_instead_of_starting(tmp_path: Path) -> None:
-    files, hub, engine = MemoryFiles(), RecordingHub(), FakeEngine()
+    files, hub, engine, attempts = MemoryFiles(), RecordingHub(), FakeEngine(), FakeAttempts()
     row = await direct_row(files)
 
-    await worker(tmp_path, files=files, disk=_disk(free=GIB // 2), engine=engine, hub=hub).run_task(row)
+    await worker(
+        tmp_path, files=files, disk=_disk(free=GIB // 2), engine=engine, attempts=attempts, hub=hub
+    ).run_task(row)
 
     assert engine.fetched == 0
-    _assert_waiting_for_space(row)
+    _assert_waiting_for_space(row, attempts)
     assert hub.named("download")[0]["status"] == "pending"
 
 
 @pytest.mark.asyncio
 async def test_a_source_too_big_for_the_space_left_waits_once_probed(tmp_path: Path) -> None:
     # 3 GiB free clears the 1 GiB minimum, but not a 5 GiB file on top of it.
-    files, engine = MemoryFiles(), FakeEngine(total=5 * GIB)
+    files, engine, attempts = MemoryFiles(), FakeEngine(total=5 * GIB), FakeAttempts()
     row = await direct_row(files)
 
-    await worker(tmp_path, files=files, disk=_disk(free=3 * GIB), engine=engine, hub=RecordingHub()).run_task(row)
+    await worker(
+        tmp_path, files=files, disk=_disk(free=3 * GIB), engine=engine, attempts=attempts, hub=RecordingHub()
+    ).run_task(row)
 
     assert engine.fetched == 1
-    _assert_waiting_for_space(row)
+    _assert_waiting_for_space(row, attempts)
 
 
 @pytest.mark.asyncio
 async def test_a_disk_that_fills_mid_write_waits_and_keeps_the_part(tmp_path: Path) -> None:
-    files = MemoryFiles()
+    files, attempts = MemoryFiles(), FakeAttempts()
     engine = FakeEngine(total=GIB, fail=OSError(errno.ENOSPC, "No space left on device"))
     row = await direct_row(files)
 
-    await worker(tmp_path, files=files, disk=_disk(free=10 * GIB), engine=engine, hub=RecordingHub()).run_task(row)
+    await worker(
+        tmp_path, files=files, disk=_disk(free=10 * GIB), engine=engine, attempts=attempts, hub=RecordingHub()
+    ).run_task(row)
 
-    _assert_waiting_for_space(row)
+    _assert_waiting_for_space(row, attempts)
     # The bytes written so far are what the next attempt resumes from.
     assert part_path(tmp_path, row.id, "file").stat().st_size == 10
 
 
 @pytest.mark.asyncio
 async def test_other_write_errors_still_fail_the_download(tmp_path: Path) -> None:
-    files = MemoryFiles()
+    files, attempts = MemoryFiles(), FakeAttempts()
     engine = FakeEngine(total=GIB, fail=OSError(errno.EACCES, "Permission denied"))
     row = await direct_row(files)
 
-    await worker(tmp_path, files=files, disk=_disk(free=10 * GIB), engine=engine, hub=RecordingHub()).run_task(row)
+    await worker(
+        tmp_path, files=files, disk=_disk(free=10 * GIB), engine=engine, attempts=attempts, hub=RecordingHub()
+    ).run_task(row)
 
     assert row.status == DownloadStatus.FAILED
-    assert row.error_code == "server_error"
+    ((_, _, code),) = attempts.errors
+    assert code == "server_error"
     assert row.attempts == 1
 
 
@@ -119,7 +133,7 @@ async def test_a_download_paused_as_the_disk_fills_stays_paused_and_keeps_the_pa
         tmp_path, files=files, repo=repo, disk=_disk(free=10 * GIB), engine=engine, hub=RecordingHub()
     ).run_task(row)
 
-    assert (row.status, row.next_attempt_at, row.error, row.attempts) == (DownloadStatus.PAUSED, None, None, 0)
+    assert (row.status, row.next_attempt_at, row.attempts) == (DownloadStatus.PAUSED, None, 0)
     assert part_path(tmp_path, row.id, "file").stat().st_size == 10
 
 

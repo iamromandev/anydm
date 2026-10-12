@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from src.data.type import DOWNLOADS_ID, MediaKind, Preset, SourceKind
 from src.data.type import DownloadStatus as S
-from src.data.type import MediaKind, Preset, SourceKind
 from src.lib.event import EventHub
 from src.service.download.collection_totals import CollectionTotals, collection_status, counts_of
 from src.service.download.live import Live, LiveStats
@@ -51,6 +51,8 @@ async def test_refresh_publishes_a_collection_frame_with_live_speed() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
         mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.SITE, "Youtube")],
+        torrent=None,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
         created_at=None,
     )
@@ -74,6 +76,8 @@ async def test_schemas_carry_the_watched_count() -> None:
     collection = SimpleNamespace(
         id=uuid.uuid4(),
         mirrors=[a_mirror("https://www.youtube.com/channel/UC/videos", SourceKind.SITE, "Youtube")],
+        torrent=None,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         media=SimpleNamespace(title="", kind=MediaKind.CHANNEL, preset=Preset.BEST),
         created_at=None,
     )

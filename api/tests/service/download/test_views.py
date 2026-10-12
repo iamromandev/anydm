@@ -1,9 +1,10 @@
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from src.data.type import DownloadStatus, MediaKind, Preset, SourceKind
+from src.data.type import DOWNLOADS_ID, DownloadStatus, MediaKind, Preset, SourceKind
 from src.service.download.live import Live, LiveStats
 from src.service.download.views import DownloadViews, download_schema, progress_frame
 
@@ -14,6 +15,8 @@ def row(**overrides: Any) -> SimpleNamespace:
     base: dict[str, Any] = dict(
         id=uuid.uuid4(),
         mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.SITE, "Youtube")],
+        torrent=None,
+        category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
         uploaded_size=0,
         status=DownloadStatus.DOWNLOADING,
         folder=None,
@@ -24,8 +27,6 @@ def row(**overrides: Any) -> SimpleNamespace:
         media=SimpleNamespace(
             title="Talk", kind=MediaKind.VIDEO, preset=Preset.BEST, video_format="137", audio_format="140"
         ),
-        error=None,
-        error_code=None,
         attempts=1,
         next_attempt_at=None,
         created_at=None,
@@ -69,9 +70,8 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
 def test_a_torrent_reports_its_hash_and_no_site() -> None:
     schema = download_schema(
         row(
-            mirrors=[
-                a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent", torrents=[a_torrent("a" * 40)])
-            ],
+            mirrors=[a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent")],
+            torrent=a_torrent("a" * 40),
             media=None,
             uploaded_size=9,
         ),
@@ -86,7 +86,9 @@ def test_a_torrent_reports_its_hash_and_no_site() -> None:
 
 def test_progress_frame_leaves_out_what_does_not_apply() -> None:
     download_id, collection_id = uuid.uuid4(), uuid.uuid4()
-    frame = progress_frame(download_id, collection_id=None, downloaded_bytes=5, total_bytes=None, live=Live(speed_bps=1))
+    frame = progress_frame(
+        download_id, collection_id=None, downloaded_bytes=5, total_bytes=None, live=Live(speed_bps=1)
+    )
     assert frame == {
         "id": str(download_id),
         "downloaded_size": 5,
@@ -124,19 +126,85 @@ async def test_many_batches_and_reads_live_numbers() -> None:
     assert schemas[1].live.speed_bps == 99
 
 
-def test_a_download_shows_its_category_and_its_stored_folder() -> None:
+def test_a_download_shows_its_category_and_the_folder_that_follows_from_it() -> None:
     lectures = SimpleNamespace(id=uuid.uuid4(), name="Lectures", folder="edu")
-    stored = row(status=DownloadStatus.COMPLETED, category=lectures, folder="edu")
+    stored = row(status=DownloadStatus.COMPLETED, category=lectures)
     schema = download_schema(stored, files=[], playback={}, live=Live(), max_attempts=3)
     assert schema.category is not None and (schema.category.id, schema.category.name) == (lectures.id, "Lectures")
     assert schema.folder == "edu"
 
 
-def test_a_stored_folder_shows_before_the_file_lands() -> None:
-    placed = row(status=DownloadStatus.DOWNLOADING, folder="Release [deadbeef]")
-    assert download_schema(placed, files=[], playback={}, live=Live(), max_attempts=3).folder == "Release [deadbeef]"
+def test_a_torrent_shows_its_folder_before_the_file_lands() -> None:
+    torrent = row(
+        status=DownloadStatus.DOWNLOADING,
+        torrent=a_torrent("deadbeefcafe", "Release"),
+        mirrors=[a_mirror("magnet:?xt=urn:btih:deadbeefcafe", SourceKind.TORRENT, "torrent")],
+        media=None,
+        category=SimpleNamespace(id=uuid.uuid4(), name="Videos", folder="videos"),
+    )
+    assert download_schema(torrent, files=[], playback={}, live=Live(), max_attempts=3).folder == (
+        "videos/Release [deadbeef]"
+    )
 
 
 def test_a_row_loaded_without_its_category_has_none() -> None:
     bare = row(status=DownloadStatus.DOWNLOADING)
+    del bare.category
     assert download_schema(bare, files=[], playback={}, live=Live(), max_attempts=3).category is None
+
+
+class _Errors:
+    """The newest try's error of each download, and which ids were asked for."""
+
+    def __init__(self, errors: dict[uuid.UUID, tuple[str | None, str | None]]) -> None:
+        self.errors = errors
+        self.asked: list[list[uuid.UUID]] = []
+
+    async def latest_errors(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        self.asked.append(list(ids))
+        return {i: self.errors[i] for i in ids if i in self.errors}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_download_shows_its_newest_tries_error_and_one_read_serves_the_page() -> None:
+    failed = row(status=DownloadStatus.FAILED)
+    waiting = row(status=DownloadStatus.PENDING, next_attempt_at=datetime(2026, 1, 1, tzinfo=UTC))
+    queued = row(status=DownloadStatus.PENDING)
+    running = row(status=DownloadStatus.DOWNLOADING)
+    errors = _Errors({i.id: ("old reason", "server_error") for i in (failed, waiting, queued, running)})
+    errors.errors[failed.id] = ("Upstream returned status 404", "does_not_exist")
+    repos = SimpleNamespace(list_for_downloads=_none_files, by_files=_none_positions)
+    views = DownloadViews(files=repos, positions=repos, live=LiveStats(), max_attempts=3, attempts=errors)  # ty: ignore[invalid-argument-type]
+
+    schemas = await views.many([failed, waiting, queued, running])
+
+    assert [(s.error, s.error_code) for s in schemas] == [
+        ("Upstream returned status 404", "does_not_exist"),
+        ("old reason", "server_error"),
+        (None, None),
+        (None, None),
+    ]
+    # Only the rows that can show an error are asked about, in one read.
+    assert errors.asked == [[failed.id, waiting.id]]
+
+
+@pytest.mark.asyncio
+async def test_a_page_with_no_failures_reads_no_errors_at_all_and_no_repo_means_none() -> None:
+    errors = _Errors({})
+    repos = SimpleNamespace(list_for_downloads=_none_files, by_files=_none_positions)
+    shown = DownloadViews(files=repos, positions=repos, live=LiveStats(), max_attempts=3, attempts=errors)  # ty: ignore[invalid-argument-type]
+    bare = DownloadViews(files=repos, positions=repos, live=LiveStats(), max_attempts=3)  # ty: ignore[invalid-argument-type]
+
+    (schema,) = await shown.many([row()])
+    (without,) = await bare.many([row(status=DownloadStatus.FAILED)])
+
+    assert (schema.error, without.error) == (None, None)
+    assert errors.asked == [[]]
+
+
+async def _none_files(ids: list[uuid.UUID]) -> dict[uuid.UUID, list[Any]]:
+    return {}
+
+
+async def _none_positions(ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
+    return {}

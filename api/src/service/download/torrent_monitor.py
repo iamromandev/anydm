@@ -23,16 +23,16 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
+from src.data.repo.download.interface import AttemptRepo, DownloadRepo, FileRepo, PieceRepo
 from src.data.type import DownloadStatus
-from src.data.type.torrent.piece import PieceStatus
 from src.lib.event import EventHub
-from src.lib.torrent.mapping import bitmap_from, completed_since, status_for
+from src.lib.torrent.mapping import completed_since, status_for
 from src.lib.torrent.metadata import piece_specs
 from src.lib.torrent.protocol import TorrentClient, TorrentProgress
 from src.lib.torrent.source import parse_source
 from src.service.download.folders import inside
 from src.service.download.live import Live, LiveStats
+from src.service.download.paths import folder_of
 from src.service.download.views import DownloadViews, pieces_frame, progress_frame
 
 
@@ -52,7 +52,9 @@ class TorrentMonitor:
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
         clock: Callable[[], float] | None = None,
+        attempts: AttemptRepo | None = None,
     ) -> None:
+        self._attempts = attempts
         self._repo = repo
         self._file_repo = file_repo
         self._piece_repo = piece_repo
@@ -165,10 +167,8 @@ class TorrentMonitor:
             logger.warning("{}|engine refused the rate limits: {}", self._tag, error.message)
 
     def _folder(self, row: Any) -> Path:
-        """The torrent's folder on disk, as recorded on its row when it was added."""
-        if row.folder is None:
-            raise Error.internal(message=f"Torrent {row.id} has no recorded folder")
-        return inside(self._downloads, row.folder)
+        """The torrent's folder on disk: under its category's, named from the torrent."""
+        return inside(self._downloads, folder_of(row) or "")
 
     async def _reconcile(self, rows: list[Any], by_hash: dict[str, TorrentProgress]) -> None:
         """Make the engine's session agree with the database, once.
@@ -205,8 +205,6 @@ class TorrentMonitor:
             "total_size": sample.total_bytes or None,
             "uploaded_size": sample.uploaded_bytes,
         }
-        if status == DownloadStatus.FAILED and sample.error:
-            fields["error"] = sample.error
         if status in (DownloadStatus.SEEDING, DownloadStatus.COMPLETED) and row.completed_at is None:
             fields["completed_at"] = now()
 
@@ -218,6 +216,8 @@ class TorrentMonitor:
             setattr(row, name, value)
         if changed:
             await row.save(update_fields=list(changed))
+        if "status" in changed and status == DownloadStatus.FAILED and sample.error and self._attempts is not None:
+            await self._attempts.record_failure(row.id, sample.error, None)
         if "total_size" in changed and row.total_size is not None:
             # Rare (a magnet's size is known once its metadata arrives), so the torrent's own row follows.
             await self._repo.set_torrent_total(_hash(row), row.total_size)
@@ -233,8 +233,7 @@ class TorrentMonitor:
 
         # The full snapshot only when the status moved; every tick, the light frame.
         if "status" in changed:
-            folder = row.folder
-            self._hub.publish("download", (await self._views.one(row, folder=folder)).to_json())
+            self._hub.publish("download", (await self._views.one(row)).to_json())
         self._hub.publish(
             "progress",
             progress_frame(
@@ -248,11 +247,11 @@ class TorrentMonitor:
         )
 
     async def _sync_pieces(self, row: Any) -> None:
-        """Mirror the engine's have bitmap onto the piece rows, and announce it.
+        """Mirror the engine's have bitmap onto the download, and announce it.
 
-        Only newly set pieces are written, as one batched update; a tick with
-        no changes writes nothing at all. A torrent the engine will not report
-        on — paused — keeps its stored map exactly as it is.
+        The bitmap is saved as one value, and only when the engine has set a piece
+        since the last tick; a tick with no changes writes nothing at all. A torrent
+        the engine will not report on — paused — keeps its stored map exactly as it is.
         """
         info_hash = _hash(row)
         if not info_hash:
@@ -274,18 +273,18 @@ class TorrentMonitor:
         new = completed_since(known, bitmap)
         if not new:
             return
-        await self._piece_repo.complete(row.id, new)
         current = bytes(bitmap)
+        await self._piece_repo.save_bitmap(row.id, current)
         self._bitmaps[row.id] = current
         self._announce_pieces(row, current)
 
     async def _seed(self, row: Any, count: int, bitmap: bytes) -> bytes:
-        """The last known bitmap from the piece table, backfilling rows a restart predates.
+        """The last known bitmap, from the download, backfilling the piece list a restart predates.
 
         The backfill runs only when the bitmap already has pieces: a torrent
-        with nothing on disk yet either has rows from ``enqueue`` or will get
-        them the moment its first piece lands, and there is nothing to record
-        before then. When rows are still missing afterwards — a failed
+        with nothing on disk yet either has its piece list from ``enqueue`` or will get
+        it the moment its first piece lands, and there is nothing to record
+        before then. When the list is still missing afterwards — a failed
         backfill — the live bitmap is held without caching it, so the next
         tick seeds again and retries rather than stranding the map forever.
         """
@@ -295,17 +294,18 @@ class TorrentMonitor:
         if not rows:
             return bytes(bitmap)
         size = rows[0].size if rows else 0
-        previous = bitmap_from([piece.index for piece in rows if piece.status == PieceStatus.COMPLETED], count)
+        stored = await self._piece_repo.bitmap(row.id)
+        previous = stored if stored is not None and len(stored) == len(bitmap) else bytes(len(bitmap))
         self._bitmaps[row.id] = previous
         self._counts[row.id] = count
         self._sizes[row.id] = size
         return previous
 
     async def _backfill(self, row: Any) -> list[Any]:
-        """Piece rows for a torrent added before they existed, read once from the engine's metadata."""
+        """The piece list of a torrent added before it was kept, read once from the engine's metadata."""
         try:
             blob = await self._client.fetch_metadata(_hash(row))
-            await self._piece_repo.replace(row.id, [(spec.index, spec.size, spec.hash) for spec in piece_specs(blob)])
+            await self._piece_repo.ensure(row.id, [(spec.index, spec.size, spec.hash) for spec in piece_specs(blob)])
         except Error as error:
             logger.warning("{}|could not backfill pieces for {}: {}", self._tag, _hash(row), error.message)
             return []

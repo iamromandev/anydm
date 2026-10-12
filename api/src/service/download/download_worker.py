@@ -42,7 +42,6 @@ from src.service.download.paths import (
     part_path,
     remove_work_files,
     short_id,
-    standalone_folder,
 )
 from src.service.download.post_process import PostProcessor
 from src.service.download.progress import AggregateSample
@@ -184,8 +183,8 @@ class DownloadWorker:
             file = await self._files.single(download.id)
             destination = final_path(self._root, download.id, file.path if file else "download")
             await self._post_processor.run(download, parts, destination, fragmented=fragmented)
-            destination, folder = await self._into_folder(download, destination)
-            if not await self._mark_complete(download, destination, folder):
+            destination = await self._into_folder(download, destination)
+            if not await self._mark_complete(download, destination):
                 # Removed while it finished: the finished file goes with the rest.
                 destination.unlink(missing_ok=True)
                 await self._yielded(download, opened, counted=True)
@@ -223,20 +222,20 @@ class DownloadWorker:
             logger.exception("{}|unexpected failure on {}", self._name, download.id)
             await self._mark_failed(download, Error.internal(message=str(exc)), opened)
 
-    async def _emit(self, download: Any, *, folder: str | None = None) -> None:
-        self._hub.publish("download", (await self._views.one(download, folder=folder)).to_json())
+    async def _emit(self, download: Any) -> None:
+        self._hub.publish("download", (await self._views.one(download)).to_json())
 
     async def _refresh_collection(self, download: Any) -> None:
         if self._totals is not None and download.parent_id is not None:
             await self._totals.refresh(download.parent_id)
 
-    async def _changed(self, download: Any, *, folder: str | None = None) -> None:
+    async def _changed(self, download: Any) -> None:
         """Publish a status change, and bring a collection video's collection up to date with it."""
-        await self._emit(download, folder=folder)
+        await self._emit(download)
         await self._refresh_collection(download)
 
-    async def _into_folder(self, download: Any, destination: Path) -> tuple[Path, str]:
-        """Where the finished file lives, and that folder relative to the download root.
+    async def _into_folder(self, download: Any, destination: Path) -> Path:
+        """Move the finished file to where it lives, and return where that is.
 
         A standalone download goes flat into its category's folder, read again
         here: a pause just before the last byte can be followed by a move, and
@@ -251,7 +250,7 @@ class DownloadWorker:
         else:
             collection = await self._collections.get_active_by_id(download.parent_id)
             if collection is None:
-                return destination, standalone_folder(download.id)
+                return destination
             folder = container_folder(collection)
             tag = describe(download).ref if download.media else short_id(download.id)
         inside(self._root, folder)
@@ -259,7 +258,7 @@ class DownloadWorker:
         moved.parent.mkdir(parents=True, exist_ok=True)
         destination.replace(moved)
         remove_work_files(self._root, download.id)
-        return moved, folder
+        return moved
 
     async def _plan(self, download: Any, site: Any, url: str) -> dict[str, Resolved]:
         """Formats for the preset, from the one extraction that also gives their URLs (v0.5).
@@ -472,8 +471,8 @@ class DownloadWorker:
         if saved:
             logger.info("{}|saved {} subtitle file(s) for {}", self._name, len(saved), download.id)
 
-    async def _mark_complete(self, download: Any, destination: Path, folder: str) -> bool:
-        """Record the finished file and the folder it is in. False when the download was removed while it finished."""
+    async def _mark_complete(self, download: Any, destination: Path) -> bool:
+        """Record the finished file. False when the download was removed while it finished."""
         size = destination.stat().st_size
         # The finished file is the honest final count: the byte totals the
         # download reported were of the parts, which muxing has just consumed.
@@ -482,9 +481,6 @@ class DownloadWorker:
             "downloaded_size": size,
             "total_size": size,
             "completed_at": now(),
-            "error": None,
-            "error_code": None,
-            "folder": folder,
         }
         # A pause (or a pause and a resume) that landed as the last bytes did loses
         # to them: the file is whole. Only a remove refuses it.
@@ -497,8 +493,8 @@ class DownloadWorker:
         # download whose video succeeded and whose audio then failed will
         # retry, and rebuilding the video plan at zero would re-download it.
         await self._segment_repo.clear(download.id)
-        await self._changed(download, folder=folder)
-        logger.success("{}|completed {} -> {}/{}", self._name, download.id, folder or download.id, destination.name)
+        await self._changed(download)
+        logger.success("{}|completed {} -> {}", self._name, download.id, destination)
         return True
 
     async def _wait_for_space(
@@ -513,17 +509,18 @@ class DownloadWorker:
         """
         fields = {
             "status": DownloadStatus.PENDING,
-            "error": error.message,
-            "error_code": error.type.value if error.type else None,
             "next_attempt_at": now() + timedelta(seconds=_SPACE_RECHECK_SECONDS),
             "attempts": max(0, download.attempts - 1) if refund else download.attempts,
         }
         if not await self._ended(download, fields):
             await self._yielded(download, opened, counted=refund)
             return
+        code = error.type.value if error.type else None
         if opened is not None:
             # Not the source's doing: the try ends without counting against its mirror.
-            await self._attempts.close(opened, AttemptStatus.CANCELLED)
+            await self._attempts.close(opened, AttemptStatus.CANCELLED, error=error.message, error_code=code)
+        else:
+            await self._attempts.record_failure(download.id, error.message, code)
         logger.warning("{}|waiting for disk space for {}: {}", self._name, download.id, error.message)
         self._live.clear(download.id)
         await self._changed(download)
@@ -534,11 +531,7 @@ class DownloadWorker:
         spent = MirrorStatus.EXHAUSTED if download.attempts >= self._max_attempts else MirrorStatus.FAILED
         # Asked, not acted on: the mirror is retired only once this outcome is written.
         failover = not decision.retry and opened is not None and await self._attempts.spare(opened)
-        fields: dict[str, Any] = {
-            "error": error.message,
-            "error_code": error.type.value if error.type else None,
-            "attempts": download.attempts,
-        }
+        fields: dict[str, Any] = {"attempts": download.attempts}
         if decision.retry:
             fields |= {
                 "status": DownloadStatus.PENDING,
@@ -553,10 +546,13 @@ class DownloadWorker:
         if not await self._ended(download, fields):
             await self._yielded(download, opened, counted=True)
             return
+        code = error.type.value if error.type else None
         if opened is not None:
-            await self._attempts.close(opened, AttemptStatus.FAILED)
+            await self._attempts.close(opened, AttemptStatus.FAILED, error=error.message, error_code=code)
             if not decision.retry:
                 await self._attempts.retire(opened, spent)
+        else:
+            await self._attempts.record_failure(download.id, error.message, code)
 
         if decision.retry:
             logger.warning(

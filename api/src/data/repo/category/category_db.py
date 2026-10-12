@@ -12,7 +12,16 @@ from src.data.type import DOWNLOADS_ID
 
 
 def _row(category: Category) -> CategoryRow:
-    return CategoryRow(category.id, category.name, category.slug, category.folder, category.position, category.builtin)
+    return CategoryRow(
+        category.id,
+        category.name,
+        category.slug,
+        category.folder,
+        category.position,
+        category.builtin,
+        tuple(category.extensions),
+        tuple(category.mime_prefixes),
+    )
 
 
 class CategoryDatabaseRepo(CategoryRepo):
@@ -30,10 +39,26 @@ class CategoryDatabaseRepo(CategoryRepo):
                 return _row(category)
         return None
 
-    async def create(self, name: str, slug: str, folder: str) -> CategoryRow:
+    async def create(
+        self,
+        name: str,
+        slug: str,
+        folder: str,
+        extensions: Sequence[str] = (),
+        mime_prefixes: Sequence[str] = (),
+    ) -> CategoryRow:
         last = await Category.all().order_by("-position").first()
         position = last.position + 1 if last is not None else 0
-        return _row(await Category.create(name=name, slug=slug, folder=folder, position=position))
+        return _row(
+            await Category.create(
+                name=name,
+                slug=slug,
+                folder=folder,
+                position=position,
+                extensions=list(extensions),
+                mime_prefixes=list(mime_prefixes),
+            )
+        )
 
     async def seed(self, rows: Sequence[CategoryRow]) -> int:
         stored = set(await Category.all().values_list("slug", flat=True))
@@ -49,6 +74,8 @@ class CategoryDatabaseRepo(CategoryRepo):
                         folder=row.folder,
                         position=row.position,
                         builtin=row.builtin,
+                        extensions=list(row.extensions),
+                        mime_prefixes=list(row.mime_prefixes),
                     )
                     for row in fresh
                 ],
@@ -57,12 +84,26 @@ class CategoryDatabaseRepo(CategoryRepo):
         return len(fresh)
 
     async def update(
-        self, id: uuid.UUID, *, name: str | None = None, slug: str | None = None, folder: str | None = None
+        self,
+        id: uuid.UUID,
+        *,
+        name: str | None = None,
+        slug: str | None = None,
+        folder: str | None = None,
+        extensions: Sequence[str] | None = None,
+        mime_prefixes: Sequence[str] | None = None,
     ) -> CategoryRow | None:
         category = await Category.filter(id=id).first()
         if category is None:
             return None
-        changed = {key: value for key, value in (("name", name), ("slug", slug), ("folder", folder)) if value is not None}
+        given = (
+            ("name", name),
+            ("slug", slug),
+            ("folder", folder),
+            ("extensions", list(extensions) if extensions is not None else None),
+            ("mime_prefixes", list(mime_prefixes) if mime_prefixes is not None else None),
+        )
+        changed = {key: value for key, value in given if value is not None}
         for key, value in changed.items():
             setattr(category, key, value)
         if changed:

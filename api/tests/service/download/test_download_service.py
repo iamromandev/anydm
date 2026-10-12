@@ -11,7 +11,7 @@ from src.core.success import Meta
 from src.core.type import Code
 from src.data.repo.catalog import address_hash
 from src.data.repo.download.described import describe
-from src.data.type import BulkAction, DownloadStatus, MediaKind, Platform, Preset, SourceKind
+from src.data.type import DOWNLOADS_ID, BulkAction, DownloadStatus, MediaKind, Platform, Preset, SourceKind
 from src.lib.identity import url_ref
 from src.lib.site import error as site_error
 from src.service.download.collection_service import CollectionService
@@ -106,6 +106,8 @@ class FakeCollectionRepo:
         self.rows[collection_id] = SimpleNamespace(
             id=collection_id,
             mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.SITE, "Youtube")],
+            torrent=None,
+            category=SimpleNamespace(id=DOWNLOADS_ID, name="Downloads", folder=""),
             media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
             created_at=None,
         )
@@ -612,8 +614,7 @@ async def test_resolve_file_rejects_an_incomplete_download(tmp_path: Path) -> No
 async def test_a_finished_single_file_is_served_from_its_folder(tmp_path: Path) -> None:
     h = _service(tmp_path)
     row = _row(h, status=DownloadStatus.COMPLETED)
-    folder = tmp_path / str(row.id)
-    folder.mkdir()
+    folder = tmp_path
     (folder / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
 
@@ -665,8 +666,7 @@ async def test_the_media_file_of_a_download_is_its_file(tmp_path: Path) -> None:
     """What Play on a finished card reads from disk (#94)."""
     h = _service(tmp_path)
     row = _row(h, status=DownloadStatus.COMPLETED)
-    folder = tmp_path / str(row.id)
-    folder.mkdir()
+    folder = tmp_path
     (folder / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
 
@@ -691,7 +691,7 @@ async def test_a_download_s_subtitle_files_are_its_neighbours_on_disk(tmp_path: 
     """#101: beside it, or in a subtitles folder there; never another film's."""
     h = _service(tmp_path)
     row = _row(h, status=DownloadStatus.COMPLETED)
-    folder = tmp_path / str(row.id)
+    folder = tmp_path
     (folder / "Subs").mkdir(parents=True)
     for name in ("Movie.mkv", "Movie.en.srt", "Subs/Movie.fr.srt", "Other.en.srt"):
         (folder / name).write_bytes(b"x")
@@ -867,8 +867,7 @@ async def test_cancel_stops_the_download_and_removes_its_work_files(tmp_path: Pa
 async def test_cancel_can_keep_the_file_of_a_finished_download(tmp_path: Path) -> None:
     h = _service(tmp_path)
     row = _row(h, status=DownloadStatus.COMPLETED)
-    folder = tmp_path / str(row.id)
-    folder.mkdir()
+    folder = tmp_path
     (folder / "clip.mp4").write_bytes(b"x")
     await h.files.set_single(row.id, path="clip.mp4", mime_type="video/mp4")
 
@@ -1048,8 +1047,7 @@ async def test_clear_finished_keeps_a_finished_file_but_not_a_failed_one(tmp_pat
     failed = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.FAILED)
     (tmp_path / str(failed.id)).mkdir()
     finished = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.COMPLETED)
-    folder = tmp_path / str(finished.id)
-    folder.mkdir()
+    folder = tmp_path
     (folder / "f.bin").write_bytes(b"x")
     await h.files.set_single(finished.id, path="f.bin", mime_type=None)
 
@@ -1064,8 +1062,7 @@ async def test_clear_finished_keeps_a_finished_file_but_not_a_failed_one(tmp_pat
 async def test_clear_finished_can_take_the_files_too(tmp_path: Path) -> None:
     h = _bulk_service(tmp_path)
     finished = next(row for row in h.repo.rows.values() if row.status == DownloadStatus.COMPLETED)
-    folder = tmp_path / str(finished.id)
-    folder.mkdir()
+    folder = tmp_path
     (folder / "f.bin").write_bytes(b"x")
     await h.files.set_single(finished.id, path="f.bin", mime_type=None)
 
@@ -1252,3 +1249,53 @@ async def test_an_unknown_category_refuses_the_add_before_any_row_exists() -> No
 
     assert int(raised.value.code) == 422
     assert h.repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_direct_link_with_no_category_is_filed_by_its_extension() -> None:
+    categories = FakeCategoryRepo()
+    h = _service(categories=categories)
+
+    await h.service.enqueue_url("https://files.test/ubuntu-24.04.iso")
+
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("software").id
+
+
+@pytest.mark.asyncio
+async def test_a_direct_link_with_an_unknown_extension_stays_in_downloads() -> None:
+    h = _service(categories=FakeCategoryRepo())
+
+    await h.service.enqueue_url("https://files.test/get?id=7")
+
+    assert h.repo.created[-1]["download"]["category_id"] == DOWNLOADS_ID
+
+
+@pytest.mark.asyncio
+async def test_a_chosen_category_wins_over_the_extension() -> None:
+    categories = FakeCategoryRepo()
+    h = _service(categories=categories)
+
+    await h.service.enqueue_url("https://files.test/ubuntu.iso", category_id=categories.named("games").id)
+
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("games").id
+
+
+@pytest.mark.asyncio
+async def test_an_mp3_preset_goes_to_music() -> None:
+    categories = FakeCategoryRepo()
+    h = _service(categories=categories)
+
+    await h.service.enqueue_media(YOUTUBE, Preset.MP3)
+
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("music").id
+
+
+@pytest.mark.asyncio
+async def test_a_video_preset_is_filed_by_the_extension_of_its_planned_file() -> None:
+    categories = FakeCategoryRepo()
+    h = _service(categories=categories)
+
+    await h.service.enqueue_media(YOUTUBE, Preset.P720)
+
+    assert h.repo.created[-1]["filename"].endswith(".mp4")
+    assert h.repo.created[-1]["download"]["category_id"] == categories.named("videos").id

@@ -41,7 +41,8 @@ def test_category_has_its_columns_and_lives_in_transfer() -> None:
     assert Category._meta.db_table == "category" and Category._meta.schema == "transfer"
 
 
-def test_a_download_has_a_category_and_a_stored_folder() -> None:
+def test_a_download_has_a_category_and_no_folder_of_its_own() -> None:
     fields = Download._meta.fields_map
     assert fields["category"].null is False
-    assert fields["folder"].null is True
+    # Where its files are follows from its category (and its torrent or collection), so nothing is stored.
+    assert "folder" not in fields

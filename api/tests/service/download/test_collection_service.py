@@ -2,6 +2,7 @@
 
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,7 +22,9 @@ from tests.service.download.memory import RecordingHub, download_row, memory_vie
 
 
 class FakeCollections:
-    def __init__(self) -> None:
+    def __init__(self, categories: Any = None) -> None:
+        #: What a collection's category is, as a reload would show it.
+        self.categories = categories
         self.collection: Any = None
         self.created: dict[str, Any] | None = None
         self.entries: list[Any] = []
@@ -56,7 +59,10 @@ class FakeCollections:
             created_at=None,
         )
         self.collection.category_id = created["collection"].get("category_id", DOWNLOADS_ID)
-        self.collection.folder = created["collection"].get("folder")
+        chosen = self.categories.rows[self.collection.category_id] if self.categories is not None else None
+        self.collection.category = SimpleNamespace(
+            id=self.collection.category_id, name="x", folder=chosen.folder if chosen is not None else ""
+        )
         return self.collection
 
     async def add_entries(self, collection: Any, provider: str, entries: list[Any]) -> None:
@@ -152,7 +158,6 @@ async def test_a_new_listing_becomes_a_numbered_collection_in_its_own_folder(tmp
     assert repo.created["collection"] == {
         "status": DownloadStatus.PENDING,
         "category_id": DOWNLOADS_ID,
-        "folder": "29C3_ Not my department [PL1]",
     }
     assert schema.folder == "29C3_ Not my department [PL1]"
     assert (tmp_path / "29C3_ Not my department [PL1]").is_dir()
@@ -349,7 +354,7 @@ async def test_a_channel_tab_s_folder_is_the_one_every_read_names(tmp_path: Path
 async def test_a_listing_added_to_a_category_lives_under_its_folder_and_its_videos_inherit_it(tmp_path: Path) -> None:
     categories = FakeCategoryRepo()
     music = categories.named("music")
-    repo = FakeCollections()
+    repo = FakeCollections(categories)
 
     schema = await service(repo, tmp_path, categories).add(request(2).model_copy(update={"category_id": music.id}))
 

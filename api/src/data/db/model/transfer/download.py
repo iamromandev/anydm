@@ -22,9 +22,9 @@ class Download(Base):
     platform and media kind are not stored here; they come from what it was
     added from (its source, its torrent, its media).
 
-    ``error``, ``error_code``, ``attempts`` and ``next_attempt_at`` are the
-    current retry state, which the worker and the list read. Each try via a
-    mirror is an ``Attempt``.
+    ``attempts`` and ``next_attempt_at`` are the current retry state, which the
+    worker and the list read. Each try via a mirror is an ``Attempt``, and the
+    reason a try failed is on it (``error``, ``error_code``).
     """
 
     # A playlist or channel tab is itself a Download (its kind and preset in its
@@ -34,8 +34,10 @@ class Download(Base):
     category = fields.ForeignKeyField(
         "model.Category", related_name="downloads", on_delete=fields.RESTRICT, db_index=True, db_default=DOWNLOADS_ID
     )
-    #: Where its files are, relative to DOWNLOAD_DIR, once they have a place. Null on rows from before categories.
-    folder: str | None = fields.TextField(null=True)
+    #: For a torrent download, the torrent it is a transfer of; none for any other kind.
+    torrent = fields.ForeignKeyField("model.Torrent", related_name="downloads", null=True, on_delete=fields.SET_NULL)
+    #: For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known.
+    pieces: bytes | None = fields.BinaryField(null=True)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
     total_size: int | None = fields.BigIntField(null=True)
     downloaded_size: int = fields.BigIntField(default=0)
@@ -44,8 +46,6 @@ class Download(Base):
     speed_limit: int | None = fields.BigIntField(null=True)
     started_at: datetime | None = fields.DatetimeField(null=True)
     completed_at: datetime | None = fields.DatetimeField(null=True)
-    error: str | None = fields.TextField(null=True)
-    error_code: str | None = fields.CharField(max_length=64, null=True)
     attempts: int = fields.IntField(default=0)
     #: When a retryable failure may run again; the row waits in ``PENDING`` until then.
     next_attempt_at: datetime | None = fields.DatetimeField(null=True)
@@ -53,6 +53,7 @@ class Download(Base):
     if TYPE_CHECKING:
         parent_id: UUID | None
         category_id: UUID
+        torrent_id: UUID | None
         children: fields.ReverseRelation[Download]
         #: A site download's title, kind, preset and formats; none for a torrent or a direct file.
         media: Media | None

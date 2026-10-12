@@ -33,7 +33,7 @@ from src.lib.site import error as site_error
 from src.lib.site.client import SiteClient
 from src.lib.site.entry_plan import plan_fields
 from src.lib.site.format import select_plan
-from src.service.category.pick import pick_category
+from src.service.category.pick import pick_category, pick_or_match
 from src.service.download.collection_service import CollectionService, remove_collection_video_files
 from src.service.download.collection_totals import CollectionTotals
 from src.service.download.control import DownloadControl
@@ -42,7 +42,7 @@ from src.service.download.disk import DiskGuard
 from src.service.download.duplicate import already_held
 from src.service.download.folders import inside
 from src.service.download.live import LiveStats
-from src.service.download.paths import container_folder, remove_work_files, standalone_folder
+from src.service.download.paths import folder_of, remove_work_files
 from src.service.download.torrent_service import TorrentService
 from src.service.download.views import DownloadViews
 
@@ -129,7 +129,9 @@ class DownloadService(BaseService):
         already in the list) fails here, as a 4xx they see immediately. What
         reaches the queue is a decision, not a guess.
         """
-        category = await pick_category(self._categories, category_id)
+        if category_id is not None:
+            # An unknown category fails now, before the extraction; the one a file type picks needs the plan.
+            await pick_category(self._categories, category_id)
         # The link as pasted, before an extraction it would only repeat.
         if not allow_duplicate:
             await self._refuse_held(url)
@@ -146,6 +148,9 @@ class DownloadService(BaseService):
         # minimum alone, and the worker checks again once the probe knows.
         self._require_space(plan.expected_bytes)
         planned = plan_fields(info, plan, preset=preset, title=info.title, number="")
+        category = await pick_or_match(
+            self._categories, category_id, filename=planned.filename, audio_only=preset == Preset.MP3
+        )
         download = await self._repo.create_site(
             # The site's own page for the video, not the link as pasted: a short
             # link and a playlist's entry for the same video are then one address.
@@ -172,13 +177,15 @@ class DownloadService(BaseService):
     ) -> DownloadSchema:
         """Queue a plain HTTP download — anything that is not a media platform."""
         ensure_fetchable(url)
-        category = await pick_category(self._categories, category_id)
+        if category_id is not None:
+            await pick_category(self._categories, category_id)
         if not allow_duplicate:
             await self._refuse_held(url)
         # The size is not known until a worker probes the source, so only the
         # minimum can be checked here.
         self._require_space()
         name = filename_from_url(url)
+        category = await pick_or_match(self._categories, category_id, filename=name)
         download = await self._repo.create_direct(
             url=url, download={"status": DownloadStatus.PENDING, "category_id": category.id}, filename=name
         )
@@ -529,11 +536,9 @@ class DownloadService(BaseService):
         if not self._control.holds(download_id):
             self._control.clear_stop(download_id)
         download.status = DownloadStatus.PENDING
-        download.error = None
-        download.error_code = None
         download.attempts = 0
         download.next_attempt_at = None
-        await download.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
+        await download.save(update_fields=["status", "attempts", "next_attempt_at"])
         self._control.wake()
         schema = await self._published(download)
         await self._refresh_collection(download)
@@ -572,29 +577,14 @@ class DownloadService(BaseService):
         if download.parent_id is not None:
             await self._totals.refresh(download.parent_id)
 
-    async def _folder_of(self, download: Any) -> str | None:
-        """The download's folder for its schema: derived when finished, else ``None``."""
-        if download.status != DownloadStatus.COMPLETED:
-            return None
-        if download.folder is not None:
-            return download.folder
-        if download.parent_id is not None:
-            collection = await self._collection_repo.get_active_by_id(download.parent_id)
-            if collection is None:
-                return None
-            return container_folder(collection)
-        return standalone_folder(download.id)
-
     async def _disk_path(self, download: Any, filename: str) -> Path:
-        """The finished file on disk: its recorded folder, else the one derived from before categories."""
-        if download.folder is not None:
-            return inside(self._root, download.folder) / Path(filename).name
+        """The finished file on disk, in the folder its category (or its collection) gives it."""
+        collection = None
         if download.parent_id is not None:
             collection = await self._collection_repo.get_active_by_id(download.parent_id)
             if collection is None:
                 raise Error.not_found(message="Collection not found")
-            return inside(self._root, container_folder(collection)) / Path(filename).name
-        return inside(self._root, standalone_folder(download.id)) / Path(filename).name
+        return inside(self._root, folder_of(download, collection) or "") / Path(filename).name
 
     async def _published(self, download: Any) -> DownloadSchema:
         """Serialise, announce and hand back.
@@ -602,7 +592,7 @@ class DownloadService(BaseService):
         Publishing here rather than only in the worker is what makes a change
         made through the API reach every open browser immediately.
         """
-        schema = await self._views.one(download, folder=await self._folder_of(download))
+        schema = await self._views.one(download)
         self._hub.publish("download", schema.to_json())
         return schema
 

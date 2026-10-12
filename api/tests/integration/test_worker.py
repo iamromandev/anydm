@@ -124,7 +124,7 @@ async def test_a_claimed_download_completes_and_records_its_file(db: None, tmp_p
     assert (row.status, row.downloaded_size, row.total_size) == (DownloadStatus.COMPLETED, 500, 500)
     # One try through its one mirror, completed with every byte.
     attempt = await Attempt.get(mirror__download_id=row.id)
-    assert (attempt.status, attempt.downloaded_bytes, attempt.completed_at is not None) == (
+    assert (attempt.status, attempt.downloaded_size, attempt.completed_at is not None) == (
         AttemptStatus.COMPLETED,
         500,
         True,
@@ -142,7 +142,9 @@ async def test_a_retryable_failure_requeues_with_a_backoff(db: None, tmp_path: P
     await row.refresh_from_db()
     assert (row.status, row.attempts) == (DownloadStatus.PENDING, 1)
     assert row.next_attempt_at is not None
-    assert row.error is not None
+    # Why it failed is on the try that failed.
+    attempt = await Attempt.get(mirror__download_id=row.id)
+    assert (attempt.status, attempt.error is not None) == (AttemptStatus.FAILED, True)
 
 
 async def test_a_permanent_failure_stops_at_once(db: None, tmp_path: Path) -> None:
@@ -153,6 +155,7 @@ async def test_a_permanent_failure_stops_at_once(db: None, tmp_path: Path) -> No
     await row.refresh_from_db()
     assert row.status == DownloadStatus.FAILED
     assert row.next_attempt_at is None
+    assert (await Attempt.get(mirror__download_id=row.id)).error_code == "does_not_exist"
 
 
 async def test_a_spent_mirror_fails_over_to_the_next(db: None, tmp_path: Path) -> None:
@@ -452,7 +455,7 @@ async def test_pausing_mid_download_keeps_the_partial_file(db: None, tmp_path: P
     assert (tmp_path / str(row.id) / "video.part").exists()
 
 
-async def test_a_finished_download_lands_in_its_category_and_records_the_folder(db: None, tmp_path: Path) -> None:
+async def test_a_finished_download_lands_in_its_categorys_folder(db: None, tmp_path: Path) -> None:
     from src.data.db.model import Category
 
     lectures = await Category.create(name="Lectures", slug="lectures", folder="edu/lectures", position=99)
@@ -465,5 +468,5 @@ async def test_a_finished_download_lands_in_its_category_and_records_the_folder(
     await _run(tmp_path, DownloadControl(), httpx.MockTransport(lambda request: httpx.Response(200, content=BIG)))
 
     await row.refresh_from_db()
-    assert (row.status, row.folder) == (DownloadStatus.COMPLETED, "edu/lectures")
+    assert row.status == DownloadStatus.COMPLETED
     assert (tmp_path / "edu" / "lectures" / "f.bin").read_bytes() == BIG

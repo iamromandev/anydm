@@ -102,3 +102,32 @@ async def test_a_collection_move_refused_while_a_video_runs(
 @pytest.mark.asyncio
 async def test_a_move_names_its_category(http: httpx.AsyncClient, repo: FakeCategoryRepo, refusing_mover: None) -> None:
     assert (await http.put(f"/download/{uuid.uuid4()}/category", json={})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_rules_are_shown_cleaned_on_create_and_replaced_on_patch(
+    http: httpx.AsyncClient, repo: FakeCategoryRepo
+) -> None:
+    made = await http.post(
+        "/category", json={"name": "Lectures", "extensions": ["MKV", "mp4"], "mime_prefixes": ["Video/*"]}
+    )
+    created = made.json()["data"]
+    assert (created["extensions"], created["mime_prefixes"]) == ([".mkv", ".mp4"], ["video/"])
+
+    patched = await http.patch(f"/category/{created['id']}", json={"extensions": [".pdf"]})
+    assert (patched.json()["data"]["extensions"], patched.json()["data"]["mime_prefixes"]) == ([".pdf"], ["video/"])
+
+    cleared = await http.patch(f"/category/{created['id']}", json={"mime_prefixes": []})
+    assert cleared.json()["data"]["mime_prefixes"] == []
+
+    listed = {row["slug"]: row for row in (await http.get("/category")).json()["data"]["categories"]}
+    assert ".iso" in listed["software"]["extensions"]
+
+
+@pytest.mark.asyncio
+async def test_a_bad_rule_is_refused(http: httpx.AsyncClient, repo: FakeCategoryRepo) -> None:
+    refused = await http.post("/category", json={"name": "Odd", "extensions": ["a b"]})
+    assert refused.status_code == 422
+
+    nothing = await http.patch(f"/category/{repo.named('music').id}", json={})
+    assert nothing.status_code == 422

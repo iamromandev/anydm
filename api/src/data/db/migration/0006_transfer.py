@@ -2,12 +2,16 @@ import uuid
 from typing import ClassVar
 from uuid import uuid4
 
+from orjson import loads
 from tortoise import fields, migrations
 from tortoise.fields.base import OnDelete
+from tortoise.fields.data import JSON_DUMPS
 from tortoise.fields.db_defaults import Now
 from tortoise.indexes import Index
 from tortoise.migrations import operations as ops
 
+from src.data.type.torrent.peer import PeerStatus
+from src.data.type.torrent.tracker import TrackerStatus
 from src.data.type.transfer.attempt import AttemptStatus
 from src.data.type.transfer.download import DownloadStatus
 from src.data.type.transfer.media import MediaKind, Preset
@@ -16,7 +20,7 @@ from src.data.type.transfer.segment import SegmentPart, SegmentStatus
 
 
 class Migration(migrations.Migration):
-    dependencies: ClassVar[list[tuple[str, str]]] = [('model', '0006_torrent')]
+    dependencies: ClassVar[list[tuple[str, str]]] = [('model', '0005_catalog')]
 
     initial: ClassVar[bool] = False
 
@@ -33,8 +37,23 @@ class Migration(migrations.Migration):
                 ('folder', fields.TextField(default='', unique=False)),
                 ('position', fields.IntField(default=0)),
                 ('builtin', fields.BooleanField(default=False)),
+                ('extensions', fields.JSONField(default=list, description='What puts a download here when nobody picked a category: lowercase, with the dot (``.mkv``).', db_default=[], encoder=JSON_DUMPS, decoder=loads)),
+                ('mime_prefixes', fields.JSONField(default=list, description='Content-Type prefixes that do the same (``video/``); an extension is tried first.', db_default=[], encoder=JSON_DUMPS, decoder=loads)),
             ],
             options={'table': 'category', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Category'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Torrent',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('name', fields.CharField(max_length=500)),
+                ('info_hash', fields.CharField(unique=True, max_length=64)),
+                ('total_size', fields.BigIntField(null=True)),
+            ],
+            options={'table': 'torrent', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Torrent'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -46,7 +65,8 @@ class Migration(migrations.Migration):
                 ('deleted_at', fields.DatetimeField(null=True, db_index=True, auto_now=False, auto_now_add=False)),
                 ('parent', fields.ForeignKeyField('model.Download', source_field='parent_id', null=True, description='The collection this download belongs to; none for a standalone download.', db_constraint=True, to_field='id', related_name='children', on_delete=OnDelete.CASCADE)),
                 ('category', fields.ForeignKeyField('model.Category', source_field='category_id', db_index=True, db_constraint=True, to_field='id', db_default=uuid.UUID('00000000-0000-4000-8000-000000000001'), related_name='downloads', on_delete=OnDelete.RESTRICT)),
-                ('folder', fields.TextField(null=True, description='Where its files are, relative to DOWNLOAD_DIR, once they have a place. Null on rows from before categories.', unique=False)),
+                ('torrent', fields.ForeignKeyField('model.Torrent', source_field='torrent_id', null=True, description='For a torrent download, the torrent it is a transfer of; none for any other kind.', db_constraint=True, to_field='id', related_name='downloads', on_delete=OnDelete.SET_NULL)),
+                ('pieces', fields.BinaryField(null=True, description="For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known.")),
                 ('status', fields.CharEnumField(default=DownloadStatus.PENDING, db_index=True, description='PENDING: pending\nQUEUED: queued\nDOWNLOADING: downloading\nMUXING: muxing\nPAUSED: paused\nSEEDING: seeding\nCOMPLETED: completed\nFAILED: failed\nCANCELLED: cancelled', enum_type=DownloadStatus, max_length=11)),
                 ('total_size', fields.BigIntField(null=True)),
                 ('downloaded_size', fields.BigIntField(default=0)),
@@ -55,31 +75,11 @@ class Migration(migrations.Migration):
                 ('speed_limit', fields.BigIntField(null=True)),
                 ('started_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
-                ('error', fields.TextField(null=True, unique=False)),
-                ('error_code', fields.CharField(null=True, max_length=64)),
                 ('attempts', fields.IntField(default=0)),
                 ('next_attempt_at', fields.DatetimeField(null=True, description='When a retryable failure may run again; the row waits in ``PENDING`` until then.', auto_now=False, auto_now_add=False)),
             ],
             options={'table': 'download', 'schema': 'transfer', 'app': 'model', 'indexes': [Index(fields=['status', 'created_at'], name='idx_download_status_created'), Index(fields=['parent_id', 'created_at'], name='idx_download_parent_created')], 'pk_attr': 'id', 'table_description': 'Download'},
             bases=['Base'],
-        ),
-        ops.CreateModel(
-            name='File',
-            fields=[
-                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
-                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
-                ('download', fields.ForeignKeyField('model.Download', source_field='download_id', db_constraint=True, to_field='id', related_name='files', on_delete=OnDelete.CASCADE)),
-                ('filename', fields.CharField(max_length=512)),
-                ('path', fields.TextField(unique=False)),
-                ('size', fields.BigIntField(null=True)),
-                ('index', fields.IntField()),
-                ('downloaded_bytes', fields.BigIntField(default=0)),
-                ('selected', fields.BooleanField(default=True)),
-                ('mime_type', fields.CharField(null=True, max_length=128)),
-            ],
-            options={'table': 'file', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'index'),), 'pk_attr': 'id', 'table_description': 'File'},
-            bases=['LinkBase'],
         ),
         ops.CreateModel(
             name='Media',
@@ -120,11 +120,78 @@ class Migration(migrations.Migration):
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('mirror', fields.ForeignKeyField('model.Mirror', source_field='mirror_id', db_constraint=True, to_field='id', related_name='attempts', on_delete=OnDelete.CASCADE)),
                 ('status', fields.CharEnumField(default=AttemptStatus.RUNNING, description='RUNNING: running\nCOMPLETED: completed\nFAILED: failed\nCANCELLED: cancelled', enum_type=AttemptStatus, max_length=9)),
-                ('downloaded_bytes', fields.BigIntField(default=0)),
+                ('downloaded_size', fields.BigIntField(default=0)),
+                ('error', fields.TextField(null=True, description='Why the try ended badly, when it did; none for a try that completed or was paused.', unique=False)),
+                ('error_code', fields.CharField(null=True, max_length=64)),
                 ('started_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('completed_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
             ],
             options={'table': 'attempt', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Attempt'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Peer',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('download', fields.ForeignKeyField('model.Download', source_field='download_id', db_constraint=True, to_field='id', related_name='peers', on_delete=OnDelete.CASCADE)),
+                ('address', fields.CharField(max_length=255)),
+                ('port', fields.IntField()),
+                ('client', fields.CharField(null=True, max_length=255)),
+                ('status', fields.CharEnumField(default=PeerStatus.CONNECTING, description='CONNECTING: connecting\nCONNECTED: connected\nDISCONNECTED: disconnected', enum_type=PeerStatus, max_length=12)),
+                ('downloaded_bytes', fields.BigIntField(default=0)),
+                ('uploaded_bytes', fields.BigIntField(default=0)),
+                ('last_seen_at', fields.DatetimeField(null=True, auto_now=False, auto_now_add=False)),
+            ],
+            options={'table': 'peer', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'address', 'port'),), 'pk_attr': 'id', 'table_description': 'Peer'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Piece',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('torrent', fields.ForeignKeyField('model.Torrent', source_field='torrent_id', db_constraint=True, to_field='id', related_name='pieces', on_delete=OnDelete.CASCADE)),
+                ('index', fields.IntField()),
+                ('size', fields.BigIntField()),
+                ('hash', fields.CharField(max_length=64)),
+            ],
+            options={'table': 'piece', 'schema': 'transfer', 'app': 'model', 'unique_together': (('torrent', 'index'),), 'pk_attr': 'id', 'table_description': 'Piece'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='TorrentFile',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('torrent', fields.ForeignKeyField('model.Torrent', source_field='torrent_id', db_constraint=True, to_field='id', related_name='files', on_delete=OnDelete.CASCADE)),
+                ('index', fields.IntField()),
+                ('path', fields.TextField(unique=False)),
+                ('size', fields.BigIntField()),
+            ],
+            options={'table': 'torrent_file', 'schema': 'transfer', 'app': 'model', 'unique_together': (('torrent', 'index'),), 'pk_attr': 'id', 'table_description': 'TorrentFile'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='File',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('download', fields.ForeignKeyField('model.Download', source_field='download_id', db_constraint=True, to_field='id', related_name='files', on_delete=OnDelete.CASCADE)),
+                ('filename', fields.CharField(max_length=512)),
+                ('path', fields.TextField(unique=False)),
+                ('size', fields.BigIntField(null=True)),
+                ('index', fields.IntField()),
+                ('downloaded_bytes', fields.BigIntField(default=0)),
+                ('selected', fields.BooleanField(default=True)),
+                ('mime_type', fields.CharField(null=True, max_length=128)),
+                ('torrent_file', fields.ForeignKeyField('model.TorrentFile', source_field='torrent_file_id', null=True, description="For a torrent's file, the torrent's own row for it (its ``index`` is this one's); none otherwise.", db_constraint=True, to_field='id', related_name='download_files', on_delete=OnDelete.SET_NULL)),
+            ],
+            options={'table': 'file', 'schema': 'transfer', 'app': 'model', 'unique_together': (('download', 'index'),), 'pk_attr': 'id', 'table_description': 'File'},
             bases=['LinkBase'],
         ),
         ops.CreateModel(
@@ -141,6 +208,20 @@ class Migration(migrations.Migration):
                 ('downloaded_bytes', fields.BigIntField(default=0)),
             ],
             options={'table': 'segment', 'schema': 'transfer', 'app': 'model', 'pk_attr': 'id', 'table_description': 'Segment'},
+            bases=['LinkBase'],
+        ),
+        ops.CreateModel(
+            name='Tracker',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('created_at', fields.DatetimeField(db_index=True, auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
+                ('torrent', fields.ForeignKeyField('model.Torrent', source_field='torrent_id', db_constraint=True, to_field='id', related_name='trackers', on_delete=OnDelete.CASCADE)),
+                ('url', fields.TextField(unique=False)),
+                ('tier', fields.IntField(default=0)),
+                ('status', fields.CharEnumField(default=TrackerStatus.ACTIVE, description='ACTIVE: active\nINACTIVE: inactive\nFAILED: failed', enum_type=TrackerStatus, max_length=8)),
+            ],
+            options={'table': 'tracker', 'schema': 'transfer', 'app': 'model', 'unique_together': (('torrent', 'url'),), 'pk_attr': 'id', 'table_description': 'Tracker'},
             bases=['LinkBase'],
         ),
     ]

@@ -19,7 +19,7 @@ from src.core.common import now
 from src.core.success import Meta
 from src.data.db.model import Download, File, Media, Mirror, Source, Torrent, TorrentFile
 from src.data.repo.catalog import address_hash, provider_row, source_row, url_row
-from src.data.repo.download.described import describe, primary_mirror
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
@@ -50,9 +50,8 @@ def _not_torrent() -> Q:
 
 
 def _torrent_named(row: Download) -> bool:
-    """Whether a torrent names it, through its primary mirror: then no file is needed for its title."""
-    mirror = primary_mirror(row)
-    return mirror is not None and any(torrent.name for torrent in mirror.source.torrents)
+    """Whether the torrent it is a transfer of names it: then no file is needed for its title."""
+    return row.torrent is not None and bool(row.torrent.name)
 
 
 def _name(path: str) -> str:
@@ -200,21 +199,26 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         files: Sequence[FileRow],
     ) -> Download:
         async with in_transaction() as conn:
-            known = await Torrent.filter(info_hash=info_hash).using_db(conn).prefetch_related("source").first()
-            if known is not None:
-                source = known.source
-            else:
-                source = await source_row(
-                    await provider_row(TORRENT_PROVIDER, conn), await url_row(url, conn), SourceKind.TORRENT, conn
-                )
-                torrent = await Torrent.create(
-                    using_db=conn, source=source, name=name, info_hash=info_hash, total_bytes=total_size
-                )
-                await TorrentFile.bulk_create(
-                    [TorrentFile(torrent=torrent, path=path, size=size) for _, path, size, _ in files], using_db=conn
-                )
-            row = await self._added(source, {**download, "total_size": total_size}, conn)
+            torrent = await Torrent.filter(info_hash=info_hash).using_db(conn).first()
+            if torrent is None:
+                torrent = await Torrent.create(using_db=conn, name=name, info_hash=info_hash, total_size=total_size)
+            # The link as pasted gets its own source, whether or not the torrent is known; the download is
+            # what points at the torrent, so a magnet and a .torrent address for one hash lead to the same one.
+            source = await source_row(
+                await provider_row(TORRENT_PROVIDER, conn), await url_row(url, conn), SourceKind.TORRENT, conn
+            )
+            row = await self._added(source, {**download, "total_size": total_size, "torrent_id": torrent.id}, conn)
             if files:
+                # The torrent's own file list is written once; a known torrent only gains what it lacks.
+                parts = {part.index: part.id for part in await TorrentFile.filter(torrent=torrent).using_db(conn)}
+                lacking = [
+                    TorrentFile(torrent=torrent, index=index, path=path, size=size)
+                    for index, path, size, _ in files
+                    if index not in parts
+                ]
+                if lacking:
+                    await TorrentFile.bulk_create(lacking, using_db=conn)
+                    parts = {part.index: part.id for part in await TorrentFile.filter(torrent=torrent).using_db(conn)}
                 await File.bulk_create(
                     [
                         File(
@@ -225,6 +229,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
                             size=size,
                             selected=selected,
                             mime_type=mime_of(path),
+                            torrent_file_id=parts.get(index),
                         )
                         for index, path, size, selected in files
                     ],
@@ -367,11 +372,8 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             completed=group("completed"),
         )
 
-    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID, folder: str | None) -> None:
-        changes: dict[str, Any] = {"category_id": category_id}
-        if folder is not None:
-            changes["folder"] = folder
-        await Download.filter(id=download_id).update(**changes)
+    async def set_category(self, download_id: uuid.UUID, category_id: uuid.UUID) -> None:
+        await Download.filter(id=download_id).update(category_id=category_id)
 
     async def by_ids(self, ids: Sequence[uuid.UUID]) -> list[Download]:
         if not ids:
@@ -421,7 +423,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
         )
 
     async def set_torrent_total(self, info_hash: str, total: int) -> None:
-        await Torrent.filter(info_hash=info_hash).update(total_bytes=total)
+        await Torrent.filter(info_hash=info_hash).update(total_size=total)
 
     async def held_at(self, url: str) -> Download | None:
         held = Download.filter(
@@ -438,7 +440,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
 
     async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (
-            Download.filter(mirrors__source__torrents__info_hash=info_hash, deleted_at__isnull=True)
+            Download.filter(torrent__info_hash=info_hash, deleted_at__isnull=True)
             .prefetch_related(*RELATED)
             .first()
         )
