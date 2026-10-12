@@ -1,4 +1,6 @@
+import type { createActions } from "./actions";
 import type { createCategories } from "./categories";
+import type { createEntries } from "./entries";
 import type { createSettings } from "./settings";
 import type { createTasks } from "./tasks";
 import type { createToasts } from "./toasts";
@@ -12,4 +14,6 @@ export interface App {
     settings: ReturnType<typeof createSettings>;
     categories: ReturnType<typeof createCategories>;
     tasks: ReturnType<typeof createTasks>;
+    entries: ReturnType<typeof createEntries>;
+    actions: ReturnType<typeof createActions>;
 }
