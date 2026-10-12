@@ -1,11 +1,5 @@
-import {
-    component$,
-    $,
-    sync$,
-    useStore,
-    useSignal,
-    useVisibleTask$,
-} from "@qwik.dev/core";
+import { useEffect, useRef, useState } from "react";
+import { usePatch } from "@/hook/use-patch";
 import {
     LuLink,
     LuDownload,
@@ -79,657 +73,600 @@ function magnetName(value: string): string {
     return dn || value;
 }
 
-export const HeroInput = component$<HeroInputProps>(
-    ({
-        defaultPreset,
-        categories,
-        addCategory,
-        onAddCategoryChange,
-        onSubmit,
-        onOpen,
-        onMany,
-        onPlay,
-        onChoose,
-        compact = false,
-    }) => {
-        const inputRef = useSignal<HTMLInputElement>();
-        /**
-         * The quality picked in this session, or null to follow the
-         * preference. A store initialised from the prop captured "best"
-         * before preferences had been read out of storage and never caught
-         * up; read at render time it simply follows.
-         */
-        const chosenPreset = useSignal<string | null>(null);
-        const store = useStore({
-            value: "",
-            kind: "auto" as InputKind,
-            isDragging: false,
-            isLoading: false,
-            error: "" as string,
-            /** The download a refused add says the list already holds, and the add. */
-            duplicate: null as Duplicate | null,
-            retry: null as AddInput | null,
-            /** What the API said about the site link in the box, if anything. */
-            lookup: "idle" as LookupStatus,
-            preview: null as SitePreview | null,
-            /** The list the link names, for a playlist or a channel. */
-            playlist: null as PlaylistPreview | null,
-            /** A channel's own lists. */
-            tabs: [] as PlaylistTab[],
-        });
+export function HeroInput({
+    defaultPreset,
+    categories,
+    addCategory,
+    onAddCategoryChange,
+    onSubmit,
+    onOpen,
+    onMany,
+    onPlay,
+    onChoose,
+    compact = false,
+}: HeroInputProps) {
+    const inputRef = useRef<HTMLInputElement>(null);
+    /**
+     * The quality picked in this session, or null to follow the
+     * preference. A store initialised from the prop captured "best"
+     * before preferences had been read out of storage and never caught
+     * up; read at render time it simply follows.
+     */
+    const [
+        chosenPreset,
+        setChosenPreset,
+    ] = useState<string | null>(null);
+    const [
+        store,
+        patch,
+    ] = usePatch({
+        value: "",
+        kind: "auto" as InputKind,
+        isDragging: false,
+        isLoading: false,
+        error: "" as string,
+        /** The download a refused add says the list already holds, and the add. */
+        duplicate: null as Duplicate | null,
+        retry: null as AddInput | null,
+        /** What the API said about the site link in the box, if anything. */
+        lookup: "idle" as LookupStatus,
+        preview: null as SitePreview | null,
+        /** The list the link names, for a playlist or a channel. */
+        playlist: null as PlaylistPreview | null,
+        /** A channel's own lists. */
+        tabs: [] as PlaylistTab[],
+    });
 
-        useVisibleTask$(({ track }) => {
-            track(() => inputRef.value);
-            if (inputRef.value) {
-                inputRef.value.focus();
-            }
-        });
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
 
-        /**
-         * Ask the API about a site link once typing pauses.
-         *
-         * An answer for a value that has since changed is dropped, so a slow
-         * lookup can never paint the preview of a link no longer in the box.
-         * ``document-ready`` because the add box can sit outside the viewport,
-         * where the default strategy would never run this.
-         */
-        useVisibleTask$(
-            ({ track, cleanup }) => {
-                const value = track(() => store.value).trim();
-                const kind = track(() => store.kind);
-                const effective = kind === "auto" ? detectKind(value) : kind;
+    // What the lookup timer compares against when its answer lands.
+    const latest = useRef(store);
+    latest.current = store;
 
-                chosenPreset.value = null;
-                if (!value || effective !== "site") {
-                    store.lookup = "idle";
-                    store.preview = null;
-                    store.playlist = null;
-                    store.tabs = [];
-                    return;
-                }
+    /**
+     * Ask the API about a site link once typing pauses.
+     *
+     * An answer for a value that has since changed is dropped, so a slow
+     * lookup can never paint the preview of a link no longer in the box.
+     */
+    const typed = store.value.trim();
+    const typedKind = store.kind;
+    useEffect(() => {
+        const effective = typedKind === "auto" ? detectKind(typed) : typedKind;
 
-                store.lookup = "looking";
-                store.preview = null;
-                store.playlist = null;
-                store.tabs = [];
-                const timer = setTimeout(async () => {
-                    const current = () => store.value.trim() === value;
-                    try {
-                        const found = await lookupLink(value);
-                        if (!current()) return;
-                        store.preview =
-                            found.kind === "site" ? found.preview : null;
-                        store.playlist =
-                            found.kind === "playlist" ||
-                            found.kind === "channel"
-                                ? found.preview
-                                : null;
-                        store.tabs = found.kind === "channel" ? found.tabs : [];
-                        store.lookup = found.kind;
-                    } catch (err) {
-                        if (!current()) return;
-                        store.lookup = "error";
-                        store.error =
-                            err instanceof Error
-                                ? err.message
-                                : "Could not look this link up";
-                    }
-                }, LOOKUP_DELAY_MS);
-                cleanup(() => clearTimeout(timer));
-            },
-            { strategy: "document-ready" },
-        );
-
-        const updateValue = $((value: string) => {
-            store.value = value;
-            store.error = "";
-            store.duplicate = null;
-        });
-
-        const activeKind =
-            store.kind === "auto" ? detectKind(store.value) : store.kind;
-        const offered = store.preview?.presets ?? [];
-        const preset =
-            chosenPreset.value ?? choosePreset(offered, defaultPreset) ?? "";
-        const siteBlocked =
-            activeKind === "site" &&
-            (store.lookup === "looking" || store.lookup === "error");
-        /** A playlist or a channel: nothing here plays until part 4's Play all. */
-        const isList =
-            store.lookup === "playlist" || store.lookup === "channel";
-
-        const choosePlaylist = $(() => {
-            const list = store.playlist;
-            if (!list) return;
-            onChoose?.({
-                url: list.url,
-                title: list.title,
-                count: list.count,
-                extractor: list.extractor,
-                playlistId: list.id,
-                channelTab: list.channelTab,
+        setChosenPreset(null);
+        if (!typed || effective !== "site") {
+            patch({
+                lookup: "idle",
+                preview: null,
+                playlist: null,
+                tabs: [],
             });
-        });
+            return;
+        }
 
-        const chooseTab = $((tab: PlaylistTab) => {
-            const list = store.playlist;
-            if (!list) return;
-            onChoose?.({
-                url: tab.url,
-                title: `${list.title} · ${tab.name}`,
-                count: null,
-                extractor: list.extractor,
-                // A channel tab's id is the channel's (spec: Findings).
-                playlistId: list.id,
-                channelTab: true,
-            });
-        });
-
-        /** Send an add; a refusal naming a download shows Open and Add anyway. */
-        const send = $(async (input: AddInput, clear: boolean) => {
-            store.isLoading = true;
-            store.error = "";
-            store.duplicate = null;
+        patch({ lookup: "looking", preview: null, playlist: null, tabs: [] });
+        const timer = setTimeout(async () => {
+            const current = () => latest.current.value.trim() === typed;
             try {
-                await onSubmit(input);
-                if (clear) store.value = "";
+                const found = await lookupLink(typed);
+                if (!current()) return;
+                patch({
+                    preview: found.kind === "site" ? found.preview : null,
+                    playlist:
+                        found.kind === "playlist" || found.kind === "channel"
+                            ? found.preview
+                            : null,
+                    tabs: found.kind === "channel" ? found.tabs : [],
+                    lookup: found.kind,
+                });
             } catch (err) {
-                const held = duplicateOf(err);
-                if (held) {
-                    store.duplicate = held;
-                    store.retry = input;
-                } else {
-                    store.error =
+                if (!current()) return;
+                patch({
+                    lookup: "error",
+                    error:
                         err instanceof Error
                             ? err.message
-                            : "Failed to start download";
-                }
-            } finally {
-                store.isLoading = false;
+                            : "Could not look this link up",
+                });
             }
+        }, LOOKUP_DELAY_MS);
+        return () => clearTimeout(timer);
+    }, [
+        typed,
+        typedKind,
+        patch,
+    ]);
+
+    const updateValue = (value: string) => {
+        patch({ value: value });
+        patch({ error: "" });
+        patch({ duplicate: null });
+    };
+
+    const activeKind =
+        store.kind === "auto" ? detectKind(store.value) : store.kind;
+    const offered = store.preview?.presets ?? [];
+    const preset = chosenPreset ?? choosePreset(offered, defaultPreset) ?? "";
+    const siteBlocked =
+        activeKind === "site" &&
+        (store.lookup === "looking" || store.lookup === "error");
+    /** A playlist or a channel: nothing here plays until part 4's Play all. */
+    const isList = store.lookup === "playlist" || store.lookup === "channel";
+
+    const choosePlaylist = () => {
+        const list = store.playlist;
+        if (!list) return;
+        onChoose?.({
+            url: list.url,
+            title: list.title,
+            count: list.count,
+            extractor: list.extractor,
+            playlistId: list.id,
+            channelTab: list.channelTab,
         });
+    };
 
-        const handleSubmit = $(async () => {
-            const value = store.value.trim();
-            if (!value) {
-                inputRef.value?.focus();
-                return;
-            }
+    const chooseTab = (tab: PlaylistTab) => {
+        const list = store.playlist;
+        if (!list) return;
+        onChoose?.({
+            url: tab.url,
+            title: `${list.title} · ${tab.name}`,
+            count: null,
+            extractor: list.extractor,
+            // A channel tab's id is the channel's (spec: Findings).
+            playlistId: list.id,
+            channelTab: true,
+        });
+    };
 
-            // Recomputed here rather than closing over the outer `activeKind`:
-            // that value is captured once when this handler's QRL is created —
-            // typically on the very first render, while the input is still
-            // empty — and never refreshes as the user types. Reading `store.kind`
-            // and `store.value` directly keeps this in step with what is on
-            // screen right now.
-            const kindNow =
-                store.kind === "auto" ? detectKind(store.value) : store.kind;
-
-            let input: AddInput;
-            if (kindNow === "magnet") {
-                input = { type: "magnet", value };
-            } else if (kindNow === "site") {
-                // A playlist: Download chooses its videos, and the box keeps
-                // the link in case the picker is closed.
-                if (store.lookup === "playlist" && store.playlist) {
-                    await choosePlaylist();
-                    return;
-                }
-                if (store.lookup === "channel") {
-                    return;
-                }
-                // Download stays disabled until the lookup has answered, so
-                // this is either a previewed page or a file no site claims.
-                if (store.lookup === "site" && store.preview) {
-                    const picked =
-                        chosenPreset.value ??
-                        choosePreset(store.preview.presets, defaultPreset);
-                    if (!picked) {
-                        store.error =
-                            "Nothing on this page can be downloaded yet";
-                        return;
-                    }
-                    input = { type: "site", value, preset: picked };
-                } else if (store.lookup === "file") {
-                    input = { type: "url", value };
-                } else {
-                    return;
-                }
+    /** Send an add; a refusal naming a download shows Open and Add anyway. */
+    const send = async (input: AddInput, clear: boolean) => {
+        patch({ isLoading: true });
+        patch({ error: "" });
+        patch({ duplicate: null });
+        try {
+            await onSubmit(input);
+            if (clear) patch({ value: "" });
+        } catch (err) {
+            const held = duplicateOf(err);
+            if (held) {
+                patch({ duplicate: held });
+                patch({ retry: input });
             } else {
-                input = { type: "url", value };
+                store.error =
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to start download";
             }
+        } finally {
+            patch({ isLoading: false });
+        }
+    };
 
-            await send(input, true);
-        });
+    const handleSubmit = async () => {
+        const value = store.value.trim();
+        if (!value) {
+            inputRef.current?.focus();
+            return;
+        }
 
-        const handleFile = $((file: File) => {
-            if (!file.name.endsWith(".torrent")) {
-                store.error = "Please drop a .torrent file";
+        // Recomputed here from the fields themselves, so it is in step with
+        // what is on screen right now.
+        const kindNow =
+            store.kind === "auto" ? detectKind(store.value) : store.kind;
+
+        let input: AddInput;
+        if (kindNow === "magnet") {
+            input = { type: "magnet", value };
+        } else if (kindNow === "site") {
+            // A playlist: Download chooses its videos, and the box keeps
+            // the link in case the picker is closed.
+            if (store.lookup === "playlist" && store.playlist) {
+                await choosePlaylist();
                 return;
             }
+            if (store.lookup === "channel") {
+                return;
+            }
+            // Download stays disabled until the lookup has answered, so
+            // this is either a previewed page or a file no site claims.
+            if (store.lookup === "site" && store.preview) {
+                const picked =
+                    chosenPreset ??
+                    choosePreset(store.preview.presets, defaultPreset);
+                if (!picked) {
+                    store.error = "Nothing on this page can be downloaded yet";
+                    return;
+                }
+                input = { type: "site", value, preset: picked };
+            } else if (store.lookup === "file") {
+                input = { type: "url", value };
+            } else {
+                return;
+            }
+        } else {
+            input = { type: "url", value };
+        }
 
-            const reader = new FileReader();
-            reader.onload = async () => {
-                const result = reader.result as string;
-                const base64 = result?.split(",")[1] || "";
-                await send({ type: "file", value: base64 }, false);
-            };
-            reader.readAsDataURL(file);
-        });
+        await send(input, true);
+    };
 
-        const openHeld = $(() => {
-            const held = store.duplicate;
-            if (!held) return;
-            store.duplicate = null;
-            onOpen?.(held.id, held.collectionId);
-        });
+    const handleFile = (file: File) => {
+        if (!file.name.endsWith(".torrent")) {
+            patch({ error: "Please drop a .torrent file" });
+            return;
+        }
 
-        const addSecondCopy = $(async () => {
-            if (store.retry) await send(addAnyway(store.retry), true);
-        });
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const result = reader.result as string;
+            const base64 = result?.split(",")[1] || "";
+            await send({ type: "file", value: base64 }, false);
+        };
+        reader.readAsDataURL(file);
+    };
 
-        const isYoutube = store.preview?.extractor === "Youtube";
+    const openHeld = () => {
+        const held = store.duplicate;
+        if (!held) return;
+        patch({ duplicate: null });
+        onOpen?.(held.id, held.collectionId);
+    };
 
-        return (
-            <section
-                class={`hero-input ${compact ? "hero-input--compact" : ""} ${store.isDragging ? "hero-input--drag" : ""}`}
-                aria-label="Start a download"
-            >
-                {compact ? (
-                    // The page still needs its heading; the welcome text is what goes.
-                    <h1 class="hero-input-title hero-input-title--hidden">
-                        Download anything
-                    </h1>
-                ) : (
-                    <div class="hero-input-header">
-                        <h1 class="hero-input-title">Download anything</h1>
-                        <p class="hero-input-subtitle">
-                            Paste a video page, a file link, a magnet URI, or
-                            drop a .torrent file.
-                        </p>
-                    </div>
+    const addSecondCopy = async () => {
+        if (store.retry) await send(addAnyway(store.retry), true);
+    };
+
+    const isYoutube = store.preview?.extractor === "Youtube";
+
+    return (
+        <section
+            className={`hero-input ${compact ? "hero-input--compact" : ""} ${store.isDragging ? "hero-input--drag" : ""}`}
+            aria-label="Start a download"
+        >
+            {compact ? (
+                // The page still needs its heading; the welcome text is what goes.
+                <h1 className="hero-input-title hero-input-title--hidden">
+                    Download anything
+                </h1>
+            ) : (
+                <div className="hero-input-header">
+                    <h1 className="hero-input-title">Download anything</h1>
+                    <p className="hero-input-subtitle">
+                        Paste a video page, a file link, a magnet URI, or drop a
+                        .torrent file.
+                    </p>
+                </div>
+            )}
+
+            <div className="hero-input-bar">
+                <div className="hero-input-icon">
+                    {activeKind === "site" && isYoutube ? (
+                        <SiYoutube width="20" height="20" aria-hidden="true" />
+                    ) : activeKind === "site" ? (
+                        <LuMonitorPlay
+                            width="20"
+                            height="20"
+                            aria-hidden="true"
+                        />
+                    ) : activeKind === "magnet" ? (
+                        <LuMagnet width="20" height="20" aria-hidden="true" />
+                    ) : activeKind === "torrent" ? (
+                        <LuFile width="20" height="20" aria-hidden="true" />
+                    ) : activeKind === "media" ? (
+                        <LuFilm width="20" height="20" aria-hidden="true" />
+                    ) : activeKind === "url" ? (
+                        <LuGlobe width="20" height="20" aria-hidden="true" />
+                    ) : (
+                        <LuLink width="20" height="20" aria-hidden="true" />
+                    )}
+                </div>
+
+                <input
+                    ref={inputRef}
+                    type="text"
+                    className="hero-input-field"
+                    placeholder="youtube.com/watch?v=..., vimeo.com/..., or magnet:?xt=..."
+                    value={store.value}
+                    disabled={store.isLoading}
+                    onChange={(e) => {
+                        updateValue((e.target as HTMLInputElement).value);
+                    }}
+                    onPaste={(event) => {
+                        // One-line field: several pasted links would be
+                        // flattened into one, so a multi-line paste is
+                        // stopped and handed on as it is.
+                        const text = event.clipboardData.getData("text") ?? "";
+                        if (!/[\r\n]/.test(text.trim())) return;
+                        event.preventDefault();
+                        if (looksLikeMany(text) && onMany) {
+                            onMany(text);
+                        } else {
+                            updateValue(text.trim());
+                        }
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter" && !siteBlocked) handleSubmit();
+                    }}
+                    onDragOver={(e) => {
+                        e.preventDefault();
+                        patch({ isDragging: true });
+                    }}
+                    onDragLeave={() => {
+                        patch({ isDragging: false });
+                    }}
+                    onDrop={(e) => {
+                        e.preventDefault();
+                        patch({ isDragging: false });
+                        const file = e.dataTransfer?.files[0];
+                        if (file) handleFile(file);
+                    }}
+                    aria-label="Download link or magnet URI"
+                />
+
+                {activeKind === "site" && store.lookup === "site" && (
+                    <select
+                        className="hero-input-select"
+                        value={preset}
+                        onChange={(e) => setChosenPreset(e.target.value)}
+                        aria-label="Quality"
+                    >
+                        {/* Only what this page offers is listed. */}
+                        {PRESET_OPTIONS.filter((option) =>
+                            offered.includes(option.value),
+                        ).map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
                 )}
 
-                <div class="hero-input-bar">
-                    <div class="hero-input-icon">
-                        {activeKind === "site" && isYoutube ? (
-                            <SiYoutube
-                                width="20"
-                                height="20"
-                                aria-hidden="true"
-                            />
-                        ) : activeKind === "site" ? (
-                            <LuMonitorPlay
-                                width="20"
-                                height="20"
-                                aria-hidden="true"
-                            />
-                        ) : activeKind === "magnet" ? (
-                            <LuMagnet
-                                width="20"
-                                height="20"
-                                aria-hidden="true"
-                            />
-                        ) : activeKind === "torrent" ? (
-                            <LuFile width="20" height="20" aria-hidden="true" />
-                        ) : activeKind === "media" ? (
-                            <LuFilm width="20" height="20" aria-hidden="true" />
-                        ) : activeKind === "url" ? (
-                            <LuGlobe
-                                width="20"
-                                height="20"
+                {store.value.trim() !== "" && (
+                    <CategorySelect
+                        className="hero-input-category"
+                        categories={categories}
+                        value={addCategory}
+                        onChange={(id: string) => onAddCategoryChange(id)}
+                    />
+                )}
+
+                <div className="hero-input-divider" aria-hidden="true" />
+
+                <div className="hero-input-actions">
+                    {isPlayableKind(activeKind) && (
+                        <button
+                            type="button"
+                            className="hero-input-play"
+                            // Held back on the same terms as Download: a
+                            // page still being looked up, or one the API
+                            // has refused, would only fail in the player.
+                            disabled={store.isLoading || siteBlocked || isList}
+                            onClick={() =>
+                                onPlay?.(store.value.trim(), activeKind)
+                            }
+                        >
+                            <LuPlay width="18" height="18" aria-hidden="true" />
+                            <span className="hero-input-submit-text">Play</span>
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        className="hero-input-submit"
+                        disabled={
+                            !store.value.trim() ||
+                            store.isLoading ||
+                            siteBlocked ||
+                            store.lookup === "channel"
+                        }
+                        onClick={handleSubmit}
+                    >
+                        {store.isLoading ||
+                        (activeKind === "site" &&
+                            store.lookup === "looking") ? (
+                            <LuLoader2
+                                width="18"
+                                height="18"
+                                className="hero-input-spin"
                                 aria-hidden="true"
                             />
                         ) : (
-                            <LuLink width="20" height="20" aria-hidden="true" />
+                            <LuDownload
+                                width="18"
+                                height="18"
+                                aria-hidden="true"
+                            />
                         )}
-                    </div>
-
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        class="hero-input-field"
-                        placeholder="youtube.com/watch?v=..., vimeo.com/..., or magnet:?xt=..."
-                        value={store.value}
-                        disabled={store.isLoading}
-                        onInput$={(e: Event) => {
-                            updateValue((e.target as HTMLInputElement).value);
-                        }}
-                        onPaste$={[
-                            // Synchronous, so the paste can still be stopped:
-                            // a one-line field would flatten several links
-                            // into one. The text is left on the element for
-                            // the handler below, which may load later.
-                            sync$(
-                                (
-                                    event: ClipboardEvent,
-                                    el: HTMLInputElement,
-                                ) => {
-                                    const text =
-                                        event.clipboardData?.getData("text") ??
-                                        "";
-                                    if (!/[\r\n]/.test(text.trim())) return;
-                                    event.preventDefault();
-                                    el.dataset.pasted = text;
-                                },
-                            ),
-                            $((_: ClipboardEvent, el: HTMLInputElement) => {
-                                const text = el.dataset.pasted;
-                                if (text === undefined) return;
-                                delete el.dataset.pasted;
-                                if (looksLikeMany(text) && onMany) {
-                                    onMany(text);
-                                } else {
-                                    updateValue(text.trim());
-                                }
-                            }),
-                        ]}
-                        onKeyDown$={(e: KeyboardEvent) => {
-                            if (e.key === "Enter" && !siteBlocked)
-                                handleSubmit();
-                        }}
-                        onDragOver$={(e: DragEvent) => {
-                            e.preventDefault();
-                            store.isDragging = true;
-                        }}
-                        onDragLeave$={() => {
-                            store.isDragging = false;
-                        }}
-                        onDrop$={(e: DragEvent) => {
-                            e.preventDefault();
-                            store.isDragging = false;
-                            const file = e.dataTransfer?.files[0];
-                            if (file) handleFile(file);
-                        }}
-                        aria-label="Download link or magnet URI"
-                    />
-
-                    {activeKind === "site" && store.lookup === "site" && (
-                        <select
-                            class="hero-input-select"
-                            onChange$={(e: Event) => {
-                                chosenPreset.value = (
-                                    e.target as HTMLSelectElement
-                                ).value;
-                            }}
-                            aria-label="Quality"
-                        >
-                            {/* `selected` on the option rather than `value`
-                                on the select: the select's value is applied
-                                before its options exist, so it silently falls
-                                back to the first one. Only what this page
-                                offers is listed. */}
-                            {PRESET_OPTIONS.filter((option) =>
-                                offered.includes(option.value),
-                            ).map((option) => (
-                                <option
-                                    key={option.value}
-                                    value={option.value}
-                                    selected={option.value === preset}
-                                >
-                                    {option.label}
-                                </option>
-                            ))}
-                        </select>
-                    )}
-
-                    {store.value.trim() !== "" && (
-                        <CategorySelect
-                            class="hero-input-category"
-                            categories={categories}
-                            value={addCategory}
-                            onChange$={$((id: string) =>
-                                onAddCategoryChange(id),
-                            )}
-                        />
-                    )}
-
-                    <div class="hero-input-divider" aria-hidden="true" />
-
-                    <div class="hero-input-actions">
-                        {isPlayableKind(activeKind) && (
-                            <button
-                                type="button"
-                                class="hero-input-play"
-                                // Held back on the same terms as Download: a
-                                // page still being looked up, or one the API
-                                // has refused, would only fail in the player.
-                                disabled={
-                                    store.isLoading || siteBlocked || isList
-                                }
-                                onClick$={$(() =>
-                                    onPlay?.(store.value.trim(), activeKind),
-                                )}
-                            >
-                                <LuPlay
-                                    width="18"
-                                    height="18"
-                                    aria-hidden="true"
-                                />
-                                <span class="hero-input-submit-text">Play</span>
-                            </button>
-                        )}
-
-                        <button
-                            type="button"
-                            class="hero-input-submit"
-                            disabled={
-                                !store.value.trim() ||
-                                store.isLoading ||
-                                siteBlocked ||
-                                store.lookup === "channel"
-                            }
-                            onClick$={handleSubmit}
-                        >
-                            {store.isLoading ||
-                            (activeKind === "site" &&
-                                store.lookup === "looking") ? (
-                                <LuLoader2
-                                    width="18"
-                                    height="18"
-                                    class="hero-input-spin"
-                                    aria-hidden="true"
-                                />
-                            ) : (
-                                <LuDownload
-                                    width="18"
-                                    height="18"
-                                    aria-hidden="true"
-                                />
-                            )}
-                            <span class="hero-input-submit-text">
-                                {store.isLoading ? "Adding…" : "Download"}
-                            </span>
-                        </button>
-                    </div>
+                        <span className="hero-input-submit-text">
+                            {store.isLoading ? "Adding…" : "Download"}
+                        </span>
+                    </button>
                 </div>
+            </div>
 
-                {activeKind === "site" && store.lookup === "looking" && (
-                    <div class="hero-input-preview" aria-live="polite">
-                        <span class="hero-input-preview-note">Looking up…</span>
-                    </div>
-                )}
+            {activeKind === "site" && store.lookup === "looking" && (
+                <div className="hero-input-preview" aria-live="polite">
+                    <span className="hero-input-preview-note">Looking up…</span>
+                </div>
+            )}
 
-                {activeKind === "site" &&
-                    store.lookup === "site" &&
-                    store.preview && (
-                        <div class="hero-input-preview" aria-live="polite">
-                            {store.preview.thumbnail && (
-                                <img
-                                    class="hero-input-preview-thumb"
-                                    src={store.preview.thumbnail}
-                                    alt=""
-                                    width={96}
-                                    height={54}
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer"
-                                />
-                            )}
-                            <div class="hero-input-preview-text">
-                                <span class="hero-input-preview-title">
-                                    {store.preview.title}
-                                </span>
-                                <span class="hero-input-preview-meta">
-                                    {[
-                                        store.preview.site,
-                                        store.preview.uploader,
-                                        store.preview.duration > 0
-                                            ? formatTime(store.preview.duration)
-                                            : "",
-                                    ]
-                                        .filter(Boolean)
-                                        .join(" · ")}
-                                </span>
-                                {store.preview.playlistUrl && (
-                                    <button
-                                        type="button"
-                                        class="hero-input-preview-link"
-                                        onClick$={() => {
-                                            const list =
-                                                store.preview?.playlistUrl;
-                                            if (list) updateValue(list);
-                                        }}
-                                    >
-                                        This video is in a playlist: see all
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                {activeKind === "site" &&
-                    (store.lookup === "playlist" ||
-                        store.lookup === "channel") &&
-                    store.playlist && (
-                        <div class="hero-input-preview" aria-live="polite">
-                            {store.playlist.thumbnail && (
-                                <img
-                                    class="hero-input-preview-thumb"
-                                    src={store.playlist.thumbnail}
-                                    alt=""
-                                    width={96}
-                                    height={54}
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer"
-                                />
-                            )}
-                            <div class="hero-input-preview-text">
-                                <span class="hero-input-preview-title">
-                                    {store.playlist.title}
-                                </span>
-                                <span class="hero-input-preview-meta">
-                                    {store.lookup === "channel"
-                                        ? [
-                                              "Channel",
-                                              store.playlist.uploader,
-                                          ]
-                                              .filter(Boolean)
-                                              .join(" · ")
-                                        : playlistMeta(store.playlist)}
-                                </span>
-                                {store.lookup === "channel" && (
-                                    <div
-                                        class="hero-input-preview-tabs"
-                                        role="group"
-                                        aria-label="Lists on this channel"
-                                    >
-                                        {store.tabs.map((tab) => (
-                                            <button
-                                                key={tab.url}
-                                                type="button"
-                                                class="hero-input-chip"
-                                                onClick$={() => chooseTab(tab)}
-                                            >
-                                                {tab.name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            {store.lookup === "playlist" && (
+            {activeKind === "site" &&
+                store.lookup === "site" &&
+                store.preview && (
+                    <div className="hero-input-preview" aria-live="polite">
+                        {store.preview.thumbnail && (
+                            <img
+                                className="hero-input-preview-thumb"
+                                src={store.preview.thumbnail}
+                                alt=""
+                                width={96}
+                                height={54}
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                            />
+                        )}
+                        <div className="hero-input-preview-text">
+                            <span className="hero-input-preview-title">
+                                {store.preview.title}
+                            </span>
+                            <span className="hero-input-preview-meta">
+                                {[
+                                    store.preview.site,
+                                    store.preview.uploader,
+                                    store.preview.duration > 0
+                                        ? formatTime(store.preview.duration)
+                                        : "",
+                                ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                            </span>
+                            {store.preview.playlistUrl && (
                                 <button
                                     type="button"
-                                    class="hero-input-preview-action"
-                                    onClick$={choosePlaylist}
+                                    className="hero-input-preview-link"
+                                    onClick={() => {
+                                        const list = store.preview?.playlistUrl;
+                                        if (list) updateValue(list);
+                                    }}
                                 >
-                                    Choose videos…
+                                    This video is in a playlist: see all
                                 </button>
                             )}
                         </div>
-                    )}
-
-                {activeKind === "site" && store.lookup === "file" && (
-                    <div class="hero-input-preview" aria-live="polite">
-                        <span class="hero-input-preview-note">
-                            Not a page on a known site: it will download as a
-                            file.
-                        </span>
                     </div>
                 )}
 
-                <div
-                    class="hero-input-chips"
-                    role="group"
-                    aria-label="Download type"
-                >
-                    {[
-                        { id: "auto" as InputKind, label: "Auto" },
-                        { id: "site" as InputKind, label: "Site" },
-                        { id: "magnet" as InputKind, label: "Magnet" },
-                        { id: "url" as InputKind, label: "URL" },
-                        { id: "torrent" as InputKind, label: ".torrent" },
-                        { id: "media" as InputKind, label: "Media" },
-                    ].map((chip) => {
-                        const resolved =
-                            store.kind === "auto"
-                                ? chip.id === "auto"
-                                : store.kind === chip.id;
-                        const detected =
-                            store.kind === "auto" &&
-                            chip.id !== "auto" &&
-                            activeKind === chip.id;
-                        return (
+            {activeKind === "site" &&
+                (store.lookup === "playlist" || store.lookup === "channel") &&
+                store.playlist && (
+                    <div className="hero-input-preview" aria-live="polite">
+                        {store.playlist.thumbnail && (
+                            <img
+                                className="hero-input-preview-thumb"
+                                src={store.playlist.thumbnail}
+                                alt=""
+                                width={96}
+                                height={54}
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                            />
+                        )}
+                        <div className="hero-input-preview-text">
+                            <span className="hero-input-preview-title">
+                                {store.playlist.title}
+                            </span>
+                            <span className="hero-input-preview-meta">
+                                {store.lookup === "channel"
+                                    ? [
+                                          "Channel",
+                                          store.playlist.uploader,
+                                      ]
+                                          .filter(Boolean)
+                                          .join(" · ")
+                                    : playlistMeta(store.playlist)}
+                            </span>
+                            {store.lookup === "channel" && (
+                                <div
+                                    className="hero-input-preview-tabs"
+                                    role="group"
+                                    aria-label="Lists on this channel"
+                                >
+                                    {store.tabs.map((tab) => (
+                                        <button
+                                            key={tab.url}
+                                            type="button"
+                                            className="hero-input-chip"
+                                            onClick={() => chooseTab(tab)}
+                                        >
+                                            {tab.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        {store.lookup === "playlist" && (
                             <button
-                                key={chip.id}
                                 type="button"
-                                class={`hero-input-chip ${resolved ? "hero-input-chip--active" : ""} ${detected ? "hero-input-chip--detected" : ""}`}
-                                onClick$={() => {
-                                    store.kind = chip.id;
-                                }}
-                                aria-pressed={resolved}
+                                className="hero-input-preview-action"
+                                onClick={choosePlaylist}
                             >
-                                {chip.label}
+                                Choose videos…
                             </button>
-                        );
-                    })}
-                </div>
-
-                {store.duplicate && (
-                    <DuplicateNotice
-                        duplicate={store.duplicate}
-                        busy={store.isLoading}
-                        onOpen={openHeld}
-                        onAddAnyway={
-                            store.retry && canAddAnyway(store.retry.type)
-                                ? addSecondCopy
-                                : undefined
-                        }
-                    />
-                )}
-
-                {store.error && (
-                    <div class="hero-input-error" role="alert">
-                        <LuAlertCircle
-                            width="14"
-                            height="14"
-                            aria-hidden="true"
-                        />
-                        <span>{store.error}</span>
+                        )}
                     </div>
                 )}
-            </section>
-        );
-    },
-);
+
+            {activeKind === "site" && store.lookup === "file" && (
+                <div className="hero-input-preview" aria-live="polite">
+                    <span className="hero-input-preview-note">
+                        Not a page on a known site: it will download as a file.
+                    </span>
+                </div>
+            )}
+
+            <div
+                className="hero-input-chips"
+                role="group"
+                aria-label="Download type"
+            >
+                {[
+                    { id: "auto" as InputKind, label: "Auto" },
+                    { id: "site" as InputKind, label: "Site" },
+                    { id: "magnet" as InputKind, label: "Magnet" },
+                    { id: "url" as InputKind, label: "URL" },
+                    { id: "torrent" as InputKind, label: ".torrent" },
+                    { id: "media" as InputKind, label: "Media" },
+                ].map((chip) => {
+                    const resolved =
+                        store.kind === "auto"
+                            ? chip.id === "auto"
+                            : store.kind === chip.id;
+                    const detected =
+                        store.kind === "auto" &&
+                        chip.id !== "auto" &&
+                        activeKind === chip.id;
+                    return (
+                        <button
+                            key={chip.id}
+                            type="button"
+                            className={`hero-input-chip ${resolved ? "hero-input-chip--active" : ""} ${detected ? "hero-input-chip--detected" : ""}`}
+                            onClick={() => {
+                                patch({ kind: chip.id });
+                            }}
+                            aria-pressed={resolved}
+                        >
+                            {chip.label}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {store.duplicate && (
+                <DuplicateNotice
+                    duplicate={store.duplicate}
+                    busy={store.isLoading}
+                    onOpen={openHeld}
+                    onAddAnyway={
+                        store.retry && canAddAnyway(store.retry.type)
+                            ? addSecondCopy
+                            : undefined
+                    }
+                />
+            )}
+
+            {store.error && (
+                <div className="hero-input-error" role="alert">
+                    <LuAlertCircle width="14" height="14" aria-hidden="true" />
+                    <span>{store.error}</span>
+                </div>
+            )}
+        </section>
+    );
+}
 
 export { magnetName };

@@ -48,15 +48,7 @@
     "exclude": [
         "node_modules",
         "src/component/layouts/app-shell",
-        "src/component/features/add-torrent-modal",
-        "src/component/features/batch-modal",
-        "src/component/features/group-card",
-        "src/component/features/hero-input",
         "src/component/features/player-modal",
-        "src/component/features/playlist-picker",
-        "src/component/features/search-view",
-        "src/component/features/torrent-card",
-        "src/component/features/torrent-list",
         "src/route/index.tsx"
     ]
 }
