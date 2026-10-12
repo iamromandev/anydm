@@ -8,7 +8,7 @@ from tortoise.migrations import operations as ops
 
 
 class Migration(migrations.Migration):
-    dependencies: ClassVar[list[tuple[str, str]]] = [('model', '0007_transfer')]
+    dependencies: ClassVar[list[tuple[str, str]]] = [('model', '0006_transfer')]
 
     initial: ClassVar[bool] = False
 

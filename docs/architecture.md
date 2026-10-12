@@ -123,7 +123,7 @@ restart forgets them. The monitor pushes them on the first tick that reaches
 the engine, and pushes them again whenever the engine has stopped answering
 since, because from the API an unreachable engine is how a restart looks.
 
-The monitor also keeps each torrent's piece map. One `torrent.Piece` row per
+The monitor also keeps each torrent's piece map. One `transfer.Piece` row per
 piece (index, size, hash) is written once per torrent when it is first added —
 from the pasted `.torrent`, or from the engine's metadata for a magnet — and
 which pieces a download has is one bitmap on the download, `Download.pieces`.

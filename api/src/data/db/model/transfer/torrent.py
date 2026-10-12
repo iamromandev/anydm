@@ -27,7 +27,7 @@ class Torrent(LinkBase):
     class Meta:
         table: ClassVar[str] = "torrent"
         table_description: ClassVar[str] = "Torrent"
-        schema: ClassVar[str] = "torrent"
+        schema: ClassVar[str] = "transfer"
 
 
 class TorrentFile(LinkBase):
@@ -48,6 +48,6 @@ class TorrentFile(LinkBase):
     class Meta:
         table: ClassVar[str] = "torrent_file"
         table_description: ClassVar[str] = "TorrentFile"
-        schema: ClassVar[str] = "torrent"
+        schema: ClassVar[str] = "transfer"
         ordering: ClassVar[list[str]] = ["index"]
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("torrent", "index"),)

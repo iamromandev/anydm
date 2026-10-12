@@ -1,8 +1,8 @@
 """Tracker/Peer/Piece: a torrent's trackers and pieces, and a download's peers."""
 
-from src.data.db.model.torrent.peer import Peer
-from src.data.db.model.torrent.piece import Piece
-from src.data.db.model.torrent.tracker import Tracker
+from src.data.db.model.transfer.peer import Peer
+from src.data.db.model.transfer.piece import Piece
+from src.data.db.model.transfer.tracker import Tracker
 from src.data.type import PeerStatus, PieceStatus, TrackerStatus
 from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
@@ -76,4 +76,4 @@ def test_statuses() -> None:
 def test_meta_is_torrent() -> None:
     for model, table in ((Tracker, "tracker"), (Peer, "peer"), (Piece, "piece")):
         assert model.Meta.table == table
-        assert model.Meta.schema == "torrent"
+        assert model.Meta.schema == "transfer"

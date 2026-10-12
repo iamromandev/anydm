@@ -4,4 +4,9 @@ from .download import Download as Download
 from .file import File as File
 from .media import Media as Media
 from .mirror import Mirror as Mirror
+from .peer import Peer as Peer
+from .piece import Piece as Piece
 from .segment import Segment as Segment
+from .torrent import Torrent as Torrent
+from .torrent import TorrentFile as TorrentFile
+from .tracker import Tracker as Tracker

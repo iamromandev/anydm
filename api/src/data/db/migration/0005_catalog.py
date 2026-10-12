@@ -41,7 +41,7 @@ class Migration(migrations.Migration):
                 ('updated_at', fields.DatetimeField(db_index=True, db_default=Now(), auto_now=True, auto_now_add=False)),
                 ('provider', fields.ForeignKeyField('model.Provider', source_field='provider_id', db_constraint=True, to_field='id', related_name='sources', on_delete=OnDelete.RESTRICT)),
                 ('url', fields.ForeignKeyField('model.Url', source_field='url_id', db_constraint=True, to_field='id', related_name='sources', on_delete=OnDelete.RESTRICT)),
-                ('kind', fields.CharEnumField(default=SourceKind.DIRECT, description='DIRECT: direct\nCONTENT: content\nTORRENT: torrent', enum_type=SourceKind, max_length=7)),
+                ('kind', fields.CharEnumField(default=SourceKind.DIRECT, description='DIRECT: direct\nSITE: site\nTORRENT: torrent', enum_type=SourceKind, max_length=7)),
             ],
             options={'table': 'source', 'schema': 'catalog', 'app': 'model', 'unique_together': (('provider', 'url', 'kind'),), 'pk_attr': 'id', 'table_description': 'Source'},
             bases=['LinkBase'],

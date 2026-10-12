@@ -57,7 +57,7 @@ async def test_a_failure_with_no_try_is_recorded_on_the_primary_mirror() -> None
         True,
     )
     mirror = await Mirror.get(download_id=row.id)
-    assert attempt.mirror_id == mirror.id
+    assert attempt.mirror.id == mirror.id
 
 
 @pytest.mark.asyncio

@@ -31,5 +31,5 @@ class Peer(LinkBase):
     class Meta:
         table: ClassVar[str] = "peer"
         table_description: ClassVar[str] = "Peer"
-        schema: ClassVar[str] = "torrent"
+        schema: ClassVar[str] = "transfer"
         unique_together: ClassVar[tuple[tuple[str, ...], ...]] = (("download", "address", "port"),)

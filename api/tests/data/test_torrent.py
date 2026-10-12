@@ -1,8 +1,8 @@
 """Torrent: content identified by its info hash, named and measured; downloads point at it."""
 
 from src.data.db.model.catalog.source import Source
-from src.data.db.model.torrent.torrent import Torrent
 from src.data.db.model.transfer.download import Download
+from src.data.db.model.transfer.torrent import Torrent
 from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
@@ -43,4 +43,4 @@ def test_torrent_columns() -> None:
 
 def test_torrent_meta_is_torrent() -> None:
     assert Torrent.Meta.table == "torrent"
-    assert Torrent.Meta.schema == "torrent"
+    assert Torrent.Meta.schema == "transfer"
