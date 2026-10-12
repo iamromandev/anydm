@@ -54,10 +54,8 @@ async def test_a_playlist_is_named_by_its_listing_id(sqlite: None) -> None:
 @pytest.mark.asyncio
 async def test_a_torrent_is_named_by_its_info_hash(sqlite: None) -> None:
     row = await a_download("torrent", "magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT)
-    source = (await Mirror.get(download=row).prefetch_related("source")).source
     torrent = await Torrent.create(name="Big Buck Bunny", info_hash="a" * 40)
-    source.torrent_id = torrent.id
-    await source.save(update_fields=["torrent_id"])
+    await Download.filter(id=row.id).update(torrent_id=torrent.id)
 
     described = describe(await loaded(row))
 

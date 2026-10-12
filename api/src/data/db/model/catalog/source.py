@@ -27,15 +27,10 @@ class Source(LinkBase):
     kind: SourceKind = fields.CharEnumField(
         enum_type=SourceKind, default=SourceKind.DIRECT
     )
-    #: The torrent a torrent source leads to, none for any other kind; several sources can lead to one.
-    torrent = fields.ForeignKeyField(
-        to="model.Torrent", related_name="sources", null=True, on_delete=fields.SET_NULL
-    )
 
     if TYPE_CHECKING:
         provider_id: UUID
         url_id: UUID
-        torrent_id: UUID | None
 
     def __str__(self) -> str:
         return f"[Source: {self.kind} {self.url.id}]"

@@ -24,8 +24,8 @@ def test_download_has_the_diagram_columns() -> None:
         "attempts",
         "next_attempt_at",
     } <= names
-    # Its relations: the collection it belongs to, and the category it saves in.
-    assert Download._meta.fk_fields == {"parent", "category"}
+    # Its relations: the collection it belongs to, the category it saves in, and the torrent it transfers.
+    assert Download._meta.fk_fields == {"parent", "category", "torrent"}
 
 
 def test_download_dropped_the_old_columns() -> None:

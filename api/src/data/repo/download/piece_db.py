@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from src.data.db.model import Download, Piece, Torrent
+from src.data.db.model import Download, Piece
 from src.data.repo.download.interface.piece import PieceRepo, PieceRow
 
 #: One ``bulk_create`` per this many pieces. A 25,000-piece torrent is dozens
@@ -14,8 +14,8 @@ _BATCH = 1000
 
 class PieceDatabaseRepo(PieceRepo):
     async def _torrent_id(self, download_id: uuid.UUID) -> Any:
-        torrent = await Torrent.filter(sources__mirrors__download_id=download_id).first()
-        return torrent.id if torrent is not None else None
+        download = await Download.filter(id=download_id).first()
+        return download.torrent_id if download is not None else None
 
     async def ensure(self, download_id: uuid.UUID, pieces: Sequence[PieceRow]) -> None:
         torrent_id = await self._torrent_id(download_id)

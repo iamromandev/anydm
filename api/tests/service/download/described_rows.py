@@ -8,7 +8,7 @@ from typing import Any
 from src.data.type import MirrorStatus, SourceKind
 
 
-def a_mirror(url: str, kind: SourceKind, provider: str, *, torrent: Any = None, priority: int = 0) -> SimpleNamespace:
+def a_mirror(url: str, kind: SourceKind, provider: str, *, priority: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=MirrorStatus.AVAILABLE,
@@ -18,7 +18,6 @@ def a_mirror(url: str, kind: SourceKind, provider: str, *, torrent: Any = None, 
             url=SimpleNamespace(value=url),
             kind=kind,
             provider=SimpleNamespace(name=provider),
-            torrent=torrent,
         ),
     )
 
@@ -31,6 +30,7 @@ def a_site_row(url: str, *, provider: str, title: str, kind: Any, preset: Any, *
     """A site download or collection container as a read would load it."""
     return SimpleNamespace(
         mirrors=[a_mirror(url, SourceKind.SITE, provider)],
+        torrent=None,
         media=SimpleNamespace(
             title=title, kind=kind, preset=preset, video_format=None, audio_format=None, playlist_index=None
         ),

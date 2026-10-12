@@ -106,6 +106,7 @@ class FakeCollectionRepo:
         self.rows[collection_id] = SimpleNamespace(
             id=collection_id,
             mirrors=[a_mirror("https://www.youtube.com/playlist?list=PL", SourceKind.SITE, "Youtube")],
+            torrent=None,
             media=SimpleNamespace(title="Talks", kind=MediaKind.PLAYLIST, preset=Preset.BEST),
             created_at=None,
         )

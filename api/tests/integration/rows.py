@@ -51,10 +51,9 @@ async def a_site_download(
 
 async def a_torrent_download(info_hash: str, *, name: str, **fields: Any) -> Download:
     row = await a_download(f"magnet:?xt=urn:btih:{info_hash}", provider="torrent", kind=SourceKind.TORRENT, **fields)
-    source = (await Mirror.get(download=row).prefetch_related("source")).source
     torrent = await Torrent.create(name=name, info_hash=info_hash)
-    source.torrent_id = torrent.id
-    await source.save(update_fields=["torrent_id"])
+    await Download.filter(id=row.id).update(torrent_id=torrent.id)
+    row.torrent_id = torrent.id
     return row
 
 

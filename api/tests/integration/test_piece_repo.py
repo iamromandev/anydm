@@ -2,7 +2,7 @@
 
 import pytest
 from src.core.common import now
-from src.data.db.model import Download, Mirror, Piece
+from src.data.db.model import Download, Piece
 from src.data.repo import PieceDatabaseRepo
 
 from tests.integration.rows import a_torrent_download
@@ -54,10 +54,8 @@ async def test_a_second_download_of_the_torrent_shares_the_list_but_not_the_bitm
     await repo.save_bitmap(first.id, b"\x80")
     await Download.filter(id=first.id).update(deleted_at=now())
 
-    # The same torrent again, through the same source: a new download with its own mirror.
-    source = (await Mirror.get(download_id=first.id).prefetch_related("source")).source
-    second = await Download.create(status="pending")
-    await Mirror.create(download=second, source=source)
+    # The same torrent again: a new download pointing at it.
+    second = await Download.create(status="pending", torrent_id=first.torrent_id)
 
     assert [p.index for p in await repo.list_for(second.id)] == [0, 1]
     assert await repo.bitmap(second.id) is None

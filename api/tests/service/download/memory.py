@@ -75,10 +75,10 @@ def download_row(**overrides: Any) -> SimpleNamespace:
         site_detail=None,
     )
     fields.update(overrides)
-    torrent = a_torrent(fields["ref_id"], fields["title"]) if fields["platform"] == Platform.TORRENT else None
-    fields.setdefault(
-        "mirrors", [a_mirror(fields["url"], _KIND[fields["platform"]], fields["provider"], torrent=torrent)]
-    )
+    if fields["platform"] == Platform.TORRENT:
+        fields.setdefault("torrent", a_torrent(fields["ref_id"], fields["title"]))
+    fields.setdefault("torrent", None)
+    fields.setdefault("mirrors", [a_mirror(fields["url"], _KIND[fields["platform"]], fields["provider"])])
     media = fields["site_detail"]
     if media is not None and "media" not in fields:
         media.title, media.kind = fields["title"], fields["media_kind"]

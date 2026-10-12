@@ -5,9 +5,10 @@ from tortoise.fields.base import OnDelete
 from tortoise.migrations import operations as ops
 from tortoise.migrations.constraints import UniqueConstraint
 
-# Torrents become content, shared by the sources that lead to them and the downloads of them in turn.
+# Torrents become content, shared by the downloads of them in turn, however they were reached.
 #
-# - Source.torrent replaces Torrent.source: several sources can lead to one torrent.
+# - Download.torrent replaces Torrent.source: the download points at the torrent it is a transfer of, so
+#   a magnet and a .torrent address for one hash lead to the same one.
 # - TorrentFile gets rqbit's file index, and a download's File points at its TorrentFile.
 # - Which pieces a download has moves from a status per Piece row to Download.pieces, one bit per piece.
 # - Peer, live state of a transfer, belongs to the download instead of the torrent.
@@ -71,9 +72,9 @@ class Migration(migrations.Migration):
             field=fields.BinaryField(null=True, description="For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known."),
         ),
         ops.AddField(
-            model_name='Source',
+            model_name='Download',
             name='torrent',
-            field=fields.ForeignKeyField('model.Torrent', source_field='torrent_id', null=True, description='The torrent a torrent source leads to, none for any other kind; several sources can lead to one.', db_constraint=True, to_field='id', related_name='sources', on_delete=OnDelete.SET_NULL),
+            field=fields.ForeignKeyField('model.Torrent', source_field='torrent_id', null=True, description='For a torrent download, the torrent it is a transfer of; none for any other kind.', db_constraint=True, to_field='id', related_name='downloads', on_delete=OnDelete.SET_NULL),
         ),
         ops.AddField(
             model_name='File',
@@ -88,8 +89,10 @@ class Migration(migrations.Migration):
         ),
         ops.RunSQL(
             [
-                # Each torrent source leads to the torrent that pointed at it.
-                'UPDATE catalog.source s SET torrent_id = t.id FROM torrent.torrent t WHERE t.source_id = s.id',
+                # Each torrent download points at the torrent its source belonged to.
+                'UPDATE transfer.download d SET torrent_id = t.id '
+                'FROM transfer.mirror m JOIN torrent.torrent t ON t.source_id = m.source_id '
+                'WHERE m.download_id = d.id',
                 # A torrent's own file index is the one its downloads' File rows already carry, matched by path.
                 'UPDATE torrent.torrent_file tf SET "index" = f."index" '
                 'FROM transfer.file f JOIN transfer.mirror m ON m.download_id = f.download_id '

@@ -14,6 +14,7 @@ def row(**overrides: Any) -> SimpleNamespace:
     base: dict[str, Any] = dict(
         id=uuid.uuid4(),
         mirrors=[a_mirror("https://youtu.be/dQw4w9WgXcQ", SourceKind.SITE, "Youtube")],
+        torrent=None,
         uploaded_size=0,
         status=DownloadStatus.DOWNLOADING,
         folder=None,
@@ -69,9 +70,8 @@ def test_schema_computes_progress_and_carries_each_block() -> None:
 def test_a_torrent_reports_its_hash_and_no_site() -> None:
     schema = download_schema(
         row(
-            mirrors=[
-                a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent", torrent=a_torrent("a" * 40))
-            ],
+            mirrors=[a_mirror("magnet:?xt=urn:btih:" + "a" * 40, SourceKind.TORRENT, "torrent")],
+            torrent=a_torrent("a" * 40),
             media=None,
             uploaded_size=9,
         ),

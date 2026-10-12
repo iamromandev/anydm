@@ -19,7 +19,7 @@ from src.core.common import now
 from src.core.success import Meta
 from src.data.db.model import Download, File, Media, Mirror, Source, Torrent, TorrentFile
 from src.data.repo.catalog import address_hash, provider_row, source_row, url_row
-from src.data.repo.download.described import describe, primary_mirror
+from src.data.repo.download.described import describe
 from src.data.repo.download.interface.download import NOT_CONTAINER, RELATED, DownloadRepo
 from src.data.repo.download.interface.file import FileRow
 from src.data.repo.download.mime import mime_of
@@ -50,9 +50,8 @@ def _not_torrent() -> Q:
 
 
 def _torrent_named(row: Download) -> bool:
-    """Whether a torrent names it, through its primary mirror: then no file is needed for its title."""
-    mirror = primary_mirror(row)
-    return mirror is not None and bool(mirror.source.torrent and mirror.source.torrent.name)
+    """Whether the torrent it is a transfer of names it: then no file is needed for its title."""
+    return row.torrent is not None and bool(row.torrent.name)
 
 
 def _name(path: str) -> str:
@@ -203,15 +202,12 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
             torrent = await Torrent.filter(info_hash=info_hash).using_db(conn).first()
             if torrent is None:
                 torrent = await Torrent.create(using_db=conn, name=name, info_hash=info_hash, total_size=total_size)
-            # The link as pasted gets its own source, whether or not the torrent is known: a magnet and a
-            # .torrent address for one hash are two sources of one torrent.
+            # The link as pasted gets its own source, whether or not the torrent is known; the download is
+            # what points at the torrent, so a magnet and a .torrent address for one hash lead to the same one.
             source = await source_row(
                 await provider_row(TORRENT_PROVIDER, conn), await url_row(url, conn), SourceKind.TORRENT, conn
             )
-            if source.torrent_id != torrent.id:
-                source.torrent_id = torrent.id
-                await source.save(update_fields=["torrent_id"], using_db=conn)
-            row = await self._added(source, {**download, "total_size": total_size}, conn)
+            row = await self._added(source, {**download, "total_size": total_size, "torrent_id": torrent.id}, conn)
             if files:
                 # The torrent's own file list is written once; a known torrent only gains what it lacks.
                 parts = {part.index: part.id for part in await TorrentFile.filter(torrent=torrent).using_db(conn)}
@@ -447,7 +443,7 @@ class DownloadDatabaseRepo(BaseRepo[Download], DownloadRepo):
 
     async def by_info_hash(self, info_hash: str) -> Download | None:
         return await (
-            Download.filter(mirrors__source__torrent__info_hash=info_hash, deleted_at__isnull=True)
+            Download.filter(torrent__info_hash=info_hash, deleted_at__isnull=True)
             .prefetch_related(*RELATED)
             .first()
         )

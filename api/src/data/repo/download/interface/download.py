@@ -18,7 +18,7 @@ from src.data.type import ACTIVE_STATUSES, CONTAINER_KINDS, DownloadStatus
 NOT_CONTAINER = Q(media__id__isnull=True) | Q(media__kind__not_in=list(CONTAINER_KINDS))
 
 #: The relations every read loads, so ``describe`` and a schema need no other query.
-RELATED = ("media", "category", "mirrors__source__url", "mirrors__source__provider", "mirrors__source__torrent")
+RELATED = ("media", "category", "mirrors__source__url", "mirrors__source__provider", "torrent")
 
 
 class DownloadRepo(CrudRepo[Download]):
@@ -60,8 +60,8 @@ class DownloadRepo(CrudRepo[Download]):
         """A download of the torrent ``info_hash``, added from ``url`` (a magnet).
 
         The ``Torrent`` and its files are recorded once: a known hash reuses its row, so a removed
-        torrent added again is one torrent. ``url`` always gets a ``Source`` of its own that leads to
-        it, and each ``File`` of the download points at the torrent's row for that file.
+        torrent added again is one torrent. ``url`` gets a ``Source`` of its own, the download points
+        at the torrent, and each of its ``File`` rows points at the torrent's row for that file.
         """
         ...
 

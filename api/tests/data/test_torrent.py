@@ -1,7 +1,8 @@
-"""Torrent: content identified by its info hash, named and measured; sources lead to it."""
+"""Torrent: content identified by its info hash, named and measured; downloads point at it."""
 
 from src.data.db.model.catalog.source import Source
 from src.data.db.model.torrent.torrent import Torrent
+from src.data.db.model.transfer.download import Download
 from tortoise.fields import CharField
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
@@ -13,13 +14,14 @@ def test_torrent_has_the_schema_columns() -> None:
     assert "deleted_at" not in names
 
 
-def test_a_source_leads_to_a_torrent_and_several_can_lead_to_one() -> None:
-    field = Source._meta.fields_map["torrent"]
+def test_a_download_points_at_its_torrent_and_a_source_does_not() -> None:
+    field = Download._meta.fields_map["torrent"]
     assert isinstance(field, ForeignKeyFieldInstance)
     assert field.null is True
     assert field.model_name == "model.Torrent"
-    assert field.related_name == "sources"
+    assert field.related_name == "downloads"
     assert getattr(field, "on_delete", None) == "SET NULL"
+    assert "torrent" not in Source._meta.fields_map
 
 
 def test_torrent_info_hash_is_unique_varchar_64() -> None:

@@ -123,7 +123,7 @@ async def test_a_torrent_is_recorded_once_by_its_info_hash() -> None:
 
 
 @pytest.mark.asyncio
-async def test_two_links_for_one_torrent_are_two_sources_of_it() -> None:
+async def test_two_links_for_one_torrent_lead_to_the_same_torrent_through_sources_of_their_own() -> None:
     repo = DownloadDatabaseRepo()
     magnet = await repo.create_torrent(
         url="magnet:?xt=urn:btih:" + "b" * 40,
@@ -144,14 +144,14 @@ async def test_two_links_for_one_torrent_are_two_sources_of_it() -> None:
     )
 
     torrent = await Torrent.get(info_hash="b" * 40)
-    sources = await Source.filter(torrent_id=torrent.id).prefetch_related("url")
-    assert sorted(source.url.value for source in sources) == [
-        "https://tracker.example/x.torrent",
-        "magnet:?xt=urn:btih:" + "b" * 40,
+    assert await Torrent.all().count() == 1
+    assert (await Download.get(id=magnet.id)).torrent_id == torrent.id
+    assert (await Download.get(id=by_file.id)).torrent_id == torrent.id
+    urls = [
+        (await Mirror.get(download_id=d.id).prefetch_related("source__url")).source.url.value for d in (magnet, by_file)
     ]
-    mirror = await Mirror.get(download_id=by_file.id).prefetch_related("source__url")
-    assert mirror.source.url.value == "https://tracker.example/x.torrent"
-    assert mirror.source.torrent_id == torrent.id
+    assert urls == ["magnet:?xt=urn:btih:" + "b" * 40, "https://tracker.example/x.torrent"]
+    assert await Source.all().count() == 2
 
 
 @pytest.mark.asyncio

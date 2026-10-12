@@ -10,9 +10,9 @@ from src.core.base import LinkBase
 class Torrent(LinkBase):
     """A torrent as content: what it's called, its info hash, and how big it is.
 
-    Identified by ``info_hash``, not by where it was found: several ``Source`` rows (a
-    magnet, a ``.torrent`` address) point at one ``Torrent``, and so does each
-    ``Download`` of it in turn. What describes the content lives here and under it
+    Identified by ``info_hash``, not by where it was found: a ``Download`` of it points here
+    whichever address (a magnet, a ``.torrent`` address) it came through, and so does each
+    later ``Download`` of the same torrent. What describes the content lives here and under it
     (``TorrentFile``, ``Piece``, ``Tracker``); what describes one transfer (peers, how
     many pieces are down) belongs to the ``Download``.
     """

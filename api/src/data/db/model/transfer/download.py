@@ -35,6 +35,8 @@ class Download(Base):
         "model.Category", related_name="downloads", on_delete=fields.RESTRICT, db_index=True, db_default=DOWNLOADS_ID
     )
     folder: str | None = fields.TextField(null=True)
+    #: For a torrent download, the torrent it is a transfer of; none for any other kind.
+    torrent = fields.ForeignKeyField("model.Torrent", related_name="downloads", null=True, on_delete=fields.SET_NULL)
     #: For a torrent, the pieces it has, one bit each in rqbit's own order (piece 0 the top bit); none until known.
     pieces: bytes | None = fields.BinaryField(null=True)
     status: DownloadStatus = fields.CharEnumField(DownloadStatus, default=DownloadStatus.PENDING, db_index=True)
@@ -54,6 +56,7 @@ class Download(Base):
     if TYPE_CHECKING:
         parent_id: UUID | None
         category_id: UUID
+        torrent_id: UUID | None
         children: fields.ReverseRelation[Download]
         #: A site download's title, kind, preset and formats; none for a torrent or a direct file.
         media: Media | None
