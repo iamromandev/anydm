@@ -1,6 +1,6 @@
 # AnyDM
 
-Any Download Manager — a FastAPI service that extracts and downloads media from URLs, with a Qwik web UI.
+Any Download Manager — a FastAPI service that extracts and downloads media from URLs, with a React web UI.
 
 ## Repository structure
 
@@ -12,7 +12,7 @@ anydm/
 │   ├── docker-compose.yml   # API + Postgres + rqbit
 │   └── makefile
 ├── ui/           # Bun workspace
-│   └── apps/web/ # Qwik 2 + Vite SPA
+│   └── apps/web/ # React 19 + Vite SPA
 ├── docs/
 └── makefile      # delegates to api/makefile and ui/package.json
 ```
@@ -226,10 +226,11 @@ cp ui/apps/web/.env.example ui/apps/web/.env.local
 
 ### `ui/apps/web`
 
-- **Stack:** Qwik 2, Qwik Router, Vite 8, Tailwind 4, TypeScript
-- **Routes:** `/` (home — URL/torrent input, task list, sidebar filters); `routesDir` is `src/route`
-- **Entry:** `src/entry.ssr.tsx`, `src/entry.csr.tsx`, `src/root.tsx`
-- **API client:** `src/lib/api` — envelope unwrapping, download normalization; the home route fetches `GET /download` on load and after each action, and takes live updates from `/download/events`
+- **Stack:** React 19, React Router, Vite 8, Tailwind 4, TypeScript; a client-only SPA
+- **Routes:** `/` (home — URL/torrent input, task list, sidebar filters); `src/router.tsx`, pages in `src/route`
+- **Entry:** `index.html` → `src/main.tsx`
+- **State:** `src/state` — one store (`src/lib/live.ts`) and a module per concern (tasks, actions, player, add, stream, …) composed by `createApp`; `useApp` in `src/hook` hands it to the page
+- **API client:** `src/lib/api` — envelope unwrapping, download normalization; the app fetches `GET /download` on load and after each action, and takes live updates from `/download/events`
 
 ## Keeping sites working
 
