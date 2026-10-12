@@ -1,5 +1,6 @@
 import type { createCategories } from "./categories";
 import type { createSettings } from "./settings";
+import type { createTasks } from "./tasks";
 import type { createToasts } from "./toasts";
 
 /**
@@ -10,6 +11,5 @@ export interface App {
     toasts: ReturnType<typeof createToasts>;
     settings: ReturnType<typeof createSettings>;
     categories: ReturnType<typeof createCategories>;
-    // Replaced by `ReturnType<typeof createTasks>` when the tasks module lands.
-    tasks: { loadPage(page: number): Promise<void>; sync(): Promise<void> };
+    tasks: ReturnType<typeof createTasks>;
 }
