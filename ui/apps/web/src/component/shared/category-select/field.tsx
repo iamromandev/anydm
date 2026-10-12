@@ -1,4 +1,3 @@
-import { component$, type QRL } from "@qwik.dev/core";
 import type { CategoryItem } from "@/lib/api/category";
 import "./field.css";
 
@@ -6,31 +5,29 @@ export interface CategorySelectProps {
     categories: CategoryItem[];
     /** The chosen category's id. */
     value: string;
-    onChange$: QRL<(id: string) => void>;
-    class?: string;
+    onChange: (id: string) => void;
+    className?: string;
 }
 
-/**
- * A category picker. The chosen option is marked `selected` rather than the
- * select's own `value` is set: the select's value is applied before its
- * options exist, and falls back to the first one.
- */
-export const CategorySelect = component$<CategorySelectProps>(
-    ({ categories, value, onChange$, class: extra }) => (
+/** A category picker. */
+export function CategorySelect({
+    categories,
+    value,
+    onChange,
+    className,
+}: CategorySelectProps) {
+    return (
         <select
-            class={`category-select ${extra ?? ""}`}
+            className={`category-select ${className ?? ""}`}
             aria-label="Category"
-            onChange$={(_, el) => onChange$(el.value)}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
         >
             {categories.map((category) => (
-                <option
-                    key={category.id}
-                    value={category.id}
-                    selected={category.id === value}
-                >
+                <option key={category.id} value={category.id}>
                     {category.name}
                 </option>
             ))}
         </select>
-    ),
-);
+    );
+}

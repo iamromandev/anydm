@@ -1,4 +1,3 @@
-import { component$ } from "@qwik.dev/core";
 import "./field.css";
 
 interface SpeedDisplayProps {
@@ -7,15 +6,19 @@ interface SpeedDisplayProps {
     compact?: boolean;
 }
 
-export const SpeedDisplay = component$<SpeedDisplayProps>(
-    ({ downloadSpeed, uploadSpeed, compact = false }) => {
+export function SpeedDisplay({
+    downloadSpeed,
+    uploadSpeed,
+    compact = false,
+}: SpeedDisplayProps) {
+    {
         return (
             <div
-                class={`speed-display ${compact ? "speed-display--compact" : ""}`}
+                className={`speed-display ${compact ? "speed-display--compact" : ""}`}
                 aria-label="Transfer speeds"
             >
                 <span
-                    class="speed-down"
+                    className="speed-down"
                     aria-label={`Download ${formatSpeed(downloadSpeed)}`}
                 >
                     <svg
@@ -24,7 +27,7 @@ export const SpeedDisplay = component$<SpeedDisplayProps>(
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
-                        stroke-width="2"
+                        strokeWidth="2"
                         aria-hidden="true"
                     >
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -33,11 +36,11 @@ export const SpeedDisplay = component$<SpeedDisplayProps>(
                     </svg>
                     <span>{formatSpeed(downloadSpeed)}</span>
                 </span>
-                <span class="speed-sep" aria-hidden="true">
+                <span className="speed-sep" aria-hidden="true">
                     {compact ? "" : "/"}
                 </span>
                 <span
-                    class="speed-up"
+                    className="speed-up"
                     aria-label={`Upload ${formatSpeed(uploadSpeed)}`}
                 >
                     <svg
@@ -46,7 +49,7 @@ export const SpeedDisplay = component$<SpeedDisplayProps>(
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
-                        stroke-width="2"
+                        strokeWidth="2"
                         aria-hidden="true"
                     >
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -57,8 +60,8 @@ export const SpeedDisplay = component$<SpeedDisplayProps>(
                 </span>
             </div>
         );
-    },
-);
+    }
+}
 
 function formatSpeed(bytesPerSecond: number): string {
     if (bytesPerSecond === 0) return "0 B/s";
