@@ -1,4 +1,4 @@
-import { component$, $, useSignal, useTask$, type QRL } from "@qwik.dev/core";
+import { useEffect, useState } from "react";
 import type { CategoryItem } from "@/lib/api/category";
 import type { UiTask } from "@/lib/api";
 import "./field.css";
@@ -7,98 +7,108 @@ export interface CategoryMoveProps {
     /** The row being moved; null hides the dialog. */
     task: UiTask | null;
     categories: CategoryItem[];
-    onClose: QRL<() => void>;
+    onClose: () => void;
     /** Move the row to the chosen category; resolves once it has answered. */
-    onMove: QRL<(categoryId: string) => Promise<void>>;
+    onMove: (categoryId: string) => Promise<void>;
 }
 
 /**
  * Picks the category a row moves to. The row is already in its own category,
  * so Move stays off until a different one is chosen.
  */
-export const CategoryMove = component$<CategoryMoveProps>(
-    ({ task, categories, onClose, onMove }) => {
-        const chosen = useSignal("");
-        const busy = useSignal(false);
+export function CategoryMove({
+    task,
+    categories,
+    onClose,
+    onMove,
+}: CategoryMoveProps) {
+    const [
+        chosen,
+        setChosen,
+    ] = useState("");
+    const [
+        busy,
+        setBusy,
+    ] = useState(false);
 
-        // Start on the row's own category each time a different row opens.
-        useTask$(({ track }) => {
-            track(() => task?.id);
-            chosen.value = task?.category?.id ?? "";
-        });
+    // Start on the row's own category each time a different row opens.
+    const openId = task?.id;
+    const ownCategory = task?.category?.id ?? "";
+    useEffect(() => {
+        setChosen(ownCategory);
+    }, [
+        openId,
+    ]);
 
-        if (!task) return null;
+    if (!task) return null;
 
-        return (
+    return (
+        <div
+            className="category-move-overlay"
+            onClick={() => onClose()}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") onClose();
+            }}
+        >
             <div
-                class="category-move-overlay"
-                onClick$={$(() => onClose())}
-                onKeyDown$={$((event: KeyboardEvent) => {
-                    if (event.key === "Escape") onClose();
-                })}
+                className="category-move-panel"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="category-move-title"
+                onClick={(event) => event.stopPropagation()}
             >
-                <div
-                    class="category-move-panel"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="category-move-title"
-                    onClick$={$((event: MouseEvent) => event.stopPropagation())}
-                >
-                    <h2 id="category-move-title" class="category-move-title">
-                        Move to category
-                    </h2>
-                    <p class="category-move-subject">{task.title}</p>
-                    <ul class="category-move-list">
-                        {categories.map((category) => (
-                            <li key={category.id}>
-                                <label class="category-move-choice">
-                                    <input
-                                        type="radio"
-                                        name="category-move"
-                                        value={category.id}
-                                        checked={chosen.value === category.id}
-                                        onChange$={$(() => {
-                                            chosen.value = category.id;
-                                        })}
-                                    />
-                                    <span>{category.name}</span>
-                                    <span class="category-move-folder">
-                                        {category.folder || "download folder"}
-                                    </span>
-                                </label>
-                            </li>
-                        ))}
-                    </ul>
-                    <footer class="category-move-actions">
-                        <button
-                            type="button"
-                            class="category-move-btn"
-                            onClick$={$(() => onClose())}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            class="category-move-btn category-move-btn--primary"
-                            disabled={
-                                busy.value ||
-                                !chosen.value ||
-                                chosen.value === (task.category?.id ?? "")
+                <h2 id="category-move-title" className="category-move-title">
+                    Move to category
+                </h2>
+                <p className="category-move-subject">{task.title}</p>
+                <ul className="category-move-list">
+                    {categories.map((category) => (
+                        <li key={category.id}>
+                            <label className="category-move-choice">
+                                <input
+                                    type="radio"
+                                    name="category-move"
+                                    value={category.id}
+                                    checked={chosen === category.id}
+                                    onChange={() => setChosen(category.id)}
+                                />
+                                <span>{category.name}</span>
+                                <span className="category-move-folder">
+                                    {category.folder || "download folder"}
+                                </span>
+                            </label>
+                        </li>
+                    ))}
+                </ul>
+                <footer className="category-move-actions">
+                    <button
+                        type="button"
+                        className="category-move-btn"
+                        onClick={() => onClose()}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        className="category-move-btn category-move-btn--primary"
+                        disabled={
+                            busy ||
+                            !chosen ||
+                            chosen === (task.category?.id ?? "")
+                        }
+                        onClick={async () => {
+                            setBusy(true);
+                            try {
+                                await onMove(chosen);
+                            } finally {
+                                setBusy(false);
                             }
-                            onClick$={$(async () => {
-                                busy.value = true;
-                                try {
-                                    await onMove(chosen.value);
-                                } finally {
-                                    busy.value = false;
-                                }
-                            })}
-                        >
-                            {busy.value ? "Moving…" : "Move"}
-                        </button>
-                    </footer>
-                </div>
+                        }}
+                    >
+                        {busy ? "Moving…" : "Move"}
+                    </button>
+                </footer>
             </div>
-        );
-    },
-);
+        </div>
+    );
+}

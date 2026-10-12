@@ -1,5 +1,5 @@
-import { component$, $ } from "@qwik.dev/core";
 import { LuX } from "@/component/core/icons";
+import { cx } from "@/lib/cx";
 import type { CategoryItem } from "@/lib/api/category";
 import { CategoryManager } from "@/component/features/category-manager";
 import { AUDIO_LANGUAGES } from "@/lib/audio";
@@ -37,287 +37,258 @@ export interface SettingsModalProps {
     onCategoryDelete: (category: CategoryItem) => void;
 }
 
-export const SettingsModal = component$<SettingsModalProps>(
-    ({
-        open,
-        prefs,
-        sort,
-        server,
-        onClose,
-        onPrefsChange,
-        onSortChange,
-        apiKey,
-        apiKeyMessage,
-        onApiKeySave,
-        categories,
-        onCategoryCreate,
-        onCategoryUpdate,
-        onCategoryOrder,
-        onCategoryDelete,
-    }) => {
-        if (!open) return null;
+export function SettingsModal({
+    open,
+    prefs,
+    sort,
+    server,
+    onClose,
+    onPrefsChange,
+    onSortChange,
+    apiKey,
+    apiKeyMessage,
+    onApiKeySave,
+    categories,
+    onCategoryCreate,
+    onCategoryUpdate,
+    onCategoryOrder,
+    onCategoryDelete,
+}: SettingsModalProps) {
+    if (!open) return null;
 
-        // First when the API has just refused a request, since that is the
-        // one thing to do; otherwise after the preferences it rarely matters
-        // next to.
-        const access = (
-            <section class="settings-section">
-                <h3 class="settings-section-title">API key</h3>
-                <p
-                    class={[
-                        "settings-section-note",
-                        apiKeyMessage && "settings-section-note--alert",
-                    ]}
-                    role={apiKeyMessage ? "alert" : undefined}
-                >
-                    {apiKeyMessage ??
-                        "Only needed when the API sets API_KEY. Kept in this browser; save it blank to remove it."}
-                </p>
-                <form
-                    class="settings-key"
-                    preventdefault:submit
-                    onSubmit$={(_, form) =>
-                        onApiKeySave(
-                            String(new FormData(form).get("apiKey") ?? ""),
-                        )
-                    }
-                >
-                    <input
-                        type="password"
-                        name="apiKey"
-                        class="settings-input"
-                        aria-label="API key"
-                        autocomplete="off"
-                        spellcheck={false}
-                        value={apiKey}
-                    />
-                    <button type="submit" class="settings-key-save">
-                        Save
-                    </button>
-                </form>
-            </section>
-        );
-
-        return (
-            <div
-                class="settings-overlay"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Settings"
+    // First when the API has just refused a request, since that is the
+    // one thing to do; otherwise after the preferences it rarely matters
+    // next to.
+    const access = (
+        <section className="settings-section">
+            <h3 className="settings-section-title">API key</h3>
+            <p
+                className={cx(
+                    "settings-section-note",
+                    apiKeyMessage && "settings-section-note--alert",
+                )}
+                role={apiKeyMessage ? "alert" : undefined}
             >
-                <div class="settings-panel">
-                    <div class="settings-header">
-                        <h2 class="settings-title">Settings</h2>
-                        <button
-                            type="button"
-                            class="settings-close"
-                            aria-label="Close settings"
-                            onClick$={onClose}
-                        >
-                            <LuX width="18" height="18" aria-hidden="true" />
-                        </button>
-                    </div>
+                {apiKeyMessage ??
+                    "Only needed when the API sets API_KEY. Kept in this browser; save it blank to remove it."}
+            </p>
+            <form
+                className="settings-key"
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    onApiKeySave(
+                        String(
+                            new FormData(event.currentTarget).get("apiKey") ??
+                                "",
+                        ),
+                    );
+                }}
+            >
+                <input
+                    type="password"
+                    name="apiKey"
+                    className="settings-input"
+                    aria-label="API key"
+                    autoComplete="off"
+                    spellCheck={false}
+                    defaultValue={apiKey}
+                />
+                <button type="submit" className="settings-key-save">
+                    Save
+                </button>
+            </form>
+        </section>
+    );
 
-                    <div class="settings-body">
-                        {apiKeyMessage && access}
-                        <section class="settings-section">
-                            <h3 class="settings-section-title">Preferences</h3>
-                            <p class="settings-section-note">
-                                Kept in this browser.
-                            </p>
+    return (
+        <div
+            className="settings-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+        >
+            <div className="settings-panel">
+                <div className="settings-header">
+                    <h2 className="settings-title">Settings</h2>
+                    <button
+                        type="button"
+                        className="settings-close"
+                        aria-label="Close settings"
+                        onClick={onClose}
+                    >
+                        <LuX width="18" height="18" aria-hidden="true" />
+                    </button>
+                </div>
 
-                            <label class="settings-row">
-                                <span class="settings-label">
-                                    Default quality
-                                </span>
-                                <select
-                                    class="settings-select"
-                                    onChange$={(_, el) =>
-                                        onPrefsChange({
-                                            ...prefs,
-                                            defaultPreset: el.value as Preset,
-                                        })
-                                    }
-                                >
-                                    {PRESET_OPTIONS.map((option) => (
-                                        <option
-                                            key={option.value}
-                                            value={option.value}
-                                            selected={
-                                                option.value ===
-                                                prefs.defaultPreset
-                                            }
-                                        >
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                <div className="settings-body">
+                    {apiKeyMessage && access}
+                    <section className="settings-section">
+                        <h3 className="settings-section-title">Preferences</h3>
+                        <p className="settings-section-note">
+                            Kept in this browser.
+                        </p>
 
-                            <label class="settings-row">
-                                <span class="settings-label">
-                                    Audio language
-                                </span>
-                                <select
-                                    class="settings-select"
-                                    onChange$={(_, el) =>
-                                        onPrefsChange({
-                                            ...prefs,
-                                            audioLanguage: el.value,
-                                        })
-                                    }
-                                >
+                        <label className="settings-row">
+                            <span className="settings-label">
+                                Default quality
+                            </span>
+                            <select
+                                className="settings-select"
+                                value={prefs.defaultPreset}
+                                onChange={({ currentTarget: el }) =>
+                                    onPrefsChange({
+                                        ...prefs,
+                                        defaultPreset: el.value as Preset,
+                                    })
+                                }
+                            >
+                                {PRESET_OPTIONS.map((option) => (
                                     <option
-                                        value=""
-                                        selected={prefs.audioLanguage === ""}
+                                        key={option.value}
+                                        value={option.value}
                                     >
-                                        As the file marks it
+                                        {option.label}
                                     </option>
-                                    {AUDIO_LANGUAGES.map((option) => (
-                                        <option
-                                            key={option.value}
-                                            value={option.value}
-                                            selected={
-                                                option.value ===
-                                                prefs.audioLanguage
-                                            }
-                                        >
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                                ))}
+                            </select>
+                        </label>
 
-                            <label class="settings-row">
-                                <span class="settings-label">Subtitles</span>
-                                <select
-                                    class="settings-select"
-                                    onChange$={(_, el) =>
-                                        onPrefsChange({
-                                            ...prefs,
-                                            subtitleLanguage: el.value,
-                                        })
-                                    }
-                                >
+                        <label className="settings-row">
+                            <span className="settings-label">
+                                Audio language
+                            </span>
+                            <select
+                                className="settings-select"
+                                value={prefs.audioLanguage}
+                                onChange={({ currentTarget: el }) =>
+                                    onPrefsChange({
+                                        ...prefs,
+                                        audioLanguage: el.value,
+                                    })
+                                }
+                            >
+                                <option value="">As the file marks it</option>
+                                {AUDIO_LANGUAGES.map((option) => (
                                     <option
-                                        value=""
-                                        selected={prefs.subtitleLanguage === ""}
+                                        key={option.value}
+                                        value={option.value}
                                     >
-                                        Off
+                                        {option.label}
                                     </option>
-                                    {AUDIO_LANGUAGES.map((option) => (
-                                        <option
-                                            key={option.value}
-                                            value={option.value}
-                                            selected={
-                                                option.value ===
-                                                prefs.subtitleLanguage
-                                            }
-                                        >
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                                ))}
+                            </select>
+                        </label>
 
-                            <label class="settings-row">
-                                <span class="settings-label">
-                                    Sort the list by
-                                </span>
-                                <select
-                                    class="settings-select"
-                                    onChange$={(_, el) =>
-                                        onSortChange(el.value as SortValue)
-                                    }
-                                >
-                                    {SORT_OPTIONS.map((option) => (
-                                        <option
-                                            key={option.value}
-                                            value={option.value}
-                                            selected={option.value === sort}
-                                        >
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                        <label className="settings-row">
+                            <span className="settings-label">Subtitles</span>
+                            <select
+                                className="settings-select"
+                                value={prefs.subtitleLanguage}
+                                onChange={({ currentTarget: el }) =>
+                                    onPrefsChange({
+                                        ...prefs,
+                                        subtitleLanguage: el.value,
+                                    })
+                                }
+                            >
+                                <option value="">Off</option>
+                                {AUDIO_LANGUAGES.map((option) => (
+                                    <option
+                                        key={option.value}
+                                        value={option.value}
+                                    >
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
 
-                            <label class="settings-row">
-                                <span class="settings-label">
-                                    Ask before removing a download
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    class="settings-check"
-                                    checked={prefs.confirmBeforeRemove}
-                                    onChange$={(_, el) =>
-                                        onPrefsChange({
-                                            ...prefs,
-                                            confirmBeforeRemove: el.checked,
-                                        })
-                                    }
-                                />
-                            </label>
-                        </section>
+                        <label className="settings-row">
+                            <span className="settings-label">
+                                Sort the list by
+                            </span>
+                            <select
+                                className="settings-select"
+                                value={sort}
+                                onChange={({ currentTarget: el }) =>
+                                    onSortChange(el.value as SortValue)
+                                }
+                            >
+                                {SORT_OPTIONS.map((option) => (
+                                    <option
+                                        key={option.value}
+                                        value={option.value}
+                                    >
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
 
-                        {!apiKeyMessage && access}
+                        <label className="settings-row">
+                            <span className="settings-label">
+                                Ask before removing a download
+                            </span>
+                            <input
+                                type="checkbox"
+                                className="settings-check"
+                                checked={prefs.confirmBeforeRemove}
+                                onChange={({ currentTarget: el }) =>
+                                    onPrefsChange({
+                                        ...prefs,
+                                        confirmBeforeRemove: el.checked,
+                                    })
+                                }
+                            />
+                        </label>
+                    </section>
 
-                        <CategoryManager
-                            categories={categories}
-                            onCreate$={$((name: string, folder: string) =>
-                                onCategoryCreate(name, folder),
-                            )}
-                            onUpdate$={$(
-                                (
-                                    id: string,
-                                    patch: { name?: string; folder?: string },
-                                ) => onCategoryUpdate(id, patch),
-                            )}
-                            onOrder$={$((ids: string[]) =>
-                                onCategoryOrder(ids),
-                            )}
-                            onDelete$={$((category: CategoryItem) =>
-                                onCategoryDelete(category),
-                            )}
-                        />
+                    {!apiKeyMessage && access}
 
-                        <section class="settings-section">
-                            <h3 class="settings-section-title">Server</h3>
-                            <p class="settings-section-note">
-                                Read-only. These come from <code>api/.env</code>{" "}
-                                and take effect when the API restarts.
+                    <CategoryManager
+                        categories={categories}
+                        onCreate={onCategoryCreate}
+                        onUpdate={onCategoryUpdate}
+                        onOrder={onCategoryOrder}
+                        onDelete={onCategoryDelete}
+                    />
+
+                    <section className="settings-section">
+                        <h3 className="settings-section-title">Server</h3>
+                        <p className="settings-section-note">
+                            Read-only. These come from <code>api/.env</code> and
+                            take effect when the API restarts.
+                        </p>
+
+                        {server === null ? (
+                            <p className="settings-server-empty">
+                                Could not read the server's settings.
                             </p>
-
-                            {server === null ? (
-                                <p class="settings-server-empty">
-                                    Could not read the server's settings.
-                                </p>
-                            ) : (
-                                <dl class="settings-server">
-                                    {Object.entries(server).map(
-                                        ([
-                                            key,
-                                            value,
-                                        ]) => (
-                                            <div
-                                                key={key}
-                                                class="settings-server-row"
-                                            >
-                                                <dt class="settings-server-key">
-                                                    {serverLabel(key)}
-                                                </dt>
-                                                <dd class="settings-server-value">
-                                                    {serverValue(key, value)}
-                                                </dd>
-                                            </div>
-                                        ),
-                                    )}
-                                </dl>
-                            )}
-                        </section>
-                    </div>
+                        ) : (
+                            <dl className="settings-server">
+                                {Object.entries(server).map(
+                                    ([
+                                        key,
+                                        value,
+                                    ]) => (
+                                        <div
+                                            key={key}
+                                            className="settings-server-row"
+                                        >
+                                            <dt className="settings-server-key">
+                                                {serverLabel(key)}
+                                            </dt>
+                                            <dd className="settings-server-value">
+                                                {serverValue(key, value)}
+                                            </dd>
+                                        </div>
+                                    ),
+                                )}
+                            </dl>
+                        )}
+                    </section>
                 </div>
             </div>
-        );
-    },
-);
+        </div>
+    );
+}

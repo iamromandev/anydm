@@ -1,4 +1,3 @@
-import { component$ } from "@qwik.dev/core";
 import { doorsFor } from "./present";
 import "./field.css";
 
@@ -9,9 +8,9 @@ export interface StartDoorsProps {
 }
 
 /** The ways to start, for a list with nothing in it yet. */
-export const StartDoors = component$<StartDoorsProps>(
-    ({ torrentSearch, onBrowse }) => (
-        <div class="start-doors">
+export function StartDoors({ torrentSearch, onBrowse }: StartDoorsProps) {
+    return (
+        <div className="start-doors">
             {doorsFor(torrentSearch).map((door) => {
                 const body = (
                     <>
@@ -21,7 +20,10 @@ export const StartDoors = component$<StartDoorsProps>(
                 );
                 if (!door.action) {
                     return (
-                        <p key={door.id} class="start-door start-door--hint">
+                        <p
+                            key={door.id}
+                            className="start-door start-door--hint"
+                        >
                             {body}
                         </p>
                     );
@@ -30,8 +32,8 @@ export const StartDoors = component$<StartDoorsProps>(
                     <button
                         key={door.id}
                         type="button"
-                        class="start-door"
-                        onClick$={() => {
+                        className="start-door"
+                        onClick={() => {
                             if (door.id === "browse") {
                                 onBrowse();
                                 return;
@@ -48,5 +50,5 @@ export const StartDoors = component$<StartDoorsProps>(
                 );
             })}
         </div>
-    ),
-);
+    );
+}
