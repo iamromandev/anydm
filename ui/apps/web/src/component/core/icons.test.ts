@@ -18,8 +18,17 @@ describe("icons facade", () => {
 
     test("every export is a React component", () => {
         const broken = entries
-            .filter(([, value]) => !isComponent(value))
-            .map(([name]) => name);
+            .filter(
+                ([
+                    ,
+                    value,
+                ]) => !isComponent(value),
+            )
+            .map(
+                ([
+                    name,
+                ]) => name,
+            );
         expect(broken).toEqual([]);
     });
 });
