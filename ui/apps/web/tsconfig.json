@@ -46,7 +46,6 @@
         "./*.config.ts"
     ],
     "exclude": [
-        "node_modules",
-        "src/route/index.tsx"
+        "node_modules"
     ]
 }

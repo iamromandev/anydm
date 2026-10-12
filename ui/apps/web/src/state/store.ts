@@ -21,8 +21,8 @@ import type { Toast } from "@/lib/toast";
 export type BulkAction = "pause_all" | "resume_all" | "clear_finished";
 
 /**
- * Everything the page knows. One flat object, as the Qwik store was, so a
- * handler that reads the category while it merges a task needs no wiring.
+ * Everything the page knows. One flat object, so a handler that reads the
+ * category while it merges a task needs no wiring.
  */
 export interface AppState {
     tasks: UiTask[];
