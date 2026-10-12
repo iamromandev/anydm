@@ -10,6 +10,7 @@ from src.service.download.live import Live, LiveStats
 from src.service.download.torrent_monitor import TorrentMonitor
 
 from tests.service.download.memory import MemoryFiles, MemoryPieces, RecordingHub, download_row, memory_views
+from tests.service.download.workers import FakeAttempts
 
 HASH = "abc"
 
@@ -125,6 +126,7 @@ def _monitor(
     download_limit_bps: int = 0,
     upload_limit_bps: int = 0,
     clock: Any = None,
+    attempts: Any = None,
 ) -> TorrentMonitor:
     files = files or MemoryFiles()
     live = live or LiveStats()
@@ -142,6 +144,7 @@ def _monitor(
         download_limit_bps=download_limit_bps,
         upload_limit_bps=upload_limit_bps,
         clock=clock,
+        attempts=attempts,
     )
 
 
@@ -185,11 +188,15 @@ async def test_a_finished_torrent_becomes_seeding_and_is_stamped() -> None:
 async def test_an_errored_torrent_carries_the_engine_message() -> None:
     row = _row(status=DownloadStatus.DOWNLOADING)
     sample = _sample(state="error", error="no space left on device")
+    attempts = FakeAttempts()
 
-    await _monitor([row], FakeClient([sample])).tick()
+    await _monitor([row], FakeClient([sample]), attempts=attempts).tick()
 
     assert row.status == DownloadStatus.FAILED
-    assert row.error == "no space left on device"
+    # A torrent has no tries of its own, so the reason is recorded as one, once.
+    assert attempts.failures == [(row.id, "no space left on device", None)]
+    await _monitor([row], FakeClient([sample]), attempts=attempts).tick()
+    assert len(attempts.failures) == 1
 
 
 @pytest.mark.asyncio

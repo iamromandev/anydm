@@ -15,7 +15,7 @@ from dataclasses import asdict
 from typing import Any
 
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import FileRepo, PositionRepo
+from src.data.repo.download.interface import AttemptRepo, FileRepo, PositionRepo
 from src.data.schema.play import PlaybackSchema
 from src.data.schema.transfer import (
     CategoryRefSchema,
@@ -52,6 +52,16 @@ def category_ref(row: Any) -> CategoryRefSchema | None:
     return CategoryRefSchema(id=category.id, name=category.name) if category is not None else None
 
 
+def shows_error(row: Any) -> bool:
+    """Whether the newest try's error is the download's current one: it has failed, or is waiting to try again.
+
+    Resuming changes the status and clears the timer, which is all it takes for the error to go away.
+    """
+    return row.status == DownloadStatus.FAILED or (
+        row.status == DownloadStatus.PENDING and row.next_attempt_at is not None
+    )
+
+
 def download_schema(
     row: Any,
     *,
@@ -60,6 +70,7 @@ def download_schema(
     live: Live,
     max_attempts: int,
     folder: str | None = None,
+    error: tuple[str | None, str | None] = (None, None),
 ) -> DownloadSchema:
     described = describe(row, files)
     media = described.media
@@ -114,8 +125,8 @@ def download_schema(
             )
             for file in files
         ],
-        error=row.error,
-        error_code=row.error_code,
+        error=error[0],
+        error_code=error[1],
         attempts=row.attempts,
         max_attempts=max_attempts,
         next_attempt_at=row.next_attempt_at,
@@ -189,7 +200,15 @@ def pieces_frame(download_id: uuid.UUID, *, piece_size: int, count: int, bitmap:
 class DownloadViews:
     """Schemas for one download or a page of them, with every related read batched."""
 
-    def __init__(self, files: FileRepo, positions: PositionRepo, live: LiveStats, max_attempts: int) -> None:
+    def __init__(
+        self,
+        files: FileRepo,
+        positions: PositionRepo,
+        live: LiveStats,
+        max_attempts: int,
+        attempts: AttemptRepo | None = None,
+    ) -> None:
+        self._attempts = attempts
         self._files = files
         self._positions = positions
         self._live = live
@@ -205,6 +224,7 @@ class DownloadViews:
         ids = [row.id for row in rows]
         files = await self._files.list_for_downloads(ids)
         playback = await self._positions.by_files([file.id for group in files.values() for file in group])
+        errors = await self._errors(rows)
         return [
             download_schema(
                 row,
@@ -213,6 +233,13 @@ class DownloadViews:
                 live=self._live.get(row.id),
                 max_attempts=self._max_attempts,
                 folder=(folders or {}).get(row.id),
+                error=errors.get(row.id, (None, None)),
             )
             for row in rows
         ]
+
+    async def _errors(self, rows: Sequence[Any]) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        """The newest try's error of each row that is showing one, in a single read."""
+        if self._attempts is None:
+            return {}
+        return await self._attempts.latest_errors([row.id for row in rows if shows_error(row)])

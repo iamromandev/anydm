@@ -19,8 +19,6 @@ def test_download_has_the_diagram_columns() -> None:
         "completed_at",
         "updated_at",
         "deleted_at",
-        "error",
-        "error_code",
         "attempts",
         "next_attempt_at",
     } <= names
@@ -63,8 +61,6 @@ def test_download_required_vs_nullable() -> None:
         "started_at",
         "completed_at",
         "deleted_at",
-        "error",
-        "error_code",
         "next_attempt_at",
     ):
         assert fields_map[name].null is True, name
@@ -83,9 +79,8 @@ def test_download_column_types_and_lengths() -> None:
     assert isinstance(fields_map["speed_limit"], fields.BigIntField)
     assert isinstance(fields_map["started_at"], fields.DatetimeField)
     assert isinstance(fields_map["completed_at"], fields.DatetimeField)
-    assert isinstance(fields_map["error"], fields.TextField)
-    assert isinstance(fields_map["error_code"], fields.CharField)
-    assert fields_map["error_code"].max_length == 64
+    # Why a try failed is on the Attempt, not here.
+    assert "error" not in fields_map and "error_code" not in fields_map
     assert isinstance(fields_map["attempts"], fields.IntField)
     assert isinstance(fields_map["next_attempt_at"], fields.DatetimeField)
 

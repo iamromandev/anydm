@@ -536,11 +536,9 @@ class DownloadService(BaseService):
         if not self._control.holds(download_id):
             self._control.clear_stop(download_id)
         download.status = DownloadStatus.PENDING
-        download.error = None
-        download.error_code = None
         download.attempts = 0
         download.next_attempt_at = None
-        await download.save(update_fields=["status", "error", "error_code", "attempts", "next_attempt_at"])
+        await download.save(update_fields=["status", "attempts", "next_attempt_at"])
         self._control.wake()
         schema = await self._published(download)
         await self._refresh_collection(download)

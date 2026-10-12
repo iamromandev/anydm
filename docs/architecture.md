@@ -175,8 +175,10 @@ the disk rqbit writes to. It is checked in two places:
   is written.
 - **By the worker.** It checks before starting, again once the probe reveals a
   direct download's size, and when a write fails with `ENOSPC`. Each sends the
-  task back to `pending` with `error_code=insufficient_storage` and a re-check
-  in 30 s. The `.part` stays, and the attempt is handed back: waiting for space
+  task back to `pending` with a re-check in 30 s, the reason
+  (`insufficient_storage`) recorded on the try that ended, where a failure's
+  reason always lives: the download shows its newest try's while it is failed
+  or waiting to retry. The `.part` stays, and the attempt is handed back: waiting for space
   never uses up the retry budget.
 
 A torrent that runs out of space mid-download is rqbit's to report; it arrives

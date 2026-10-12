@@ -233,15 +233,15 @@ async def test_a_try_s_outcome_is_written_only_over_a_row_still_in_the_worker_s_
     paused = await add_site(repo, status=DownloadStatus.PAUSED)
     removed = await add_site(repo, status=DownloadStatus.DOWNLOADING)
     await Download.filter(id=removed.id).update(deleted_at=now())
-    failed = {"status": DownloadStatus.PENDING, "error": "refused", "attempts": 1}
+    failed = {"status": DownloadStatus.PENDING, "next_attempt_at": now(), "attempts": 1}
 
     assert await repo.end_try(running.id, failed) is True
     assert await repo.end_try(paused.id, failed) is False
     assert await repo.end_try(removed.id, failed) is False
 
     rows = {row.id: row for row in await Download.filter(id__in=[running.id, paused.id, removed.id])}
-    assert (rows[running.id].status, rows[running.id].error) == (DownloadStatus.PENDING, "refused")
-    assert (rows[paused.id].status, rows[paused.id].error) == (DownloadStatus.PAUSED, None)
+    assert (rows[running.id].status, rows[running.id].attempts) == (DownloadStatus.PENDING, 1)
+    assert (rows[paused.id].status, rows[paused.id].attempts) == (DownloadStatus.PAUSED, 0)
     assert rows[removed.id].status == DownloadStatus.DOWNLOADING
     # Completion may also land over a pause: the file is whole.
     done = {"status": DownloadStatus.COMPLETED}

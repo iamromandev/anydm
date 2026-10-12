@@ -242,9 +242,7 @@ class TorrentService(BaseService):
         # the engine is moving bytes the moment it is started. The next monitor
         # tick corrects this to whatever the engine actually reports.
         download.status = DownloadStatus.DOWNLOADING
-        download.error = None
-        download.error_code = None
-        await download.save(update_fields=["status", "error", "error_code"])
+        await download.save(update_fields=["status"])
         return await self._published(download)
 
     async def stop_seeding(self, download_id: uuid.UUID) -> DownloadSchema:

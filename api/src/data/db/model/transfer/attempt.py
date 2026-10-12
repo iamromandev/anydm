@@ -19,6 +19,9 @@ class Attempt(LinkBase):
         enum_type=AttemptStatus, default=AttemptStatus.RUNNING
     )
     downloaded_size: int = fields.BigIntField(default=0)
+    #: Why the try ended badly, when it did; none for a try that completed or was paused.
+    error: str | None = fields.TextField(null=True)
+    error_code: str | None = fields.CharField(max_length=64, null=True)
     started_at: datetime = fields.DatetimeField(auto_now_add=True)
     completed_at: datetime | None = fields.DatetimeField(null=True)
 

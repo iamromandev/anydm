@@ -25,5 +25,5 @@ async def pause_rows(query: Any) -> list[uuid.UUID]:
 async def requeue_rows(query: Any) -> int:
     """Put the paused and failed in ``query`` back in the queue, as a person's fresh decision."""
     return await query.filter(status__in=[DownloadStatus.PAUSED, DownloadStatus.FAILED]).update(
-        status=DownloadStatus.PENDING, attempts=0, error=None, error_code=None, next_attempt_at=None
+        status=DownloadStatus.PENDING, attempts=0, next_attempt_at=None
     )

@@ -23,7 +23,7 @@ from loguru import logger
 from src.core.common import now
 from src.core.error import Error
 from src.data.repo.download.described import describe
-from src.data.repo.download.interface import DownloadRepo, FileRepo, PieceRepo
+from src.data.repo.download.interface import AttemptRepo, DownloadRepo, FileRepo, PieceRepo
 from src.data.type import DownloadStatus
 from src.lib.event import EventHub
 from src.lib.torrent.mapping import completed_since, status_for
@@ -51,7 +51,9 @@ class TorrentMonitor:
         download_limit_bps: int = 0,
         upload_limit_bps: int = 0,
         clock: Callable[[], float] | None = None,
+        attempts: AttemptRepo | None = None,
     ) -> None:
+        self._attempts = attempts
         self._repo = repo
         self._file_repo = file_repo
         self._piece_repo = piece_repo
@@ -204,8 +206,6 @@ class TorrentMonitor:
             "total_size": sample.total_bytes or None,
             "uploaded_size": sample.uploaded_bytes,
         }
-        if status == DownloadStatus.FAILED and sample.error:
-            fields["error"] = sample.error
         if status in (DownloadStatus.SEEDING, DownloadStatus.COMPLETED) and row.completed_at is None:
             fields["completed_at"] = now()
 
@@ -217,6 +217,8 @@ class TorrentMonitor:
             setattr(row, name, value)
         if changed:
             await row.save(update_fields=list(changed))
+        if "status" in changed and status == DownloadStatus.FAILED and sample.error and self._attempts is not None:
+            await self._attempts.record_failure(row.id, sample.error, None)
         if "total_size" in changed and row.total_size is not None:
             # Rare (a magnet's size is known once its metadata arrives), so the torrent's own row follows.
             await self._repo.set_torrent_total(_hash(row), row.total_size)

@@ -42,6 +42,10 @@ class FakeAttempts:
     def __init__(self, *, spare_mirror: bool = False) -> None:
         self.closed: list[AttemptStatus] = []
         self.retired: list[MirrorStatus] = []
+        #: ``(status, error, error_code)`` of each close that carried a reason.
+        self.errors: list[tuple[AttemptStatus, str | None, str | None]] = []
+        #: ``(download id, error, error_code)`` of each ``record_failure``.
+        self.failures: list[tuple[uuid.UUID, str | None, str | None]] = []
         self._spare = spare_mirror
 
     async def open(self, download: Any) -> Opened | None:
@@ -51,8 +55,18 @@ class FakeAttempts:
         mirror = min(usable, key=lambda mirror: (mirror.priority, mirror.created_at))
         return Opened(uuid.uuid4(), download.id, mirror.id, mirror.source.url.value, download.downloaded_size)
 
-    async def close(self, opened: Opened, status: AttemptStatus) -> None:
+    async def close(
+        self, opened: Opened, status: AttemptStatus, *, error: str | None = None, error_code: str | None = None
+    ) -> None:
         self.closed.append(status)
+        if error is not None or error_code is not None:
+            self.errors.append((status, error, error_code))
+
+    async def record_failure(self, download_id: uuid.UUID, error: str | None, error_code: str | None) -> None:
+        self.failures.append((download_id, error, error_code))
+
+    async def latest_errors(self, download_ids: Any) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        return {}
 
     async def spare(self, opened: Opened) -> bool:
         return self._spare

@@ -2,6 +2,7 @@
 
 from src.data.db.model.transfer.attempt import Attempt
 from src.data.type import AttemptStatus
+from tortoise import fields
 from tortoise.fields.relational import ForeignKeyFieldInstance
 
 
@@ -21,9 +22,12 @@ def test_attempt_mirror_is_a_cascade_fk() -> None:
     assert getattr(field, "on_delete", None) == "CASCADE"
 
 
-def test_attempt_dropped_the_download_fk_and_error() -> None:
-    assert "download" not in Attempt._meta.fields_map
-    assert "error" not in Attempt._meta.fields_map
+def test_attempt_dropped_the_download_fk_and_carries_why_it_failed() -> None:
+    fields_map = Attempt._meta.fields_map
+    assert "download" not in fields_map
+    assert isinstance(fields_map["error"], fields.TextField) and fields_map["error"].null is True
+    assert isinstance(fields_map["error_code"], fields.CharField)
+    assert fields_map["error_code"].max_length == 64 and fields_map["error_code"].null is True
 
 
 def test_attempt_status_defaults_to_running() -> None:

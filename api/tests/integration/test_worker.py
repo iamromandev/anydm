@@ -142,7 +142,9 @@ async def test_a_retryable_failure_requeues_with_a_backoff(db: None, tmp_path: P
     await row.refresh_from_db()
     assert (row.status, row.attempts) == (DownloadStatus.PENDING, 1)
     assert row.next_attempt_at is not None
-    assert row.error is not None
+    # Why it failed is on the try that failed.
+    attempt = await Attempt.get(mirror__download_id=row.id)
+    assert (attempt.status, attempt.error is not None) == (AttemptStatus.FAILED, True)
 
 
 async def test_a_permanent_failure_stops_at_once(db: None, tmp_path: Path) -> None:
@@ -153,6 +155,7 @@ async def test_a_permanent_failure_stops_at_once(db: None, tmp_path: Path) -> No
     await row.refresh_from_db()
     assert row.status == DownloadStatus.FAILED
     assert row.next_attempt_at is None
+    assert (await Attempt.get(mirror__download_id=row.id)).error_code == "does_not_exist"
 
 
 async def test_a_spent_mirror_fails_over_to_the_next(db: None, tmp_path: Path) -> None:

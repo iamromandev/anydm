@@ -482,8 +482,6 @@ class DownloadWorker:
             "downloaded_size": size,
             "total_size": size,
             "completed_at": now(),
-            "error": None,
-            "error_code": None,
             "folder": folder,
         }
         # A pause (or a pause and a resume) that landed as the last bytes did loses
@@ -513,17 +511,18 @@ class DownloadWorker:
         """
         fields = {
             "status": DownloadStatus.PENDING,
-            "error": error.message,
-            "error_code": error.type.value if error.type else None,
             "next_attempt_at": now() + timedelta(seconds=_SPACE_RECHECK_SECONDS),
             "attempts": max(0, download.attempts - 1) if refund else download.attempts,
         }
         if not await self._ended(download, fields):
             await self._yielded(download, opened, counted=refund)
             return
+        code = error.type.value if error.type else None
         if opened is not None:
             # Not the source's doing: the try ends without counting against its mirror.
-            await self._attempts.close(opened, AttemptStatus.CANCELLED)
+            await self._attempts.close(opened, AttemptStatus.CANCELLED, error=error.message, error_code=code)
+        else:
+            await self._attempts.record_failure(download.id, error.message, code)
         logger.warning("{}|waiting for disk space for {}: {}", self._name, download.id, error.message)
         self._live.clear(download.id)
         await self._changed(download)
@@ -534,11 +533,7 @@ class DownloadWorker:
         spent = MirrorStatus.EXHAUSTED if download.attempts >= self._max_attempts else MirrorStatus.FAILED
         # Asked, not acted on: the mirror is retired only once this outcome is written.
         failover = not decision.retry and opened is not None and await self._attempts.spare(opened)
-        fields: dict[str, Any] = {
-            "error": error.message,
-            "error_code": error.type.value if error.type else None,
-            "attempts": download.attempts,
-        }
+        fields: dict[str, Any] = {"attempts": download.attempts}
         if decision.retry:
             fields |= {
                 "status": DownloadStatus.PENDING,
@@ -553,10 +548,13 @@ class DownloadWorker:
         if not await self._ended(download, fields):
             await self._yielded(download, opened, counted=True)
             return
+        code = error.type.value if error.type else None
         if opened is not None:
-            await self._attempts.close(opened, AttemptStatus.FAILED)
+            await self._attempts.close(opened, AttemptStatus.FAILED, error=error.message, error_code=code)
             if not decision.retry:
                 await self._attempts.retire(opened, spent)
+        else:
+            await self._attempts.record_failure(download.id, error.message, code)
 
         if decision.retry:
             logger.warning(
