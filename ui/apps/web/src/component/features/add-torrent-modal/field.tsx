@@ -110,10 +110,12 @@ export function AddTorrentModal({
             // a puzzle to solve before downloading.
             patch({ selected: resolved.files.map((file) => file.index) });
         } catch (err) {
-            store.resolveError =
-                err instanceof Error
-                    ? err.message
-                    : "Could not read that torrent";
+            patch({
+                resolveError:
+                    err instanceof Error
+                        ? err.message
+                        : "Could not read that torrent",
+            });
         } finally {
             patch({ isResolving: false });
         }

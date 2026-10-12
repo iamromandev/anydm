@@ -237,10 +237,12 @@ export function HeroInput({
                 patch({ duplicate: held });
                 patch({ retry: input });
             } else {
-                store.error =
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to start download";
+                patch({
+                    error:
+                        err instanceof Error
+                            ? err.message
+                            : "Failed to start download",
+                });
             }
         } finally {
             patch({ isLoading: false });
@@ -279,7 +281,9 @@ export function HeroInput({
                     chosenPreset ??
                     choosePreset(store.preview.presets, defaultPreset);
                 if (!picked) {
-                    store.error = "Nothing on this page can be downloaded yet";
+                    patch({
+                        error: "Nothing on this page can be downloaded yet",
+                    });
                     return;
                 }
                 input = { type: "site", value, preset: picked };

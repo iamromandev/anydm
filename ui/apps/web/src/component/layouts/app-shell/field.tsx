@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { usePatch } from "@/hook/use-patch";
 import {
     aggregateStats,
@@ -323,6 +323,8 @@ export function AppShell({
         moving,
         setMoving,
     ] = useState<string | null>(null);
+    // Stable, so the memoised cards are not redrawn because the shell was.
+    const startMove = useCallback((id: string) => setMoving(id), []);
 
     /** The list, Search, Sources, or Stats. Held here with Search's own state, so the
             query and results survive switching away and back. */
@@ -685,9 +687,7 @@ export function AppShell({
                                     onLoadMore={onLoadMore}
                                     filter={filter}
                                     category={category}
-                                    onMoveCategory={(id: string) => {
-                                        setMoving(id);
-                                    }}
+                                    onMoveCategory={startMove}
                                     searchQuery={searchQuery}
                                     highlightId={highlightId}
                                     onPause={onPause}

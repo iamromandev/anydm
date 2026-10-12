@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createCleanups } from "@/lib/cleanups";
 import { createLive } from "@/lib/live";
 import { useLive } from "@/hook/use-live";
 import { LuX } from "@/component/core/icons";
@@ -297,13 +298,10 @@ export function PlayerModal({
             return;
         }
 
-        let disposed = false;
-        const cleanups: Array<() => void> = [];
-        // Run at once when registered after the run was superseded.
-        const cleanup = (fn: () => void) => {
-            if (disposed) fn();
-            else cleanups.push(fn);
-        };
+        // Undone in the order it was set up; one added after this run was
+        // superseded runs at once.
+        const cleanups = createCleanups();
+        const cleanup = cleanups.add;
 
         void (async () => {
             // Which of a torrent's files: picked in the menu, named by
@@ -429,7 +427,7 @@ export function PlayerModal({
                     );
                 } else if (sourceTask) {
                     const media = await fetchMediaInfo(sourceTask, playIndex);
-                    if (disposed) return;
+                    if (cleanups.disposed) return;
                     live.patch({ hasVideo: media.hasVideo });
                     live.patch({ currentFileIndex: media.fileIndex });
                     const probe = document.createElement("video");
@@ -480,7 +478,7 @@ export function PlayerModal({
 
                 // Superseded while the session was being asked for: it was
                 // started for a run that no longer exists, so end it.
-                if (disposed) {
+                if (cleanups.disposed) {
                     if (session) {
                         void stopStream(session.sessionId).catch(() => {});
                     }
@@ -572,7 +570,7 @@ export function PlayerModal({
                     });
                 }
 
-                if (disposed) {
+                if (cleanups.disposed) {
                     streamEventsRef.current?.close();
                     if (session) {
                         void stopStream(session.sessionId).catch(() => {});
@@ -848,7 +846,7 @@ export function PlayerModal({
                             // availability) is the reliable signal; native <video src>
                             // is the fallback for the few browsers without it (Safari).
                             const { default: Hls } = await import("hls.js");
-                            if (disposed) return;
+                            if (cleanups.disposed) return;
                             if (Hls.isSupported()) {
                                 // hls.js makes its own requests, so it can
                                 // send the key as a header and keep it out of
@@ -1184,7 +1182,7 @@ export function PlayerModal({
                 });
             } finally {
                 // A superseded run leaves the flag to the run that replaced it.
-                if (!disposed) live.patch({ isLoading: false });
+                if (!cleanups.disposed) live.patch({ isLoading: false });
             }
 
             cleanup(() => {
@@ -1200,10 +1198,7 @@ export function PlayerModal({
             });
         })();
 
-        return () => {
-            disposed = true;
-            for (const fn of cleanups.splice(0).reverse()) fn();
-        };
+        return () => cleanups.dispose();
     }, [
         open,
         url,
