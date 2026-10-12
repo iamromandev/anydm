@@ -1,121 +1,64 @@
-// qwikset-icons-v2 is built for @qwik.dev/core (Qwik 2) and renders correctly
-// under SSR/resumability. This module is a thin re-export aggregation point so
-// the rest of the app can import icons from a single location.
+// One import point for every icon the app draws. Lucide names keep their
+// `Lu` prefix and brand marks their `Si` prefix, so call sites do not change.
 
 // Lucide icons
-import {
-    LuDownload as _LuDownload,
-    LuPause as _LuPause,
-    LuPlay as _LuPlay,
-    LuX as _LuX,
-    LuTrash as _LuTrash,
-    LuRefreshCw as _LuRefreshCw,
-    LuFolderOpen as _LuFolderOpen,
-    LuFolderInput as _LuFolderInput,
-    LuHardDrive as _LuHardDrive,
-    LuArrowDownToLine as _LuArrowDownToLine,
-    LuCheckCircle as _LuCheckCircle,
-    LuXCircle as _LuXCircle,
-    LuAlertTriangle as _LuAlertTriangle,
-    LuGlobe as _LuGlobe,
-    LuMusic2 as _LuMusic2,
-    LuFilm as _LuFilm,
-    LuMonitorPlay as _LuMonitorPlay,
-    LuList as _LuList,
-    LuLoader2 as _LuLoader2,
-    LuLink as _LuLink,
-    LuClock as _LuClock,
-    LuChevronDown as _LuChevronDown,
-    LuChevronRight as _LuChevronRight,
-    LuCopy as _LuCopy,
-    LuCircle as _LuCircle,
-    LuMagnet as _LuMagnet,
-    LuPlus as _LuPlus,
-    LuSettings as _LuSettings,
-    LuMenu as _LuMenu,
-    LuFile as _LuFile,
-    LuFileDown as _LuFileDown,
-    LuRotateCcw as _LuRotateCcw,
-    LuAlertCircle as _LuAlertCircle,
-    LuSearch as _LuSearch,
-    LuSearchX as _LuSearchX,
-    LuUpload as _LuUpload,
-    LuVolume2 as _LuVolume2,
-    LuVolumeX as _LuVolumeX,
-    LuMaximize as _LuMaximize,
-    LuSkipBack as _LuSkipBack,
-    LuSkipForward as _LuSkipForward,
-    LuRewind as _LuRewind,
-    LuFastForward as _LuFastForward,
-    LuMinimize as _LuMinimize,
-    LuCheck as _LuCheck,
-    LuChevronLeft as _LuChevronLeft,
-    LuCaptions as _LuCaptions,
-    LuBarChart3 as _LuBarChart3,
-} from "qwikset-icons-v2/lucide";
-
-export const LuDownload = _LuDownload;
-export const LuPause = _LuPause;
-export const LuPlay = _LuPlay;
-export const LuX = _LuX;
-export const LuTrash = _LuTrash;
-export const LuRefreshCw = _LuRefreshCw;
-export const LuFolderOpen = _LuFolderOpen;
-export const LuFolderInput = _LuFolderInput;
-export const LuHardDrive = _LuHardDrive;
-export const LuArrowDownToLine = _LuArrowDownToLine;
-export const LuCheckCircle = _LuCheckCircle;
-export const LuXCircle = _LuXCircle;
-export const LuAlertTriangle = _LuAlertTriangle;
-export const LuGlobe = _LuGlobe;
-export const LuMusic2 = _LuMusic2;
-export const LuFilm = _LuFilm;
-export const LuMonitorPlay = _LuMonitorPlay;
-export const LuList = _LuList;
-export const LuLoader2 = _LuLoader2;
-export const LuLink = _LuLink;
-export const LuClock = _LuClock;
-export const LuChevronDown = _LuChevronDown;
-export const LuChevronRight = _LuChevronRight;
-export const LuCopy = _LuCopy;
-export const LuCircle = _LuCircle;
-export const LuMagnet = _LuMagnet;
-export const LuPlus = _LuPlus;
-export const LuSettings = _LuSettings;
-export const LuMenu = _LuMenu;
-export const LuFile = _LuFile;
-export const LuFileDown = _LuFileDown;
-export const LuRotateCcw = _LuRotateCcw;
-export const LuAlertCircle = _LuAlertCircle;
-export const LuSearch = _LuSearch;
-export const LuSearchX = _LuSearchX;
-export const LuUpload = _LuUpload;
-export const LuVolume2 = _LuVolume2;
-export const LuVolumeX = _LuVolumeX;
-export const LuMaximize = _LuMaximize;
-export const LuMinimize = _LuMinimize;
-export const LuSkipBack = _LuSkipBack;
-export const LuSkipForward = _LuSkipForward;
-export const LuRewind = _LuRewind;
-export const LuFastForward = _LuFastForward;
-export const LuCheck = _LuCheck;
-export const LuChevronLeft = _LuChevronLeft;
-export const LuCaptions = _LuCaptions;
-export const LuBarChart3 = _LuBarChart3;
+export {
+    Download as LuDownload,
+    Pause as LuPause,
+    Play as LuPlay,
+    X as LuX,
+    Trash as LuTrash,
+    RefreshCw as LuRefreshCw,
+    FolderOpen as LuFolderOpen,
+    FolderInput as LuFolderInput,
+    HardDrive as LuHardDrive,
+    ArrowDownToLine as LuArrowDownToLine,
+    CheckCircle as LuCheckCircle,
+    XCircle as LuXCircle,
+    AlertTriangle as LuAlertTriangle,
+    Globe as LuGlobe,
+    Music2 as LuMusic2,
+    Film as LuFilm,
+    MonitorPlay as LuMonitorPlay,
+    List as LuList,
+    Loader2 as LuLoader2,
+    Link as LuLink,
+    Clock as LuClock,
+    ChevronDown as LuChevronDown,
+    ChevronRight as LuChevronRight,
+    Copy as LuCopy,
+    Circle as LuCircle,
+    Magnet as LuMagnet,
+    Plus as LuPlus,
+    Settings as LuSettings,
+    Menu as LuMenu,
+    File as LuFile,
+    FileDown as LuFileDown,
+    RotateCcw as LuRotateCcw,
+    AlertCircle as LuAlertCircle,
+    Search as LuSearch,
+    SearchX as LuSearchX,
+    Upload as LuUpload,
+    Volume2 as LuVolume2,
+    VolumeX as LuVolumeX,
+    Maximize as LuMaximize,
+    Minimize as LuMinimize,
+    SkipBack as LuSkipBack,
+    SkipForward as LuSkipForward,
+    Rewind as LuRewind,
+    FastForward as LuFastForward,
+    Check as LuCheck,
+    ChevronLeft as LuChevronLeft,
+    Captions as LuCaptions,
+    BarChart3 as LuBarChart3,
+} from "lucide-react";
 
 // Simple Icons (brand logos)
-import {
-    SiYoutube as _SiYoutube,
-    SiTiktok as _SiTiktok,
-    SiInstagram as _SiInstagram,
-    SiX as _SiX,
-    SiVimeo as _SiVimeo,
-    SiTwitch as _SiTwitch,
-} from "qwikset-icons-v2/simpleicons";
-
-export const SiYoutube = _SiYoutube;
-export const SiTiktok = _SiTiktok;
-export const SiInstagram = _SiInstagram;
-export const SiX = _SiX;
-export const SiVimeo = _SiVimeo;
-export const SiTwitch = _SiTwitch;
+export {
+    SiYoutube,
+    SiTiktok,
+    SiInstagram,
+    SiX,
+    SiVimeo,
+    SiTwitch,
+} from "@icons-pack/react-simple-icons";
