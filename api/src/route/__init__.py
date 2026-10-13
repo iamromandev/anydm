@@ -1,34 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from src.core.auth import require_api_key
-
-from .category import router as _category_router
-from .download import router as _download_router
-from .extract import router as _extract_router
 from .health import router as _health_router
-from .search import router as _search_router
-from .settings import router as _settings_router
-from .source import router as _source_router
-from .stat import router as _stat_router
-from .stream import router as _stream_router
-from .system import router as _system_router
-
-#: Everything but health, which has to answer a load balancer or a person
-#: checking whether the API is up before either of them has a key.
-_subrouters = [
-    _extract_router,
-    _category_router,
-    _download_router,
-    _search_router,
-    _source_router,
-    _stream_router,
-    _settings_router,
-    _stat_router,
-    _system_router,
-]
 
 router = APIRouter()
 
 router.include_router(_health_router)
-for subrouter in _subrouters:
-    router.include_router(subrouter, dependencies=[Depends(require_api_key)])
