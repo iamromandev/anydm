@@ -31,18 +31,19 @@ import kotlinx.io.files.Path
  * preflight and probe on a PENDING job and moves it to QUEUED; [run] runs transfer, post-process and finish once the
  * queue gives the job a slot: QUEUED, DOWNLOADING, MUXING, then COMPLETED or SEEDING.
  *
- * | Step         | Runs in           | On success                                   | On failure (default policy) |
- * |--------------|-------------------|----------------------------------------------|-----------------------------|
- * | Preflight    | PENDING           | (probe)                                      | PENDING to FAILED           |
- * | Probe        | PENDING           | QUEUED, with saveFolder, fileName, size set  | PENDING to FAILED           |
- * | Transfer     | DOWNLOADING       | MUXING                                       | DOWNLOADING to FAILED       |
- * | Post-process | MUXING            | COMPLETED, or SEEDING if the protocol says so | MUXING to FAILED           |
- * | Finish       | COMPLETED/SEEDING | (the finish hook)                            | a throw is a bug, see below |
+ * | Step         | Runs in           | On success                                    | On failure                  |
+ * |--------------|-------------------|-----------------------------------------------|-----------------------------|
+ * | Preflight    | PENDING           | (probe)                                       | status unchanged            |
+ * | Probe        | PENDING           | QUEUED, with saveFolder, fileName, size set   | status unchanged            |
+ * | Transfer     | DOWNLOADING       | MUXING                                        | status unchanged            |
+ * | Post-process | MUXING            | COMPLETED, or SEEDING if the protocol says so | status unchanged            |
+ * | Finish       | COMPLETED/SEEDING | (the finish hook)                             | a throw is a bug, see below |
  *
  * The runner never writes a status: it moves the job with transitionTo and reports each move to the [RunListener]
  * before the step that runs in the new status starts, and #552 persists it. It writes only the plan's file and
- * segment rows ([PlanStore]) and the files in the save folder. Where a failed job goes is the [FailurePolicy]'s call.
- * Expected failures come back as outcomes; bugs throw.
+ * segment rows ([PlanStore]) and the files in the save folder. A failed step returns the job in the status it failed
+ * in, with no move: the queue owns every move after a failure (#553: RetryPolicy). Expected failures come back as
+ * outcomes; bugs throw.
  *
  * Cancellation propagates with no move; partials and watermarks stay for the next run. The finish hook is the
  * exception: it runs shielded from cancellation, so a job whose COMPLETED or SEEDING move was reported always returns
@@ -67,7 +68,6 @@ class StepRunner(
     private val defaultFolder: Path,
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
-    private val failurePolicy: FailurePolicy = FailurePolicy.Fail,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
 ) {
     init {
@@ -93,22 +93,21 @@ class StepRunner(
                     download,
                     Step.PREFLIGHT,
                     StepResult.Failed(null, "no protocol handles ${download.kind} downloads yet"),
-                    listener,
                 )
         val folder =
             when (val checked = preflight(download, mirror)) {
-                is StepResult.Failed -> return prepareFailed(download, Step.PREFLIGHT, checked, listener)
+                is StepResult.Failed -> return prepareFailed(download, Step.PREFLIGHT, checked)
                 is StepResult.Ok -> checked.value
             }
         val probe =
             when (val probed = protocol.probe(ProbeRequest(download, mirror))) {
-                is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed, listener)
+                is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }
         val learned = probe.size
         if (learned != null && learned != download.size) {
             val room = checkSpace(folder, learned - writtenBytes(download.id))
-            if (room is StepResult.Failed) return prepareFailed(download, Step.PROBE, room, listener)
+            if (room is StepResult.Failed) return prepareFailed(download, Step.PROBE, room)
         }
         // The user's file name wins; the probe's size is the source's own word.
         val queued =
@@ -134,19 +133,19 @@ class StepRunner(
         listener.moved(downloading)
         val transfer =
             when (val done = transferStep(downloading, job, protocol, folder, listener, limiter, meter)) {
-                is StepResult.Failed -> return runFailed(downloading, Step.TRANSFER, done, listener)
+                is StepResult.Failed -> return runFailed(downloading, Step.TRANSFER, done)
                 is StepResult.Ok -> done.value
             }
         val muxing = downloading.moveTo(MUXING)
         listener.moved(muxing)
         val finalized =
             when (val done = protocol.finalize(transfer)) {
-                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, done, listener)
+                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, done)
                 is StepResult.Ok -> done.value
             }
         val outputs =
             when (val placed = placeOutputs(job.download.id, folder, finalized.outputs)) {
-                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed, listener)
+                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed)
                 is StepResult.Ok -> placed.value
             }
         val finished = muxing.moveTo(if (finalized.seeding) SEEDING else COMPLETED)
@@ -432,43 +431,25 @@ class StepRunner(
                 }
             }.saturatingSum()
 
-    private suspend fun prepareFailed(
+    private fun prepareFailed(
         download: Download,
         step: Step,
         result: StepResult.Failed,
-        listener: RunListener,
-    ): PrepareOutcome = afterFailure(download, step, result, listener).let { (after, failure) -> PrepareOutcome.Failed(after, failure) }
+    ): PrepareOutcome = PrepareOutcome.Failed(download, result.toFailure(step))
 
-    private suspend fun runFailed(
+    private fun runFailed(
         download: Download,
         step: Step,
         result: StepResult.Failed,
-        listener: RunListener,
-    ): RunOutcome = afterFailure(download, step, result, listener).let { (after, failure) -> RunOutcome.Failed(after, failure) }
-
-    private suspend fun afterFailure(
-        download: Download,
-        step: Step,
-        result: StepResult.Failed,
-        listener: RunListener,
-    ): Pair<Download, StepFailure> {
-        val failure = StepFailure(step, result.errorClass, result.message)
-        val target = failurePolicy.statusAfter(download, failure)
-        if (target == download.status) {
-            // Staying put means a retry from PENDING; a job that already has a slot must leave its state.
-            check(download.status == PENDING) { "a failure policy can't keep a ${download.status} job where it is" }
-            return download to failure
-        }
-        val after = download.moveTo(target)
-        listener.moved(after)
-        return after to failure
-    }
+    ): RunOutcome = RunOutcome.Failed(download, result.toFailure(step))
 
     companion object {
         /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
         const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
     }
 }
+
+private fun StepResult.Failed.toFailure(step: Step) = StepFailure(step, errorClass, message, retryAfter)
 
 private fun File.key() = Triple(index, path, size)
 

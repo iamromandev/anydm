@@ -533,7 +533,7 @@ internal class QueueActor(
         val pending = if (start.status == QUEUED) report(slot, start.moved(PENDING)) else start
         val mirror =
             slot.mirror
-                ?: return SlotEnd.Failed(pending.moved(FAILED), StepFailure(Step.PREFLIGHT, null, "no source to download from"))
+                ?: return SlotEnd.Failed(pending, StepFailure(Step.PREFLIGHT, null, "no source to download from"))
         val listener =
             object : RunListener {
                 override suspend fun moved(download: Download) {
@@ -585,7 +585,7 @@ internal class QueueActor(
                 }
 
                 is SlotEnd.Failed -> {
-                    slot.download.takeRun(end.download)
+                    slot.download.takeRun(end.download).toFailed()
                 }
 
                 // The message has nowhere to be kept until #553 records Attempts (DIA-03), nor to be logged until #556.
@@ -608,7 +608,7 @@ internal class QueueActor(
     // A throw after COMPLETED or SEEDING was reported is a finished job (FinishHook); anything earlier fails it.
     private fun afterCrash(slot: Slot): Download {
         val reported = slot.lastReported
-        return if (reported != null && reported.status in FINISHED) slot.download.takeRun(reported) else slot.download.crashed()
+        return if (reported != null && reported.status in FINISHED) slot.download.takeRun(reported) else slot.download.toFailed()
     }
 
     private suspend fun save(download: Download): Download {
@@ -630,8 +630,8 @@ internal class QueueActor(
 private fun Download.takeRun(run: Download): Download =
     copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size)
 
-/** Where a job goes when its run threw: FAILED, through PENDING if it was between probe and transfer. */
-private fun Download.crashed(): Download {
+/** FAILED, through PENDING if it was between probe and transfer: where a job goes when its run threw or failed. */
+private fun Download.toFailed(): Download {
     val from = if (status == QUEUED) moved(PENDING) else this
     return if (from.status.canMoveTo(FAILED)) from.moved(FAILED) else from
 }

@@ -2,7 +2,6 @@ package dev.anydm.engine.core
 
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
-import dev.anydm.engine.core.DownloadStatus.FAILED
 import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
@@ -83,7 +82,7 @@ class StepRunnerTest {
         }
 
     @Test
-    fun aFailureAtAnyStepStopsTheJobWithTheRightStatus() =
+    fun aFailureAtAnyStepLeavesTheJobWhereItFailed() =
         runTest {
             val mismatches =
                 buildList {
@@ -100,13 +99,13 @@ class StepRunnerTest {
                                 h.protocol.calls,
                                 h.finish.calls.size,
                             )
-                        val expected = listOf(case.step, case.errorClass, FAILED, case.moves, case.calls, 0)
+                        val expected = listOf(case.step, case.errorClass, case.moves.lastOrNull() ?: PENDING, case.moves, case.calls, 0)
                         if (actual != expected ||
                             f?.message.isNullOrBlank()
                         ) {
                             add("${case.name}: expected $expected, got $actual (${f?.message})")
                         }
-                        // No leftover state: nothing open, nothing placed, the partial as the policy says (kept for a
+                        // No leftover state: nothing open, nothing placed, the partial as the case says (kept for a
                         // resume once it was made), and no watermark vouching for bytes that aren't in it.
                         if (h.fs.openWriters != 0) add("${case.name}: ${h.fs.openWriters} writers left open")
                         if (h.fs.exists(partial) != case.partialKept) add("${case.name}: partial kept should be ${case.partialKept}")
@@ -332,97 +331,15 @@ class StepRunnerTest {
         }
 
     @Test
-    fun aPolicyDecidesWhereAFailedJobGoes() =
+    fun theRunnerCopiesRetryAfterIntoTheFailure() =
         runTest {
-            val h =
-                StepHarness(
-                    failurePolicy =
-                        object : FailurePolicy {
-                            override suspend fun statusAfter(
-                                download: Download,
-                                failure: StepFailure,
-                            ) = if (failure.errorClass == ErrorClass.DISK_FULL) PAUSED else FAILED
-                        },
-                )
-            h.fs.free = 1_000
-            val result = h.runAll(aPendingDownload(size = 65536))
-            result.download.status shouldBe PAUSED
-            result.failure.shouldNotBeNull().errorClass shouldBe ErrorClass.DISK_FULL
-            h.listener.moves.map { it.status } shouldBe listOf(PAUSED)
-        }
-
-    @Test
-    fun aPolicyCanKeepAJobWhereItIs() =
-        runTest {
-            val h =
-                StepHarness(
-                    failurePolicy =
-                        object : FailurePolicy {
-                            override suspend fun statusAfter(
-                                download: Download,
-                                failure: StepFailure,
-                            ) = download.status
-                        },
-                )
-            h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
-            val result = h.runAll()
-            result.download.status shouldBe PENDING
-            result.failure.shouldNotBeNull().step shouldBe Step.PROBE
-            h.listener.moves.shouldBeEmpty()
-        }
-
-    @Test
-    fun aPolicySeesTheStatusTheStepRanIn() =
-        runTest {
-            val seen = mutableListOf<Pair<Step, DownloadStatus>>()
-            val policy =
-                object : FailurePolicy {
-                    override suspend fun statusAfter(
-                        download: Download,
-                        failure: StepFailure,
-                    ): DownloadStatus {
-                        seen += failure.step to download.status
-                        return if (download.status == PENDING) PENDING else FAILED
-                    }
-                }
-            StepHarness(failurePolicy = policy).apply { protocol.failure = FakeFailure.AtProbe(StepResult.Failed(null, "no")) }.runAll()
-            StepHarness(failurePolicy = policy).apply { fs.faults[Op.PREALLOCATE] = { FileResult.AccessDenied(it) } }.runAll()
-            StepHarness(failurePolicy = policy).apply { fs.faults[Op.ATOMIC_MOVE] = { FileResult.AccessDenied(it) } }.runAll()
-            seen shouldBe listOf(Step.PROBE to PENDING, Step.TRANSFER to DOWNLOADING, Step.POST_PROCESS to MUXING)
-        }
-
-    @Test
-    fun aPolicyCantKeepAJobThatWasAlreadyQueued() =
-        runTest {
-            val h =
-                StepHarness(
-                    failurePolicy =
-                        object : FailurePolicy {
-                            override suspend fun statusAfter(
-                                download: Download,
-                                failure: StepFailure,
-                            ) = download.status
-                        },
-                )
-            h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
-            shouldThrow<IllegalStateException> { h.runAll() }
-        }
-
-    @Test
-    fun anIllegalPolicyMoveIsABug() =
-        runTest {
-            val h =
-                StepHarness(
-                    failurePolicy =
-                        object : FailurePolicy {
-                            override suspend fun statusAfter(
-                                download: Download,
-                                failure: StepFailure,
-                            ) = COMPLETED
-                        },
-                )
-            h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.GONE, "404"))
-            shouldThrow<IllegalStateException> { h.runAll() }
+            val h = StepHarness()
+            h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.RATE_LIMITED, "slow down", 30.seconds))
+            h
+                .runAll()
+                .failure
+                .shouldNotBeNull()
+                .retryAfter shouldBe 30.seconds
         }
 
     @Test
@@ -465,8 +382,8 @@ class StepRunnerTest {
             val failed = h.prepare().shouldBeInstanceOf<PrepareOutcome.Failed>()
             failed.failure.step shouldBe Step.PROBE
             failed.failure.errorClass shouldBe ErrorClass.DISK_FULL
-            failed.download.status shouldBe FAILED
-            h.listener.moves.map { it.status } shouldBe listOf(FAILED) // never QUEUED
+            failed.download.status shouldBe PENDING
+            h.listener.moves.shouldBeEmpty() // never QUEUED, and the queue decides where it goes
         }
 
     @Test
@@ -500,7 +417,7 @@ class StepRunnerTest {
             h.protocol.files = listOf(FakeFile("a.bin", 1L shl 62), FakeFile("b.bin", 1L shl 62))
             h.fs.free = 1L shl 62
             val result = h.runAll()
-            result.download.status shouldBe FAILED
+            result.download.status shouldBe PENDING // the probe's size doesn't fit
             result.failure.shouldNotBeNull().errorClass shouldBe ErrorClass.DISK_FULL
         }
 
@@ -625,7 +542,7 @@ class StepRunnerTest {
             val mine = byteArrayOf(1, 2, 3)
             h.fs.put(existing, mine)
             val result = h.runAll()
-            result.download.status shouldBe FAILED
+            result.download.status shouldBe MUXING
             val failure = result.failure.shouldNotBeNull()
             failure.step shouldBe Step.POST_PROCESS
             failure.errorClass shouldBe null
