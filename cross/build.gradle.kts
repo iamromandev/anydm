@@ -5,4 +5,5 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.compose) apply false
     alias(libs.plugins.kotlinter) apply false
+    alias(libs.plugins.sqldelight) apply false
 }
