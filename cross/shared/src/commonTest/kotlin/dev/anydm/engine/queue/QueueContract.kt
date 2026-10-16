@@ -28,7 +28,6 @@ import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.store.NewDownload
-import dev.anydm.engine.store.StoreTestBase
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -55,22 +54,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** What the queue (#552) must do, on a new database from [newDriver] for each test. */
-abstract class QueueContract : StoreTestBase() {
-    // advanceUntilIdle doesn't run backgroundScope, where the queue lives: move virtual time on instead.
-    private fun TestScope.settle() {
-        advanceTimeBy(10.minutes)
-        runCurrent()
-    }
-
-    private suspend fun TestScope.started(
-        limit: Int? = null,
-        harness: (TestScope) -> QueueHarness = { QueueHarness(it, newStore()) },
-    ): QueueHarness =
-        harness(this).also { h ->
-            if (limit != null) h.store.settings.update { it.copy(concurrencyLimit = limit) }
-            h.queue.start()
-        }
-
+abstract class QueueContract : QueueTestBase() {
     @Test
     fun runsAtMostTheLimitAtOnce() =
         runTest {

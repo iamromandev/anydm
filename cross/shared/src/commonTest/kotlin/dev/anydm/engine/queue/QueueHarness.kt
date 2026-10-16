@@ -5,6 +5,8 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.FinishHook
+import dev.anydm.engine.core.FixedRandom
+import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.platform.FakeFileSystem
@@ -13,15 +15,22 @@ import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.io.files.Path
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * A queue over [store] with the fakes: by default one [FakeProtocol] for every kind, serving one 64 KiB file at 16 KiB/s
- * of virtual time, so a job takes 4 s. [finished] records completed jobs in the order the finish hook saw them.
+ * of virtual time, so a job takes 4 s. [finished] records completed jobs in the order the finish hook saw them. The
+ * default [retryPolicy] has no jitter: the first retry waits exactly 2.5 s, the second 5 s, the third 10 s. A harness
+ * made after a restart passes the first one's [clock], since a new virtualClock starts again at its origin.
  */
 internal class QueueHarness(
     test: TestScope,
@@ -30,6 +39,8 @@ internal class QueueHarness(
     protocols: Map<DownloadKind, Protocol> = DownloadKind.entries.associateWith { protocol },
     finish: FinishHook? = null,
     scope: CoroutineScope = test.backgroundScope,
+    val clock: Clock = test.virtualClock(),
+    val retryPolicy: RetryPolicy = RetryPolicy(random = FixedRandom(0.0)),
 ) {
     val fs = FakeFileSystem()
     val finished = mutableListOf<DownloadId>()
@@ -50,7 +61,7 @@ internal class QueueHarness(
                 },
             freeSpaceReserve = 0,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, test.virtualClock())
+    val queue = Queue(scope, store, runner, protocols, fs, clock)
 
     private var added = 0
 
@@ -58,12 +69,13 @@ internal class QueueHarness(
     suspend fun addJob(
         priority: Int = 0,
         kind: DownloadKind = DownloadKind.DIRECT,
+        mirrors: List<String> = listOf("https://example.com/file.zip"),
     ): DownloadId {
         val added =
             queue.add(
                 NewDownload(
                     kind,
-                    mirrors = listOf("https://example.com/file.zip"),
+                    mirrors = mirrors,
                     saveFolder = stepRoot.toString(),
                     fileName = "job-${++added}.zip",
                     priority = priority,
@@ -79,4 +91,22 @@ internal class QueueHarness(
     suspend fun statusesShouldBe(vararg expected: Pair<DownloadId, DownloadStatus>) {
         expected.map { (id, _) -> id to status(id) } shouldBe expected.toList()
     }
+}
+
+/** The helpers every queue test shares, each test on a new database from [newDriver]. */
+abstract class QueueTestBase : StoreTestBase() {
+    // advanceUntilIdle doesn't run backgroundScope, where the queue lives: move virtual time on instead.
+    internal fun TestScope.settle() {
+        advanceTimeBy(10.minutes)
+        runCurrent()
+    }
+
+    internal suspend fun TestScope.started(
+        limit: Int? = null,
+        harness: (TestScope) -> QueueHarness = { QueueHarness(it, newStore()) },
+    ): QueueHarness =
+        harness(this).also { h ->
+            if (limit != null) h.store.settings.update { it.copy(concurrencyLimit = limit) }
+            h.queue.start()
+        }
 }

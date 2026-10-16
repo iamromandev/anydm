@@ -23,12 +23,14 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.store.NewAttempt
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
@@ -324,12 +326,13 @@ internal class QueueActor(
         if (settings.globalPause && job.status in WAITING) (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download else job
 
     /**
-     * After a restart nothing runs: a job left mid-run waits again (DOWNLOADING to PENDING for a fresh probe, MUXING to
-     * QUEUED), every waiting job has a queued time, and every job agrees with the global pause setting. Checking the
-     * partial files is #554's.
+     * After a restart nothing runs: every attempt left open ends ("the app stopped", not counted), a job left mid-run
+     * waits again (DOWNLOADING to PENDING for a fresh probe, MUXING to QUEUED), every waiting job has a queued time,
+     * and every job agrees with the global pause setting. Checking the partial files is #554's.
      */
     private suspend fun reconcile() {
         val now = clock.now()
+        for (open in downloads.openAttempts()) downloads.updateAttempt(open.copy(endedAt = now, message = "the app stopped"))
         for (job in downloads.list()) {
             var fixed =
                 when (job.status) {
@@ -507,7 +510,9 @@ internal class QueueActor(
     }
 
     private suspend fun launchSlot(download: Download) {
-        val slot = Slot(download, downloads.mirrors(download.id).firstOrNull())
+        val mirror = mirrorToStart(downloads.mirrors(download.id), downloads.attempts(download.id))
+        val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id))
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
         slots[slot.id] = slot
         var end: SlotEnd = SlotEnd.Cancelled
         slot.job =
@@ -523,6 +528,9 @@ internal class QueueActor(
         // Not a finally: a slot cancelled before its coroutine ran never runs one, and must still report.
         slot.job.invokeOnCompletion { inbox.trySend(Message.Ended(slot, end)) }
     }
+
+    private suspend fun writtenBytes(id: DownloadId): Long =
+        downloads.files(id).sumOf { file -> downloads.segments(file.id).sumOf { it.written } }
 
     // On the slot's coroutine: the job's whole run, from probe to finish.
     private suspend fun runSlot(
@@ -578,6 +586,7 @@ internal class QueueActor(
         val slot = message.slot
         if (slots[slot.id] !== slot) return
         slots.remove(slot.id)
+        endAttempt(slot, message.end)
         val after =
             when (val end = message.end) {
                 is SlotEnd.Finished -> {
@@ -588,7 +597,6 @@ internal class QueueActor(
                     slot.download.takeRun(end.download).toFailed()
                 }
 
-                // The message has nowhere to be kept until #553 records Attempts (DIA-03), nor to be logged until #556.
                 is SlotEnd.Crashed -> {
                     afterCrash(slot)
                 }
@@ -603,6 +611,21 @@ internal class QueueActor(
             val result = withJob(slot.id, next.op)
             next.reply?.complete(result)
         }
+    }
+
+    // Every end closes the run's Attempt (DIA-03); a stop doesn't count as a failure, so it has no class.
+    private suspend fun endAttempt(
+        slot: Slot,
+        end: SlotEnd,
+    ) {
+        val (errorClass, message) =
+            when (end) {
+                is SlotEnd.Finished -> null to null
+                is SlotEnd.Failed -> end.failure.errorClass to end.failure.message
+                is SlotEnd.Crashed -> null to "internal error: ${end.error.message ?: end.error::class.simpleName}"
+                SlotEnd.Cancelled -> null to if (slot.stopping) "stopped" else "internal error: cancelled unexpectedly"
+            }
+        downloads.updateAttempt(slot.attempt.copy(endedAt = clock.now(), errorClass = errorClass, message = message))
     }
 
     // A throw after COMPLETED or SEEDING was reported is a finished job (FinishHook); anything earlier fails it.

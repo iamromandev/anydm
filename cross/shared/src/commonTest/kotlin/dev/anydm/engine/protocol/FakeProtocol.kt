@@ -1,6 +1,7 @@
 package dev.anydm.engine.protocol
 
 import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
@@ -76,13 +77,20 @@ internal class FakeProtocol(
     var relinkAnswer: StepResult<Unit>? = null,
     /** When set, [relink] waits for it first. */
     var relinkGate: CompletableDeferred<Unit>? = null,
+    /** Mirror urls whose probe answers GONE. */
+    var gone: Set<String> = emptySet(),
     private val journal: MutableList<String>? = null,
 ) : Protocol {
     val calls = mutableListOf<String>()
     val fetched = mutableListOf<Fetched>()
 
+    /** Each probe's mirror url, in order. */
+    val probed = mutableListOf<String>()
+
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         log("probe")
+        probed += request.mirror.url
+        if (request.mirror.url in gone) return StepResult.Failed(ErrorClass.GONE, "gone: ${request.mirror.url}")
         when (val scripted = failure) {
             is FakeFailure.AtProbe -> return scripted.failure
             is FakeFailure.ThrowAtProbe -> throw scripted.error
