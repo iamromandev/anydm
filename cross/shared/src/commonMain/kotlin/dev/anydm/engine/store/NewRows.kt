@@ -26,6 +26,8 @@ data class NewDownload(
     val size: Long? = null,
     val priority: Int = 0,
     val speedLimit: Long? = null,
+    /** When it starts waiting for a slot; the queue sets it. */
+    val queuedAt: Instant? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

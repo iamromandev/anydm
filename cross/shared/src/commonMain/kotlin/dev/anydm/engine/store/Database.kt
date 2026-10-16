@@ -49,6 +49,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 priorityAdapter = IntAdapter("download.priority"),
                 attempt_countAdapter = IntAdapter("download.attempt_count"),
                 next_attempt_atAdapter = InstantAdapter,
+                queued_atAdapter = InstantAdapter,
             ),
         file_Adapter =
             FileRow.Adapter(
