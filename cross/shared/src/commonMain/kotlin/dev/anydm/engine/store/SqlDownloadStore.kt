@@ -63,6 +63,7 @@ internal class SqlDownloadStore(
                 next_attempt_at = null,
                 pause_reasons = "",
                 queued_at = queuedAt,
+                source_validator = null,
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -98,6 +99,7 @@ internal class SqlDownloadStore(
                     next_attempt_at = download.nextAttemptAt,
                     pause_reasons = encodePauseReasons(download.pauseReasons),
                     queued_at = download.queuedAt,
+                    source_validator = download.sourceValidator,
                     id = download.id,
                 ).value > 0
         }
@@ -205,6 +207,7 @@ internal class SqlDownloadStore(
             nextAttemptAt = next_attempt_at,
             pauseReasons = decodePauseReasons(pause_reasons),
             queuedAt = queued_at,
+            sourceValidator = source_validator,
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)

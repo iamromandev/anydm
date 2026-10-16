@@ -14,6 +14,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.platform.AppDirs
@@ -65,6 +66,36 @@ class DatabaseFileTest {
         rawDriver(file).use { raw -> V1_ROWS.forEach(raw::exec) }
     }
 
+    @Test
+    fun versionTwoUpgradesWithNoSourceValidator() =
+        runTest {
+            val snapshots = requireNotNull(System.getProperty("anydm.schemaDir")) { "anydm.schemaDir is not set" }
+            Files.copy(Path(snapshots, "2.db").toNioPath(), file.toNioPath())
+            rawDriver(file).use { raw ->
+                raw.exec("PRAGMA user_version = 2")
+                raw.exec(
+                    "INSERT INTO download VALUES (1, 'DIRECT', 'PAUSED', NULL, NULL, NULL, NULL, '/media', 'a.mp4', 1000, 0, NULL, 0, " +
+                        "NULL, 'USER', 1700000000000)",
+                )
+            }
+
+            val store = open()
+            store.downloads.get(DownloadId(1)) shouldBe
+                Download(
+                    id = DownloadId(1),
+                    kind = DownloadKind.DIRECT,
+                    status = DownloadStatus.PAUSED,
+                    saveFolder = "/media",
+                    fileName = "a.mp4",
+                    size = 1_000,
+                    pauseReasons = setOf(PauseReason.USER),
+                    queuedAt = Instant.fromEpochMilliseconds(1_700_000_000_000),
+                    sourceValidator = null,
+                )
+            store.close()
+            rawDriver(file).use { it.userVersion() shouldBe 3L }
+        }
+
     // A made-up version 2 whose migration is [change], run on a version 1 file; create is the real schema.
     private class Version2(
         private val change: (SqlDriver) -> Unit,
@@ -101,9 +132,9 @@ class DatabaseFileTest {
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
         // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 2L
+        AnydmDb.Schema.version shouldBe 3L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 2L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 3L }
     }
 
     @Test

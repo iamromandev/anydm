@@ -10,4 +10,11 @@ interface ProbeResult {
 
     /** Total bytes, or null when unknown. */
     val size: Long?
+
+    /**
+     * An opaque token for what the source is now (an ETag or Last-Modified for HTTP, #538; an infohash for torrents),
+     * or null when this protocol can't tell. A later probe that returns a different one makes the download start over
+     * (FND-10): the partial files may no longer belong to the source.
+     */
+    val validator: String? get() = null
 }
