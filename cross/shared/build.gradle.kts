@@ -62,4 +62,21 @@ val checkJvmCommonApis =
             }
         }
     }
-tasks.named("check") { dependsOn(checkJvmCommonApis) }
+
+// With only a JVM target, the compiler also accepts JVM APIs in common code. This is a heuristic
+// until a non-JVM target exists (a js or linux target would make the compiler enforce it).
+val checkCommonApis =
+    tasks.register("checkCommonApis") {
+        val sources = fileTree("src") { include("commonMain/**/*.kt", "commonTest/**/*.kt") }
+        inputs.files(sources)
+        doLast {
+            val comments = Regex("""/\*.*?\*/|//[^\n]*""", RegexOption.DOT_MATCHES_ALL)
+            // java./javax. anywhere, plus java.lang names that need no import.
+            val jvmApi = Regex("""\bjavax?\.[a-z]|\b(System|Thread|Runtime|StrictMath|ProcessBuilder|Math)\s*\.""")
+            val offenders = sources.files.filter { jvmApi.containsMatchIn(it.readText().replace(comments, "")) }
+            check(offenders.isEmpty()) {
+                "JVM APIs in common source sets:\n" + offenders.joinToString("\n") { "  $it" }
+            }
+        }
+    }
+tasks.named("check") { dependsOn(checkJvmCommonApis, checkCommonApis) }
