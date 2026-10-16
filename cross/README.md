@@ -21,6 +21,13 @@ own, with the engine in `shared/`; no server is needed.
     `FileResult`. Engine code takes a `kotlin.time.Clock`: `Clock.System` in the app,
     `virtualClock()` (on `runTest`'s virtual time) in tests. `FileSystem` has an abstract contract
     test in `commonTest` that every implementation's test extends.
+  - The store (`dev.anydm.engine.store`) is SQLite through SQLDelight: tables and queries in
+    `src/commonMain/sqldelight/dev/anydm/engine/store/db/*.sq`, repositories in `commonMain`, and the JDBC driver in
+    `jvmMain` (`openStore` opens `anydm.db` in the data folder). Ids are never reused, enums are stored by name and times
+    as epoch milliseconds. To change the schema, edit the `.sq` file, add `N.sqm` with the SQL from version N to N+1,
+    run `./gradlew :shared:generateCommonMainAnydmDbSchema` to add `(N+1).db`, and commit all three. `check` runs
+    `verifyCommonMainAnydmDbMigration`, which fails if the migrations don't reach the `.sq` schema. Never edit a committed `N.db`.
+    Migrations run with foreign keys off and are checked with `foreign_key_check` before commit, so a table rebuild is safe.
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in

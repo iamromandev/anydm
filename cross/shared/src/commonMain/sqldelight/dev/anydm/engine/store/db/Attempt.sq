@@ -1,0 +1,32 @@
+import dev.anydm.engine.core.AttemptId;
+import dev.anydm.engine.core.DownloadId;
+import dev.anydm.engine.core.ErrorClass;
+import dev.anydm.engine.core.MirrorId;
+import kotlin.time.Instant;
+
+-- One try at a download: dev.anydm.engine.core.Attempt. It outlives its mirror (DIA-03).
+-- Wall-clock times, so ended_at may precede started_at: no CHECK between them.
+CREATE TABLE attempt (
+    id INTEGER AS AttemptId PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER AS DownloadId NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    mirror_id INTEGER AS MirrorId REFERENCES mirror(id) ON DELETE SET NULL,
+    started_at INTEGER AS Instant NOT NULL,
+    ended_at INTEGER AS Instant,
+    error_class TEXT AS ErrorClass,
+    message TEXT
+);
+
+CREATE INDEX attempt_download ON attempt(download_id, id);
+CREATE INDEX attempt_mirror ON attempt(mirror_id);
+
+insert:
+INSERT INTO attempt(download_id, mirror_id, started_at, ended_at, error_class, message) VALUES (?, ?, ?, ?, ?, ?);
+
+selectLastInserted:
+SELECT * FROM attempt WHERE id = last_insert_rowid();
+
+selectByDownload:
+SELECT * FROM attempt WHERE download_id = ? ORDER BY id;
+
+update:
+UPDATE attempt SET mirror_id = ?, started_at = ?, ended_at = ?, error_class = ?, message = ? WHERE id = ?;
