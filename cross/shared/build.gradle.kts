@@ -31,6 +31,8 @@ kotlin {
         jvmTest.get().dependsOn(jvmCommonTest)
 
         commonMain.dependencies {
+            // Public: the platform interfaces take kotlinx.io.files.Path.
+            api(libs.kotlinx.io.core)
             implementation(libs.ktor.client.core)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
