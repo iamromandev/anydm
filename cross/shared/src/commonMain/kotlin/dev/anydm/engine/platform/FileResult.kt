@@ -9,7 +9,7 @@ import kotlinx.io.files.Path
  *
  * Callers map these: [DiskFull] is ErrorClass.DISK_FULL (#551, #553); [TrashUnavailable] keeps
  * the files and tells the user (#552); [CrossVolume] is copied and verified instead (#539);
- * [Busy] is retried briefly (#554); [InvalidName] means the name must be sanitised (FIL-03, #539; until then the step fails with the reason).
+ * [Busy] is TRANSIENT and retried with backoff (#553, FileFailureMapping); [InvalidName] means the name must be sanitised (FIL-03, #539; until then the step fails with the reason).
  */
 sealed interface FileResult<out T> {
     data class Ok<out T>(
@@ -69,7 +69,7 @@ sealed interface FileResult<out T> {
 
     /**
      * Another process holds [path] open (Windows sharing or lock violations, a busy file on Unix).
-     * It usually passes: retry briefly (#554).
+     * It usually passes: it is TRANSIENT and retried with backoff (#553, FileFailureMapping).
      */
     data class Busy(
         override val path: Path,

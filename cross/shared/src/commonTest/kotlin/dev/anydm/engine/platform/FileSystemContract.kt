@@ -30,6 +30,26 @@ abstract class FileSystemContract {
     fun deleteRoot() = deleteRecursively(root)
 
     @Test
+    fun sizeOfAFileIsItsLength() =
+        runTest {
+            val file = Path(root, "a.bin").also { writeText(it, "12345") }
+            fileSystem(trash).size(file) shouldBe FileResult.Ok(5L)
+        }
+
+    @Test
+    fun sizeOfAMissingFileIsNotFound() =
+        runTest {
+            val missing = Path(root, "missing.bin")
+            fileSystem(trash).size(missing) shouldBe FileResult.NotFound(missing)
+        }
+
+    @Test
+    fun sizeOfAFolderIsAFolderInTheWay() =
+        runTest {
+            fileSystem(trash).size(trash).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe trash
+        }
+
+    @Test
     fun prepareFolderCreatesMissingParents() =
         runTest {
             val folder = Path(root, "a", "b", "c")
