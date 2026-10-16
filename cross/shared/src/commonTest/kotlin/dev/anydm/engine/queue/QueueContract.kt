@@ -11,8 +11,11 @@ import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.Step
+import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.platform.virtualEpoch
@@ -22,6 +25,7 @@ import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
+import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.assertions.throwables.shouldThrow
@@ -31,12 +35,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
@@ -661,6 +667,29 @@ abstract class QueueContract : StoreTestBase() {
         }
 
     @Test
+    fun aPreemptedJobThatReachedMuxingWaitsAgain() =
+        runTest {
+            // Its transfer ignores the stop, so the job reports MUXING after the preemption was decided.
+            val stubborn = FakeProtocol()
+            val ignoresStop =
+                object : Protocol by stubborn {
+                    override suspend fun transfer(
+                        transfer: Transfer,
+                        io: TransferIo,
+                    ): StepResult<Unit> = withContext(NonCancellable) { stubborn.transfer(transfer, io) }
+                }
+            val h = started { QueueHarness(it, newStore(), stubborn, DownloadKind.entries.associateWith { ignoresStop }) }
+            val low = h.addJob(priority = 0)
+            val high = h.addJob(priority = 1)
+            advanceTimeBy(1.seconds)
+
+            h.queue.setLimit(1)
+            settle()
+
+            h.statusesShouldBe(low to COMPLETED, high to COMPLETED)
+        }
+
+    @Test
     fun resumeAllAfterALimitChangeStartsOnlyTheLimit() =
         runTest {
             val h = started()
@@ -682,5 +711,104 @@ abstract class QueueContract : StoreTestBase() {
             val h = started()
 
             shouldThrow<IllegalArgumentException> { h.queue.setLimit(0) }
+        }
+
+    // Relink
+
+    private suspend fun QueueHarness.mirrorOf(id: DownloadId) = store.downloads.mirrors(id).single()
+
+    @Test
+    fun theDefaultRelinkIsRefused() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            val mirror = h.mirrorOf(a)
+
+            h.queue.relink(a, mirror.id, "https://example.com/new") shouldBe
+                CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "relink not supported"))
+            h.mirrorOf(a).url shouldBe mirror.url
+        }
+
+    @Test
+    fun relinkSavesTheUrlAndReprobesARunningJob() =
+        runTest {
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(relinkAnswer = StepResult.Ok(Unit))) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.status(a) shouldBe DOWNLOADING
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+            h.mirrorOf(a).url shouldBe "https://example.com/new"
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.protocol.calls.count { it == "probe" } shouldBe 2
+        }
+
+    @Test
+    fun aRefusedRelinkChangesNothing() =
+        runTest {
+            val refusal = StepResult.Failed(ErrorClass.AUTH, "not the same file")
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(relinkAnswer = refusal)) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            val mirror = h.mirrorOf(a)
+
+            h.queue.relink(a, mirror.id, "https://example.com/new") shouldBe
+                CommandResult.RelinkFailed(StepFailure(Step.PROBE, ErrorClass.AUTH, "not the same file"))
+
+            h.mirrorOf(a) shouldBe mirror
+            h.status(a) shouldBe DOWNLOADING
+        }
+
+    @Test
+    fun relinkOfAMuxingJobIsRejected() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val quick = FakeProtocol(relinkAnswer = StepResult.Ok(Unit))
+            val gated =
+                object : Protocol by quick {
+                    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
+                        gate.await()
+                        return quick.finalize(transfer)
+                    }
+                }
+            val h = started { QueueHarness(it, newStore(), quick, DownloadKind.entries.associateWith { gated }) }
+            val a = h.addJob()
+            advanceTimeBy(5.seconds)
+            h.status(a) shouldBe MUXING
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new") shouldBe
+                CommandResult.Rejected(TransitionResult.Rejected(MUXING, PENDING))
+            gate.complete(Unit)
+        }
+
+    @Test
+    fun relinkOfAnotherJobsMirrorIsNotFound() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            val b = h.addJob()
+
+            h.queue.relink(a, h.mirrorOf(b).id, "https://example.com/new") shouldBe CommandResult.NotFound
+        }
+
+    @Test
+    fun relinkDoesNotBlockOtherCommands() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val protocol = FakeProtocol(relinkAnswer = StepResult.Ok(Unit), relinkGate = gate)
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            val b = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            val relinked = async { h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new") }
+            runCurrent()
+            h.queue.pause(b).shouldBeInstanceOf<CommandResult.Done>()
+            relinked.isCompleted shouldBe false
+
+            gate.complete(Unit)
+            relinked.await().shouldBeInstanceOf<CommandResult.Done>()
         }
 }

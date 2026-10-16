@@ -1,8 +1,11 @@
 package dev.anydm.engine.protocol
 
+import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -69,6 +72,10 @@ internal class FakeProtocol(
     var fresh: Boolean = false,
     /** How long a cancelled transfer takes to stop, so a test can see a slot while it is stopping. */
     var stopDelay: Duration = Duration.ZERO,
+    /** What [relink] answers; null keeps the interface's default (not supported). */
+    var relinkAnswer: StepResult<Unit>? = null,
+    /** When set, [relink] waits for it first. */
+    var relinkGate: CompletableDeferred<Unit>? = null,
     private val journal: MutableList<String>? = null,
 ) : Protocol {
     val calls = mutableListOf<String>()
@@ -168,6 +175,16 @@ internal class FakeProtocol(
             }
         }
         return stop?.failure ?: StepResult.Ok(Unit)
+    }
+
+    override suspend fun relink(
+        download: Download,
+        mirror: Mirror,
+        url: String,
+    ): StepResult<Unit> {
+        log("relink")
+        relinkGate?.await()
+        return relinkAnswer ?: super.relink(download, mirror, url)
     }
 
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {

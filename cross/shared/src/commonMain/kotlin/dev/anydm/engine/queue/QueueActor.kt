@@ -13,6 +13,8 @@ import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.PrepareOutcome
 import dev.anydm.engine.core.RunListener
@@ -26,6 +28,7 @@ import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
@@ -48,7 +51,7 @@ import kotlin.time.Clock
 internal class QueueActor(
     private val store: Store,
     private val runner: StepRunner,
-    @Suppress("unused") private val protocols: Map<DownloadKind, Protocol>,
+    private val protocols: Map<DownloadKind, Protocol>,
     private val fileSystem: FileSystem,
     private val clock: Clock,
 ) {
@@ -58,9 +61,19 @@ internal class QueueActor(
             val reply: CompletableDeferred<CommandResult>,
         ) : Message
 
-        class Inspect(
-            val reply: CompletableDeferred<QueueState>,
-        ) : Message
+        class Ask<T>(
+            val block: suspend QueueActor.() -> T,
+            val reply: CompletableDeferred<T>,
+        ) : Message {
+            suspend fun answer(actor: QueueActor) {
+                try {
+                    reply.complete(actor.block())
+                } catch (e: Throwable) {
+                    reply.completeExceptionally(e)
+                    throw e
+                }
+            }
+        }
 
         /** The runner moved [slot]'s job to [download]; [ack] once it is stored. */
         class Moved(
@@ -117,9 +130,12 @@ internal class QueueActor(
         return reply.await()
     }
 
-    suspend fun inspect(): QueueState {
-        val reply = CompletableDeferred<QueueState>()
-        send(Message.Inspect(reply))
+    suspend fun inspect(): QueueState = ask { state() }
+
+    /** Runs [block] on the queue's coroutine and returns its value. */
+    private suspend fun <T> ask(block: suspend QueueActor.() -> T): T {
+        val reply = CompletableDeferred<T>()
+        send(Message.Ask(block, reply))
         return reply.await()
     }
 
@@ -138,8 +154,8 @@ internal class QueueActor(
                 }
             }
 
-            is Message.Inspect -> {
-                message.reply.complete(state())
+            is Message.Ask<*> -> {
+                message.answer(this)
             }
 
             is Message.Moved -> {
@@ -159,7 +175,7 @@ internal class QueueActor(
         while (true) {
             when (val message = inbox.tryReceive().getOrNull() ?: break) {
                 is Message.Command -> message.reply.completeExceptionally(error)
-                is Message.Inspect -> message.reply.completeExceptionally(error)
+                is Message.Ask<*> -> message.reply.completeExceptionally(error)
                 is Message.Moved -> message.ack.completeExceptionally(error)
                 is Message.Ended -> Unit
             }
@@ -273,9 +289,10 @@ internal class QueueActor(
     private suspend fun afterGlobalStop(job: Download): CommandResult =
         if (settings.globalPause) change(job.pause(PauseReason.GLOBAL)) else requeue(job)
 
-    // A slot stopped to give its place back: waiting again, at the back of its priority.
+    // A slot stopped to give its place back: waiting again, at the back of its priority. It may have reached MUXING
+    // before the stop landed; with no slot it can't stay there.
     private suspend fun requeue(job: Download): CommandResult {
-        val waiting = if (job.status == DOWNLOADING) job.moved(QUEUED) else job
+        val waiting = if (job.status == DOWNLOADING || job.status == MUXING) job.moved(QUEUED) else job
         return CommandResult.Done(if (waiting.status in WAITING) save(waiting.copy(queuedAt = clock.now())) else waiting)
     }
 
@@ -315,6 +332,80 @@ internal class QueueActor(
                 release(fixed)
             }
         }
+    }
+
+    /**
+     * Relink in three steps, so that the protocol's check, which may go to the network, runs on the caller's coroutine
+     * and not the queue's: find the job and mirror, ask the protocol, then store the url and send the job back to probe.
+     */
+    suspend fun relink(
+        id: DownloadId,
+        mirrorId: MirrorId,
+        url: String,
+    ): CommandResult {
+        val (job, mirror) =
+            when (val found = ask { relinkTarget(id, mirrorId) }) {
+                is RelinkTarget.Refused -> return found.result
+                is RelinkTarget.Found -> found
+            }
+        val protocol =
+            protocols[job.kind]
+                ?: return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "no protocol handles ${job.kind} downloads yet"))
+        when (val checked = protocol.relink(job, mirror, url)) {
+            is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
+            is StepResult.Ok -> Unit
+        }
+        return callLater { reply ->
+            when (val found = relinkTarget(id, mirrorId)) {
+                is RelinkTarget.Refused -> {
+                    reply.complete(found.result)
+                }
+
+                is RelinkTarget.Found -> {
+                    downloads.updateMirror(found.mirror.copy(url = url))
+                    val slot = slots[id]
+                    if (slot == null) reply.complete(reprobe(found.job)) else stop(slot, ::reprobe, reply)
+                }
+            }
+        }
+    }
+
+    private sealed interface RelinkTarget {
+        data class Found(
+            val job: Download,
+            val mirror: Mirror,
+        ) : RelinkTarget
+
+        data class Refused(
+            val result: CommandResult,
+        ) : RelinkTarget
+    }
+
+    // A MUXING job has its bytes already; a new link can't change them.
+    private suspend fun relinkTarget(
+        id: DownloadId,
+        mirrorId: MirrorId,
+    ): RelinkTarget {
+        val job = slots[id]?.download ?: downloads.get(id) ?: return RelinkTarget.Refused(CommandResult.NotFound)
+        val mirror = downloads.mirrors(id).find { it.id == mirrorId } ?: return RelinkTarget.Refused(CommandResult.NotFound)
+        if (job.status == MUXING) return RelinkTarget.Refused(CommandResult.Rejected(TransitionResult.Rejected(MUXING, PENDING)))
+        return RelinkTarget.Found(job, mirror)
+    }
+
+    // After a relink: a job that was running or waiting probes again (the new link) before it transfers. A job at rest
+    // (paused, failed, finished) keeps its status; it probes when it next runs.
+    private suspend fun reprobe(job: Download): CommandResult {
+        val again =
+            when (job.status) {
+                DOWNLOADING, QUEUED -> job.moved(PENDING)
+
+                MUXING -> job.moved(QUEUED)
+
+                // reached MUXING before the stop landed
+                else -> job
+            }
+        if (again.status !in WAITING) return CommandResult.Done(again)
+        return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = clock.now()))))
     }
 
     private suspend fun removeJob(

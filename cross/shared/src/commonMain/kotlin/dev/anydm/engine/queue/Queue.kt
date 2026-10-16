@@ -3,6 +3,7 @@ package dev.anydm.engine.queue
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
@@ -78,6 +79,16 @@ class Queue(
         require(limit >= 1) { "limit must be >= 1: $limit" }
         return actor.call { setLimit(limit) }
     }
+
+    /**
+     * Gives [mirrorId] of job [id] a new [url], once the job's protocol agrees it is the same content. That check runs
+     * outside the queue, so other commands go on meanwhile. A running job is stopped and probes the new link.
+     */
+    suspend fun relink(
+        id: DownloadId,
+        mirrorId: MirrorId,
+        url: String,
+    ): CommandResult = actor.relink(id, mirrorId, url)
 
     /** For tests: what holds a slot right now. */
     internal suspend fun inspect(): QueueState = actor.inspect()
