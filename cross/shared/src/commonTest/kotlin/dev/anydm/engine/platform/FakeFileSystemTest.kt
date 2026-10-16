@@ -31,6 +31,20 @@ class FakeFileSystemTest {
         }
 
     @Test
+    fun aWriterOpenedBeforeAPowerCutIsDead() =
+        runTest {
+            val fs = FakeFileSystem()
+            val writer = fs.writer()
+            writer.write(0, byteArrayOf(1))
+
+            fs.powerCut()
+
+            writer.sync().shouldBeInstanceOf<FileResult.IoError>()
+            writer.write(0, byteArrayOf(2)).shouldBeInstanceOf<FileResult.IoError>()
+            fs.read(file)!!.first() shouldBe 0.toByte()
+        }
+
+    @Test
     fun aPowerCutKeepsMetadataOperations() =
         runTest {
             val fs = FakeFileSystem()

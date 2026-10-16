@@ -44,10 +44,17 @@ internal class FakeFileSystem(
         durable.remove(path)
     }
 
-    /** The power goes off: every file loses what was written to it since it was last synced. */
+    /**
+     * The power goes off: every file loses what was written to it since it was last synced, and every writer open until
+     * now is dead (its writes and syncs fail), as nothing of the stopped run reaches the disk after the cut.
+     */
     fun powerCut() {
         for (path in files.keys) files[path] = durable.getValue(path).copyOf()
+        power++
     }
+
+    // Bumped by each power cut; a writer opened before it is dead.
+    private var power = 0
 
     /** Every file, not folders. */
     fun paths(): Set<Path> = files.keys.toSet()
@@ -158,6 +165,9 @@ internal class FakeFileSystem(
         private val path: Path,
     ) : FileWriter {
         private var closed = false
+        private val opened = power
+
+        private fun dead(): FileResult.Failed? = if (opened != power) FileResult.IoError(path, "power cut") else null
 
         override suspend fun write(
             offset: Long,
@@ -167,6 +177,7 @@ internal class FakeFileSystem(
         ): FileResult<Unit> {
             check(!closed) { "the writer for $path is closed" }
             require(offset >= 0 && startIndex in 0..endIndex && endIndex <= bytes.size)
+            dead()?.let { return it }
             fault(Op.WRITE, path)?.let { return it }
             val current = files[path] ?: return FileResult.NotFound(path)
             val end = offset + (endIndex - startIndex)
@@ -186,6 +197,7 @@ internal class FakeFileSystem(
 
         override suspend fun sync(): FileResult<Unit> {
             check(!closed) { "the writer for $path is closed" }
+            dead()?.let { return it }
             fault(Op.SYNC, path)?.let { return it }
             files[path]?.let { durable[path] = it.copyOf() }
             syncs++
