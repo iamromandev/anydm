@@ -13,10 +13,12 @@ import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.FailureAction
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.PrepareOutcome
+import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.RunListener
 import dev.anydm.engine.core.RunOutcome
 import dev.anydm.engine.core.Step
@@ -24,6 +26,7 @@ import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.core.mirrorToStart
+import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.platform.FileResult
@@ -37,14 +40,17 @@ import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * The queue's single coroutine and everything only it touches: the slots, the cached settings and every write of a
@@ -58,6 +64,7 @@ internal class QueueActor(
     private val protocols: Map<DownloadKind, Protocol>,
     private val fileSystem: FileSystem,
     private val clock: Clock,
+    private val retryPolicy: RetryPolicy,
 ) {
     private sealed interface Message {
         class Command(
@@ -90,6 +97,9 @@ internal class QueueActor(
             val slot: Slot,
             val end: SlotEnd,
         ) : Message
+
+        /** The earliest pending retry may be due; handling any message reschedules. */
+        data object Wake : Message
     }
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
@@ -98,6 +108,10 @@ internal class QueueActor(
     private lateinit var settings: Settings
     private lateinit var slotScope: CoroutineScope
     private var launched = false
+
+    // The one timer for the earliest pending retry (nextAttemptAt), and the time it is armed for.
+    private var wake: Job? = null
+    private var wakeAt: Instant? = null
 
     suspend fun start(scope: CoroutineScope) {
         check(!launched) { "the queue is already started" }
@@ -175,6 +189,12 @@ internal class QueueActor(
             is Message.Ended -> {
                 ended(message)
             }
+
+            // Fired: the reschedule after it arms the next one, even for the same time if the clock was set back.
+            Message.Wake -> {
+                wake = null
+                wakeAt = null
+            }
         }
     }
 
@@ -199,6 +219,7 @@ internal class QueueActor(
             is Message.Ask<*> -> message.reply.completeExceptionally(error)
             is Message.Moved -> message.ack.completeExceptionally(error)
             is Message.Ended -> message.slot.afterStop.forEach { it.reply?.completeExceptionally(error) }
+            Message.Wake -> Unit
         }
     }
 
@@ -501,15 +522,37 @@ internal class QueueActor(
 
     // Scheduling
 
+    // A job waiting for a retry (nextAttemptAt in the future) isn't ready yet; the timer wakes the queue when it is.
     private suspend fun reschedule() {
+        val now = clock.now()
         val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots }
-        val decision = schedule(waiting, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
-        val byId = waiting.associateBy { it.id }
+        val ready = waiting.filter { job -> job.nextAttemptAt.let { it == null || it <= now } }
+        val decision = schedule(ready, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
+        val byId = ready.associateBy { it.id }
         decision.start.forEach { launchSlot(byId.getValue(it)) }
         decision.preempt.forEach { stop(slots.getValue(it), ::requeue, null) }
+        armWake(waiting.mapNotNull { it.nextAttemptAt }.filter { it > now }.minOrNull(), now)
     }
 
-    private suspend fun launchSlot(download: Download) {
+    private fun armWake(
+        earliest: Instant?,
+        now: Instant,
+    ) {
+        if (earliest == wakeAt) return
+        wake?.cancel()
+        wakeAt = earliest
+        wake =
+            earliest?.let { at ->
+                slotScope.launch {
+                    delay(at - now)
+                    inbox.trySend(Message.Wake)
+                }
+            }
+    }
+
+    private suspend fun launchSlot(waiting: Download) {
+        // The retry is happening now.
+        val download = if (waiting.nextAttemptAt != null) save(waiting.copy(nextAttemptAt = null)) else waiting
         val mirror = mirrorToStart(downloads.mirrors(download.id), downloads.attempts(download.id))
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id))
         val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
@@ -542,19 +585,28 @@ internal class QueueActor(
         val mirror =
             slot.mirror
                 ?: return SlotEnd.Failed(pending, StepFailure(Step.PREFLIGHT, null, "no source to download from"))
+        // The most bytes the run reported: did this attempt make progress (RetryPolicy's budget)?
+        var maxDownloaded: Long? = null
         val listener =
             object : RunListener {
                 override suspend fun moved(download: Download) {
                     report(slot, download)
                 }
+
+                override fun progress(
+                    downloaded: Long,
+                    total: Long?,
+                ) {
+                    maxDownloaded = maxOf(maxDownloaded ?: downloaded, downloaded)
+                }
             }
         val ready =
             when (val prepared = runner.prepare(pending, mirror, listener)) {
-                is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
+                is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure, maxDownloaded)
                 is PrepareOutcome.Ready -> prepared
             }
         return when (val ran = runner.run(ready, listener)) {
-            is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
+            is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure, maxDownloaded)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }
     }
@@ -590,11 +642,11 @@ internal class QueueActor(
         val after =
             when (val end = message.end) {
                 is SlotEnd.Finished -> {
-                    slot.download.takeRun(end.outcome.download)
+                    slot.download.takeRun(end.outcome.download).copy(attemptCount = 0)
                 }
 
                 is SlotEnd.Failed -> {
-                    slot.download.takeRun(end.download).toFailed()
+                    afterFailure(slot, end)
                 }
 
                 is SlotEnd.Crashed -> {
@@ -628,6 +680,39 @@ internal class QueueActor(
         downloads.updateAttempt(slot.attempt.copy(endedAt = clock.now(), errorClass = errorClass, message = message))
     }
 
+    /**
+     * Where a failed job goes (FND-06..08), as the [RetryPolicy] decides. The attempt is already closed, so a GONE
+     * counts when choosing the next mirror. A retry starts waiting for a slot when its delay is over; a failover runs
+     * again at once and keeps its place in line.
+     */
+    private suspend fun afterFailure(
+        slot: Slot,
+        end: SlotEnd.Failed,
+    ): Download {
+        val job = slot.download.takeRun(end.download)
+        val madeProgress = end.maxDownloaded != null && end.maxDownloaded > slot.writtenAtStart
+        val next = nextMirror(downloads.mirrors(slot.id), downloads.attempts(slot.id))
+        return when (val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now())) {
+            is FailureAction.Retry -> {
+                holdIfGlobal(
+                    job.backToWaiting().copy(attemptCount = action.attemptCount, nextAttemptAt = action.at, queuedAt = action.at),
+                )
+            }
+
+            is FailureAction.NextMirror -> {
+                holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
+            }
+
+            is FailureAction.Pause -> {
+                (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
+            }
+
+            FailureAction.Fail -> {
+                job.toFailed().copy(nextAttemptAt = null)
+            }
+        }
+    }
+
     // A throw after COMPLETED or SEEDING was reported is a finished job (FinishHook); anything earlier fails it.
     private fun afterCrash(slot: Slot): Download {
         val reported = slot.lastReported
@@ -652,6 +737,14 @@ internal class QueueActor(
  */
 private fun Download.takeRun(run: Download): Download =
     copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size)
+
+/** Waiting again after a failed run: a new probe from PENDING, or QUEUED (which probes again) after post-processing. */
+private fun Download.backToWaiting(): Download =
+    when (status) {
+        DOWNLOADING -> moved(PENDING)
+        MUXING -> moved(QUEUED)
+        else -> this
+    }
 
 /** FAILED, through PENDING if it was between probe and transfer: where a job goes when its run threw or failed. */
 private fun Download.toFailed(): Download {

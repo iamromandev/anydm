@@ -61,7 +61,7 @@ internal class QueueHarness(
                 },
             freeSpaceReserve = 0,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, clock)
+    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy)
 
     private var added = 0
 

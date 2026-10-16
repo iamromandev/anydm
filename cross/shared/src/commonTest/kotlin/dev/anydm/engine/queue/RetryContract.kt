@@ -1,8 +1,16 @@
 package dev.anydm.engine.queue
 
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DownloadStatus.COMPLETED
+import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
+import dev.anydm.engine.core.DownloadStatus.PAUSED
+import dev.anydm.engine.core.DownloadStatus.PENDING
+import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.platform.ShiftedClock
+import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.platform.virtualEpoch
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
@@ -26,6 +34,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** What the queue does with failures (#553): Attempt rows, retries, mirror failover. A new database for each test. */
@@ -209,5 +218,272 @@ abstract class RetryContract : QueueTestBase() {
             attempt.message shouldBe "the app stopped"
             settle()
             store.downloads.openAttempts().shouldBeEmpty()
+        }
+
+    // Retries, failover and the timer. The harness's policy has no jitter: the first retry waits 2.5 s.
+
+    private val reset = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+
+    private suspend fun TestScope.startedWith(maxRetries: Int): QueueHarness {
+        val h = QueueHarness(this, newStore())
+        h.store.settings.update { it.copy(maxRetries = maxRetries) }
+        h.queue.start()
+        return h
+    }
+
+    @Test
+    fun aTransientFailureWaitsThenRetries() =
+        runTest {
+            val h = started()
+            h.protocol.failure = reset
+            val t0 = h.clock.now()
+            val a = h.addJob()
+            runCurrent()
+
+            val waiting = h.job(a)!!
+            waiting.status shouldBe PENDING
+            waiting.attemptCount shouldBe 1
+            waiting.nextAttemptAt shouldBe t0 + 2.5.seconds
+            waiting.queuedAt shouldBe waiting.nextAttemptAt
+            h.queue
+                .inspect()
+                .running
+                .shouldBeEmpty()
+
+            advanceTimeBy(2.4.seconds)
+            runCurrent()
+            h.protocol.probed.size shouldBe 1
+
+            h.protocol.failure = null
+            advanceTimeBy(0.2.seconds)
+            runCurrent()
+            h.protocol.probed.size shouldBe 2
+            h.job(a)!!.nextAttemptAt shouldBe null
+
+            settle()
+            h.status(a) shouldBe COMPLETED
+            h.job(a)!!.attemptCount shouldBe 0
+        }
+
+    @Test
+    fun aUsedUpBudgetFails() =
+        runTest {
+            val h = startedWith(maxRetries = 2)
+            h.protocol.failure = reset
+            val a = h.addJob()
+            settle()
+
+            val job = h.job(a)!!
+            job.status shouldBe FAILED
+            job.attemptCount shouldBe 2
+            job.nextAttemptAt shouldBe null
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 3
+        }
+
+    @Test
+    fun aFailureAfterProgressDoesNotUseUpTheBudget() =
+        runTest {
+            val h = startedWith(maxRetries = 1)
+            h.protocol.failure = FakeFailure.AtTransfer(16 * 1024, StepResult.Failed(ErrorClass.TRANSIENT, "drop"))
+            val a = h.addJob()
+            settle()
+
+            // Runs 1 to 4 each add 16 KiB of the 64, so the count stays at 1; run 5 has nothing left to write, makes no
+            // progress and uses up the budget. Without the reset the job would fail after 2.
+            h.status(a) shouldBe FAILED
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 5
+        }
+
+    @Test
+    fun aMuxingFailureRetriesThroughQueued() =
+        runTest {
+            val h = started()
+            h.protocol.failure = FakeFailure.AtFinalize(StepResult.Failed(ErrorClass.TRANSIENT, "busy"))
+            val a = h.addJob()
+            advanceTimeBy(5.seconds)
+            runCurrent()
+
+            h.status(a) shouldBe QUEUED
+            h.job(a)!!.nextAttemptAt.shouldNotBeNull()
+
+            h.protocol.failure = null
+            settle()
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun goneFailsOverInMirrorOrder() =
+        runTest {
+            val h = started()
+            val urls = listOf("https://a.example/f", "https://b.example/f", "https://c.example/f")
+            h.protocol.gone = urls.take(2).toSet()
+            val a = h.addJob(mirrors = urls)
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.protocol.probed shouldBe urls
+            h.store.downloads
+                .attempts(a)
+                .map { it.mirrorId } shouldBe
+                h.store.downloads
+                    .mirrors(a)
+                    .map { it.id }
+            h.job(a)!!.attemptCount shouldBe 0
+        }
+
+    @Test
+    fun goneOnEveryMirrorFailsAndARetryStartsAtTheFirst() =
+        runTest {
+            val h = started()
+            val urls = listOf("https://a.example/f", "https://b.example/f")
+            h.protocol.gone = urls.toSet()
+            val a = h.addJob(mirrors = urls)
+            settle()
+            h.status(a) shouldBe FAILED
+
+            h.protocol.gone = emptySet()
+            h.queue.retry(a)
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.protocol.probed shouldBe urls + urls.first()
+        }
+
+    @Test
+    fun failoverKeepsTheJobsPlace() =
+        runTest {
+            val h = started(limit = 1)
+            h.protocol.gone = setOf("https://a.example/f")
+            val a = h.addJob(mirrors = listOf("https://a.example/f", "https://b.example/f"))
+            val b = h.addJob()
+            settle()
+
+            h.finished shouldBe listOf(a, b)
+        }
+
+    @Test
+    fun diskFullPausesForLowDisk() =
+        runTest {
+            val h = started()
+            h.fs.free = 1_000 // the probe learns 64 KiB
+            val a = h.addJob()
+            runCurrent()
+
+            val paused = h.job(a)!!
+            paused.status shouldBe PAUSED
+            paused.pauseReasons shouldBe setOf(PauseReason.LOW_DISK)
+            paused.nextAttemptAt shouldBe null
+
+            h.fs.free = 1L shl 40
+            h.queue.resume(a)
+            settle()
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun theRetryTimeSurvivesARestart() =
+        runTest {
+            val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+            val store = newStore()
+            val slow = FakeProtocol(bytesPerSecond = 1024)
+            val failing = FakeProtocol(failure = reset)
+            val first = QueueHarness(this, store, slow, mapOf(DownloadKind.DIRECT to slow, DownloadKind.SITE to failing), scope = scope)
+            first.queue.start()
+            val t0 = first.clock.now()
+            val a = first.addJob(kind = DownloadKind.SITE)
+            val b = first.addJob()
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            first.job(a)!!.nextAttemptAt shouldBe t0 + 2.5.seconds
+            first.status(b) shouldBe DOWNLOADING
+
+            scope.cancel()
+            runCurrent()
+            val second = QueueHarness(this, store, clock = first.clock)
+            second.queue.start()
+
+            store.downloads
+                .attempts(b)
+                .first()
+                .message shouldBe "the app stopped"
+            second.job(b)!!.attemptCount shouldBe 0
+            second.job(a)!!.nextAttemptAt shouldBe t0 + 2.5.seconds
+
+            advanceTimeBy(1.4.seconds)
+            runCurrent()
+            store.downloads.attempts(a).size shouldBe 1
+
+            advanceTimeBy(0.2.seconds)
+            runCurrent()
+            store.downloads.attempts(a).size shouldBe 2
+
+            settle()
+            second.statusesShouldBe(a to COMPLETED, b to COMPLETED)
+        }
+
+    @Test
+    fun aWakeBeforeTheRetryTimeReArms() =
+        runTest {
+            val shifted = ShiftedClock(virtualClock())
+            val h = started { QueueHarness(it, newStore(), clock = shifted) }
+            h.protocol.failure = reset
+            val t0 = shifted.now()
+            val a = h.addJob()
+            runCurrent()
+            h.job(a)!!.nextAttemptAt shouldBe t0 + 2.5.seconds
+
+            shifted.offset = (-1).minutes // the wall clock is set back
+            advanceTimeBy(3.seconds)
+            runCurrent()
+            h.status(a) shouldBe PENDING
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 1
+
+            advanceTimeBy(1.minutes)
+            runCurrent()
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 2
+        }
+
+    @Test
+    fun theTimerFollowsTheEarliestRetry() =
+        runTest {
+            val h = started()
+            h.protocol.failure = reset
+            val a = h.addJob() // retries at 2.5 s
+            runCurrent()
+            advanceTimeBy(1.seconds)
+            val b = h.addJob() // retries at 3.5 s
+            runCurrent()
+            advanceTimeBy(1.seconds)
+
+            h.queue.remove(a, RemoveFiles.KEEP)
+            advanceTimeBy(1.6.seconds)
+            runCurrent()
+
+            h.store.downloads
+                .attempts(b)
+                .size shouldBe 2
+        }
+
+    @Test
+    fun aZeroRetryAfterStillRunsOutOfBudget() =
+        runTest {
+            val h = started()
+            h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.RATE_LIMITED, "slow", 0.seconds))
+            val t0 = h.clock.now()
+            val a = h.addJob()
+            runCurrent()
+
+            h.status(a) shouldBe FAILED
+            val attempts = h.store.downloads.attempts(a)
+            attempts.size shouldBe 6
+            attempts.map { it.startedAt }.toSet() shouldBe setOf(t0)
         }
 }

@@ -4,6 +4,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
@@ -32,8 +33,9 @@ class Queue(
     protocols: Map<DownloadKind, Protocol>,
     fileSystem: FileSystem,
     clock: Clock = Clock.System,
+    retryPolicy: RetryPolicy = RetryPolicy(),
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
