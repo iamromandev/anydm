@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
+import kotlin.time.Instant
 
 /**
  * Downloads and the rows that belong to them, including the plan rows of [PlanStore], whose rules apply to every call
@@ -14,8 +15,14 @@ import dev.anydm.engine.core.Mirror
  * cancelled [add] creates a second download: add is not idempotent.
  */
 interface DownloadStore : PlanStore {
-    /** Adds a PENDING download with no attempts, and its mirrors, together. Not idempotent. */
-    suspend fun add(new: NewDownload): Download
+    /**
+     * Adds a PENDING download with no attempts, and its mirrors, together. [queuedAt] is when it starts waiting for a
+     * slot; only the queue sets it. Not idempotent.
+     */
+    suspend fun add(
+        new: NewDownload,
+        queuedAt: Instant? = null,
+    ): Download
 
     suspend fun get(id: DownloadId): Download?
 
@@ -49,4 +56,7 @@ interface DownloadStore : PlanStore {
 
     /** Oldest first. */
     suspend fun attempts(id: DownloadId): List<Attempt>
+
+    /** Every attempt of every download that has no end yet, oldest first: the tries a stopped app left behind. */
+    suspend fun openAttempts(): List<Attempt>
 }

@@ -82,7 +82,6 @@ internal data class JobResult(
 /** A StepRunner over the in-memory fakes, sharing one journal; FTP has no protocol. */
 internal class StepHarness(
     freeSpaceReserve: Long = 0,
-    failurePolicy: FailurePolicy = FailurePolicy.Fail,
 ) {
     val journal = mutableListOf<String>()
     val protocol = FakeProtocol(journal = journal)
@@ -108,7 +107,6 @@ internal class StepHarness(
                     }
                 },
             finish = finish,
-            failurePolicy = failurePolicy,
             freeSpaceReserve = freeSpaceReserve,
         )
 

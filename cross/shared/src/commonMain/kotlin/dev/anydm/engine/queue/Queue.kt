@@ -4,6 +4,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
@@ -32,8 +33,9 @@ class Queue(
     protocols: Map<DownloadKind, Protocol>,
     fileSystem: FileSystem,
     clock: Clock = Clock.System,
+    retryPolicy: RetryPolicy = RetryPolicy(),
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
@@ -74,9 +76,12 @@ class Queue(
     /** Ends global pause; jobs also paused for another reason stay paused. */
     suspend fun resumeAll(): CommandResult = actor.call { resumeAll() }
 
-    /** Sets how many jobs may run at once. A lower limit stops the lowest-priority running jobs (never MUXING ones). */
+    /**
+     * Sets how many jobs may run at once. A lower limit stops the lowest-priority running jobs (never MUXING ones).
+     * Below 1 it is [CommandResult.Invalid].
+     */
     suspend fun setLimit(limit: Int): CommandResult {
-        require(limit >= 1) { "limit must be >= 1: $limit" }
+        if (limit < 1) return CommandResult.Invalid("limit must be >= 1: $limit")
         return actor.call { setLimit(limit) }
     }
 
@@ -124,6 +129,11 @@ sealed interface CommandResult {
     /** Remove with [RemoveFiles.TRASH] couldn't move a file to the trash; the job stays. */
     data class TrashFailed(
         val failure: FileResult.Failed,
+    ) : CommandResult
+
+    /** An argument the command can't take, and why; nothing changed. */
+    data class Invalid(
+        val reason: String,
     ) : CommandResult
 
     /** The protocol refused the new link; nothing changed. */

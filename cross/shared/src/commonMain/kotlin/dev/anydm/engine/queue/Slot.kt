@@ -1,5 +1,6 @@
 package dev.anydm.engine.queue
 
+import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.Mirror
@@ -16,6 +17,10 @@ internal class Slot(
     /** The job as the queue last stored it. */
     var download: Download,
     val mirror: Mirror?,
+    /** This run's Attempt row, still open (DIA-03). */
+    val attempt: Attempt,
+    /** The bytes the job's stored watermarks held when the run started, to tell whether it made progress. */
+    val writtenAtStart: Long,
 ) {
     val id: DownloadId = download.id
     lateinit var job: Job
@@ -41,7 +46,7 @@ internal sealed interface SlotEnd {
         val outcome: RunOutcome.Finished,
     ) : SlotEnd
 
-    /** A step failed and the runner moved the job to [download]. */
+    /** A step failed; [download] is the job in the status it failed in. */
     data class Failed(
         val download: Download,
         val failure: StepFailure,

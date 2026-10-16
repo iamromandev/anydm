@@ -53,7 +53,7 @@ class StepRunnerDesktopTest {
                 failed.failure.step shouldBe Step.PREFLIGHT
                 failed.failure.errorClass shouldBe null
                 failed.failure.message shouldContain locked.toString()
-                failed.download.status shouldBe DownloadStatus.FAILED
+                failed.download.status shouldBe DownloadStatus.PENDING
                 protocol.calls.shouldBeEmpty()
             }
         } finally {

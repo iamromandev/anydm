@@ -259,7 +259,7 @@ abstract class DownloadStoreContract : StoreTestBase() {
     fun pauseReasonsAndQueuedAtRoundTrip() =
         runTest {
             val store = newStore().downloads
-            val added = store.add(NewDownload(DownloadKind.DIRECT, queuedAt = t0))
+            val added = store.add(NewDownload(DownloadKind.DIRECT), queuedAt = t0)
             added.queuedAt shouldBe t0
 
             val paused =
@@ -290,7 +290,7 @@ abstract class DownloadStoreContract : StoreTestBase() {
             val store = newStore().downloads
             val t2 = Instant.fromEpochMilliseconds(1_700_000_000_456)
             for (at in listOf(t2, t0, t1)) {
-                val added = store.add(NewDownload(DownloadKind.DIRECT, priority = 1, queuedAt = at))
+                val added = store.add(NewDownload(DownloadKind.DIRECT, priority = 1), queuedAt = at)
                 store.update((added.transitionTo(DownloadStatus.QUEUED) as TransitionResult.Moved).download)
             }
 
@@ -357,6 +357,21 @@ abstract class DownloadStoreContract : StoreTestBase() {
             val failure = shouldThrow<Exception> { store.saveWatermarks(mapOf(s0.id to 300L, s1.id to 1_001L)) }
             failure.message shouldContain "CHECK constraint failed"
             store.segments(file.id).map { it.watermark } shouldBe listOf(250L, 1_000L)
+        }
+
+    @Test
+    fun openAttemptsListsOnlyUnendedAttemptsOldestFirst() =
+        runTest {
+            val store = newStore().downloads
+            val one = store.add(NewDownload(DownloadKind.DIRECT))
+            val two = store.add(NewDownload(DownloadKind.DIRECT))
+
+            val a1 = store.addAttempt(NewAttempt(one.id, t0))
+            val a2 = store.addAttempt(NewAttempt(one.id, t0))
+            store.updateAttempt(a2.copy(endedAt = t1))
+            val a3 = store.addAttempt(NewAttempt(two.id, t1))
+
+            store.openAttempts().map { it.id } shouldBe listOf(a1.id, a3.id)
         }
 
     @Test

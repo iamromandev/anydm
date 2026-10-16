@@ -1,7 +1,6 @@
 package dev.anydm.engine.core
 
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
-import dev.anydm.engine.core.DownloadStatus.FAILED
 import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.platform.FakeFileSystem.Op
@@ -12,9 +11,9 @@ import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.fakeContent
 import kotlinx.io.files.Path
 
-private val toFailed = listOf(FAILED)
-private val inTransfer = listOf(QUEUED, DOWNLOADING, FAILED)
-private val inPost = listOf(QUEUED, DOWNLOADING, MUXING, FAILED)
+private val toFailed = emptyList<DownloadStatus>()
+private val inTransfer = listOf(QUEUED, DOWNLOADING)
+private val inPost = listOf(QUEUED, DOWNLOADING, MUXING)
 private val noCalls = emptyList<String>()
 private val probeOnly = listOf("probe")
 private val upToPlan = listOf("probe", "plan")

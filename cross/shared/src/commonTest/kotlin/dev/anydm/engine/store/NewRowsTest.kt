@@ -43,7 +43,10 @@ class NewRowsTest {
         defaults.concurrencyLimit shouldBe 3
         defaults.defaultSaveFolder shouldBe null
         defaults.globalPause shouldBe false
+        defaults.maxRetries shouldBe 5
+        Settings(maxRetries = 0).maxRetries shouldBe 0
         shouldThrow<IllegalArgumentException> { Settings(concurrencyLimit = 0) }
+        shouldThrow<IllegalArgumentException> { Settings(maxRetries = -1) }
         shouldThrow<IllegalArgumentException> { Settings(defaultSaveFolder = Path("relative")) }
     }
 }

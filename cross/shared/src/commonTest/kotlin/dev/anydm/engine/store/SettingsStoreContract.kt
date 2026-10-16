@@ -55,6 +55,20 @@ abstract class SettingsStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun maxRetriesIsStoredOnlyWhenNotTheDefault() =
+        runTest {
+            val store = newStore().settings
+            store.load().maxRetries shouldBe 5
+
+            store.update { it.copy(maxRetries = 2) }
+            store.load().maxRetries shouldBe 2
+            rows() shouldBe listOf("retry.max_retries=2")
+
+            store.update { it.copy(maxRetries = 5) }
+            driver.count("setting") shouldBe 0
+        }
+
+    @Test
     fun unknownSettingsAreKept() =
         runTest {
             val store = newStore().settings
@@ -76,6 +90,8 @@ abstract class SettingsStoreContract : StoreTestBase() {
                     "queue.concurrency_limit" to "0",
                     "queue.global_pause" to "yes",
                     "files.default_save_folder" to "relative/dir",
+                    "retry.max_retries" to "x",
+                    "retry.max_retries" to "-1",
                 )
             for ((name, data) in unreadable) {
                 driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('$name', '$data')")
