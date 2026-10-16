@@ -14,9 +14,12 @@ data class Settings(
     val defaultSaveFolder: Path? = null,
     /** Everything is paused, and stays paused after a restart (FND-05). */
     val globalPause: Boolean = false,
+    /** How many automatic retries in a row a job gets before it fails (FND-07); 0 never retries. */
+    val maxRetries: Int = 5,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
+        require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }

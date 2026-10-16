@@ -28,5 +28,8 @@ SELECT * FROM attempt WHERE id = last_insert_rowid();
 selectByDownload:
 SELECT * FROM attempt WHERE download_id = ? ORDER BY id;
 
+selectOpen:
+SELECT * FROM attempt WHERE ended_at IS NULL ORDER BY id;
+
 update:
 UPDATE attempt SET mirror_id = ?, started_at = ?, ended_at = ?, error_class = ?, message = ? WHERE id = ?;

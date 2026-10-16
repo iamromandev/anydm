@@ -29,6 +29,7 @@ internal class SqlSettingsStore(
                 stored[DEFAULT_SAVE_FOLDER]?.takeIf { it.isNotEmpty() }?.let(::Path)?.takeIf { it.isAbsolute }
                     ?: DEFAULTS.defaultSaveFolder,
             globalPause = stored[GLOBAL_PAUSE]?.toBooleanStrictOrNull() ?: DEFAULTS.globalPause,
+            maxRetries = stored[MAX_RETRIES]?.toIntOrNull()?.takeIf { it >= 0 } ?: DEFAULTS.maxRetries,
         )
     }
 
@@ -37,6 +38,7 @@ internal class SqlSettingsStore(
         put(CONCURRENCY_LIMIT, settings.concurrencyLimit.takeIf { it != DEFAULTS.concurrencyLimit }?.toString())
         put(DEFAULT_SAVE_FOLDER, settings.defaultSaveFolder.takeIf { it != DEFAULTS.defaultSaveFolder }?.toString())
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
+        put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
     }
 
     private fun put(
@@ -51,5 +53,6 @@ internal class SqlSettingsStore(
         const val CONCURRENCY_LIMIT = "queue.concurrency_limit"
         const val GLOBAL_PAUSE = "queue.global_pause"
         const val DEFAULT_SAVE_FOLDER = "files.default_save_folder"
+        const val MAX_RETRIES = "retry.max_retries"
     }
 }

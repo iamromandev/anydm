@@ -12,7 +12,10 @@ import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.Segment
 import kotlin.time.Instant
 
-/** A download to add: the creation fields of [Download]. It starts PENDING with no attempts; the store assigns its id. */
+/**
+ * A download to add: the creation fields of [Download]. It starts PENDING with no attempts; the store assigns its id,
+ * and the queue its queued time (DownloadStore.add).
+ */
 data class NewDownload(
     val kind: DownloadKind,
     /** Source URLs in the order to try them; each becomes a [Mirror] at its index. */
@@ -26,8 +29,6 @@ data class NewDownload(
     val size: Long? = null,
     val priority: Int = 0,
     val speedLimit: Long? = null,
-    /** When it starts waiting for a slot; the queue sets it. */
-    val queuedAt: Instant? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

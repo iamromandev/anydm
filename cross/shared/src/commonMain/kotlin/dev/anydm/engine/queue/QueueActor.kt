@@ -211,7 +211,7 @@ internal class QueueActor(
     // Commands
 
     suspend fun add(new: NewDownload): CommandResult {
-        val added = downloads.add(new.copy(queuedAt = clock.now()))
+        val added = downloads.add(new, queuedAt = clock.now())
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }

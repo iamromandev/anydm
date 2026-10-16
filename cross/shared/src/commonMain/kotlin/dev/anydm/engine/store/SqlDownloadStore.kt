@@ -14,6 +14,7 @@ import dev.anydm.engine.store.db.AnydmDb
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlin.time.Instant
 import dev.anydm.engine.store.db.Attempt as AttemptRow
 import dev.anydm.engine.store.db.Download as DownloadRow
 import dev.anydm.engine.store.db.File_ as FileRow
@@ -41,7 +42,10 @@ internal class SqlDownloadStore(
 
     private suspend fun <T> writing(block: () -> T): T = withContext(writeContext) { database.transactionWithResult { block() } }
 
-    override suspend fun add(new: NewDownload): Download =
+    override suspend fun add(
+        new: NewDownload,
+        queuedAt: Instant?,
+    ): Download =
         writing {
             downloadQueries.insert(
                 kind = new.kind,
@@ -58,7 +62,7 @@ internal class SqlDownloadStore(
                 attempt_count = 0,
                 next_attempt_at = null,
                 pause_reasons = "",
-                queued_at = new.queuedAt,
+                queued_at = queuedAt,
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -179,6 +183,9 @@ internal class SqlDownloadStore(
 
     override suspend fun attempts(id: DownloadId): List<Attempt> =
         inTransaction { attemptQueries.selectByDownload(id).executeAsList().map { it.toAttempt() } }
+
+    override suspend fun openAttempts(): List<Attempt> =
+        inTransaction { attemptQueries.selectOpen().executeAsList().map { it.toAttempt() } }
 
     private fun DownloadRow.toDownload() =
         Download(
