@@ -1,0 +1,25 @@
+import dev.anydm.engine.core.DownloadId;
+import dev.anydm.engine.core.FileId;
+
+-- One output file of a download: dev.anydm.engine.core.File. `index` is an SQL keyword, hence file_index.
+CREATE TABLE file (
+    id INTEGER AS FileId PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER AS DownloadId NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    file_index INTEGER AS kotlin.Int NOT NULL CHECK (file_index >= 0),
+    path TEXT NOT NULL,
+    size INTEGER CHECK (size >= 0),
+    selected INTEGER AS kotlin.Boolean NOT NULL,
+    UNIQUE (download_id, file_index)
+);
+
+insert:
+INSERT INTO file(download_id, file_index, path, size, selected) VALUES (?, ?, ?, ?, ?);
+
+selectById:
+SELECT * FROM file WHERE id = ?;
+
+selectByDownload:
+SELECT * FROM file WHERE download_id = ? ORDER BY file_index;
+
+deleteByDownload:
+DELETE FROM file WHERE download_id = ?;

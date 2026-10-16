@@ -1,0 +1,15 @@
+-- One engine setting that differs from its default (SET-01), as text. Names this version doesn't know
+-- are left alone. (`data`, not `value`: SQLDelight's grammar uses VALUE.)
+CREATE TABLE setting (
+    name TEXT NOT NULL PRIMARY KEY,
+    data TEXT NOT NULL
+);
+
+selectAll:
+SELECT * FROM setting;
+
+put:
+INSERT OR REPLACE INTO setting(name, data) VALUES (?, ?);
+
+remove:
+DELETE FROM setting WHERE name = ?;

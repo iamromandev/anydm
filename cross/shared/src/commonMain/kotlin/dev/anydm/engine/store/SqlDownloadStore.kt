@@ -1,0 +1,210 @@
+package dev.anydm.engine.store
+
+import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.File
+import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.Segment
+import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.store.db.AnydmDb
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import dev.anydm.engine.store.db.Attempt as AttemptRow
+import dev.anydm.engine.store.db.Download as DownloadRow
+import dev.anydm.engine.store.db.File_ as FileRow
+import dev.anydm.engine.store.db.Mirror as MirrorRow
+import dev.anydm.engine.store.db.Segment as SegmentRow
+
+internal class SqlDownloadStore(
+    private val database: AnydmDb,
+    private val io: CoroutineDispatcher,
+) : DownloadStore {
+    private val downloadQueries = database.downloadQueries
+    private val mirrorQueries = database.mirrorQueries
+    private val fileQueries = database.fileQueries
+    private val segmentQueries = database.segmentQueries
+    private val attemptQueries = database.attemptQueries
+
+    // One transaction per call: the JDBC driver opens a connection per statement outside one, and
+    // last_insert_rowid() only means something on the connection that inserted. The block never suspends.
+    private suspend fun <T> inTransaction(block: () -> T): T = withContext(io) { database.transactionWithResult { block() } }
+
+    // A write that has been asked for is made, even if its caller is cancelled while it waits for the database: a
+    // pause or quit saving watermarks from a finally block (FND-09) must still checkpoint. The caller may lose the
+    // result, not the write.
+    private val writeContext = io + NonCancellable
+
+    private suspend fun <T> writing(block: () -> T): T = withContext(writeContext) { database.transactionWithResult { block() } }
+
+    override suspend fun add(new: NewDownload): Download =
+        writing {
+            downloadQueries.insert(
+                kind = new.kind,
+                status = DownloadStatus.PENDING,
+                parent_id = new.parentId,
+                collection = new.collection,
+                category_id = new.categoryId,
+                profile_id = new.profileId,
+                save_folder = new.saveFolder,
+                file_name = new.fileName,
+                size = new.size,
+                priority = new.priority,
+                speed_limit = new.speedLimit,
+                attempt_count = 0,
+                next_attempt_at = null,
+            )
+            val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
+            new.mirrors.forEachIndexed { position, url ->
+                mirrorQueries.insert(download_id = download.id, url = url, position = position)
+            }
+            download
+        }
+
+    override suspend fun get(id: DownloadId): Download? =
+        inTransaction { downloadQueries.selectById(id).executeAsOneOrNull()?.toDownload() }
+
+    override suspend fun list(): List<Download> = inTransaction { downloadQueries.selectAll().executeAsList().map { it.toDownload() } }
+
+    override suspend fun list(status: DownloadStatus): List<Download> =
+        inTransaction { downloadQueries.selectByStatus(status).executeAsList().map { it.toDownload() } }
+
+    override suspend fun update(download: Download): Boolean =
+        writing {
+            downloadQueries
+                .update(
+                    kind = download.kind,
+                    status = download.status,
+                    parent_id = download.parentId,
+                    collection = download.collection,
+                    category_id = download.categoryId,
+                    profile_id = download.profileId,
+                    save_folder = download.saveFolder,
+                    file_name = download.fileName,
+                    size = download.size,
+                    priority = download.priority,
+                    speed_limit = download.speedLimit,
+                    attempt_count = download.attemptCount,
+                    next_attempt_at = download.nextAttemptAt,
+                    id = download.id,
+                ).value > 0
+        }
+
+    override suspend fun remove(id: DownloadId): Boolean = writing { downloadQueries.delete(id).value > 0 }
+
+    override suspend fun mirrors(id: DownloadId): List<Mirror> =
+        inTransaction { mirrorQueries.selectByDownload(id).executeAsList().map { it.toMirror() } }
+
+    override suspend fun replaceFiles(
+        id: DownloadId,
+        files: List<NewFile>,
+    ): List<File> {
+        require(files.map { it.index }.toSet().size == files.size) { "file indexes must differ" }
+        return writing {
+            // Checked here, not left to the foreign key, so that an empty list can't hide the mistake.
+            check(downloadQueries.selectById(id).executeAsOneOrNull() != null) { "download ${id.value} does not exist" }
+            fileQueries.deleteByDownload(id)
+            files.forEach {
+                fileQueries.insert(
+                    download_id = id,
+                    file_index = it.index,
+                    path = it.path,
+                    size = it.size,
+                    selected = it.selected,
+                )
+            }
+            fileQueries.selectByDownload(id).executeAsList().map { it.toFile() }
+        }
+    }
+
+    override suspend fun files(id: DownloadId): List<File> =
+        inTransaction { fileQueries.selectByDownload(id).executeAsList().map { it.toFile() } }
+
+    override suspend fun replaceSegments(
+        fileId: FileId,
+        segments: List<NewSegment>,
+    ): List<Segment> =
+        writing {
+            check(fileQueries.selectById(fileId).executeAsOneOrNull() != null) { "file ${fileId.value} does not exist" }
+            segmentQueries.deleteByFile(fileId)
+            segments.forEach {
+                segmentQueries.insert(file_id = fileId, start_byte = it.start, end_byte = it.end, watermark = it.start)
+            }
+            segmentQueries.selectByFile(fileId).executeAsList().map { it.toSegment() }
+        }
+
+    override suspend fun segments(fileId: FileId): List<Segment> =
+        inTransaction { segmentQueries.selectByFile(fileId).executeAsList().map { it.toSegment() } }
+
+    override suspend fun saveWatermarks(watermarks: Map<SegmentId, Long>) {
+        writing { watermarks.forEach { (id, watermark) -> segmentQueries.setWatermark(watermark = watermark, id = id) } }
+    }
+
+    override suspend fun addAttempt(new: NewAttempt): Attempt =
+        writing {
+            attemptQueries.insert(
+                download_id = new.downloadId,
+                mirror_id = new.mirrorId,
+                started_at = new.startedAt,
+                ended_at = null,
+                error_class = null,
+                message = null,
+            )
+            attemptQueries.selectLastInserted().executeAsOne().toAttempt()
+        }
+
+    override suspend fun updateAttempt(attempt: Attempt): Boolean =
+        writing {
+            attemptQueries
+                .update(
+                    mirror_id = attempt.mirrorId,
+                    started_at = attempt.startedAt,
+                    ended_at = attempt.endedAt,
+                    error_class = attempt.errorClass,
+                    message = attempt.message,
+                    id = attempt.id,
+                ).value > 0
+        }
+
+    override suspend fun attempts(id: DownloadId): List<Attempt> =
+        inTransaction { attemptQueries.selectByDownload(id).executeAsList().map { it.toAttempt() } }
+
+    private fun DownloadRow.toDownload() =
+        Download(
+            id = id,
+            kind = kind,
+            status = status,
+            parentId = parent_id,
+            collection = collection,
+            categoryId = category_id,
+            profileId = profile_id,
+            saveFolder = save_folder,
+            fileName = file_name,
+            size = size,
+            priority = priority,
+            speedLimit = speed_limit,
+            attemptCount = attempt_count,
+            nextAttemptAt = next_attempt_at,
+        )
+
+    private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)
+
+    private fun FileRow.toFile() =
+        File(id = id, downloadId = download_id, index = file_index, path = path, size = size, selected = selected)
+
+    private fun SegmentRow.toSegment() = Segment(id = id, fileId = file_id, start = start_byte, end = end_byte, watermark = watermark)
+
+    private fun AttemptRow.toAttempt() =
+        Attempt(
+            id = id,
+            downloadId = download_id,
+            startedAt = started_at,
+            mirrorId = mirror_id,
+            endedAt = ended_at,
+            errorClass = error_class,
+            message = message,
+        )
+}

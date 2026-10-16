@@ -1,0 +1,17 @@
+import dev.anydm.engine.core.DownloadId;
+import dev.anydm.engine.core.MirrorId;
+
+-- One source URL of a download, tried in position order: dev.anydm.engine.core.Mirror.
+CREATE TABLE mirror (
+    id INTEGER AS MirrorId PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER AS DownloadId NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    position INTEGER AS kotlin.Int NOT NULL CHECK (position >= 0),
+    UNIQUE (download_id, position)
+);
+
+insert:
+INSERT INTO mirror(download_id, url, position) VALUES (?, ?, ?);
+
+selectByDownload:
+SELECT * FROM mirror WHERE download_id = ? ORDER BY position;

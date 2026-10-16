@@ -1,0 +1,60 @@
+import dev.anydm.engine.core.CategoryId;
+import dev.anydm.engine.core.CollectionKind;
+import dev.anydm.engine.core.DownloadId;
+import dev.anydm.engine.core.DownloadKind;
+import dev.anydm.engine.core.DownloadStatus;
+import dev.anydm.engine.core.ProfileId;
+import kotlin.time.Instant;
+
+-- One job: dev.anydm.engine.core.Download. Enums are stored by name, times as epoch milliseconds.
+-- AUTOINCREMENT never reuses an id, so a stale id can't reach a newer download.
+-- A NULL passes a CHECK, so nullable columns need no IS NULL arm.
+-- category_id and profile_id get foreign keys, if ever, with their tables (#539, #540).
+CREATE TABLE download (
+    id INTEGER AS DownloadId PRIMARY KEY AUTOINCREMENT,
+    kind TEXT AS DownloadKind NOT NULL,
+    status TEXT AS DownloadStatus NOT NULL,
+    parent_id INTEGER AS DownloadId REFERENCES download(id) ON DELETE CASCADE,
+    collection TEXT AS CollectionKind,
+    category_id INTEGER AS CategoryId,
+    profile_id INTEGER AS ProfileId,
+    save_folder TEXT,
+    file_name TEXT,
+    size INTEGER CHECK (size >= 0),
+    priority INTEGER AS kotlin.Int NOT NULL,
+    speed_limit INTEGER CHECK (speed_limit > 0),
+    attempt_count INTEGER AS kotlin.Int NOT NULL CHECK (attempt_count >= 0),
+    next_attempt_at INTEGER AS Instant,
+    CHECK (parent_id <> id)
+);
+
+-- The queue (#552): one status, highest priority first, then first added.
+CREATE INDEX download_status ON download(status, priority DESC, id);
+-- Finds a collection's children when it is removed.
+CREATE INDEX download_parent ON download(parent_id);
+
+insert:
+INSERT INTO download(kind, status, parent_id, collection, category_id, profile_id, save_folder, file_name, size,
+    priority, speed_limit, attempt_count, next_attempt_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Only meaningful in the transaction that inserted (the JDBC driver opens a connection per statement outside one).
+selectLastInserted:
+SELECT * FROM download WHERE id = last_insert_rowid();
+
+selectById:
+SELECT * FROM download WHERE id = ?;
+
+selectAll:
+SELECT * FROM download ORDER BY id;
+
+selectByStatus:
+SELECT * FROM download WHERE status = ? ORDER BY priority DESC, id;
+
+update:
+UPDATE download SET kind = ?, status = ?, parent_id = ?, collection = ?, category_id = ?, profile_id = ?,
+    save_folder = ?, file_name = ?, size = ?, priority = ?, speed_limit = ?, attempt_count = ?, next_attempt_at = ?
+WHERE id = ?;
+
+delete:
+DELETE FROM download WHERE id = ?;
