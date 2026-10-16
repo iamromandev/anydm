@@ -42,6 +42,8 @@ data class Download(
     val nextAttemptAt: Instant? = null,
     val pauseReasons: Set<PauseReason> = emptySet(),
     val queuedAt: Instant? = null,
+    /** What the source said it is at the last probe (ProbeResult.validator); a different one starts it over (#554). */
+    val sourceValidator: String? = null,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }

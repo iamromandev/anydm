@@ -22,9 +22,15 @@ import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewFile
 import dev.anydm.engine.store.NewSegment
 import dev.anydm.engine.store.PlanStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Runs a job's steps with the [Protocol] of its kind (FND-03). The queue (#552) sits between two calls: [prepare] runs
@@ -69,8 +75,11 @@ class StepRunner(
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
+    /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
+    private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
 ) {
     init {
+        require(checkpointEvery.isPositive()) { "checkpointEvery must be positive: $checkpointEvery" }
         require(defaultFolder.isAbsolute) { "defaultFolder must be absolute: $defaultFolder" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
     }
@@ -104,6 +113,16 @@ class StepRunner(
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }
+        val stored = download.sourceValidator
+        var probed = probe.validator
+        // Every byte already fetched is one whole copy of the old source (its outputs may be placed): nothing would be
+        // appended, so it is kept, still marked with the old validator.
+        if (stored != null && probed != null && probed != stored && allFetched(download.id)) probed = stored
+        if (stored != null && probed != null && probed != stored) {
+            val dropped = dropPartials(download, folder)
+            if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)
+            listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
+        }
         val learned = probe.size
         if (learned != null && learned != download.size) {
             val room = checkSpace(folder, learned - writtenBytes(download.id))
@@ -112,10 +131,36 @@ class StepRunner(
         // The user's file name wins; the probe's size is the source's own word.
         val queued =
             download
-                .copy(saveFolder = folder.toString(), fileName = download.fileName ?: probe.name, size = learned ?: download.size)
-                .moveTo(QUEUED)
+                .copy(
+                    saveFolder = folder.toString(),
+                    fileName = download.fileName ?: probe.name,
+                    size = learned ?: download.size,
+                    sourceValidator = probed ?: stored,
+                ).moveTo(QUEUED)
         listener.moved(queued)
         return PrepareOutcome.Ready(queued, mirror, probe)
+    }
+
+    /** True when the download has stored files and every one of their segments is written to its end. */
+    private suspend fun allFetched(id: DownloadId): Boolean {
+        val files = store.files(id)
+        return files.isNotEmpty() && files.all { file -> store.segments(file.id).all { it.watermark == it.end } }
+    }
+
+    /**
+     * The source is no longer the one the partials came from (FND-10): never append to them. Deletes each stored file's
+     * partial (one already gone is fine) and the file rows with their watermarks, so the plan starts every file over.
+     */
+    private suspend fun dropPartials(
+        download: Download,
+        folder: Path,
+    ): StepResult<Unit> {
+        for (file in store.files(download.id)) {
+            val deleted = fileSystem.delete(partialPath(targetPath(folder, file.path), download.id))
+            if (deleted is FileResult.Failed && deleted !is FileResult.NotFound) return deleted.toStepFailed()
+        }
+        store.replaceFiles(download.id, emptyList())
+        return StepResult.Ok(Unit)
     }
 
     /** Transfer, post-process and finish a QUEUED job that [prepare] made ready. */
@@ -198,15 +243,32 @@ class StepRunner(
                 is StepResult.Ok -> planned.value
             }
         val writers = mutableMapOf<FileId, FileWriter>()
+        val owners = mutableMapOf<SegmentId, FileId>()
+        val checkpointer = Checkpointer(writers, store, owners)
         val result =
             try {
-                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers)
+                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, owners, checkpointer)
+            } catch (e: Throwable) {
+                // A pause, cancel or quit (or a bug) still keeps what was written: everything is durable up to here.
+                try {
+                    val flushed = withContext(NonCancellable) { checkpointer.flush() }
+                    if (flushed is StepResult.Failed) e.addSuppressed(IllegalStateException("final checkpoint failed: ${flushed.message}"))
+                } catch (flushError: Throwable) {
+                    e.addSuppressed(flushError)
+                }
+                closeAll(writers.values, e)
+                throw e
+            }
+        // On success this is what makes the transfer durable before finalize and the rename build on it.
+        val flushed =
+            try {
+                withContext(NonCancellable) { checkpointer.flush() }
             } catch (e: Throwable) {
                 closeAll(writers.values, e)
                 throw e
             }
         closeAll(writers.values, null)
-        return result
+        return if (result is StepResult.Ok && flushed is StepResult.Failed) flushed else result
     }
 
     private suspend fun fetch(
@@ -220,22 +282,65 @@ class StepRunner(
         limiter: Limiter,
         meter: Meter,
         writers: MutableMap<FileId, FileWriter>,
+        owners: MutableMap<SegmentId, FileId>,
+        checkpointer: Checkpointer,
     ): StepResult<Transfer> {
         val transfer =
             when (val opened = openFiles(download, job, plan, stored, folder, writers)) {
                 is StepResult.Failed -> return opened
                 is StepResult.Ok -> opened.value
             }
+        for (part in transfer.files) part.segments.forEach { owners[it.id] = part.file.id }
         val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
-        val moved = protocol.transfer(transfer, RunIo(transfer, writers, store, limiter, meter, listener, total))
+        val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total)
+        val moved = transferWithCheckpoints(protocol, transfer, io, checkpointer)
         if (moved is StepResult.Failed) return moved
-        // Everything the transfer wrote is made durable before finalize and the rename build on it.
-        for (writer in writers.values) {
-            val synced = writer.sync()
-            if (synced is FileResult.Failed) return synced.toStepFailed()
-        }
         return StepResult.Ok(transfer)
     }
+
+    /**
+     * Runs the protocol's transfer beside a ticker that saves its checkpoints every [checkpointEvery]. A tick that can't
+     * sync the files stops the transfer, and its failure is the step's.
+     */
+    private suspend fun transferWithCheckpoints(
+        protocol: Protocol,
+        transfer: Transfer,
+        io: RunIo,
+        checkpointer: Checkpointer,
+    ): StepResult<Unit> {
+        // coroutineScope may hand back a copy of what its body threw (stack trace recovery): keep the original.
+        var thrown: Throwable? = null
+        return try {
+            coroutineScope {
+                val ticker =
+                    launch {
+                        while (true) {
+                            delay(checkpointEvery)
+                            val flushed = checkpointer.flush()
+                            if (flushed is StepResult.Failed) throw TickFailed(flushed)
+                        }
+                    }
+                try {
+                    protocol.transfer(transfer, io)
+                } catch (e: Throwable) {
+                    thrown = e
+                    throw e
+                } finally {
+                    ticker.cancel()
+                }
+            }
+        } catch (e: TickFailed) {
+            e.failure
+        } catch (e: Throwable) {
+            // The body's cancellation is only a symptom when the ticker failed for real (the store, say).
+            throw thrown?.takeUnless { it is CancellationException && e !is CancellationException } ?: e
+        }
+    }
+
+    // How a failed tick stops the transfer beside it: it fails the scope, which cancels the transfer.
+    private class TickFailed(
+        val failure: StepResult.Failed,
+    ) : Exception(failure.message)
 
     /** Closes every writer, even if some close throws; see [transferStep] for what is thrown. */
     private fun closeAll(
@@ -312,6 +417,11 @@ class StepRunner(
             val target = targetPath(folder, new.path)
             val partial = partialPath(target, download.id)
             val old = earlier.getOrNull(i)
+            if (old != null && resumes(old, new) && alreadyPlaced(old.segments, partial, target, new.size)) {
+                // Placed by a run that stopped while placing outputs: nothing to write, nothing to open.
+                files += TransferFile(file, old.segments, partial, target)
+                continue
+            }
             val resumed = if (old != null && resumes(old, new)) reopen(partial, new.size) else null
             if (resumed is StepResult.Failed) return resumed
             val writer: FileWriter
@@ -332,6 +442,21 @@ class StepRunner(
         }
         return StepResult.Ok(Transfer(download, job.mirror, job.probe, files))
     }
+
+    /**
+     * A file a stopped run already renamed into place: every segment written, no partial left, and the output there with
+     * the planned [size]. Without a known size it can't be told from some other file, so it is fetched again.
+     */
+    private suspend fun alreadyPlaced(
+        segments: List<Segment>,
+        partial: Path,
+        target: Path,
+        size: Long?,
+    ): Boolean =
+        size != null &&
+            segments.all { it.watermark == it.end } &&
+            fileSystem.size(partial) is FileResult.NotFound &&
+            fileSystem.size(target) == FileResult.Ok(size)
 
     /**
      * The earlier partial opened again, or null when it is gone or its length isn't the planned [size] (some other
@@ -381,8 +506,8 @@ class StepRunner(
      * outputs are checked like planned paths first.
      *
      * Outputs are placed one by one, so a failure or a cancel part way leaves the ones already placed without a
-     * partial: the next run finds no bytes for them and downloads them again. #554's restore must treat a finished
-     * output as finished (or place all outputs in a way that can be undone).
+     * partial. The next run counts those as placed: openFiles keeps their rows and opens nothing, and here an output
+     * whose partial is gone but whose target is there is skipped (#554).
      */
     private suspend fun placeOutputs(
         id: DownloadId,
@@ -393,7 +518,13 @@ class StepRunner(
         val placed = mutableListOf<Path>()
         for (output in outputs) {
             val target = targetPath(folder, output)
-            val moved = fileSystem.atomicMove(partialPath(target, id), target, replace = false)
+            val partial = partialPath(target, id)
+            val moved = fileSystem.atomicMove(partial, target, replace = false)
+            // No partial but the output is there: a stopped run placed it already.
+            if (moved is FileResult.NotFound && moved.path == partial && fileSystem.size(target) is FileResult.Ok) {
+                placed += target
+                continue
+            }
             if (moved is FileResult.Failed) return moved.toStepFailed()
             placed += target
         }
@@ -444,6 +575,9 @@ class StepRunner(
     ): RunOutcome = RunOutcome.Failed(download, result.toFailure(step))
 
     companion object {
+        /** How often a running transfer saves its checkpoints (FND-09). */
+        val DEFAULT_CHECKPOINT_EVERY: Duration = 15.seconds
+
         /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
         const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
     }

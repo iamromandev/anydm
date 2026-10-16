@@ -7,13 +7,12 @@ import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
-import dev.anydm.engine.store.PlanStore
 
-/** The [TransferIo] of one run: writes go to the open partials, checkpoints straight to the store (#554 will batch them). */
+/** The [TransferIo] of one run: writes go to the open partials, checkpoints to the run's [Checkpointer]. */
 internal class RunIo(
     transfer: Transfer,
     private val writers: Map<FileId, FileWriter>,
-    private val store: PlanStore,
+    private val checkpointer: Checkpointer,
     override val limiter: Limiter,
     override val meter: Meter,
     private val listener: RunListener,
@@ -30,14 +29,20 @@ internal class RunIo(
     ): StepResult<Unit> {
         val writer = requireNotNull(writers[file]) { "file ${file.value} isn't part of this transfer" }
         return when (val written = writer.write(offset, bytes, startIndex, endIndex)) {
-            is FileResult.Failed -> written.toStepFailed()
-            is FileResult.Ok -> StepResult.Ok(Unit)
+            is FileResult.Failed -> {
+                written.toStepFailed()
+            }
+
+            is FileResult.Ok -> {
+                checkpointer.wrote(file)
+                StepResult.Ok(Unit)
+            }
         }
     }
 
     override suspend fun checkpoint(watermarks: Map<SegmentId, Long>) {
         require(known.containsAll(watermarks.keys)) { "segments of another transfer: ${watermarks.keys - known}" }
-        store.saveWatermarks(watermarks)
+        checkpointer.record(watermarks)
     }
 
     override fun progress(downloaded: Long) = listener.progress(downloaded, total)

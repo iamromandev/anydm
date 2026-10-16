@@ -20,7 +20,9 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.fakeContent
 import dev.anydm.engine.store.InMemoryPlanStore
+import dev.anydm.engine.store.PlanStore
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotContain
@@ -31,11 +33,14 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -640,5 +645,259 @@ class StepRunnerTest {
             val runner = runnerWith(stray, FakeFileSystem())
             val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
             shouldThrow<IllegalArgumentException> { runner.run(ready) }
+        }
+
+    // Batched checkpoints (#554). At 1 KiB/s a 4 KiB chunk lands every 4 s, so 64 KiB takes 64 s.
+
+    private fun TestScope.slowRun(h: StepHarness): Job {
+        h.protocol.bytesPerSecond = 1024
+        val ready = runBlockingPrepare(h)
+        return launch { h.runner.run(ready, h.listener) }
+    }
+
+    private fun TestScope.runBlockingPrepare(h: StepHarness): PrepareOutcome.Ready {
+        var ready: PrepareOutcome.Ready? = null
+        launch { ready = h.prepare().shouldBeInstanceOf<PrepareOutcome.Ready>() }
+        testScheduler.runCurrent()
+        return ready!!
+    }
+
+    @Test
+    fun checkpointsAreSavedEveryInterval() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+
+            testScheduler.advanceTimeBy(14_900.milliseconds)
+            h.store.written() shouldBe 0L
+            testScheduler.advanceTimeBy(200.milliseconds)
+            h.store.written() shouldBe 3 * 4096L
+
+            job.cancel()
+        }
+
+    @Test
+    fun stoppingSavesEverythingWritten() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(9.seconds)
+
+            job.cancel()
+            job.join()
+
+            h.store.written() shouldBe h.protocol.fetched.sumOf { it.end - it.start }
+            h.store.written() shouldBe 2 * 4096L
+        }
+
+    @Test
+    fun aFailedStepSavesItsBytesFirst() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+
+            h.runAll().failure!!.step shouldBe Step.TRANSFER
+
+            h.store.written() shouldBe 10_000L
+        }
+
+    @Test
+    fun aFailedTickSyncEndsTheStep() =
+        runTest {
+            val h = StepHarness()
+            h.fs.faults[FakeFileSystem.Op.SYNC] = { FileResult.IoError(it, "disk gone") }
+            h.protocol.bytesPerSecond = 1024
+
+            val result = h.runAll()
+
+            result.failure!!.step shouldBe Step.TRANSFER
+            h.store.written() shouldBe 0L
+            (h.protocol.fetched.sumOf { it.end - it.start } < 64 * 1024L) shouldBe true
+            h.fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aStopRightAfterATickSavesNothingNew() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(15_500.milliseconds) // chunks at 4, 8, 12 s; tick at 15 s; next chunk at 16 s
+            h.fs.syncs shouldBe 1
+
+            job.cancel()
+            job.join()
+
+            h.fs.syncs shouldBe 1
+            h.store.written() shouldBe 3 * 4096L
+        }
+
+    @Test
+    fun aFailedFinalFlushStillLetsThePauseFinish() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(5.seconds)
+            h.fs.faults[FakeFileSystem.Op.SYNC] = { FileResult.IoError(it, "disk gone") }
+
+            job.cancel()
+            job.join()
+
+            job.isCancelled shouldBe true
+            h.fs.openWriters shouldBe 0
+            h.store.written() shouldBe 0L
+        }
+
+    @Test
+    fun aCheckpointIntervalMustBePositive() {
+        shouldThrow<IllegalArgumentException> { StepHarness(checkpointEvery = Duration.ZERO) }
+    }
+
+    // Source validators (#554)
+
+    @Test
+    fun theValidatorDecidesWhetherPartialsAreKept() =
+        runTest {
+            data class Row(
+                val stored: String?,
+                val probed: String?,
+                val kept: Boolean,
+                val after: String?,
+                val reason: String?,
+            )
+            val rows =
+                listOf(
+                    Row(null, null, kept = true, after = null, reason = null),
+                    Row(null, "v", kept = true, after = "v", reason = null),
+                    Row("v", "v", kept = true, after = "v", reason = null),
+                    Row("v", "w", kept = false, after = "w", reason = "source changed (validator \"v\" → \"w\"): starting from zero"),
+                    Row("v", null, kept = true, after = "v", reason = null),
+                )
+            for (row in rows) {
+                withClue(row) {
+                    val h = StepHarness()
+                    h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+                    h.runAll()
+                    h.protocol.failure = null
+                    h.protocol.validator = row.probed
+
+                    val prepared =
+                        h
+                            .prepare(
+                                aPendingDownload().copy(sourceValidator = row.stored),
+                            ).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+                    h.fs.exists(partial) shouldBe row.kept
+                    h.store.files(DownloadId(1)).isNotEmpty() shouldBe row.kept
+                    prepared.download.sourceValidator shouldBe row.after
+                    h.listener.startedOver shouldBe listOfNotNull(row.reason)
+                }
+            }
+        }
+
+    @Test
+    fun aSourceThatChangedStartsFromZero() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+            h.runAll()
+            h.protocol.failure = null
+            h.protocol.validator = "w"
+            h.protocol.fetched.clear()
+
+            h.runAll(aPendingDownload().copy(sourceValidator = "v")).failure shouldBe null
+
+            h.protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
+            h.fs.read(target) shouldBe whole
+        }
+
+    // Outputs placed before a stop (#554)
+
+    @Test
+    fun anOutputPlacedBeforeAStopIsNotFetchedAgain() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.files = listOf(FakeFile("a.bin", 4096), FakeFile("b.bin", 4096))
+            var failOnce = true
+            h.fs.faults[FakeFileSystem.Op.ATOMIC_MOVE] = { source ->
+                if (failOnce &&
+                    source.name.startsWith("b.bin")
+                ) {
+                    FileResult.IoError(source, "stopped here").also { failOnce = false }
+                } else {
+                    null
+                }
+            }
+            val ready = h.prepare().shouldBeInstanceOf<PrepareOutcome.Ready>()
+            val failed = h.runner.run(ready, h.listener).shouldBeInstanceOf<RunOutcome.Failed>()
+            failed.failure.step shouldBe Step.POST_PROCESS
+            h.protocol.fetched.clear()
+
+            h.runner.run(ready.copy(download = failed.download.movedTo(QUEUED)), h.listener).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            h.protocol.fetched.none { it.index == 0 } shouldBe true
+            h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
+            h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
+        }
+
+    // Final review fixes (#554)
+
+    private fun runnerOver(
+        store: PlanStore,
+        fs: FakeFileSystem,
+        protocol: FakeProtocol,
+    ) = StepRunner(fs, store, mapOf(DownloadKind.DIRECT to protocol), stepRoot, freeSpaceReserve = 0)
+
+    private class FailingSaves(
+        private val inner: InMemoryPlanStore,
+    ) : PlanStore by inner {
+        override suspend fun saveWatermarks(watermarks: Map<SegmentId, Long>): Unit = throw IllegalStateException("store gone")
+    }
+
+    @Test
+    fun aStoreFailureInATickIsTheErrorThatLeaves() =
+        runTest {
+            val fs = FakeFileSystem()
+            val runner =
+                runnerOver(FailingSaves(InMemoryPlanStore().also { it.register(DownloadId(1)) }), fs, FakeProtocol(bytesPerSecond = 1024))
+            val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+            shouldThrow<IllegalStateException> { runner.run(ready) }.message shouldBe "store gone"
+            fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aStoreFailureInTheFinalFlushStillClosesTheWriters() =
+        runTest {
+            val fs = FakeFileSystem()
+            val runner = runnerOver(FailingSaves(InMemoryPlanStore().also { it.register(DownloadId(1)) }), fs, FakeProtocol())
+            val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+            shouldThrow<IllegalStateException> { runner.run(ready) }.message shouldBe "store gone"
+            fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aSourceThatChangedAfterItsOutputsWerePlacedStillFinishes() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.files = listOf(FakeFile("a.bin", 4096), FakeFile("b.bin", 4096))
+            var failOnce = true
+            h.fs.faults[FakeFileSystem.Op.ATOMIC_MOVE] = { source ->
+                if (failOnce &&
+                    source.name.startsWith("b.bin")
+                ) {
+                    FileResult.IoError(source, "stopped here").also { failOnce = false }
+                } else {
+                    null
+                }
+            }
+            h.protocol.validator = "v"
+            h.runAll()
+            h.protocol.validator = "w"
+
+            h.runAll(aPendingDownload().copy(sourceValidator = "v")).failure shouldBe null
+
+            h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
+            h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
         }
 }

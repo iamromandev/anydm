@@ -28,6 +28,9 @@ internal class Slot(
     /** The last move the runner reported, applied or not; it decides whether a throw came after the finish. */
     var lastReported: Download? = null
 
+    /** Why this run started from zero, if it did (#554); kept on the Attempt unless the run ends with a message of its own. */
+    var note: String? = null
+
     /** What to do, in order, once the cancelled slot has stopped; not empty means it is stopping. */
     val afterStop = mutableListOf<AfterStop>()
 

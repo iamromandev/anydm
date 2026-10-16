@@ -165,6 +165,18 @@ class DesktopFileSystem internal constructor(
         }
     }
 
+    override suspend fun size(path: Path): FileResult<Long> {
+        requireAbsolute(path)
+        return blocking {
+            val file = path.nio()
+            when {
+                !Files.exists(file, NOFOLLOW_LINKS) -> FileResult.NotFound(path)
+                Files.isDirectory(file, NOFOLLOW_LINKS) -> FileResult.AlreadyExists(path, "a folder is in the way")
+                else -> attempt(path) { Files.size(file) }
+            }
+        }
+    }
+
     override suspend fun delete(path: Path): FileResult<Unit> {
         requireAbsolute(path)
         return blocking(cancellable = false) {

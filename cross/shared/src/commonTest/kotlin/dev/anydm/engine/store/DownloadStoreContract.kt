@@ -256,6 +256,18 @@ abstract class DownloadStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun sourceValidatorRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT))
+            added.sourceValidator shouldBe null
+
+            store.update(added.copy(sourceValidator = "\"etag-1\"")) shouldBe true
+
+            store.get(added.id)!!.sourceValidator shouldBe "\"etag-1\""
+        }
+
+    @Test
     fun pauseReasonsAndQueuedAtRoundTrip() =
         runTest {
             val store = newStore().downloads

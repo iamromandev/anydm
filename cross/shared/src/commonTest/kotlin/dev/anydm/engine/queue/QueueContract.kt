@@ -28,6 +28,7 @@ import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
+import dev.anydm.engine.protocol.fakeContent
 import dev.anydm.engine.store.NewDownload
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -954,5 +955,42 @@ abstract class QueueContract : QueueTestBase() {
             val failure = paused.await().exceptionOrNull().shouldNotBeNull()
             failure.shouldNotBeInstanceOf<CancellationException>() // a JVM CancellationException is an IllegalStateException
             failure.message shouldBe "the queue has stopped"
+        }
+
+    // Source validators (#554)
+
+    private suspend fun TestScope.changeSourceWhilePaused(): Pair<QueueHarness, DownloadId> {
+        val h = started()
+        h.protocol.validator = "a"
+        val a = h.addJob()
+        advanceTimeBy(1.seconds)
+        h.queue.pause(a)
+        h.protocol.validator = "b"
+        h.protocol.fetched.clear()
+        h.queue.resume(a)
+        settle()
+        return h to a
+    }
+
+    @Test
+    fun aChangedSourceIsRecordedOnTheAttempt() =
+        runTest {
+            val (h, a) = changeSourceWhilePaused()
+
+            h.status(a) shouldBe COMPLETED
+            h.fs.read(Path(stepRoot, "job-1.zip"))!!.toList() shouldBe fakeContent(0, 0, 64 * 1024).toList()
+            h.store.downloads
+                .attempts(a)
+                .last()
+                .message shouldBe "source changed (validator \"a\" → \"b\"): starting from zero"
+        }
+
+    @Test
+    fun aSourceThatChangedWhilePausedStartsOver() =
+        runTest {
+            val (h, _) = changeSourceWhilePaused()
+
+            h.protocol.fetched.minOf { it.start } shouldBe 0L
+            h.protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
         }
 }

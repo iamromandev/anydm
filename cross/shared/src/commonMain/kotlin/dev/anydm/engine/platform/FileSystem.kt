@@ -62,6 +62,12 @@ interface FileSystem {
      * Like [atomicMove], it finishes even if the caller is cancelled.
      */
     suspend fun delete(path: Path): FileResult<Unit>
+
+    /**
+     * The length of the file at [path] (#554 finds outputs placed before a stop): [FileResult.NotFound] if there is
+     * none, [FileResult.AlreadyExists] for a folder.
+     */
+    suspend fun size(path: Path): FileResult<Long>
 }
 
 internal fun requireAbsolute(path: Path) = require(path.isAbsolute) { "path must be absolute: $path" }

@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.io.files.Path
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
 /**
@@ -41,8 +42,10 @@ internal class QueueHarness(
     scope: CoroutineScope = test.backgroundScope,
     val clock: Clock = test.virtualClock(),
     val retryPolicy: RetryPolicy = RetryPolicy(random = FixedRandom(0.0)),
+    /** A harness made after a restart passes the first one's, so the files survive it. */
+    val fs: FakeFileSystem = FakeFileSystem(),
+    checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
 ) {
-    val fs = FakeFileSystem()
     val finished = mutableListOf<DownloadId>()
     val runner =
         StepRunner(
@@ -60,6 +63,7 @@ internal class QueueHarness(
                     }
                 },
             freeSpaceReserve = 0,
+            checkpointEvery = checkpointEvery,
         )
     val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy)
 

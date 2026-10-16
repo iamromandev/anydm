@@ -29,7 +29,8 @@ interface TransferIo {
 
     /**
      * These segments are written up to these offsets: bytes [write] accepted, never bytes merely received (FND-09).
-     * Saved now; #554 batches.
+     * Call it as often as you like: the runner saves them at least every StepRunner.checkpointEvery and when the
+     * transfer ends, each time after syncing the files they cover.
      */
     suspend fun checkpoint(watermarks: Map<SegmentId, Long>)
 

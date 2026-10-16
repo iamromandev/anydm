@@ -355,7 +355,8 @@ internal class QueueActor(
     /**
      * After a restart nothing runs: every attempt left open ends ("the app stopped", not counted), a job left mid-run
      * waits again (DOWNLOADING to PENDING for a fresh probe, MUXING to QUEUED), every waiting job has a queued time,
-     * and every job agrees with the global pause setting. Checking the partial files is #554's.
+     * and every job agrees with the global pause setting. The partial files are checked when each job runs: it probes
+     * again, and StepRunner.prepare starts it over if the source's validator changed (#554).
      */
     private suspend fun reconcile() {
         val now = clock.now()
@@ -608,6 +609,10 @@ internal class QueueActor(
                 override suspend fun moved(download: Download) {
                     report(slot, download)
                 }
+
+                override suspend fun startedOver(reason: String) {
+                    ask { noteStartOver(slot, reason) }
+                }
             }
         val ready =
             when (val prepared = runner.prepare(pending, mirror, listener)) {
@@ -675,13 +680,23 @@ internal class QueueActor(
     }
 
     // Every end closes the run's Attempt (DIA-03); a stop doesn't count as a failure, so it has no class.
+    // The reason goes on the run's Attempt now, so it is there even if the app stops before the run ends.
+    private suspend fun noteStartOver(
+        slot: Slot,
+        reason: String,
+    ) {
+        if (slots[slot.id] !== slot) return
+        slot.note = reason
+        downloads.updateAttempt(slot.attempt.copy(message = reason))
+    }
+
     private suspend fun endAttempt(
         slot: Slot,
         end: SlotEnd,
     ) {
         val (errorClass, message) =
             when (end) {
-                is SlotEnd.Finished -> null to null
+                is SlotEnd.Finished -> null to slot.note
                 is SlotEnd.Failed -> end.failure.errorClass to end.failure.message
                 is SlotEnd.Crashed -> null to internalError(end.error)
                 SlotEnd.Cancelled -> null to if (slot.stopping) "stopped" else "internal error: cancelled unexpectedly"
@@ -747,7 +762,7 @@ internal class QueueActor(
  * changed while the job ran, stays as the queue has it.
  */
 private fun Download.takeRun(run: Download): Download =
-    copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size)
+    copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size, sourceValidator = run.sourceValidator)
 
 /** How a bug (a throw that isn't an expected failure) is reported in an Attempt or a command's result. */
 private fun internalError(error: Throwable) = "internal error: ${error.message ?: error::class.simpleName}"
