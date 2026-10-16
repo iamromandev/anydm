@@ -24,6 +24,10 @@ internal class FakeFileSystem(
     private val folders = mutableSetOf<Path>()
     private val files = mutableMapOf<Path, ByteArray>()
 
+    /** False: [moveToTrash] says there is no trash. True: it takes the path away and records it in [trashed]. */
+    var trashAvailable = false
+    val trashed = mutableListOf<Path>()
+
     fun read(path: Path): ByteArray? = files[path]?.copyOf()
 
     fun exists(path: Path): Boolean = path in files || path in folders
@@ -89,7 +93,11 @@ internal class FakeFileSystem(
 
     override suspend fun moveToTrash(path: Path): FileResult<Unit> {
         log("moveToTrash", path)
-        return fault(Op.MOVE_TO_TRASH, path) ?: FileResult.TrashUnavailable(path)
+        fault(Op.MOVE_TO_TRASH, path)?.let { return it }
+        if (!trashAvailable) return FileResult.TrashUnavailable(path)
+        if (files.remove(path) == null && !folders.remove(path)) return FileResult.NotFound(path)
+        trashed += path
+        return FileResult.Ok(Unit)
     }
 
     override suspend fun openWriter(path: Path): FileResult<FileWriter> {

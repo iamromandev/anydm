@@ -2,7 +2,11 @@ package dev.anydm.engine.protocol
 
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 internal data class FakeFile(
@@ -63,6 +67,8 @@ internal class FakeProtocol(
     var seeding: Boolean = false,
     /** Plans every file as [PlannedFile.fresh], as a protocol that saw its source change would. */
     var fresh: Boolean = false,
+    /** How long a cancelled transfer takes to stop, so a test can see a slot while it is stopping. */
+    var stopDelay: Duration = Duration.ZERO,
     private val journal: MutableList<String>? = null,
 ) : Protocol {
     val calls = mutableListOf<String>()
@@ -116,6 +122,17 @@ internal class FakeProtocol(
     }
 
     override suspend fun transfer(
+        transfer: Transfer,
+        io: TransferIo,
+    ): StepResult<Unit> =
+        try {
+            fetch(transfer, io)
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) { delay(stopDelay) }
+            throw e
+        }
+
+    private suspend fun fetch(
         transfer: Transfer,
         io: TransferIo,
     ): StepResult<Unit> {

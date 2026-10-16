@@ -6,6 +6,7 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
@@ -39,6 +40,33 @@ class Queue(
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
 
+    /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
+    suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }
+
+    /** Queues a paused job again, behind the jobs of its priority that already wait; clears every pause reason. */
+    suspend fun resume(id: DownloadId): CommandResult = actor.call { resume(id) }
+
+    /** Stops the job for good. Its partial files stay. */
+    suspend fun cancel(id: DownloadId): CommandResult = actor.callLater { cancel(id, it) }
+
+    /**
+     * Removes the job and, with [RemoveFiles.TRASH], moves its outputs and partials to the trash first. If that fails
+     * the job stays (paused for the user if it was active) and the result says why.
+     */
+    suspend fun remove(
+        id: DownloadId,
+        files: RemoveFiles,
+    ): CommandResult = actor.callLater { remove(id, files, it) }
+
+    /** Queues a FAILED job again with a fresh attempt count. */
+    suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
+
+    /** Sets the job's priority. It never stops a running job: the new order applies to the next free slot. */
+    suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ): CommandResult = actor.call { reprioritize(id, priority) }
+
     /** For tests: what holds a slot right now. */
     internal suspend fun inspect(): QueueState = actor.inspect()
 }
@@ -69,6 +97,11 @@ sealed interface CommandResult {
 
     /** Remove with [RemoveFiles.TRASH] found no trash on this system; the job and its files stay. */
     data object TrashUnavailable : CommandResult
+
+    /** Remove with [RemoveFiles.TRASH] couldn't move a file to the trash; the job stays. */
+    data class TrashFailed(
+        val failure: FileResult.Failed,
+    ) : CommandResult
 
     /** The protocol refused the new link; nothing changed. */
     data class RelinkFailed(

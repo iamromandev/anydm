@@ -5,6 +5,7 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.RunOutcome
 import dev.anydm.engine.core.StepFailure
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 
 /**
@@ -21,7 +22,18 @@ internal class Slot(
 
     /** The last move the runner reported, applied or not; it decides whether a throw came after the finish. */
     var lastReported: Download? = null
+
+    /** What to do, in order, once the cancelled slot has stopped; not empty means it is stopping. */
+    val afterStop = mutableListOf<AfterStop>()
+
+    val stopping: Boolean get() = afterStop.isNotEmpty()
 }
+
+/** A command that had to stop the job's slot first: [op] runs on the job as stored then, and answers [reply]. */
+internal class AfterStop(
+    val op: suspend (Download) -> CommandResult,
+    val reply: CompletableDeferred<CommandResult>?,
+)
 
 /** How a slot's coroutine ended; it sends exactly one. */
 internal sealed interface SlotEnd {

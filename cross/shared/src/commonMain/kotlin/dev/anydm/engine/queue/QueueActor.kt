@@ -4,11 +4,16 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.DownloadStatus.CANCELLED
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
+import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
+import dev.anydm.engine.core.DownloadStatus.MUXING
+import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.PrepareOutcome
 import dev.anydm.engine.core.RunListener
 import dev.anydm.engine.core.RunOutcome
@@ -16,6 +21,9 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.partialPath
+import dev.anydm.engine.core.targetPath
+import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
@@ -27,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.io.files.Path
 import kotlin.time.Clock
 
 /**
@@ -39,7 +48,7 @@ internal class QueueActor(
     private val store: Store,
     private val runner: StepRunner,
     @Suppress("unused") private val protocols: Map<DownloadKind, Protocol>,
-    @Suppress("unused") private val fileSystem: FileSystem,
+    private val fileSystem: FileSystem,
     private val clock: Clock,
 ) {
     private sealed interface Message {
@@ -158,18 +167,133 @@ internal class QueueActor(
     private fun state() =
         QueueState(
             running = slots.keys.toSet(),
-            stopping = emptySet(),
+            stopping = slots.filterValues { it.stopping }.keys,
             limit = settings.concurrencyLimit,
             globalPause = settings.globalPause,
         )
 
+    // Commands
+
     suspend fun add(new: NewDownload): CommandResult = CommandResult.Done(downloads.add(new.copy(queuedAt = clock.now())))
+
+    suspend fun pause(
+        id: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = stopThen(id, reply) { change(it.pause(PauseReason.USER)) }
+
+    suspend fun resume(id: DownloadId): CommandResult =
+        withJob(id) { job ->
+            if (job.status != PAUSED) {
+                CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
+            } else {
+                change(job.transitionTo(QUEUED)) { it.copy(queuedAt = clock.now()) }
+            }
+        }
+
+    suspend fun cancel(
+        id: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = stopThen(id, reply) { change(it.transitionTo(CANCELLED)) }
+
+    suspend fun remove(
+        id: DownloadId,
+        files: RemoveFiles,
+        reply: CompletableDeferred<CommandResult>,
+    ) = stopThen(id, reply) { removeJob(it, files) }
+
+    suspend fun retry(id: DownloadId): CommandResult =
+        withJob(id) { job ->
+            if (job.status != FAILED) {
+                CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
+            } else {
+                change(job.transitionTo(QUEUED)) { it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()) }
+            }
+        }
+
+    suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ): CommandResult {
+        val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(priority = priority))) }
+        slot.download = save(slot.download.copy(priority = priority))
+        return CommandResult.Done(slot.download)
+    }
+
+    private suspend fun removeJob(
+        job: Download,
+        files: RemoveFiles,
+    ): CommandResult {
+        if (files == RemoveFiles.TRASH) {
+            // Held paused while its files go, so a refused trash leaves it waiting for the user, not running.
+            val held = if (job.status in ACTIVE) save((job.pause(PauseReason.USER) as TransitionResult.Moved).download) else job
+            when (val trashed = trash(held)) {
+                null -> Unit
+                is FileResult.TrashUnavailable -> return CommandResult.TrashUnavailable
+                else -> return CommandResult.TrashFailed(trashed)
+            }
+        }
+        downloads.remove(job.id)
+        return CommandResult.Done(null)
+    }
+
+    // Each planned file's output and partial; one that isn't there is fine. The first failure stops it.
+    private suspend fun trash(job: Download): FileResult.Failed? {
+        val folder = job.saveFolder?.let(::Path) ?: return null
+        for (file in downloads.files(job.id)) {
+            val target = targetPath(folder, file.path)
+            for (path in listOf(target, partialPath(target, job.id))) {
+                when (val trashed = fileSystem.moveToTrash(path)) {
+                    is FileResult.Ok, is FileResult.NotFound -> Unit
+                    is FileResult.Failed -> return trashed
+                }
+            }
+        }
+        return null
+    }
+
+    private suspend fun withJob(
+        id: DownloadId,
+        op: suspend (Download) -> CommandResult,
+    ): CommandResult = downloads.get(id)?.let { op(it) } ?: CommandResult.NotFound
+
+    /** Runs [op] on job [id] now, or, if the job holds a slot, once that slot has stopped. */
+    private suspend fun stopThen(
+        id: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+        op: suspend (Download) -> CommandResult,
+    ) {
+        val slot = slots[id]
+        if (slot == null) {
+            reply.complete(withJob(id, op))
+        } else {
+            stop(slot, op, reply)
+        }
+    }
+
+    // Never waits for the slot: its end arrives as a message, and ended() runs what was asked.
+    private fun stop(
+        slot: Slot,
+        op: suspend (Download) -> CommandResult,
+        reply: CompletableDeferred<CommandResult>?,
+    ) {
+        if (!slot.stopping) slot.job.cancel()
+        slot.afterStop += AfterStop(op, reply)
+    }
+
+    private suspend fun change(
+        result: TransitionResult,
+        edit: (Download) -> Download = { it },
+    ): CommandResult =
+        when (result) {
+            is TransitionResult.Moved -> CommandResult.Done(save(edit(result.download)))
+            is TransitionResult.Rejected -> CommandResult.Rejected(result)
+        }
 
     // Scheduling
 
     private suspend fun reschedule() {
         val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots }
-        val decision = schedule(waiting, slots.values.map { SlotView(it.download, stopping = false) }, settings.concurrencyLimit)
+        val decision = schedule(waiting, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = waiting.associateBy { it.id }
         decision.start.forEach { launchSlot(byId.getValue(it)) }
     }
@@ -177,19 +301,19 @@ internal class QueueActor(
     private suspend fun launchSlot(download: Download) {
         val slot = Slot(download, downloads.mirrors(download.id).firstOrNull())
         slots[slot.id] = slot
+        var end: SlotEnd = SlotEnd.Cancelled
         slot.job =
             slotScope.launch {
-                var end: SlotEnd = SlotEnd.Cancelled
                 try {
                     end = runSlot(slot, download)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
                     end = SlotEnd.Crashed(e)
-                } finally {
-                    inbox.trySend(Message.Ended(slot, end))
                 }
             }
+        // Not a finally: a slot cancelled before its coroutine ran never runs one, and must still report.
+        slot.job.invokeOnCompletion { inbox.trySend(Message.Ended(slot, end)) }
     }
 
     // On the slot's coroutine: the job's whole run, from probe to finish.
@@ -233,6 +357,7 @@ internal class QueueActor(
     private suspend fun moved(message: Message.Moved) {
         val slot = message.slot
         if (slots[slot.id] === slot) {
+            // Stored even while the slot stops: the command that stopped it runs after the slot's last move.
             slot.lastReported = message.download
             slot.download = save(slot.download.takeRun(message.download))
         }
@@ -264,6 +389,10 @@ internal class QueueActor(
                 }
             }
         if (after != null && after != slot.download) save(after)
+        for (next in slot.afterStop) {
+            val result = withJob(slot.id, next.op)
+            next.reply?.complete(result)
+        }
     }
 
     private suspend fun save(download: Download): Download {
@@ -273,6 +402,7 @@ internal class QueueActor(
 
     private companion object {
         val FINISHED = setOf(COMPLETED, SEEDING)
+        val ACTIVE = setOf(PENDING, QUEUED, DOWNLOADING, MUXING)
     }
 }
 
