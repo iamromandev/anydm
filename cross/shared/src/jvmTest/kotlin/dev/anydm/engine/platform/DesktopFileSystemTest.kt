@@ -3,8 +3,12 @@ package dev.anydm.engine.platform
 import io.kotest.matchers.longs.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -14,6 +18,7 @@ import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import java.nio.file.Path as NioPath
 
@@ -55,6 +60,95 @@ class DesktopFileSystemTest : FileSystemContract() {
         }
 
     @Test
+    fun aCancelledDeleteStillHappens() =
+        runTest {
+            val fs = DesktopFileSystem(StandardTestDispatcher(testScheduler), NoTrashBin)
+            val file = Path(root, "video.mp4.anydm").also { writeText(it, "stale") }
+            val call = launch(start = CoroutineStart.UNDISPATCHED) { fs.delete(file) }
+            call.cancel()
+            testScheduler.advanceUntilIdle()
+            call.join()
+            exists(file) shouldBe false
+        }
+
+    // withContext drops the result of a call whose caller was cancelled meanwhile, so the channel the call opened would
+    // never be closed. The dispatchers here hold the work: the block runs, and the cancel lands before the caller resumes.
+    @Test
+    fun aCancelledOpenWriterClosesTheChannelItOpened() {
+        val io = QueueDispatcher()
+        val caller = QueueDispatcher()
+        val opened = mutableListOf<DesktopFileWriter>()
+        val fs = DesktopFileSystem(io, NoTrashBin) { opened += it }
+        val file = Path(root, "video.mp4.anydm").also { writeText(it, "x") }
+        val scope = CoroutineScope(caller + Job())
+        try {
+            val call = scope.launch(start = CoroutineStart.UNDISPATCHED) { fs.openWriter(file) }
+            io.runAll()
+            opened.size shouldBe 1 // the channel is open and the result is on its way to the caller
+            opened.single().isOpen shouldBe true
+            call.cancel()
+            caller.runAll()
+            call.isCancelled shouldBe true
+            opened.single().isOpen shouldBe false
+        } finally {
+            scope.cancel()
+            opened.forEach { it.close() }
+        }
+    }
+
+    @Test
+    fun anUncancelledOpenWriterKeepsItsChannelOpen() {
+        val io = QueueDispatcher()
+        val caller = QueueDispatcher()
+        val opened = mutableListOf<DesktopFileWriter>()
+        val fs = DesktopFileSystem(io, NoTrashBin) { opened += it }
+        val file = Path(root, "video.mp4.anydm").also { writeText(it, "x") }
+        val scope = CoroutineScope(caller + Job())
+        try {
+            var result: FileResult<FileWriter>? = null
+            val call = scope.launch(start = CoroutineStart.UNDISPATCHED) { result = fs.openWriter(file) }
+            io.runAll()
+            caller.runAll()
+            call.isCompleted shouldBe true
+            result.shouldBeInstanceOf<FileResult.Ok<FileWriter>>()
+            opened.single().isOpen shouldBe true
+        } finally {
+            scope.cancel()
+            opened.forEach { it.close() }
+        }
+    }
+
+    @Test
+    fun deleteOfASymlinkRemovesTheLinkNotItsTarget() {
+        val target = Path(root, "real.bin").also { writeText(it, "keep") }
+        val link = Path(root, "link.bin")
+        try {
+            Files.createSymbolicLink(link.toNioPath(), target.toNioPath())
+        } catch (e: UnsupportedOperationException) {
+            assumeTrue("symlinks aren't supported here", false)
+        } catch (e: java.io.IOException) {
+            assumeTrue("symlinks aren't allowed here: ${e.message}", false)
+        }
+        runTest { fileSystem(trash = null).delete(link) shouldBe FileResult.Ok(Unit) }
+        Files.exists(link.toNioPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) shouldBe false
+        readText(target) shouldBe "keep"
+    }
+
+    @Test
+    fun openWriterOnAReadOnlyFileIsAccessDenied() {
+        val file = Path(root, "locked.anydm").also { writeText(it, "x") }
+        val nio = file.toNioPath()
+        assumeTrue("needs POSIX permissions", Files.getFileStore(nio).supportsFileAttributeView("posix"))
+        Files.setPosixFilePermissions(nio, PosixFilePermissions.fromString("r--r--r--"))
+        try {
+            assumeFalse("permissions don't bind this user", Files.isWritable(nio))
+            runTest { fileSystem(trash = null).openWriter(file).shouldBeInstanceOf<FileResult.AccessDenied>().path shouldBe file }
+        } finally {
+            Files.setPosixFilePermissions(nio, PosixFilePermissions.fromString("rw-r--r--"))
+        }
+    }
+
+    @Test
     fun aCancelledMoveToTrashStillHappens() =
         runTest {
             val trash = Path(root, "trash")
@@ -80,6 +174,22 @@ class DesktopFileSystemTest : FileSystemContract() {
         } finally {
             Files.setPosixFilePermissions(nio, PosixFilePermissions.fromString("rwxr-xr-x"))
         }
+    }
+}
+
+/** Holds every task until the test runs it, so a test decides what happens between a call's steps. */
+private class QueueDispatcher : CoroutineDispatcher() {
+    private val queue = ArrayDeque<Runnable>()
+
+    override fun dispatch(
+        context: CoroutineContext,
+        block: Runnable,
+    ) {
+        queue.addLast(block)
+    }
+
+    fun runAll() {
+        while (queue.isNotEmpty()) queue.removeFirst().run()
     }
 }
 

@@ -3,8 +3,9 @@
 The anydm desktop client: Kotlin Multiplatform, with Compose for the window. It downloads on its
 own, with the engine in `shared/`; no server is needed.
 
-- `shared/` — the download engine, being built in #548–#556, in three packages:
-  `dev.anydm.engine.core` (job model, states, queue), `dev.anydm.engine.store` (SQLite through
+- `shared/` — the download engine, being built in #548–#556, in four packages:
+  `dev.anydm.engine.core` (job model, states, step runner, queue), `dev.anydm.engine.protocol` (the
+  `Protocol` interface each kind of source implements), `dev.anydm.engine.store` (SQLite through
   SQLDelight) and `dev.anydm.engine.platform` (files, app folders, clock). Only the `jvm()` target
   for now; Android and iOS would add targets here. Source sets:
   - `commonMain` is pure Kotlin. With only a JVM target the compiler can't enforce that, so the
@@ -28,6 +29,14 @@ own, with the engine in `shared/`; no server is needed.
     run `./gradlew :shared:generateCommonMainAnydmDbSchema` to add `(N+1).db`, and commit all three. `check` runs
     `verifyCommonMainAnydmDbMigration`, which fails if the migrations don't reach the `.sq` schema. Never edit a committed `N.db`.
     Migrations run with foreign keys off and are checked with `foreign_key_check` before commit, so a table rebuild is safe.
+  - `StepRunner` runs a job's steps with a `Protocol`: `prepare` (preflight and probe, PENDING to QUEUED) and
+    `run` (transfer, post-process, finish). It moves the job with `transitionTo` and reports each move to a
+    `RunListener` instead of saving it, and writes only the plan's files and segments. Bytes go into a sparse
+    `<name>.<download id>.anydm` partial that is renamed into place at the end (never over a file that is already
+    there) and kept on failure or cancel, so the next run can resume it. A run resumes only when the planned file list
+    equals the stored one, and then only the files whose ranges and partial still match; anything else starts over.
+    A QUEUED job without the in-memory `Ready` from `prepare` must go back through PENDING. Tests script jobs with
+    `FakeProtocol`, `FakeFileSystem` and `InMemoryPlanStore` from `commonTest`.
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in

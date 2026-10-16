@@ -1,0 +1,487 @@
+package dev.anydm.engine.core
+
+import dev.anydm.engine.core.DownloadStatus.COMPLETED
+import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
+import dev.anydm.engine.core.DownloadStatus.MUXING
+import dev.anydm.engine.core.DownloadStatus.PENDING
+import dev.anydm.engine.core.DownloadStatus.QUEUED
+import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.platform.FileResult
+import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.platform.FileWriter
+import dev.anydm.engine.protocol.Limiter
+import dev.anydm.engine.protocol.Meter
+import dev.anydm.engine.protocol.PlanContext
+import dev.anydm.engine.protocol.PlannedFile
+import dev.anydm.engine.protocol.ProbeRequest
+import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.protocol.Transfer
+import dev.anydm.engine.protocol.TransferFile
+import dev.anydm.engine.protocol.TransferPlan
+import dev.anydm.engine.store.NewFile
+import dev.anydm.engine.store.NewSegment
+import dev.anydm.engine.store.PlanStore
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.io.files.Path
+
+/**
+ * Runs a job's steps with the [Protocol] of its kind (FND-03). The queue (#552) sits between two calls: [prepare] runs
+ * preflight and probe on a PENDING job and moves it to QUEUED; [run] runs transfer, post-process and finish once the
+ * queue gives the job a slot: QUEUED, DOWNLOADING, MUXING, then COMPLETED or SEEDING.
+ *
+ * | Step         | Runs in           | On success                                   | On failure (default policy) |
+ * |--------------|-------------------|----------------------------------------------|-----------------------------|
+ * | Preflight    | PENDING           | (probe)                                      | PENDING to FAILED           |
+ * | Probe        | PENDING           | QUEUED, with saveFolder, fileName, size set  | PENDING to FAILED           |
+ * | Transfer     | DOWNLOADING       | MUXING                                       | DOWNLOADING to FAILED       |
+ * | Post-process | MUXING            | COMPLETED, or SEEDING if the protocol says so | MUXING to FAILED           |
+ * | Finish       | COMPLETED/SEEDING | (the finish hook)                            | a throw is a bug, see below |
+ *
+ * The runner never writes a status: it moves the job with transitionTo and reports each move to the [RunListener]
+ * before the step that runs in the new status starts, and #552 persists it. It writes only the plan's file and
+ * segment rows ([PlanStore]) and the files in the save folder. Where a failed job goes is the [FailurePolicy]'s call.
+ * Expected failures come back as outcomes; bugs throw.
+ *
+ * Cancellation propagates with no move; partials and watermarks stay for the next run. The finish hook is the
+ * exception: it runs shielded from cancellation, so a job whose COMPLETED or SEEDING move was reported always returns
+ * Finished. If the hook throws, the exception leaves [run] after that move: #552 must treat a throw from `run` after
+ * COMPLETED or SEEDING was reported as a finished job.
+ *
+ * A QUEUED job needs the [PrepareOutcome.Ready] that [prepare] returned, which is in memory only. After a restart, or
+ * for a PAUSED job moved to QUEUED, there is none: send the job back through PENDING and [prepare], and let the
+ * protocol re-validate its source in that probe (ETag, size).
+ *
+ * Resume is all or nothing at the level of the plan: a run keeps the stored rows and partials only when the planned
+ * file list (index, path, size) equals the stored one. Within an equal list, a file resumes only if its ranges are
+ * unchanged, it isn't [PlannedFile.fresh] and its partial opens with the planned length; otherwise that file starts
+ * over. A changed list replaces all rows, starts every file over and deletes the partials of files that dropped out.
+ * Keeping the unchanged files of a changed list needs a store operation that keeps rows, which the torrent story
+ * (#541) can add.
+ */
+class StepRunner(
+    private val fileSystem: FileSystem,
+    private val store: PlanStore,
+    private val protocols: Map<DownloadKind, Protocol>,
+    private val defaultFolder: Path,
+    private val duplicates: DuplicateCheck = DuplicateCheck.None,
+    private val finish: FinishHook = FinishHook.None,
+    private val failurePolicy: FailurePolicy = FailurePolicy.Fail,
+    private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
+) {
+    init {
+        require(defaultFolder.isAbsolute) { "defaultFolder must be absolute: $defaultFolder" }
+        require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
+    }
+
+    /**
+     * Preflight and probe a PENDING [download]; on success it is QUEUED and ready for [run]. The room a size needs is
+     * checked as soon as it is known: in preflight if the download had a size, and right after the probe if the probe
+     * is what learned it (a failure there is a PROBE failure, since the probe's answer is what doesn't fit).
+     */
+    suspend fun prepare(
+        download: Download,
+        mirror: Mirror,
+        listener: RunListener = RunListener.None,
+    ): PrepareOutcome {
+        require(download.status == PENDING) { "prepare needs a PENDING download, not ${download.status}" }
+        require(mirror.downloadId == download.id) { "mirror ${mirror.id.value} isn't download ${download.id.value}'s" }
+        val protocol =
+            protocols[download.kind]
+                ?: return prepareFailed(
+                    download,
+                    Step.PREFLIGHT,
+                    StepResult.Failed(null, "no protocol handles ${download.kind} downloads yet"),
+                    listener,
+                )
+        val folder =
+            when (val checked = preflight(download, mirror)) {
+                is StepResult.Failed -> return prepareFailed(download, Step.PREFLIGHT, checked, listener)
+                is StepResult.Ok -> checked.value
+            }
+        val probe =
+            when (val probed = protocol.probe(ProbeRequest(download, mirror))) {
+                is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed, listener)
+                is StepResult.Ok -> probed.value
+            }
+        val learned = probe.size
+        if (learned != null && learned != download.size) {
+            val room = checkSpace(folder, learned - writtenBytes(download.id))
+            if (room is StepResult.Failed) return prepareFailed(download, Step.PROBE, room, listener)
+        }
+        // The user's file name wins; the probe's size is the source's own word.
+        val queued =
+            download
+                .copy(saveFolder = folder.toString(), fileName = download.fileName ?: probe.name, size = learned ?: download.size)
+                .moveTo(QUEUED)
+        listener.moved(queued)
+        return PrepareOutcome.Ready(queued, mirror, probe)
+    }
+
+    /** Transfer, post-process and finish a QUEUED job that [prepare] made ready. */
+    suspend fun run(
+        job: PrepareOutcome.Ready,
+        listener: RunListener = RunListener.None,
+        limiter: Limiter = Limiter.None,
+        meter: Meter = Meter.None,
+    ): RunOutcome {
+        require(job.download.status == QUEUED) { "run needs a QUEUED download, not ${job.download.status}" }
+        val folder = Path(requireNotNull(job.download.saveFolder) { "a prepared download has a save folder" })
+        require(folder.isAbsolute) { "save folder must be absolute: $folder" }
+        val protocol = protocols.getValue(job.download.kind)
+        val downloading = job.download.moveTo(DOWNLOADING)
+        listener.moved(downloading)
+        val transfer =
+            when (val done = transferStep(downloading, job, protocol, folder, listener, limiter, meter)) {
+                is StepResult.Failed -> return runFailed(downloading, Step.TRANSFER, done, listener)
+                is StepResult.Ok -> done.value
+            }
+        val muxing = downloading.moveTo(MUXING)
+        listener.moved(muxing)
+        val finalized =
+            when (val done = protocol.finalize(transfer)) {
+                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, done, listener)
+                is StepResult.Ok -> done.value
+            }
+        val outputs =
+            when (val placed = placeOutputs(job.download.id, folder, finalized.outputs)) {
+                is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed, listener)
+                is StepResult.Ok -> placed.value
+            }
+        val finished = muxing.moveTo(if (finalized.seeding) SEEDING else COMPLETED)
+        listener.moved(finished)
+        // The job is finished whatever happens from here, so a pause or cancel must not interrupt its hook.
+        withContext(NonCancellable) { finish.finished(finished, outputs) }
+        return RunOutcome.Finished(finished, outputs)
+    }
+
+    /** The duplicate check comes first, before anything is written to the disk. */
+    private suspend fun preflight(
+        download: Download,
+        mirror: Mirror,
+    ): StepResult<Path> {
+        val folder = download.saveFolder?.let(::Path) ?: defaultFolder
+        if (!folder.isAbsolute) return StepResult.Failed(null, "the save folder must be a full path: $folder")
+        val duplicate = duplicates.duplicateOf(download, mirror)
+        if (duplicate != null) return StepResult.Failed(null, "already in the list as download ${duplicate.value}")
+        val prepared = fileSystem.prepareFolder(folder)
+        if (prepared is FileResult.Failed) return prepared.toStepFailed()
+        if (download.size != null) {
+            val room = checkSpace(folder, download.size - writtenBytes(download.id))
+            if (room is StepResult.Failed) return room
+        }
+        return StepResult.Ok(folder)
+    }
+
+    /**
+     * Plan, store it, open the partials, transfer. Every writer is closed on every exit: a close that fails is added to
+     * the exception already on its way, and surfaces by itself only if nothing else went wrong. The original exception
+     * (cancellation included) is always the one rethrown.
+     */
+    private suspend fun transferStep(
+        download: Download,
+        job: PrepareOutcome.Ready,
+        protocol: Protocol,
+        folder: Path,
+        listener: RunListener,
+        limiter: Limiter,
+        meter: Meter,
+    ): StepResult<Transfer> {
+        val stored =
+            store.files(download.id).map { file ->
+                val target = targetPath(folder, file.path)
+                TransferFile(file, store.segments(file.id), partialPath(target, download.id), target)
+            }
+        val plan =
+            when (val planned = protocol.plan(job.probe, PlanContext(download, stored))) {
+                is StepResult.Failed -> return planned
+                is StepResult.Ok -> planned.value
+            }
+        val writers = mutableMapOf<FileId, FileWriter>()
+        val result =
+            try {
+                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers)
+            } catch (e: Throwable) {
+                closeAll(writers.values, e)
+                throw e
+            }
+        closeAll(writers.values, null)
+        return result
+    }
+
+    private suspend fun fetch(
+        download: Download,
+        job: PrepareOutcome.Ready,
+        protocol: Protocol,
+        plan: TransferPlan,
+        stored: List<TransferFile>,
+        folder: Path,
+        listener: RunListener,
+        limiter: Limiter,
+        meter: Meter,
+        writers: MutableMap<FileId, FileWriter>,
+    ): StepResult<Transfer> {
+        val transfer =
+            when (val opened = openFiles(download, job, plan, stored, folder, writers)) {
+                is StepResult.Failed -> return opened
+                is StepResult.Ok -> opened.value
+            }
+        val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
+        val moved = protocol.transfer(transfer, RunIo(transfer, writers, store, limiter, meter, listener, total))
+        if (moved is StepResult.Failed) return moved
+        // Everything the transfer wrote is made durable before finalize and the rename build on it.
+        for (writer in writers.values) {
+            val synced = writer.sync()
+            if (synced is FileResult.Failed) return synced.toStepFailed()
+        }
+        return StepResult.Ok(transfer)
+    }
+
+    /** Closes every writer, even if some close throws; see [transferStep] for what is thrown. */
+    private fun closeAll(
+        writers: Collection<FileWriter>,
+        primary: Throwable?,
+    ) {
+        var first: Throwable? = null
+        for (writer in writers) {
+            try {
+                writer.close()
+            } catch (e: Throwable) {
+                when {
+                    primary != null -> primary.addSuppressed(e)
+                    first == null -> first = e
+                    else -> first.addSuppressed(e)
+                }
+            }
+        }
+        if (first != null) throw first
+    }
+
+    /**
+     * Stores [plan] and readies each partial. The stored rows and partials are reused only when the planned file list
+     * (index, path, size) equals the stored one; then each file whose ranges are unchanged, that is not
+     * [PlannedFile.fresh] and whose partial opens with the planned length resumes, and every other file starts over
+     * (new segments, the partial deleted and made again). A different file list replaces all rows, starts every file
+     * over and first deletes the partials of stored files that are not in the new plan. Per-file resume across a changed
+     * list is left to the torrent story (#541).
+     */
+    private suspend fun openFiles(
+        download: Download,
+        job: PrepareOutcome.Ready,
+        plan: TransferPlan,
+        stored: List<TransferFile>,
+        folder: Path,
+        writers: MutableMap<FileId, FileWriter>,
+    ): StepResult<Transfer> {
+        val planned = plan.files.sortedBy { it.index }
+        pathProblem(planned.map { it.path })?.let { return StepResult.Failed(null, "the plan can't be made in the save folder: $it") }
+        val sameFiles = stored.map { it.file.key() } == planned.map { it.key() }
+        val earlier = if (sameFiles) stored else emptyList()
+        val kept =
+            earlier
+                .zip(planned)
+                .filter { (old, new) ->
+                    resumes(old, new)
+                }.map { (old, _) -> old.segments.sumOf { it.written } }
+                .saturatingSum()
+        val room = checkSpace(folder, planned.map { it.size ?: 0L }.saturatingSum() - kept)
+        if (room is StepResult.Failed) return room
+        if (!sameFiles) {
+            val targets = planned.map { targetPath(folder, it.path) }.toSet()
+            for (old in stored.filter { it.target !in targets && isSafeRelativePath(it.file.path) }) {
+                val gone = fileSystem.delete(old.partial)
+                if (gone is FileResult.Failed && gone !is FileResult.NotFound) return gone.toStepFailed()
+            }
+        }
+        for (parent in planned.map { requireNotNull(targetPath(folder, it.path).parent) }.distinct()) {
+            val made = fileSystem.prepareFolder(parent)
+            if (made is FileResult.Failed) return made.toStepFailed()
+        }
+        val rows =
+            if (sameFiles) {
+                stored.map { it.file }
+            } else {
+                store.replaceFiles(
+                    download.id,
+                    planned.map { NewFile(it.index, it.path, it.size) },
+                )
+            }
+        val files = mutableListOf<TransferFile>()
+        for ((i, new) in planned.withIndex()) {
+            val file = rows[i]
+            val target = targetPath(folder, new.path)
+            val partial = partialPath(target, download.id)
+            val old = earlier.getOrNull(i)
+            val resumed = if (old != null && resumes(old, new)) reopen(partial, new.size) else null
+            if (resumed is StepResult.Failed) return resumed
+            val writer: FileWriter
+            val segments: List<Segment>
+            if (resumed is StepResult.Ok && old != null) {
+                writer = resumed.value
+                segments = old.segments
+            } else {
+                segments = store.replaceSegments(file.id, new.segments)
+                writer =
+                    when (val made = startOver(partial, new.size)) {
+                        is StepResult.Failed -> return made
+                        is StepResult.Ok -> made.value
+                    }
+            }
+            writers[file.id] = writer
+            files += TransferFile(file, segments, partial, target)
+        }
+        return StepResult.Ok(Transfer(download, job.mirror, job.probe, files))
+    }
+
+    /**
+     * The earlier partial opened again, or null when it is gone or its length isn't the planned [size] (some other
+     * program's file, or a copy that was cut short: nothing in it can be trusted).
+     */
+    private suspend fun reopen(
+        partial: Path,
+        size: Long?,
+    ): StepResult<FileWriter>? {
+        val writer =
+            when (val opened = fileSystem.openWriter(partial)) {
+                is FileResult.Ok -> opened.value
+                is FileResult.NotFound -> return null
+                is FileResult.Failed -> return opened.toStepFailed()
+            }
+        var keep = false
+        try {
+            when (val length = writer.size()) {
+                is FileResult.Failed -> return length.toStepFailed()
+                is FileResult.Ok -> if (length.value != size) return null
+            }
+            keep = true
+            return StepResult.Ok(writer)
+        } finally {
+            if (!keep) writer.close()
+        }
+    }
+
+    /** A fresh partial of [size] bytes (sparse where possible) replacing any stale one, opened for writing (HTTP-16). */
+    private suspend fun startOver(
+        partial: Path,
+        size: Long?,
+    ): StepResult<FileWriter> {
+        val deleted = fileSystem.delete(partial)
+        if (deleted is FileResult.Failed && deleted !is FileResult.NotFound) return deleted.toStepFailed()
+        val made = fileSystem.preallocate(partial, size ?: 0)
+        if (made is FileResult.Failed) return made.toStepFailed()
+        return when (val opened = fileSystem.openWriter(partial)) {
+            is FileResult.Failed -> opened.toStepFailed()
+            is FileResult.Ok -> StepResult.Ok(opened.value)
+        }
+    }
+
+    /**
+     * Renames each output's partial into place (FIL-07) and never replaces a file that is already there: that fails
+     * the step with the reason and leaves the partial, until the name-clash policy of FIL-04 (#539) decides. The
+     * outputs are checked like planned paths first.
+     *
+     * Outputs are placed one by one, so a failure or a cancel part way leaves the ones already placed without a
+     * partial: the next run finds no bytes for them and downloads them again. #554's restore must treat a finished
+     * output as finished (or place all outputs in a way that can be undone).
+     */
+    private suspend fun placeOutputs(
+        id: DownloadId,
+        folder: Path,
+        outputs: List<String>,
+    ): StepResult<List<Path>> {
+        pathProblem(outputs)?.let { return StepResult.Failed(null, "the outputs can't be placed in the save folder: $it") }
+        val placed = mutableListOf<Path>()
+        for (output in outputs) {
+            val target = targetPath(folder, output)
+            val moved = fileSystem.atomicMove(partialPath(target, id), target, replace = false)
+            if (moved is FileResult.Failed) return moved.toStepFailed()
+            placed += target
+        }
+        return StepResult.Ok(placed)
+    }
+
+    /** Room for [bytes] more plus the reserve (FIL-08); nothing to check for 0 or fewer. */
+    private suspend fun checkSpace(
+        folder: Path,
+        bytes: Long,
+    ): StepResult<Unit> {
+        if (bytes <= 0) return StepResult.Ok(Unit)
+        val needed = listOf(bytes, freeSpaceReserve).saturatingSum()
+        return when (val free = fileSystem.freeSpace(folder)) {
+            is FileResult.Failed -> {
+                free.toStepFailed()
+            }
+
+            is FileResult.Ok -> {
+                if (free.value >= needed) {
+                    StepResult.Ok(Unit)
+                } else {
+                    StepResult.Failed(ErrorClass.DISK_FULL, "needs $needed bytes free in $folder, ${free.value} are free")
+                }
+            }
+        }
+    }
+
+    private suspend fun writtenBytes(id: DownloadId): Long =
+        store
+            .files(id)
+            .map { file ->
+                store.segments(file.id).sumOf {
+                    it.written
+                }
+            }.saturatingSum()
+
+    private suspend fun prepareFailed(
+        download: Download,
+        step: Step,
+        result: StepResult.Failed,
+        listener: RunListener,
+    ): PrepareOutcome = afterFailure(download, step, result, listener).let { (after, failure) -> PrepareOutcome.Failed(after, failure) }
+
+    private suspend fun runFailed(
+        download: Download,
+        step: Step,
+        result: StepResult.Failed,
+        listener: RunListener,
+    ): RunOutcome = afterFailure(download, step, result, listener).let { (after, failure) -> RunOutcome.Failed(after, failure) }
+
+    private suspend fun afterFailure(
+        download: Download,
+        step: Step,
+        result: StepResult.Failed,
+        listener: RunListener,
+    ): Pair<Download, StepFailure> {
+        val failure = StepFailure(step, result.errorClass, result.message)
+        val target = failurePolicy.statusAfter(download, failure)
+        if (target == download.status) {
+            // Staying put means a retry from PENDING; a job that already has a slot must leave its state.
+            check(download.status == PENDING) { "a failure policy can't keep a ${download.status} job where it is" }
+            return download to failure
+        }
+        val after = download.moveTo(target)
+        listener.moved(after)
+        return after to failure
+    }
+
+    companion object {
+        /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
+        const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
+    }
+}
+
+private fun File.key() = Triple(index, path, size)
+
+private fun PlannedFile.key() = Triple(index, path, size)
+
+private fun resumes(
+    old: TransferFile,
+    new: PlannedFile,
+) = !new.fresh && new.segments.isNotEmpty() && old.segments.map { NewSegment(it.start, it.end) } == new.segments
+
+/** transitionTo for moves made only from statuses the runner checked; a rejection is a bug. */
+private fun Download.moveTo(target: DownloadStatus): Download =
+    when (val moved = transitionTo(target)) {
+        is TransitionResult.Moved -> moved.download
+        is TransitionResult.Rejected -> error("can't move a download from ${moved.from} to ${moved.to}")
+    }

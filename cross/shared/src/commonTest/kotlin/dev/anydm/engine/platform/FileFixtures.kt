@@ -4,6 +4,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.readByteArray
 import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlin.random.Random
@@ -20,6 +21,8 @@ internal fun writeText(
 ) = SystemFileSystem.sink(path).buffered().use { it.writeString(text) }
 
 internal fun readText(path: Path): String = SystemFileSystem.source(path).buffered().use { it.readString() }
+
+internal fun readBytes(path: Path): ByteArray = SystemFileSystem.source(path).buffered().use { it.readByteArray() }
 
 internal fun exists(path: Path): Boolean = SystemFileSystem.exists(path)
 

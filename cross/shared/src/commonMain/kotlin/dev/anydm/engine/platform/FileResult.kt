@@ -9,7 +9,7 @@ import kotlinx.io.files.Path
  *
  * Callers map these: [DiskFull] is ErrorClass.DISK_FULL (#551, #553); [TrashUnavailable] keeps
  * the files and tells the user (#552); [CrossVolume] is copied and verified instead (#539);
- * [Busy] is retried briefly (#554); [InvalidName] means the name must be sanitised (#551).
+ * [Busy] is retried briefly (#554); [InvalidName] means the name must be sanitised (FIL-03, #539; until then the step fails with the reason).
  */
 sealed interface FileResult<out T> {
     data class Ok<out T>(
@@ -60,7 +60,7 @@ sealed interface FileResult<out T> {
 
     /**
      * The OS can't make a file or folder with the name in [path] (a NUL character; on Windows also
-     * `?`, `:` or a trailing space or dot). Nothing was touched. The caller must sanitise the name (#551).
+     * `?`, `:` or a trailing space or dot). Nothing was touched. The caller must sanitise the name (FIL-03, #539).
      */
     data class InvalidName(
         override val path: Path,

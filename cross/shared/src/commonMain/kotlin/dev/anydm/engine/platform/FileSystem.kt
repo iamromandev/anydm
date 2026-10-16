@@ -3,7 +3,7 @@ package dev.anydm.engine.platform
 import kotlinx.io.files.Path
 
 /**
- * The file operations the engine needs beyond reading and writing bytes. Paths must be absolute.
+ * The file operations the engine needs. Paths must be absolute.
  * Expected failures come back as [FileResult], including a name the OS can't make
  * ([FileResult.InvalidName]); only bugs throw.
  */
@@ -16,8 +16,7 @@ interface FileSystem {
      * Never touches an existing file. The folder must exist. Leaves nothing behind on failure.
      *
      * Cancelling the call can leave the file behind, possibly partly written: a caller that cancels
-     * a preallocate should expect [FileResult.AlreadyExists] when it retries (deleting is not part
-     * of this interface).
+     * a preallocate should expect [FileResult.AlreadyExists] when it retries (clear it with [delete]).
      *
      * On file systems without sparse files (FAT32, exFAT, HFS+) it writes the whole length, which
      * can block for minutes, and FAT32 rejects files of 4 GiB and larger ([FileResult.IoError]).
@@ -32,13 +31,17 @@ interface FileSystem {
     suspend fun freeSpace(path: Path): FileResult<Long>
 
     /**
-     * Renames [source] to [target] in one step, replacing a file there (FIL-07). Across volumes it
-     * returns [FileResult.CrossVolume]; copying is the caller's job (#539). A cancelled caller does
-     * not stop the rename once the call has been made, so the file is either moved or untouched.
+     * Renames [source] to [target] in one step, replacing a file there when [replace] is true (FIL-07). With
+     * `replace = false` a file already at [target] is [FileResult.AlreadyExists] and both files stay as they are; the
+     * check comes just before the rename, so a file that appears in between can still be replaced (best effort, as the
+     * OS has no portable rename-without-replace). Across volumes it returns [FileResult.CrossVolume]; copying is the
+     * caller's job (#539). A cancelled caller does not stop the rename once the call has been made, so the file is
+     * either moved or untouched.
      */
     suspend fun atomicMove(
         source: Path,
         target: Path,
+        replace: Boolean = true,
     ): FileResult<Unit>
 
     /**
@@ -46,6 +49,19 @@ interface FileSystem {
      * Like [atomicMove], it runs to the end even if the caller is cancelled.
      */
     suspend fun moveToTrash(path: Path): FileResult<Unit>
+
+    /**
+     * Opens the existing file at [path] for writes at any offset; never creates, truncates or resizes it (create it
+     * with [preallocate]). A folder there is [FileResult.AlreadyExists]. A caller cancelled while the file is being
+     * opened gets no writer, and the file is closed again.
+     */
+    suspend fun openWriter(path: Path): FileResult<FileWriter>
+
+    /**
+     * Deletes the file at [path] for good (a stale partial; cancel, #552); a folder is [FileResult.AlreadyExists].
+     * Like [atomicMove], it finishes even if the caller is cancelled.
+     */
+    suspend fun delete(path: Path): FileResult<Unit>
 }
 
 internal fun requireAbsolute(path: Path) = require(path.isAbsolute) { "path must be absolute: $path" }
