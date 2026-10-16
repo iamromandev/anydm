@@ -7,7 +7,10 @@ own, with the engine in `shared/`; no server is needed.
   `dev.anydm.engine.core` (job model, states, queue), `dev.anydm.engine.store` (SQLite through
   SQLDelight) and `dev.anydm.engine.platform` (files, app folders, clock). Only the `jvm()` target
   for now; Android and iOS would add targets here. Source sets:
-  - `commonMain` is pure Kotlin.
+  - `commonMain` is pure Kotlin. With only a JVM target the compiler can't enforce that, so the
+    `checkCommonApis` task (part of `check`) is a heuristic: it rejects `java.`/`javax.` references
+    and `System`/`Thread`/`Runtime`/`Math`/`ProcessBuilder` use in `commonMain` and `commonTest`
+    (comments are ignored).
   - `jvmCommonMain` holds code that needs JVM libraries. `jvm` depends on it now and Android will
     later, so nothing desktop-only (`java.awt`, Swing) goes there. Until an Android target exists
     to enforce that, the `checkJvmCommonApis` task (part of `check`) fails on such references.
