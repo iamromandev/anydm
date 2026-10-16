@@ -16,6 +16,8 @@ import kotlinx.coroutines.sync.withLock
 internal class Checkpointer(
     private val writers: Map<FileId, FileWriter>,
     private val store: PlanStore,
+    /** The file each segment belongs to: a checkpoint marks its file for sync, as a library may write it directly. */
+    private val owners: Map<SegmentId, FileId>,
 ) {
     private val lock = Mutex()
     private val pending = mutableMapOf<SegmentId, Long>()
@@ -27,14 +29,18 @@ internal class Checkpointer(
     /** The segments are written up to these offsets; a lower offset than one already recorded is ignored. */
     suspend fun record(watermarks: Map<SegmentId, Long>) =
         lock.withLock {
-            for ((segment, at) in watermarks) pending[segment] = maxOf(at, pending[segment] ?: at)
+            for ((segment, at) in watermarks) {
+                pending[segment] = maxOf(at, pending[segment] ?: at)
+                owners[segment]?.let { dirty += it }
+            }
         }
 
     /** Syncs every written file, then saves the watermarks. If a sync fails nothing is saved, and the next flush tries again. */
     suspend fun flush(): StepResult<Unit> =
         lock.withLock {
             for (file in dirty) {
-                val synced = writers.getValue(file).sync()
+                // A file placed by an earlier run has no writer, and nothing new to sync.
+                val synced = writers[file]?.sync() ?: continue
                 if (synced is FileResult.Failed) return@withLock synced.toStepFailed()
             }
             if (pending.isNotEmpty()) store.saveWatermarks(pending.toMap())

@@ -20,6 +20,7 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.fakeContent
 import dev.anydm.engine.store.InMemoryPlanStore
+import dev.anydm.engine.store.PlanStore
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -834,6 +835,68 @@ class StepRunnerTest {
             h.runner.run(ready.copy(download = failed.download.movedTo(QUEUED)), h.listener).shouldBeInstanceOf<RunOutcome.Finished>()
 
             h.protocol.fetched.none { it.index == 0 } shouldBe true
+            h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
+            h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
+        }
+
+    // Final review fixes (#554)
+
+    private fun runnerOver(
+        store: PlanStore,
+        fs: FakeFileSystem,
+        protocol: FakeProtocol,
+    ) = StepRunner(fs, store, mapOf(DownloadKind.DIRECT to protocol), stepRoot, freeSpaceReserve = 0)
+
+    private class FailingSaves(
+        private val inner: InMemoryPlanStore,
+    ) : PlanStore by inner {
+        override suspend fun saveWatermarks(watermarks: Map<SegmentId, Long>): Unit = throw IllegalStateException("store gone")
+    }
+
+    @Test
+    fun aStoreFailureInATickIsTheErrorThatLeaves() =
+        runTest {
+            val fs = FakeFileSystem()
+            val runner =
+                runnerOver(FailingSaves(InMemoryPlanStore().also { it.register(DownloadId(1)) }), fs, FakeProtocol(bytesPerSecond = 1024))
+            val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+            shouldThrow<IllegalStateException> { runner.run(ready) }.message shouldBe "store gone"
+            fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aStoreFailureInTheFinalFlushStillClosesTheWriters() =
+        runTest {
+            val fs = FakeFileSystem()
+            val runner = runnerOver(FailingSaves(InMemoryPlanStore().also { it.register(DownloadId(1)) }), fs, FakeProtocol())
+            val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+            shouldThrow<IllegalStateException> { runner.run(ready) }.message shouldBe "store gone"
+            fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aSourceThatChangedAfterItsOutputsWerePlacedStillFinishes() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.files = listOf(FakeFile("a.bin", 4096), FakeFile("b.bin", 4096))
+            var failOnce = true
+            h.fs.faults[FakeFileSystem.Op.ATOMIC_MOVE] = { source ->
+                if (failOnce &&
+                    source.name.startsWith("b.bin")
+                ) {
+                    FileResult.IoError(source, "stopped here").also { failOnce = false }
+                } else {
+                    null
+                }
+            }
+            h.protocol.validator = "v"
+            h.runAll()
+            h.protocol.validator = "w"
+
+            h.runAll(aPendingDownload().copy(sourceValidator = "v")).failure shouldBe null
+
             h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
             h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
         }

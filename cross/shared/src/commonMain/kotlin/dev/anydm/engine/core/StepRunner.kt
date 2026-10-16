@@ -22,6 +22,7 @@ import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewFile
 import dev.anydm.engine.store.NewSegment
 import dev.anydm.engine.store.PlanStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -113,7 +114,10 @@ class StepRunner(
                 is StepResult.Ok -> probed.value
             }
         val stored = download.sourceValidator
-        val probed = probe.validator
+        var probed = probe.validator
+        // Every byte already fetched is one whole copy of the old source (its outputs may be placed): nothing would be
+        // appended, so it is kept, still marked with the old validator.
+        if (stored != null && probed != null && probed != stored && allFetched(download.id)) probed = stored
         if (stored != null && probed != null && probed != stored) {
             val dropped = dropPartials(download, folder)
             if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)
@@ -135,6 +139,12 @@ class StepRunner(
                 ).moveTo(QUEUED)
         listener.moved(queued)
         return PrepareOutcome.Ready(queued, mirror, probe)
+    }
+
+    /** True when the download has stored files and every one of their segments is written to its end. */
+    private suspend fun allFetched(id: DownloadId): Boolean {
+        val files = store.files(id)
+        return files.isNotEmpty() && files.all { file -> store.segments(file.id).all { it.watermark == it.end } }
     }
 
     /**
@@ -233,10 +243,11 @@ class StepRunner(
                 is StepResult.Ok -> planned.value
             }
         val writers = mutableMapOf<FileId, FileWriter>()
-        val checkpointer = Checkpointer(writers, store)
+        val owners = mutableMapOf<SegmentId, FileId>()
+        val checkpointer = Checkpointer(writers, store, owners)
         val result =
             try {
-                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, checkpointer)
+                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, owners, checkpointer)
             } catch (e: Throwable) {
                 // A pause, cancel or quit (or a bug) still keeps what was written: everything is durable up to here.
                 try {
@@ -249,7 +260,13 @@ class StepRunner(
                 throw e
             }
         // On success this is what makes the transfer durable before finalize and the rename build on it.
-        val flushed = withContext(NonCancellable) { checkpointer.flush() }
+        val flushed =
+            try {
+                withContext(NonCancellable) { checkpointer.flush() }
+            } catch (e: Throwable) {
+                closeAll(writers.values, e)
+                throw e
+            }
         closeAll(writers.values, null)
         return if (result is StepResult.Ok && flushed is StepResult.Failed) flushed else result
     }
@@ -265,6 +282,7 @@ class StepRunner(
         limiter: Limiter,
         meter: Meter,
         writers: MutableMap<FileId, FileWriter>,
+        owners: MutableMap<SegmentId, FileId>,
         checkpointer: Checkpointer,
     ): StepResult<Transfer> {
         val transfer =
@@ -272,6 +290,7 @@ class StepRunner(
                 is StepResult.Failed -> return opened
                 is StepResult.Ok -> opened.value
             }
+        for (part in transfer.files) part.segments.forEach { owners[it.id] = part.file.id }
         val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
         val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total)
         val moved = transferWithCheckpoints(protocol, transfer, io, checkpointer)
@@ -313,7 +332,8 @@ class StepRunner(
         } catch (e: TickFailed) {
             e.failure
         } catch (e: Throwable) {
-            throw thrown ?: e
+            // The body's cancellation is only a symptom when the ticker failed for real (the store, say).
+            throw thrown?.takeUnless { it is CancellationException && e !is CancellationException } ?: e
         }
     }
 

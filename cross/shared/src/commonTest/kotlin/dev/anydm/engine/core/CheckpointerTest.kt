@@ -53,7 +53,7 @@ class CheckpointerTest {
                 fs.preallocate(path, 100)
                 file.id to fs.openWriter(path).shouldBeInstanceOf<FileResult.Ok<FileWriter>>().value
             }
-        return Setup(fs, store, files, segments, Checkpointer(writers, store))
+        return Setup(fs, store, files, segments, Checkpointer(writers, store, segments.associate { it.id to it.fileId }))
     }
 
     @Test
@@ -122,5 +122,17 @@ class CheckpointerTest {
             s.checkpointer.flush()
 
             s.fs.syncs shouldBe 1
+        }
+
+    @Test
+    fun aCheckpointSyncsTheFileItCoversEvenWithoutAWrite() =
+        runTest {
+            // A protocol whose library writes the partial itself only reports checkpoints.
+            val s = setup()
+            s.checkpointer.record(mapOf(s.segments[1].id to 30L))
+
+            s.checkpointer.flush()
+
+            s.store.saves shouldBe listOf(1 to mapOf(s.segments[1].id to 30L))
         }
 }
