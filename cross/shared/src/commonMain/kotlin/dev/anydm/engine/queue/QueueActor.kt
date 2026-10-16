@@ -32,6 +32,7 @@ import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -90,6 +91,7 @@ internal class QueueActor(
                 slotScope = this
                 try {
                     settings = store.settings.load()
+                    reconcile()
                     reschedule()
                     started.complete(Unit)
                     for (message in inbox) handle(message)
@@ -174,7 +176,11 @@ internal class QueueActor(
 
     // Commands
 
-    suspend fun add(new: NewDownload): CommandResult = CommandResult.Done(downloads.add(new.copy(queuedAt = clock.now())))
+    suspend fun add(new: NewDownload): CommandResult {
+        val added = downloads.add(new.copy(queuedAt = clock.now()))
+        val held = holdIfGlobal(added)
+        return CommandResult.Done(if (held == added) added else save(held))
+    }
 
     suspend fun pause(
         id: DownloadId,
@@ -186,7 +192,7 @@ internal class QueueActor(
             if (job.status != PAUSED) {
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
-                change(job.transitionTo(QUEUED)) { it.copy(queuedAt = clock.now()) }
+                change(job.transitionTo(QUEUED)) { holdIfGlobal(it.copy(queuedAt = clock.now())) }
             }
         }
 
@@ -206,7 +212,9 @@ internal class QueueActor(
             if (job.status != FAILED) {
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
-                change(job.transitionTo(QUEUED)) { it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()) }
+                change(job.transitionTo(QUEUED)) {
+                    holdIfGlobal(it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()))
+                }
             }
         }
 
@@ -217,6 +225,96 @@ internal class QueueActor(
         val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(priority = priority))) }
         slot.download = save(slot.download.copy(priority = priority))
         return CommandResult.Done(slot.download)
+    }
+
+    /**
+     * Global pause (FND-05): the setting first, so a crash halfway leaves it on and [reconcile] finishes the job. A
+     * running job is stopped; the reply comes once every stopped slot has ended.
+     */
+    suspend fun pauseAll(reply: CompletableDeferred<CommandResult>) {
+        settings = store.settings.update { it.copy(globalPause = true) }
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (job in downloads.list()) {
+            val slot = slots[job.id]
+            if (slot != null) {
+                stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterGlobalStop, it) }
+            } else if (job.status in ACTIVE || job.status == PAUSED) {
+                save((job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download)
+            }
+        }
+        if (stopping.isEmpty()) {
+            reply.complete(CommandResult.Done(null))
+        } else {
+            slotScope.launch {
+                try {
+                    stopping.awaitAll()
+                    reply.complete(CommandResult.Done(null))
+                } catch (e: Throwable) {
+                    reply.completeExceptionally(e)
+                }
+            }
+        }
+    }
+
+    /** Ends global pause: the jobs first, then the setting (the reverse of [pauseAll], for the same reason). */
+    suspend fun resumeAll(): CommandResult {
+        for (job in downloads.list(PAUSED)) release(job)
+        settings = store.settings.update { it.copy(globalPause = false) }
+        return CommandResult.Done(null)
+    }
+
+    /** The limit applies at once: the next reschedule preempts what is over it. */
+    suspend fun setLimit(limit: Int): CommandResult {
+        settings = store.settings.update { it.copy(concurrencyLimit = limit) }
+        return CommandResult.Done(null)
+    }
+
+    // A slot stopped by pauseAll: paused GLOBAL, unless resumeAll came first while it stopped.
+    private suspend fun afterGlobalStop(job: Download): CommandResult =
+        if (settings.globalPause) change(job.pause(PauseReason.GLOBAL)) else requeue(job)
+
+    // A slot stopped to give its place back: waiting again, at the back of its priority.
+    private suspend fun requeue(job: Download): CommandResult {
+        val waiting = if (job.status == DOWNLOADING) job.moved(QUEUED) else job
+        return CommandResult.Done(if (waiting.status in WAITING) save(waiting.copy(queuedAt = clock.now())) else waiting)
+    }
+
+    private suspend fun release(job: Download) {
+        val released = (job.release(PauseReason.GLOBAL) as TransitionResult.Moved).download
+        if (released != job) save(if (released.status == QUEUED) released.copy(queuedAt = clock.now()) else released)
+    }
+
+    /** While global pause is on, a job that starts waiting waits paused instead. */
+    private fun holdIfGlobal(job: Download): Download =
+        if (settings.globalPause && job.status in WAITING) (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download else job
+
+    /**
+     * After a restart nothing runs: a job left mid-run waits again (DOWNLOADING to PENDING for a fresh probe, MUXING to
+     * QUEUED), every waiting job has a queued time, and every job agrees with the global pause setting. Checking the
+     * partial files is #554's.
+     */
+    private suspend fun reconcile() {
+        val now = clock.now()
+        for (job in downloads.list()) {
+            var fixed =
+                when (job.status) {
+                    DOWNLOADING -> job.moved(PENDING).copy(queuedAt = now)
+                    MUXING -> job.moved(QUEUED).copy(queuedAt = now)
+                    else -> job
+                }
+            if (fixed.status in WAITING && fixed.queuedAt == null) fixed = fixed.copy(queuedAt = now)
+            if (settings.globalPause) {
+                if (fixed.status in WAITING ||
+                    fixed.status == PAUSED
+                ) {
+                    fixed = (fixed.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
+                }
+                if (fixed != job) save(fixed)
+            } else {
+                if (fixed != job) save(fixed)
+                release(fixed)
+            }
+        }
     }
 
     private suspend fun removeJob(
@@ -296,6 +394,7 @@ internal class QueueActor(
         val decision = schedule(waiting, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = waiting.associateBy { it.id }
         decision.start.forEach { launchSlot(byId.getValue(it)) }
+        decision.preempt.forEach { stop(slots.getValue(it), ::requeue, null) }
     }
 
     private suspend fun launchSlot(download: Download) {
@@ -403,6 +502,7 @@ internal class QueueActor(
     private companion object {
         val FINISHED = setOf(COMPLETED, SEEDING)
         val ACTIVE = setOf(PENDING, QUEUED, DOWNLOADING, MUXING)
+        val WAITING = setOf(PENDING, QUEUED)
     }
 }
 

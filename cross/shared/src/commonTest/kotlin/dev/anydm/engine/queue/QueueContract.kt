@@ -7,6 +7,7 @@ import dev.anydm.engine.core.DownloadStatus.CANCELLED
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
+import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
@@ -17,7 +18,10 @@ import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.platform.virtualEpoch
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
+import dev.anydm.engine.protocol.FinalizeResult
+import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.assertions.throwables.shouldThrow
@@ -503,5 +507,180 @@ abstract class QueueContract : StoreTestBase() {
             val a = h.addJob()
             h.queue.remove(a, RemoveFiles.KEEP) shouldBe CommandResult.Done(null)
             h.queue.remove(a, RemoveFiles.KEEP) shouldBe CommandResult.NotFound
+        }
+
+    // Global pause and the limit
+
+    @Test
+    fun pauseAllPausesEveryActiveJobAndFreesEverySlot() =
+        runTest {
+            val h = started(limit = 2)
+            val ids = List(3) { h.addJob() }
+            advanceTimeBy(1.seconds)
+
+            h.queue.pauseAll() shouldBe CommandResult.Done(null)
+            settle()
+
+            ids.map { h.job(it)!!.status to h.job(it)!!.pauseReasons } shouldBe List(3) { PAUSED to setOf(PauseReason.GLOBAL) }
+            h.queue.inspect().running shouldBe emptySet()
+            h.queue.inspect().globalPause shouldBe true
+            h.store.settings
+                .load()
+                .globalPause shouldBe true
+        }
+
+    @Test
+    fun resumeAllResumesOnlyWhatItPaused() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            val b = h.addJob()
+            h.queue.pause(a)
+            h.queue.pauseAll()
+
+            h.queue.resumeAll() shouldBe CommandResult.Done(null)
+            settle()
+
+            h.job(a)!!.pauseReasons shouldBe setOf(PauseReason.USER)
+            h.statusesShouldBe(a to PAUSED, b to COMPLETED)
+            h.store.settings
+                .load()
+                .globalPause shouldBe false
+        }
+
+    @Test
+    fun aUserResumeDuringGlobalPauseLeavesItPausedGlobally() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            h.queue.pause(a)
+            h.queue.pauseAll()
+            h.job(a)!!.pauseReasons shouldBe setOf(PauseReason.USER, PauseReason.GLOBAL)
+
+            val resumed =
+                h.queue
+                    .resume(a)
+                    .shouldBeInstanceOf<CommandResult.Done>()
+                    .download!!
+
+            resumed.status shouldBe PAUSED
+            resumed.pauseReasons shouldBe setOf(PauseReason.GLOBAL)
+        }
+
+    @Test
+    fun aJobAddedDuringGlobalPauseStartsPaused() =
+        runTest {
+            val h = started()
+            h.queue.pauseAll()
+
+            val a = h.addJob()
+            settle()
+
+            h.job(a)!!.status shouldBe PAUSED
+            h.job(a)!!.pauseReasons shouldBe setOf(PauseReason.GLOBAL)
+        }
+
+    @Test
+    fun aRetryDuringGlobalPauseWaitsPaused() =
+        runTest {
+            val protocol = FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(null, "nope")))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            settle()
+            protocol.failure = null
+            h.queue.pauseAll()
+
+            h.queue
+                .retry(a)
+                .shouldBeInstanceOf<CommandResult.Done>()
+                .download!!
+                .pauseReasons shouldBe setOf(PauseReason.GLOBAL)
+            h.queue.resumeAll()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun pauseAllThenResumeAllBeforeTheSlotsStopRequeuesThem() =
+        runTest {
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(stopDelay = 1.seconds)) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            val paused = async { h.queue.pauseAll() }
+            runCurrent()
+            h.queue.resumeAll()
+            settle()
+
+            paused.await() shouldBe CommandResult.Done(null)
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun loweringTheLimitPreemptsTheLowestPriority() =
+        runTest {
+            val h = started()
+            val p1 = h.addJob(priority = 1)
+            val p2 = h.addJob(priority = 2)
+            val p3 = h.addJob(priority = 3)
+            advanceTimeBy(1.seconds)
+
+            h.queue.setLimit(1) shouldBe CommandResult.Done(null)
+            runCurrent()
+
+            h.statusesShouldBe(p1 to QUEUED, p2 to QUEUED, p3 to DOWNLOADING)
+            settle()
+            h.finished shouldBe listOf(p3, p2, p1)
+        }
+
+    @Test
+    fun loweringTheLimitNeverPreemptsMuxing() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val quick = FakeProtocol()
+            val gated =
+                object : Protocol by quick {
+                    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
+                        gate.await()
+                        return quick.finalize(transfer)
+                    }
+                }
+            val slow = FakeProtocol(bytesPerSecond = 1024)
+            val h = started { QueueHarness(it, newStore(), slow, mapOf(DownloadKind.SITE to gated, DownloadKind.DIRECT to slow)) }
+            val muxing = h.addJob(kind = DownloadKind.SITE)
+            val downloading = h.addJob()
+            advanceTimeBy(5.seconds)
+            h.status(muxing) shouldBe MUXING
+
+            h.queue.setLimit(1)
+            runCurrent()
+
+            h.statusesShouldBe(muxing to MUXING, downloading to QUEUED)
+            gate.complete(Unit)
+        }
+
+    @Test
+    fun resumeAllAfterALimitChangeStartsOnlyTheLimit() =
+        runTest {
+            val h = started()
+            repeat(5) { h.addJob() }
+            h.queue.pauseAll()
+            h.queue.setLimit(2)
+
+            h.queue.resumeAll()
+            runCurrent()
+
+            h.queue
+                .inspect()
+                .running.size shouldBe 2
+        }
+
+    @Test
+    fun aLimitBelowOneIsRefused() =
+        runTest {
+            val h = started()
+
+            shouldThrow<IllegalArgumentException> { h.queue.setLimit(0) }
         }
 }

@@ -67,6 +67,18 @@ class Queue(
         priority: Int,
     ): CommandResult = actor.call { reprioritize(id, priority) }
 
+    /** Pauses everything (GLOBAL), running jobs included, and keeps it paused across restarts (FND-05). */
+    suspend fun pauseAll(): CommandResult = actor.callLater { pauseAll(it) }
+
+    /** Ends global pause; jobs also paused for another reason stay paused. */
+    suspend fun resumeAll(): CommandResult = actor.call { resumeAll() }
+
+    /** Sets how many jobs may run at once. A lower limit stops the lowest-priority running jobs (never MUXING ones). */
+    suspend fun setLimit(limit: Int): CommandResult {
+        require(limit >= 1) { "limit must be >= 1: $limit" }
+        return actor.call { setLimit(limit) }
+    }
+
     /** For tests: what holds a slot right now. */
     internal suspend fun inspect(): QueueState = actor.inspect()
 }
