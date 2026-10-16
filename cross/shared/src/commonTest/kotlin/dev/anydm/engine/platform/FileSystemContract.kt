@@ -6,7 +6,11 @@ import io.kotest.matchers.longs.shouldBeGreaterThan
 import io.kotest.matchers.longs.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlin.math.abs
@@ -116,6 +120,8 @@ abstract class FileSystemContract {
             fs.atomicMove(bad, Path(root, "x")).shouldBeInstanceOf<FileResult.InvalidName>().path shouldBe bad
             fs.atomicMove(good, bad).shouldBeInstanceOf<FileResult.InvalidName>().path shouldBe bad
             fs.moveToTrash(bad).shouldBeInstanceOf<FileResult.InvalidName>().path shouldBe bad
+            fs.openWriter(bad).shouldBeInstanceOf<FileResult.InvalidName>().path shouldBe bad
+            fs.delete(bad).shouldBeInstanceOf<FileResult.InvalidName>().path shouldBe bad
             readText(good) shouldBe "x"
             namesIn(root) shouldBe before
             namesIn(trash).shouldBeEmpty()
@@ -220,6 +226,146 @@ abstract class FileSystemContract {
         }
 
     @Test
+    fun aWriterWritesAtAnyOffset() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "video.mp4.anydm")
+            fs.preallocate(file, 10) shouldBe FileResult.Ok(Unit)
+            fs.openWriter(file).value().use { writer ->
+                writer.write(7, "abc".encodeToByteArray()) shouldBe FileResult.Ok(Unit)
+                writer.write(0, "..xy..".encodeToByteArray(), startIndex = 2, endIndex = 4) shouldBe FileResult.Ok(Unit)
+            }
+            readBytes(file) shouldBe "xy".encodeToByteArray() + ByteArray(5) + "abc".encodeToByteArray()
+        }
+
+    @Test
+    fun aWriterTakesParallelWritesToSeparateRanges() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "video.mp4.anydm")
+            val chunk = 4096
+            fs.preallocate(file, 16L * chunk) shouldBe FileResult.Ok(Unit)
+            fs.openWriter(file).value().use { writer ->
+                val results =
+                    withContext(Dispatchers.Default) {
+                        (0 until 16)
+                            .map { i -> async { writer.write(i.toLong() * chunk, ByteArray(chunk) { i.toByte() }) } }
+                            .awaitAll()
+                    }
+                results.all { it == FileResult.Ok(Unit) } shouldBe true
+            }
+            readBytes(file) shouldBe ByteArray(16 * chunk) { (it / chunk).toByte() }
+        }
+
+    @Test
+    fun aWriteBeyondTheEndGrowsTheFile() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "grow.anydm")
+            fs.preallocate(file, 0) shouldBe FileResult.Ok(Unit)
+            fs.openWriter(file).value().use { it.write(4, "z".encodeToByteArray()) shouldBe FileResult.Ok(Unit) }
+            sizeOf(file) shouldBe 5L
+        }
+
+    @Test
+    fun openWriterNeverCreatesAFile() =
+        runTest {
+            val file = Path(root, "missing.anydm")
+            fileSystem(trash).openWriter(file).shouldBeInstanceOf<FileResult.NotFound>().path shouldBe file
+            exists(file) shouldBe false
+        }
+
+    @Test
+    fun openWriterRefusesAFolder() =
+        runTest {
+            val folder = Path(root, "album").also { SystemFileSystem.createDirectories(it) }
+            fileSystem(trash).openWriter(folder).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe folder
+        }
+
+    @Test
+    fun aClosedWriterThrows() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "video.mp4.anydm")
+            fs.preallocate(file, 10) shouldBe FileResult.Ok(Unit)
+            val writer = fs.openWriter(file).value()
+            writer.close()
+            shouldThrow<IllegalStateException> { writer.write(0, ByteArray(1)) }
+            shouldThrow<IllegalStateException> { writer.size() }
+            shouldThrow<IllegalStateException> { writer.sync() }
+        }
+
+    @Test
+    fun aWriterReportsTheLengthOfItsFile() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "video.mp4.anydm")
+            fs.preallocate(file, 10) shouldBe FileResult.Ok(Unit)
+            fs.openWriter(file).value().use { writer ->
+                writer.size() shouldBe FileResult.Ok(10L)
+                writer.write(20, ByteArray(1)) shouldBe FileResult.Ok(Unit)
+                writer.size() shouldBe FileResult.Ok(21L)
+            }
+        }
+
+    @Test
+    fun aWriterSyncsWhatItWrote() =
+        runTest {
+            val fs = fileSystem(trash)
+            val file = Path(root, "video.mp4.anydm")
+            fs.preallocate(file, 4) shouldBe FileResult.Ok(Unit)
+            fs.openWriter(file).value().use { writer ->
+                writer.write(0, "abcd".encodeToByteArray()) shouldBe FileResult.Ok(Unit)
+                writer.sync() shouldBe FileResult.Ok(Unit)
+            }
+            readText(file) shouldBe "abcd"
+        }
+
+    @Test
+    fun atomicMoveWithoutReplaceLeavesAnExistingTargetAlone() =
+        runTest {
+            val source = Path(root, "video.mp4.anydm").also { writeText(it, "new") }
+            val target = Path(root, "video.mp4").also { writeText(it, "old") }
+            fileSystem(trash).atomicMove(source, target, replace = false).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe
+                target
+            readText(target) shouldBe "old"
+            readText(source) shouldBe "new"
+        }
+
+    @Test
+    fun atomicMoveWithoutReplaceStillMovesToAFreeName() =
+        runTest {
+            val source = Path(root, "video.mp4.anydm").also { writeText(it, "new") }
+            val target = Path(root, "video.mp4")
+            fileSystem(trash).atomicMove(source, target, replace = false) shouldBe FileResult.Ok(Unit)
+            readText(target) shouldBe "new"
+            exists(source) shouldBe false
+        }
+
+    @Test
+    fun deleteRemovesAFile() =
+        runTest {
+            val file = Path(root, "video.mp4.anydm").also { writeText(it, "stale") }
+            fileSystem(trash).delete(file) shouldBe FileResult.Ok(Unit)
+            exists(file) shouldBe false
+        }
+
+    @Test
+    fun deleteOfAMissingFileIsNotFound() =
+        runTest {
+            val file = Path(root, "gone.anydm")
+            fileSystem(trash).delete(file).shouldBeInstanceOf<FileResult.NotFound>().path shouldBe file
+        }
+
+    @Test
+    fun deleteWontRemoveAFolder() =
+        runTest {
+            val folder = Path(root, "album").also { SystemFileSystem.createDirectories(it) }
+            fileSystem(trash).delete(folder).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe folder
+            isFolder(folder) shouldBe true
+        }
+
+    @Test
     fun everyCallRejectsARelativePath() =
         runTest {
             val fs = fileSystem(trash)
@@ -230,6 +376,8 @@ abstract class FileSystemContract {
             shouldThrow<IllegalArgumentException> { fs.atomicMove(relative, Path(root, "x")) }
             shouldThrow<IllegalArgumentException> { fs.atomicMove(Path(root, "x"), relative) }
             shouldThrow<IllegalArgumentException> { fs.moveToTrash(relative) }
+            shouldThrow<IllegalArgumentException> { fs.openWriter(relative) }
+            shouldThrow<IllegalArgumentException> { fs.delete(relative) }
         }
 }
 

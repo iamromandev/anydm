@@ -1,5 +1,6 @@
 package dev.anydm.engine.platform
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -24,6 +25,8 @@ import java.nio.file.Path as NioPath
 class DesktopFileSystem internal constructor(
     private val io: CoroutineDispatcher,
     private val trashBin: TrashBin,
+    // A seam for tests: told of every writer the moment its file is open.
+    private val onWriterOpened: (DesktopFileWriter) -> Unit = {},
 ) : FileSystem {
     constructor() : this(Dispatchers.IO, DesktopTrashBin)
 
@@ -85,6 +88,7 @@ class DesktopFileSystem internal constructor(
     override suspend fun atomicMove(
         source: Path,
         target: Path,
+        replace: Boolean,
     ): FileResult<Unit> {
         requireAbsolute(source)
         requireAbsolute(target)
@@ -104,6 +108,11 @@ class DesktopFileSystem internal constructor(
                 // rename(2) and MoveFileEx refuse a folder target differently; refuse it one way everywhere.
                 Files.isDirectory(to, NOFOLLOW_LINKS) -> {
                     FileResult.AlreadyExists(target, "a folder is in the way")
+                }
+
+                // Best effort: rename(2) replaces silently, so a file that appears after this check is replaced.
+                !replace && Files.exists(to, NOFOLLOW_LINKS) -> {
+                    FileResult.AlreadyExists(target, "a file is already there")
                 }
 
                 else -> {
@@ -126,6 +135,44 @@ class DesktopFileSystem internal constructor(
                 !Files.exists(item, NOFOLLOW_LINKS) -> FileResult.NotFound(path)
                 !trashBin.isAvailable -> FileResult.TrashUnavailable(path)
                 else -> attempt(path) { if (!trashBin.moveToTrash(item)) throw IOException("the trash refused it") }
+            }
+        }
+    }
+
+    override suspend fun openWriter(path: Path): FileResult<FileWriter> {
+        requireAbsolute(path)
+        // withContext throws away the result of a call whose caller was cancelled meanwhile, which would leave the
+        // channel it opened unclosed for good. So the channel is kept here, and closed if the call ends cancelled.
+        var opened: DesktopFileWriter? = null
+        try {
+            return blocking {
+                val file = path.nio()
+                if (Files.isDirectory(file)) {
+                    FileResult.AlreadyExists(path, "a folder is in the way")
+                } else {
+                    // No CREATE: a missing file is NotFound.
+                    attempt<FileWriter>(path) {
+                        DesktopFileWriter(path, FileChannel.open(file, WRITE), io).also {
+                            opened = it
+                            onWriterOpened(it)
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            opened?.close()
+            throw e
+        }
+    }
+
+    override suspend fun delete(path: Path): FileResult<Unit> {
+        requireAbsolute(path)
+        return blocking(cancellable = false) {
+            val file = path.nio()
+            when {
+                !Files.exists(file, NOFOLLOW_LINKS) -> FileResult.NotFound(path)
+                Files.isDirectory(file, NOFOLLOW_LINKS) -> FileResult.AlreadyExists(path, "a folder is in the way")
+                else -> attempt(path) { Files.delete(file) }
             }
         }
     }
