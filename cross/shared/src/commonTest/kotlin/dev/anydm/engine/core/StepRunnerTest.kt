@@ -31,11 +31,14 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -641,4 +644,109 @@ class StepRunnerTest {
             val ready = runner.prepare(aPendingDownload(), aMirror()).shouldBeInstanceOf<PrepareOutcome.Ready>()
             shouldThrow<IllegalArgumentException> { runner.run(ready) }
         }
+
+    // Batched checkpoints (#554). At 1 KiB/s a 4 KiB chunk lands every 4 s, so 64 KiB takes 64 s.
+
+    private fun TestScope.slowRun(h: StepHarness): Job {
+        h.protocol.bytesPerSecond = 1024
+        val ready = runBlockingPrepare(h)
+        return launch { h.runner.run(ready, h.listener) }
+    }
+
+    private fun TestScope.runBlockingPrepare(h: StepHarness): PrepareOutcome.Ready {
+        var ready: PrepareOutcome.Ready? = null
+        launch { ready = h.prepare().shouldBeInstanceOf<PrepareOutcome.Ready>() }
+        testScheduler.runCurrent()
+        return ready!!
+    }
+
+    @Test
+    fun checkpointsAreSavedEveryInterval() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+
+            testScheduler.advanceTimeBy(14_900.milliseconds)
+            h.store.written() shouldBe 0L
+            testScheduler.advanceTimeBy(200.milliseconds)
+            h.store.written() shouldBe 3 * 4096L
+
+            job.cancel()
+        }
+
+    @Test
+    fun stoppingSavesEverythingWritten() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(9.seconds)
+
+            job.cancel()
+            job.join()
+
+            h.store.written() shouldBe h.protocol.fetched.sumOf { it.end - it.start }
+            h.store.written() shouldBe 2 * 4096L
+        }
+
+    @Test
+    fun aFailedStepSavesItsBytesFirst() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+
+            h.runAll().failure!!.step shouldBe Step.TRANSFER
+
+            h.store.written() shouldBe 10_000L
+        }
+
+    @Test
+    fun aFailedTickSyncEndsTheStep() =
+        runTest {
+            val h = StepHarness()
+            h.fs.faults[FakeFileSystem.Op.SYNC] = { FileResult.IoError(it, "disk gone") }
+            h.protocol.bytesPerSecond = 1024
+
+            val result = h.runAll()
+
+            result.failure!!.step shouldBe Step.TRANSFER
+            h.store.written() shouldBe 0L
+            (h.protocol.fetched.sumOf { it.end - it.start } < 64 * 1024L) shouldBe true
+            h.fs.openWriters shouldBe 0
+        }
+
+    @Test
+    fun aStopRightAfterATickSavesNothingNew() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(15_500.milliseconds) // chunks at 4, 8, 12 s; tick at 15 s; next chunk at 16 s
+            h.fs.syncs shouldBe 1
+
+            job.cancel()
+            job.join()
+
+            h.fs.syncs shouldBe 1
+            h.store.written() shouldBe 3 * 4096L
+        }
+
+    @Test
+    fun aFailedFinalFlushStillLetsThePauseFinish() =
+        runTest {
+            val h = StepHarness()
+            val job = slowRun(h)
+            testScheduler.advanceTimeBy(5.seconds)
+            h.fs.faults[FakeFileSystem.Op.SYNC] = { FileResult.IoError(it, "disk gone") }
+
+            job.cancel()
+            job.join()
+
+            job.isCancelled shouldBe true
+            h.fs.openWriters shouldBe 0
+            h.store.written() shouldBe 0L
+        }
+
+    @Test
+    fun aCheckpointIntervalMustBePositive() {
+        shouldThrow<IllegalArgumentException> { StepHarness(checkpointEvery = Duration.ZERO) }
+    }
 }

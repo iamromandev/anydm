@@ -8,6 +8,7 @@ import dev.anydm.engine.store.InMemoryPlanStore
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemTemporaryDirectory
+import kotlin.time.Duration
 
 /** A save folder for the fakes; nothing is created there. */
 internal val stepRoot: Path = Path(SystemTemporaryDirectory, "anydm-step-runner")
@@ -82,6 +83,7 @@ internal data class JobResult(
 /** A StepRunner over the in-memory fakes, sharing one journal; FTP has no protocol. */
 internal class StepHarness(
     freeSpaceReserve: Long = 0,
+    checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
 ) {
     val journal = mutableListOf<String>()
     val protocol = FakeProtocol(journal = journal)
@@ -108,6 +110,7 @@ internal class StepHarness(
                 },
             finish = finish,
             freeSpaceReserve = freeSpaceReserve,
+            checkpointEvery = checkpointEvery,
         )
 
     suspend fun prepare(download: Download = aPendingDownload()): PrepareOutcome {

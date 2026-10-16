@@ -23,8 +23,13 @@ import dev.anydm.engine.store.NewFile
 import dev.anydm.engine.store.NewSegment
 import dev.anydm.engine.store.PlanStore
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Runs a job's steps with the [Protocol] of its kind (FND-03). The queue (#552) sits between two calls: [prepare] runs
@@ -69,8 +74,11 @@ class StepRunner(
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
+    /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
+    private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
 ) {
     init {
+        require(checkpointEvery.isPositive()) { "checkpointEvery must be positive: $checkpointEvery" }
         require(defaultFolder.isAbsolute) { "defaultFolder must be absolute: $defaultFolder" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
     }
@@ -198,15 +206,25 @@ class StepRunner(
                 is StepResult.Ok -> planned.value
             }
         val writers = mutableMapOf<FileId, FileWriter>()
+        val checkpointer = Checkpointer(writers, store)
         val result =
             try {
-                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers)
+                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, checkpointer)
             } catch (e: Throwable) {
+                // A pause, cancel or quit (or a bug) still keeps what was written: everything is durable up to here.
+                try {
+                    val flushed = withContext(NonCancellable) { checkpointer.flush() }
+                    if (flushed is StepResult.Failed) e.addSuppressed(IllegalStateException("final checkpoint failed: ${flushed.message}"))
+                } catch (flushError: Throwable) {
+                    e.addSuppressed(flushError)
+                }
                 closeAll(writers.values, e)
                 throw e
             }
+        // On success this is what makes the transfer durable before finalize and the rename build on it.
+        val flushed = withContext(NonCancellable) { checkpointer.flush() }
         closeAll(writers.values, null)
-        return result
+        return if (result is StepResult.Ok && flushed is StepResult.Failed) flushed else result
     }
 
     private suspend fun fetch(
@@ -220,6 +238,7 @@ class StepRunner(
         limiter: Limiter,
         meter: Meter,
         writers: MutableMap<FileId, FileWriter>,
+        checkpointer: Checkpointer,
     ): StepResult<Transfer> {
         val transfer =
             when (val opened = openFiles(download, job, plan, stored, folder, writers)) {
@@ -227,15 +246,54 @@ class StepRunner(
                 is StepResult.Ok -> opened.value
             }
         val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
-        val moved = protocol.transfer(transfer, RunIo(transfer, writers, store, limiter, meter, listener, total))
+        val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total)
+        val moved = transferWithCheckpoints(protocol, transfer, io, checkpointer)
         if (moved is StepResult.Failed) return moved
-        // Everything the transfer wrote is made durable before finalize and the rename build on it.
-        for (writer in writers.values) {
-            val synced = writer.sync()
-            if (synced is FileResult.Failed) return synced.toStepFailed()
-        }
         return StepResult.Ok(transfer)
     }
+
+    /**
+     * Runs the protocol's transfer beside a ticker that saves its checkpoints every [checkpointEvery]. A tick that can't
+     * sync the files stops the transfer, and its failure is the step's.
+     */
+    private suspend fun transferWithCheckpoints(
+        protocol: Protocol,
+        transfer: Transfer,
+        io: RunIo,
+        checkpointer: Checkpointer,
+    ): StepResult<Unit> {
+        // coroutineScope may hand back a copy of what its body threw (stack trace recovery): keep the original.
+        var thrown: Throwable? = null
+        return try {
+            coroutineScope {
+                val ticker =
+                    launch {
+                        while (true) {
+                            delay(checkpointEvery)
+                            val flushed = checkpointer.flush()
+                            if (flushed is StepResult.Failed) throw TickFailed(flushed)
+                        }
+                    }
+                try {
+                    protocol.transfer(transfer, io)
+                } catch (e: Throwable) {
+                    thrown = e
+                    throw e
+                } finally {
+                    ticker.cancel()
+                }
+            }
+        } catch (e: TickFailed) {
+            e.failure
+        } catch (e: Throwable) {
+            throw thrown ?: e
+        }
+    }
+
+    // How a failed tick stops the transfer beside it: it fails the scope, which cancels the transfer.
+    private class TickFailed(
+        val failure: StepResult.Failed,
+    ) : Exception(failure.message)
 
     /** Closes every writer, even if some close throws; see [transferStep] for what is thrown. */
     private fun closeAll(
@@ -444,6 +502,9 @@ class StepRunner(
     ): RunOutcome = RunOutcome.Failed(download, result.toFailure(step))
 
     companion object {
+        /** How often a running transfer saves its checkpoints (FND-09). */
+        val DEFAULT_CHECKPOINT_EVERY: Duration = 15.seconds
+
         /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
         const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
     }
