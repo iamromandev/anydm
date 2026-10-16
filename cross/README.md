@@ -16,6 +16,11 @@ own, with the engine in `shared/`; no server is needed.
     to enforce that, the `checkJvmCommonApis` task (part of `check`) fails on such references.
   - `jvmMain` is desktop only.
   - Each has a matching `*Test` source set.
+  - Platform code (`dev.anydm.engine.platform`) is interfaces in `commonMain` with desktop versions
+    in `jvmMain`. Paths are `kotlinx.io.files.Path`, and expected failures come back as a
+    `FileResult`. Engine code takes a `kotlin.time.Clock`: `Clock.System` in the app,
+    `virtualClock()` (on `runTest`'s virtual time) in tests. `FileSystem` has an abstract contract
+    test in `commonTest` that every implementation's test extends.
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in
