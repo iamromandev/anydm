@@ -4,10 +4,12 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
+import dev.anydm.engine.core.DownloadStatus.FAILED
 import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
@@ -33,7 +35,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
 
-/** Random command sequences against the queue (#552), each on a new database from [newDriver]. */
+/** Random command sequences against the queue (#552, #553), each on a new database from [newDriver]. */
 abstract class QueuePropertyContract {
     protected abstract fun newDriver(): SqlDriver
 
@@ -78,6 +80,8 @@ abstract class QueuePropertyContract {
         ) : Op
     }
 
+    private val kinds = listOf(DownloadKind.DIRECT, DownloadKind.DIRECT, DownloadKind.SITE, DownloadKind.TORRENT)
+
     // A job index picks among the jobs added so far; -1 is an id that never existed.
     private val arbJob = Arb.int(-1..9)
     private val arbOp: Arb<Op> =
@@ -117,10 +121,19 @@ abstract class QueuePropertyContract {
         store: Store,
         scope: CoroutineScope,
     ) {
-        // Every third job fails mid-transfer, so retry has FAILED jobs to act on.
+        // Jobs cycle through three kinds: one works; one fails mid-transfer for good, so retry has FAILED jobs to act on;
+        // one drops mid-transfer and retries, so timers, progress and waiting retries meet every command.
         val working = FakeProtocol()
         val failing = FakeProtocol(failure = FakeFailure.AtTransfer(8 * 1024, StepResult.Failed(null, "dropped")))
-        val h = QueueHarness(this, store, working, mapOf(DownloadKind.DIRECT to working, DownloadKind.SITE to failing), scope = scope)
+        val flaky = FakeProtocol(failure = FakeFailure.AtTransfer(8 * 1024, StepResult.Failed(ErrorClass.TRANSIENT, "reset")))
+        val h =
+            QueueHarness(
+                this,
+                store,
+                working,
+                mapOf(DownloadKind.DIRECT to working, DownloadKind.SITE to failing, DownloadKind.TORRENT to flaky),
+                scope = scope,
+            )
         h.queue.start()
         val added = mutableListOf<DownloadId>()
         val removed = mutableSetOf<DownloadId>()
@@ -129,7 +142,7 @@ abstract class QueuePropertyContract {
 
         for ((step, op) in ops.withIndex()) {
             when (op) {
-                Op.Add -> added += h.addJob(kind = if (added.size % 3 == 2) DownloadKind.SITE else DownloadKind.DIRECT)
+                Op.Add -> added += h.addJob(kind = kinds[added.size % kinds.size])
                 is Op.Pause -> h.queue.pause(pick(op.job))
                 is Op.Resume -> h.queue.resume(pick(op.job))
                 is Op.Cancel -> h.queue.cancel(pick(op.job))
@@ -159,7 +172,24 @@ abstract class QueuePropertyContract {
         jobs.keys shouldBe expected
         val holding = (state.running - state.stopping).count { jobs[it]?.status != MUXING }
         withClue("running $holding of limit ${state.limit}") { (holding <= state.limit) shouldBe true }
+        // Each slot has exactly one open attempt, and no other attempt is open.
+        withClue("open attempts") {
+            h.store.downloads
+                .openAttempts()
+                .map { it.downloadId }
+                .sortedBy { it.value } shouldBe state.running.sortedBy { it.value }
+        }
+        val now = h.clock.now()
         for (job in jobs.values) {
+            if (job.status == DOWNLOADING ||
+                job.status == MUXING
+            ) {
+                withClue("running without a slot: $job") { (job.id in state.running) shouldBe true }
+            }
+            if (job.id in state.running) {
+                withClue("a slot before its retry time: $job") { (job.nextAttemptAt.let { it == null || it <= now }) shouldBe true }
+                withClue("a failed job in a slot: $job") { (job.status == FAILED) shouldBe false }
+            }
             withClue(job) { (job.status == PAUSED) shouldBe job.pauseReasons.isNotEmpty() }
             if (state.globalPause && job.id !in state.stopping) {
                 withClue("global pause: $job") { (job.status in setOf(PENDING, QUEUED, DOWNLOADING, MUXING)) shouldBe false }
