@@ -19,7 +19,7 @@ internal class Slot(
     val mirror: Mirror?,
     /** This run's Attempt row, still open (DIA-03). */
     val attempt: Attempt,
-    /** The bytes the job's watermarks held when the run started, to tell whether it made progress. */
+    /** The bytes the job's stored watermarks held when the run started, to tell whether it made progress. */
     val writtenAtStart: Long,
 ) {
     val id: DownloadId = download.id
@@ -46,14 +46,10 @@ internal sealed interface SlotEnd {
         val outcome: RunOutcome.Finished,
     ) : SlotEnd
 
-    /**
-     * A step failed; [download] is the job in the status it failed in. [maxDownloaded] is the most bytes the run
-     * reported, or null if it reported none.
-     */
+    /** A step failed; [download] is the job in the status it failed in. */
     data class Failed(
         val download: Download,
         val failure: StepFailure,
-        val maxDownloaded: Long? = null,
     ) : SlotEnd
 
     data object Cancelled : SlotEnd

@@ -49,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -559,7 +560,9 @@ internal class QueueActor(
         wake =
             earliest?.let { at ->
                 slotScope.launch {
-                    delay(at - now)
+                    // At most a minute: delay runs on the monotonic clock, so a wall clock that moved (sleep, a
+                    // correction) is noticed at the next check. A wake that comes early only re-arms.
+                    delay(minOf(at - now, WAKE_CHECK))
                     inbox.trySend(Message.Wake)
                 }
             }
@@ -600,28 +603,19 @@ internal class QueueActor(
         val mirror =
             slot.mirror
                 ?: return SlotEnd.Failed(pending, StepFailure(Step.PREFLIGHT, null, "no source to download from"))
-        // The most bytes the run reported: did this attempt make progress (RetryPolicy's budget)?
-        var maxDownloaded: Long? = null
         val listener =
             object : RunListener {
                 override suspend fun moved(download: Download) {
                     report(slot, download)
                 }
-
-                override fun progress(
-                    downloaded: Long,
-                    total: Long?,
-                ) {
-                    maxDownloaded = maxOf(maxDownloaded ?: downloaded, downloaded)
-                }
             }
         val ready =
             when (val prepared = runner.prepare(pending, mirror, listener)) {
-                is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure, maxDownloaded)
+                is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }
         return when (val ran = runner.run(ready, listener)) {
-            is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure, maxDownloaded)
+            is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }
     }
@@ -705,7 +699,8 @@ internal class QueueActor(
         end: SlotEnd.Failed,
     ): Download {
         val job = slot.download.takeRun(end.download)
-        val madeProgress = end.maxDownloaded != null && end.maxDownloaded > slot.writtenAtStart
+        // Progress is what the stored watermarks gained: bytes a run fetched but never checkpointed are fetched again.
+        val madeProgress = writtenBytes(slot.id) > slot.writtenAtStart
         val next = nextMirror(downloads.mirrors(slot.id), downloads.attempts(slot.id))
         return when (val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now())) {
             is FailureAction.Retry -> {
@@ -743,6 +738,7 @@ internal class QueueActor(
         val FINISHED = setOf(COMPLETED, SEEDING)
         val ACTIVE = setOf(PENDING, QUEUED, DOWNLOADING, MUXING)
         val WAITING = setOf(PENDING, QUEUED)
+        val WAKE_CHECK = 1.minutes
     }
 }
 

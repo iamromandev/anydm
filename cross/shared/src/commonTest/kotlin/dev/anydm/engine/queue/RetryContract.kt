@@ -9,6 +9,7 @@ import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.platform.ShiftedClock
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.platform.virtualEpoch
@@ -34,6 +35,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -565,6 +567,57 @@ abstract class RetryContract : QueueTestBase() {
             relinked.nextAttemptAt shouldBe null
             relinked.attemptCount shouldBe 0
             relinked.queuedAt shouldBe waiting.queuedAt
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 2
+        }
+
+    // Final review fixes
+
+    @Test
+    fun aDropBeforeACheckpointStillUsesUpTheBudget() =
+        runTest {
+            // Bytes reach the partial, but the run drops before any watermark is stored: nothing durable was gained.
+            val fake = FakeProtocol(failure = FakeFailure.AtTransfer(8 * 1024, StepResult.Failed(ErrorClass.TRANSIENT, "reset")))
+            val noCheckpoints =
+                object : Protocol by fake {
+                    override suspend fun transfer(
+                        transfer: Transfer,
+                        io: TransferIo,
+                    ): StepResult<Unit> =
+                        fake.transfer(
+                            transfer,
+                            object : TransferIo by io {
+                                override suspend fun checkpoint(watermarks: Map<SegmentId, Long>) {}
+                            },
+                        )
+                }
+            val h = QueueHarness(this, newStore(), fake, DownloadKind.entries.associateWith { noCheckpoints })
+            h.store.settings.update { it.copy(maxRetries = 2) }
+            h.queue.start()
+            val a = h.addJob()
+            settle()
+
+            h.status(a) shouldBe FAILED
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 3
+        }
+
+    @Test
+    fun aWallClockJumpForwardIsNoticedWithinAMinute() =
+        runTest {
+            val shifted = ShiftedClock(virtualClock())
+            val h = started { QueueHarness(it, newStore(), clock = shifted) }
+            h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.RATE_LIMITED, "slow", 1.hours))
+            val a = h.addJob()
+            runCurrent()
+            h.protocol.failure = null
+
+            shifted.offset = 1.hours // the laptop slept, or the clock was corrected
+            advanceTimeBy(61.seconds)
+            runCurrent()
+
             h.store.downloads
                 .attempts(a)
                 .size shouldBe 2
