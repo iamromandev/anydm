@@ -486,4 +486,87 @@ abstract class RetryContract : QueueTestBase() {
             attempts.size shouldBe 6
             attempts.map { it.startedAt }.toSet() shouldBe setOf(t0)
         }
+
+    // Commands while a retry is pending
+
+    @Test
+    fun pauseKeepsAPendingRetryAndResumeRunsItNow() =
+        runTest {
+            val h = started()
+            h.protocol.failure = reset
+            val t0 = h.clock.now()
+            val a = h.addJob()
+            runCurrent()
+
+            h.queue.pause(a)
+            h.job(a)!!.status shouldBe PAUSED
+            h.job(a)!!.nextAttemptAt shouldBe t0 + 2.5.seconds
+
+            h.protocol.failure = null
+            advanceTimeBy(1.seconds)
+            h.queue.resume(a)
+            runCurrent()
+
+            h.job(a)!!.nextAttemptAt shouldBe null
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 2
+        }
+
+    @Test
+    fun aPendingRetryOutlastsAGlobalPause() =
+        runTest {
+            val h = started()
+            h.protocol.failure = reset
+            val t0 = h.clock.now()
+            val a = h.addJob()
+            runCurrent()
+
+            advanceTimeBy(1.seconds)
+            h.queue.pauseAll()
+            advanceTimeBy(0.5.seconds)
+            h.queue.resumeAll()
+            runCurrent()
+            h.job(a)!!.nextAttemptAt shouldBe t0 + 2.5.seconds
+
+            advanceTimeBy(0.9.seconds)
+            runCurrent()
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 1
+
+            advanceTimeBy(0.2.seconds)
+            runCurrent()
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 2
+        }
+
+    @Test
+    fun relinkRunsAPendingRetryNowAndKeepsItsPlace() =
+        runTest {
+            val h = started()
+            h.protocol.failure = reset
+            h.protocol.relinkAnswer = StepResult.Ok(Unit)
+            val a = h.addJob()
+            runCurrent()
+            val waiting = h.job(a)!!
+            waiting.attemptCount shouldBe 1
+
+            h.protocol.failure = null
+            val mirror =
+                h.store.downloads
+                    .mirrors(a)
+                    .single()
+            h.queue.relink(a, mirror.id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+            runCurrent()
+
+            val relinked = h.job(a)!!
+            relinked.nextAttemptAt shouldBe null
+            relinked.attemptCount shouldBe 0
+            relinked.queuedAt shouldBe waiting.queuedAt
+            h.store.downloads
+                .attempts(a)
+                .size shouldBe 2
+        }
 }

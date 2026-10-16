@@ -76,9 +76,12 @@ class Queue(
     /** Ends global pause; jobs also paused for another reason stay paused. */
     suspend fun resumeAll(): CommandResult = actor.call { resumeAll() }
 
-    /** Sets how many jobs may run at once. A lower limit stops the lowest-priority running jobs (never MUXING ones). */
+    /**
+     * Sets how many jobs may run at once. A lower limit stops the lowest-priority running jobs (never MUXING ones).
+     * Below 1 it is [CommandResult.Invalid].
+     */
     suspend fun setLimit(limit: Int): CommandResult {
-        require(limit >= 1) { "limit must be >= 1: $limit" }
+        if (limit < 1) return CommandResult.Invalid("limit must be >= 1: $limit")
         return actor.call { setLimit(limit) }
     }
 
@@ -126,6 +129,11 @@ sealed interface CommandResult {
     /** Remove with [RemoveFiles.TRASH] couldn't move a file to the trash; the job stays. */
     data class TrashFailed(
         val failure: FileResult.Failed,
+    ) : CommandResult
+
+    /** An argument the command can't take, and why; nothing changed. */
+    data class Invalid(
+        val reason: String,
     ) : CommandResult
 
     /** The protocol refused the new link; nothing changed. */

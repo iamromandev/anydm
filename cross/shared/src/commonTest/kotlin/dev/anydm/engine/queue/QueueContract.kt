@@ -13,6 +13,7 @@ import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FinishHook
+import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
@@ -29,8 +30,10 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.store.NewDownload
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.kotest.matchers.types.shouldNotBeInstanceOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -695,11 +698,12 @@ abstract class QueueContract : QueueTestBase() {
         }
 
     @Test
-    fun aLimitBelowOneIsRefused() =
+    fun aLimitBelowOneIsInvalid() =
         runTest {
             val h = started()
 
-            shouldThrow<IllegalArgumentException> { h.queue.setLimit(0) }
+            h.queue.setLimit(0) shouldBe CommandResult.Invalid("limit must be >= 1: 0")
+            h.queue.inspect().limit shouldBe 3
         }
 
     // Relink
@@ -875,5 +879,80 @@ abstract class QueueContract : QueueTestBase() {
             paused.isCompleted shouldBe true
             paused.await().exceptionOrNull().shouldBeInstanceOf<IllegalStateException>()
             shouldThrow<IllegalStateException> { h.queue.add(NewDownload(DownloadKind.DIRECT)) }
+        }
+
+    @Test
+    fun relinkKeepsAWaitingJobsPlace() =
+        runTest {
+            val h = started(limit = 1) { QueueHarness(it, newStore(), FakeProtocol(relinkAnswer = StepResult.Ok(Unit))) }
+            h.addJob()
+            val a = h.addJob()
+            runCurrent()
+            val queuedAt = h.job(a)!!.queuedAt
+            h.status(a) shouldBe PENDING
+            advanceTimeBy(1.seconds)
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+
+            h.job(a)!!.queuedAt shouldBe queuedAt
+        }
+
+    @Test
+    fun aRelinkThatThrowsIsAnInternalError() =
+        runTest {
+            val fake = FakeProtocol()
+            val buggy =
+                object : Protocol by fake {
+                    override suspend fun relink(
+                        download: Download,
+                        mirror: Mirror,
+                        url: String,
+                    ): StepResult<Unit> = throw IllegalStateException("bug")
+                }
+            val h = started { QueueHarness(it, newStore(), fake, DownloadKind.entries.associateWith { buggy }) }
+            val a = h.addJob()
+            val mirror = h.mirrorOf(a)
+
+            h.queue.relink(a, mirror.id, "https://example.com/new") shouldBe
+                CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "internal error: bug"))
+            h.mirrorOf(a).url shouldBe mirror.url
+        }
+
+    @Test
+    fun aStoreFailureDuringPauseAllReachesItsCaller() =
+        runTest {
+            val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job() + CoroutineExceptionHandler { _, _ -> })
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(stopDelay = 1.seconds), scope = scope) }
+            h.addJob()
+            advanceTimeBy(1.seconds)
+            val paused = async { runCatching { h.queue.pauseAll() } }
+            advanceTimeBy(100.milliseconds)
+            h.store.close()
+
+            val error = shouldThrow<Exception> { h.addJob() }
+            settle()
+
+            val failure = paused.await().exceptionOrNull().shouldNotBeNull()
+            failure.shouldNotBeInstanceOf<CancellationException>()
+            failure.message shouldBe error.message
+        }
+
+    @Test
+    fun aStoppedQueueAnswersPauseAllWithWhy() =
+        runTest {
+            val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(stopDelay = 1.seconds), scope = scope) }
+            h.addJob()
+            advanceTimeBy(1.seconds)
+            val paused = async { runCatching { h.queue.pauseAll() } }
+            advanceTimeBy(100.milliseconds)
+
+            scope.cancel()
+            runCurrent()
+
+            paused.isCompleted shouldBe true
+            val failure = paused.await().exceptionOrNull().shouldNotBeNull()
+            failure.shouldNotBeInstanceOf<CancellationException>() // a JVM CancellationException is an IllegalStateException
+            failure.message shouldBe "the queue has stopped"
         }
 }

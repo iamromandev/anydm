@@ -42,7 +42,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -249,7 +248,8 @@ internal class QueueActor(
             if (job.status != PAUSED) {
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
-                change(job.transitionTo(QUEUED)) { holdIfGlobal(it.copy(queuedAt = clock.now())) }
+                // The user wants it now: a pending retry doesn't wait out its delay.
+                change(job.transitionTo(QUEUED)) { holdIfGlobal(it.copy(queuedAt = clock.now(), nextAttemptAt = null)) }
             }
         }
 
@@ -302,12 +302,17 @@ internal class QueueActor(
         if (stopping.isEmpty()) {
             reply.complete(CommandResult.Done(null))
         } else {
-            slotScope.launch {
-                try {
-                    stopping.awaitAll()
-                    reply.complete(CommandResult.Done(null))
-                } catch (e: Throwable) {
-                    reply.completeExceptionally(e)
+            // Not a coroutine in slotScope: one cancelled along with a stopping queue would answer with its own
+            // CancellationException instead of why the queue stopped. The handlers run on the queue's coroutine, which
+            // completes every stopped slot's reply, so the count needs no lock.
+            var left = stopping.size
+            for (stopped in stopping) {
+                stopped.invokeOnCompletion { cause ->
+                    if (cause != null) {
+                        reply.completeExceptionally(cause)
+                    } else if (--left == 0) {
+                        reply.complete(CommandResult.Done(null))
+                    }
                 }
             }
         }
@@ -393,7 +398,15 @@ internal class QueueActor(
         val protocol =
             protocols[job.kind]
                 ?: return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "no protocol handles ${job.kind} downloads yet"))
-        when (val checked = protocol.relink(job, mirror, url)) {
+        val checked =
+            try {
+                protocol.relink(job, mirror, url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, internalError(e)))
+            }
+        when (checked) {
             is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
             is StepResult.Ok -> Unit
         }
@@ -434,8 +447,9 @@ internal class QueueActor(
         return RelinkTarget.Found(job, mirror)
     }
 
-    // After a relink: a job that was running or waiting probes again (the new link) before it transfers. A job at rest
-    // (paused, failed, finished) keeps its status; it probes when it next runs.
+    // After a relink: a job that was running or waiting probes again (the new link) before it transfers, at once and
+    // with a fresh retry budget. A job that was waiting keeps its place; one that was running waits at the back of its
+    // priority. A job at rest (paused, failed, finished) keeps its status; it probes when it next runs.
     private suspend fun reprobe(job: Download): CommandResult {
         val again =
             when (job.status) {
@@ -445,9 +459,10 @@ internal class QueueActor(
 
                 // reached MUXING before the stop landed
                 else -> job
-            }
-        if (again.status !in WAITING) return CommandResult.Done(again)
-        return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = clock.now()))))
+            }.copy(nextAttemptAt = null, attemptCount = 0)
+        if (again.status !in WAITING) return CommandResult.Done(if (again != job) save(again) else again)
+        val queuedAt = if (job.status in WAITING) job.queuedAt else clock.now()
+        return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = queuedAt))))
     }
 
     private suspend fun removeJob(
@@ -674,7 +689,7 @@ internal class QueueActor(
             when (end) {
                 is SlotEnd.Finished -> null to null
                 is SlotEnd.Failed -> end.failure.errorClass to end.failure.message
-                is SlotEnd.Crashed -> null to "internal error: ${end.error.message ?: end.error::class.simpleName}"
+                is SlotEnd.Crashed -> null to internalError(end.error)
                 SlotEnd.Cancelled -> null to if (slot.stopping) "stopped" else "internal error: cancelled unexpectedly"
             }
         downloads.updateAttempt(slot.attempt.copy(endedAt = clock.now(), errorClass = errorClass, message = message))
@@ -737,6 +752,9 @@ internal class QueueActor(
  */
 private fun Download.takeRun(run: Download): Download =
     copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size)
+
+/** How a bug (a throw that isn't an expected failure) is reported in an Attempt or a command's result. */
+private fun internalError(error: Throwable) = "internal error: ${error.message ?: error::class.simpleName}"
 
 /** Waiting again after a failed run: a new probe from PENDING, or QUEUED (which probes again) after post-processing. */
 private fun Download.backToWaiting(): Download =
