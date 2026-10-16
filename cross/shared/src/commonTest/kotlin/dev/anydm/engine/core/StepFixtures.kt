@@ -31,6 +31,11 @@ internal class RecordingListener(
 ) : RunListener {
     val moves = mutableListOf<Download>()
     val reported = mutableListOf<Pair<Long, Long?>>()
+    val startedOver = mutableListOf<String>()
+
+    override suspend fun startedOver(reason: String) {
+        startedOver += reason
+    }
 
     override suspend fun moved(download: Download) {
         moves += download

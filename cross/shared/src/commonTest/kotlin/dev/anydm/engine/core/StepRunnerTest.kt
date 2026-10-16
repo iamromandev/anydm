@@ -21,6 +21,7 @@ import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.fakeContent
 import dev.anydm.engine.store.InMemoryPlanStore
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotContain
@@ -749,4 +750,62 @@ class StepRunnerTest {
     fun aCheckpointIntervalMustBePositive() {
         shouldThrow<IllegalArgumentException> { StepHarness(checkpointEvery = Duration.ZERO) }
     }
+
+    // Source validators (#554)
+
+    @Test
+    fun theValidatorDecidesWhetherPartialsAreKept() =
+        runTest {
+            data class Row(
+                val stored: String?,
+                val probed: String?,
+                val kept: Boolean,
+                val after: String?,
+                val reason: String?,
+            )
+            val rows =
+                listOf(
+                    Row(null, null, kept = true, after = null, reason = null),
+                    Row(null, "v", kept = true, after = "v", reason = null),
+                    Row("v", "v", kept = true, after = "v", reason = null),
+                    Row("v", "w", kept = false, after = "w", reason = "source changed (validator \"v\" → \"w\"): starting from zero"),
+                    Row("v", null, kept = true, after = "v", reason = null),
+                )
+            for (row in rows) {
+                withClue(row) {
+                    val h = StepHarness()
+                    h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+                    h.runAll()
+                    h.protocol.failure = null
+                    h.protocol.validator = row.probed
+
+                    val prepared =
+                        h
+                            .prepare(
+                                aPendingDownload().copy(sourceValidator = row.stored),
+                            ).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+                    h.fs.exists(partial) shouldBe row.kept
+                    h.store.files(DownloadId(1)).isNotEmpty() shouldBe row.kept
+                    prepared.download.sourceValidator shouldBe row.after
+                    h.listener.startedOver shouldBe listOfNotNull(row.reason)
+                }
+            }
+        }
+
+    @Test
+    fun aSourceThatChangedStartsFromZero() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.failure = FakeFailure.AtTransfer(10_000, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+            h.runAll()
+            h.protocol.failure = null
+            h.protocol.validator = "w"
+            h.protocol.fetched.clear()
+
+            h.runAll(aPendingDownload().copy(sourceValidator = "v")).failure shouldBe null
+
+            h.protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
+            h.fs.read(target) shouldBe whole
+        }
 }

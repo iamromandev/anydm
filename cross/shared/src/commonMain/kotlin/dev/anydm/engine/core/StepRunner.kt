@@ -112,6 +112,13 @@ class StepRunner(
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }
+        val stored = download.sourceValidator
+        val probed = probe.validator
+        if (stored != null && probed != null && probed != stored) {
+            val dropped = dropPartials(download, folder)
+            if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)
+            listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
+        }
         val learned = probe.size
         if (learned != null && learned != download.size) {
             val room = checkSpace(folder, learned - writtenBytes(download.id))
@@ -120,10 +127,30 @@ class StepRunner(
         // The user's file name wins; the probe's size is the source's own word.
         val queued =
             download
-                .copy(saveFolder = folder.toString(), fileName = download.fileName ?: probe.name, size = learned ?: download.size)
-                .moveTo(QUEUED)
+                .copy(
+                    saveFolder = folder.toString(),
+                    fileName = download.fileName ?: probe.name,
+                    size = learned ?: download.size,
+                    sourceValidator = probed ?: stored,
+                ).moveTo(QUEUED)
         listener.moved(queued)
         return PrepareOutcome.Ready(queued, mirror, probe)
+    }
+
+    /**
+     * The source is no longer the one the partials came from (FND-10): never append to them. Deletes each stored file's
+     * partial (one already gone is fine) and the file rows with their watermarks, so the plan starts every file over.
+     */
+    private suspend fun dropPartials(
+        download: Download,
+        folder: Path,
+    ): StepResult<Unit> {
+        for (file in store.files(download.id)) {
+            val deleted = fileSystem.delete(partialPath(targetPath(folder, file.path), download.id))
+            if (deleted is FileResult.Failed && deleted !is FileResult.NotFound) return deleted.toStepFailed()
+        }
+        store.replaceFiles(download.id, emptyList())
+        return StepResult.Ok(Unit)
     }
 
     /** Transfer, post-process and finish a QUEUED job that [prepare] made ready. */
