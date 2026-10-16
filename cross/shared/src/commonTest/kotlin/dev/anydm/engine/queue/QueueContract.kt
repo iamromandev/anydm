@@ -18,6 +18,7 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualEpoch
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
@@ -31,12 +32,16 @@ import dev.anydm.engine.store.StoreTestBase
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -810,5 +815,81 @@ abstract class QueueContract : StoreTestBase() {
 
             gate.complete(Unit)
             relinked.await().shouldBeInstanceOf<CommandResult.Done>()
+        }
+
+    // Final review fixes
+
+    @Test
+    fun aStopRacingTheFinishStillRunsTheFinishHook() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            var paused: CommandResult? = null
+            // The pause is queued while the outputs are placed, so it reaches the queue before the COMPLETED move does.
+            h.fs.faults[FakeFileSystem.Op.ATOMIC_MOVE] = {
+                launch(start = CoroutineStart.UNDISPATCHED) { paused = h.queue.pause(a) }
+                null
+            }
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.finished shouldBe listOf(a)
+            paused shouldBe CommandResult.Rejected(TransitionResult.Rejected(COMPLETED, PAUSED))
+        }
+
+    @Test
+    fun aCancellationNobodyAskedForFailsTheJob() =
+        runTest {
+            val quiet = FakeProtocol()
+            val leaky =
+                object : Protocol by quiet {
+                    override suspend fun transfer(
+                        transfer: Transfer,
+                        io: TransferIo,
+                    ): StepResult<Unit> = throw CancellationException("a timeout that escaped")
+                }
+            val h = started { QueueHarness(it, newStore(), quiet, DownloadKind.entries.associateWith { leaky }) }
+            val a = h.addJob()
+            settle()
+
+            h.status(a) shouldBe FAILED
+            h.queue.inspect().running shouldBe emptySet()
+        }
+
+    @Test
+    fun aStoreFailureAnswersCommandsWaitingForASlotToStop() =
+        runTest {
+            val failures = mutableListOf<Throwable>()
+            val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job() + CoroutineExceptionHandler { _, e -> failures += e })
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(stopDelay = 1.seconds), scope = scope) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            val paused = async { runCatching { h.queue.pause(a) } }
+            advanceTimeBy(100.milliseconds)
+            h.store.close()
+
+            shouldThrow<Exception> { h.addJob() }
+            settle()
+
+            paused.isCompleted shouldBe true
+            paused.await().isFailure shouldBe true
+        }
+
+    @Test
+    fun aStoppedQueueAnswersEveryCommand() =
+        runTest {
+            val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(stopDelay = 1.seconds), scope = scope) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            val paused = async { runCatching { h.queue.pause(a) } }
+            advanceTimeBy(100.milliseconds)
+
+            scope.cancel()
+            runCurrent()
+
+            paused.isCompleted shouldBe true
+            paused.await().exceptionOrNull().shouldBeInstanceOf<IllegalStateException>()
+            shouldThrow<IllegalStateException> { h.queue.add(NewDownload(DownloadKind.DIRECT)) }
         }
 }

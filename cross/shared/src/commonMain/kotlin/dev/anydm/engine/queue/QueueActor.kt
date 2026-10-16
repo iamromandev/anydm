@@ -35,10 +35,12 @@ import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlin.time.Clock
 
@@ -102,6 +104,7 @@ internal class QueueActor(
         scope.launch {
             coroutineScope {
                 slotScope = this
+                // Inside the scope, before it waits for the slots: a slot may be waiting for an ack only stopped() gives.
                 try {
                     settings = store.settings.load()
                     reconcile()
@@ -109,10 +112,10 @@ internal class QueueActor(
                     started.complete(Unit)
                     for (message in inbox) handle(message)
                 } catch (e: CancellationException) {
+                    stopped(IllegalStateException("the queue has stopped", e), started)
                     throw e
                 } catch (e: Throwable) {
-                    fail(e)
-                    started.completeExceptionally(e)
+                    stopped(e, started)
                     throw e
                 }
             }
@@ -144,14 +147,19 @@ internal class QueueActor(
     }
 
     private suspend fun handle(message: Message) {
+        try {
+            dispatch(message)
+        } catch (e: Throwable) {
+            abandon(message, e)
+            throw e
+        }
+        reschedule()
+    }
+
+    private suspend fun dispatch(message: Message) {
         when (message) {
             is Message.Command -> {
-                try {
-                    message.block(this, message.reply)
-                } catch (e: Throwable) {
-                    message.reply.completeExceptionally(e)
-                    throw e
-                }
+                message.block(this, message.reply)
             }
 
             is Message.Ask<*> -> {
@@ -166,19 +174,29 @@ internal class QueueActor(
                 ended(message)
             }
         }
-        reschedule()
     }
 
-    // A store failure: nothing more is accepted, and everyone still waiting learns why.
-    private fun fail(error: Throwable) {
+    // The queue stopped (a store failure, or its scope was cancelled): nothing more is accepted, and everyone still
+    // waiting, for a reply or an ack, learns why. Completing what is already complete changes nothing.
+    private fun stopped(
+        error: Throwable,
+        started: CompletableDeferred<Unit>,
+    ) {
         inbox.close()
-        while (true) {
-            when (val message = inbox.tryReceive().getOrNull() ?: break) {
-                is Message.Command -> message.reply.completeExceptionally(error)
-                is Message.Ask<*> -> message.reply.completeExceptionally(error)
-                is Message.Moved -> message.ack.completeExceptionally(error)
-                is Message.Ended -> Unit
-            }
+        while (true) abandon(inbox.tryReceive().getOrNull() ?: break, error)
+        for (slot in slots.values) slot.afterStop.forEach { it.reply?.completeExceptionally(error) }
+        started.completeExceptionally(error)
+    }
+
+    private fun abandon(
+        message: Message,
+        error: Throwable,
+    ) {
+        when (message) {
+            is Message.Command -> message.reply.completeExceptionally(error)
+            is Message.Ask<*> -> message.reply.completeExceptionally(error)
+            is Message.Moved -> message.ack.completeExceptionally(error)
+            is Message.Ended -> message.slot.afterStop.forEach { it.reply?.completeExceptionally(error) }
         }
     }
 
@@ -540,7 +558,9 @@ internal class QueueActor(
     ): Download {
         val ack = CompletableDeferred<Unit>()
         send(Message.Moved(slot, download, ack))
-        ack.await()
+        // Not cancellable: a stop that lands while COMPLETED is being stored must not skip the finish hook after it
+        // (StepRunner runs it shielded only once this returns). The ack always comes, or stopped() fails it.
+        withContext(NonCancellable) { ack.await() }
         return download
     }
 
@@ -570,12 +590,12 @@ internal class QueueActor(
 
                 // The message has nowhere to be kept until #553 records Attempts (DIA-03), nor to be logged until #556.
                 is SlotEnd.Crashed -> {
-                    val reported = slot.lastReported
-                    if (reported != null && reported.status in FINISHED) slot.download.takeRun(reported) else slot.download.crashed()
+                    afterCrash(slot)
                 }
 
+                // Nobody stopped it: a cancellation that escaped the protocol (a stray timeout) is a crash too.
                 SlotEnd.Cancelled -> {
-                    null
+                    if (slot.stopping) null else afterCrash(slot)
                 }
             }
         if (after != null && after != slot.download) save(after)
@@ -583,6 +603,12 @@ internal class QueueActor(
             val result = withJob(slot.id, next.op)
             next.reply?.complete(result)
         }
+    }
+
+    // A throw after COMPLETED or SEEDING was reported is a finished job (FinishHook); anything earlier fails it.
+    private fun afterCrash(slot: Slot): Download {
+        val reported = slot.lastReported
+        return if (reported != null && reported.status in FINISHED) slot.download.takeRun(reported) else slot.download.crashed()
     }
 
     private suspend fun save(download: Download): Download {
