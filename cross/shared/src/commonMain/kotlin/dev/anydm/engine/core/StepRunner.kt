@@ -397,6 +397,11 @@ class StepRunner(
             val target = targetPath(folder, new.path)
             val partial = partialPath(target, download.id)
             val old = earlier.getOrNull(i)
+            if (old != null && resumes(old, new) && alreadyPlaced(old.segments, partial, target, new.size)) {
+                // Placed by a run that stopped while placing outputs: nothing to write, nothing to open.
+                files += TransferFile(file, old.segments, partial, target)
+                continue
+            }
             val resumed = if (old != null && resumes(old, new)) reopen(partial, new.size) else null
             if (resumed is StepResult.Failed) return resumed
             val writer: FileWriter
@@ -417,6 +422,21 @@ class StepRunner(
         }
         return StepResult.Ok(Transfer(download, job.mirror, job.probe, files))
     }
+
+    /**
+     * A file a stopped run already renamed into place: every segment written, no partial left, and the output there with
+     * the planned [size]. Without a known size it can't be told from some other file, so it is fetched again.
+     */
+    private suspend fun alreadyPlaced(
+        segments: List<Segment>,
+        partial: Path,
+        target: Path,
+        size: Long?,
+    ): Boolean =
+        size != null &&
+            segments.all { it.watermark == it.end } &&
+            fileSystem.size(partial) is FileResult.NotFound &&
+            fileSystem.size(target) == FileResult.Ok(size)
 
     /**
      * The earlier partial opened again, or null when it is gone or its length isn't the planned [size] (some other
@@ -466,8 +486,8 @@ class StepRunner(
      * outputs are checked like planned paths first.
      *
      * Outputs are placed one by one, so a failure or a cancel part way leaves the ones already placed without a
-     * partial: the next run finds no bytes for them and downloads them again. #554's restore must treat a finished
-     * output as finished (or place all outputs in a way that can be undone).
+     * partial. The next run counts those as placed: openFiles keeps their rows and opens nothing, and here an output
+     * whose partial is gone but whose target is there is skipped (#554).
      */
     private suspend fun placeOutputs(
         id: DownloadId,
@@ -478,7 +498,13 @@ class StepRunner(
         val placed = mutableListOf<Path>()
         for (output in outputs) {
             val target = targetPath(folder, output)
-            val moved = fileSystem.atomicMove(partialPath(target, id), target, replace = false)
+            val partial = partialPath(target, id)
+            val moved = fileSystem.atomicMove(partial, target, replace = false)
+            // No partial but the output is there: a stopped run placed it already.
+            if (moved is FileResult.NotFound && moved.path == partial && fileSystem.size(target) is FileResult.Ok) {
+                placed += target
+                continue
+            }
             if (moved is FileResult.Failed) return moved.toStepFailed()
             placed += target
         }

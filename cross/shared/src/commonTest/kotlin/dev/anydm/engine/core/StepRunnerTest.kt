@@ -808,4 +808,33 @@ class StepRunnerTest {
             h.protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
             h.fs.read(target) shouldBe whole
         }
+
+    // Outputs placed before a stop (#554)
+
+    @Test
+    fun anOutputPlacedBeforeAStopIsNotFetchedAgain() =
+        runTest {
+            val h = StepHarness()
+            h.protocol.files = listOf(FakeFile("a.bin", 4096), FakeFile("b.bin", 4096))
+            var failOnce = true
+            h.fs.faults[FakeFileSystem.Op.ATOMIC_MOVE] = { source ->
+                if (failOnce &&
+                    source.name.startsWith("b.bin")
+                ) {
+                    FileResult.IoError(source, "stopped here").also { failOnce = false }
+                } else {
+                    null
+                }
+            }
+            val ready = h.prepare().shouldBeInstanceOf<PrepareOutcome.Ready>()
+            val failed = h.runner.run(ready, h.listener).shouldBeInstanceOf<RunOutcome.Failed>()
+            failed.failure.step shouldBe Step.POST_PROCESS
+            h.protocol.fetched.clear()
+
+            h.runner.run(ready.copy(download = failed.download.movedTo(QUEUED)), h.listener).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            h.protocol.fetched.none { it.index == 0 } shouldBe true
+            h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
+            h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
+        }
 }
