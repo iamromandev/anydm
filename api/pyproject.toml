@@ -2,7 +2,7 @@
 name = "anydm-api"
 version = "0.0.1"
 description = "AnyDM download API"
-requires-python = "==3.14.6"
+requires-python = "==3.15.0"
 dependencies = [
     ### core ###
     "toml==0.10.2",
