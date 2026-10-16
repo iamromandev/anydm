@@ -7,6 +7,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.store.db.AnydmDb
@@ -56,6 +57,8 @@ internal class SqlDownloadStore(
                 speed_limit = new.speedLimit,
                 attempt_count = 0,
                 next_attempt_at = null,
+                pause_reasons = "",
+                queued_at = new.queuedAt,
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -89,6 +92,8 @@ internal class SqlDownloadStore(
                     speed_limit = download.speedLimit,
                     attempt_count = download.attemptCount,
                     next_attempt_at = download.nextAttemptAt,
+                    pause_reasons = encodePauseReasons(download.pauseReasons),
+                    queued_at = download.queuedAt,
                     id = download.id,
                 ).value > 0
         }
@@ -97,6 +102,9 @@ internal class SqlDownloadStore(
 
     override suspend fun mirrors(id: DownloadId): List<Mirror> =
         inTransaction { mirrorQueries.selectByDownload(id).executeAsList().map { it.toMirror() } }
+
+    override suspend fun updateMirror(mirror: Mirror): Boolean =
+        writing { mirrorQueries.update(url = mirror.url, position = mirror.position, id = mirror.id).value > 0 }
 
     override suspend fun replaceFiles(
         id: DownloadId,
@@ -188,6 +196,8 @@ internal class SqlDownloadStore(
             speedLimit = speed_limit,
             attemptCount = attempt_count,
             nextAttemptAt = next_attempt_at,
+            pauseReasons = decodePauseReasons(pause_reasons),
+            queuedAt = queued_at,
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)
@@ -207,4 +217,12 @@ internal class SqlDownloadStore(
             errorClass = error_class,
             message = message,
         )
+}
+
+private fun encodePauseReasons(reasons: Set<PauseReason>): String = reasons.sortedBy { it.ordinal }.joinToString(",") { it.name }
+
+// A name this version doesn't know is a newer version's reason: read as none, so the job still loads.
+private fun decodePauseReasons(stored: String): Set<PauseReason> {
+    val known = PauseReason.entries.associateBy { it.name }
+    return stored.split(',').mapNotNullTo(mutableSetOf()) { known[it] }
 }

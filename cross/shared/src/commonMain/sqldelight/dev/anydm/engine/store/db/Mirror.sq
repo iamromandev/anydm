@@ -15,3 +15,6 @@ INSERT INTO mirror(download_id, url, position) VALUES (?, ?, ?);
 
 selectByDownload:
 SELECT * FROM mirror WHERE download_id = ? ORDER BY position;
+
+update:
+UPDATE mirror SET url = ?, position = ? WHERE id = ?;

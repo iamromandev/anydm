@@ -12,6 +12,8 @@ import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
@@ -230,6 +232,69 @@ abstract class DownloadStoreContract : StoreTestBase() {
             mirrors.map { it.downloadId }.toSet() shouldBe setOf(added.id)
             mirrors.map { it.id }.toSet().size shouldBe 3
             mirrors[1] shouldBe Mirror(mirrors[1].id, added.id, "https://u1", 1)
+        }
+
+    @Test
+    fun updateMirrorSavesTheUrl() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://u0", "https://u1")))
+            val first = store.mirrors(added.id).first()
+
+            store.updateMirror(first.copy(url = "https://fresh")) shouldBe true
+
+            store.mirrors(added.id).map { it.url } shouldBe listOf("https://fresh", "https://u1")
+        }
+
+    @Test
+    fun updateMirrorOfAMissingMirrorIsFalse() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT))
+
+            store.updateMirror(Mirror(MirrorId(999), added.id, "https://u", 0)) shouldBe false
+        }
+
+    @Test
+    fun pauseReasonsAndQueuedAtRoundTrip() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT, queuedAt = t0))
+            added.queuedAt shouldBe t0
+
+            val paused =
+                (added.pause(PauseReason.USER) as TransitionResult.Moved)
+                    .download
+                    .let { (it.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download }
+                    .copy(queuedAt = t1)
+            store.update(paused) shouldBe true
+
+            store.get(added.id) shouldBe paused
+            store.get(added.id)!!.pauseReasons shouldBe setOf(PauseReason.USER, PauseReason.GLOBAL)
+        }
+
+    @Test
+    fun anUnknownPauseReasonIsIgnoredOnLoad() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT))
+
+            driver.exec("UPDATE download SET status = 'PAUSED', pause_reasons = 'USER,FUTURE' WHERE id = ${added.id.value}")
+
+            store.get(added.id)!!.pauseReasons shouldBe setOf(PauseReason.USER)
+        }
+
+    @Test
+    fun listByStatusBreaksPriorityTiesByQueuedAt() =
+        runTest {
+            val store = newStore().downloads
+            val t2 = Instant.fromEpochMilliseconds(1_700_000_000_456)
+            for (at in listOf(t2, t0, t1)) {
+                val added = store.add(NewDownload(DownloadKind.DIRECT, priority = 1, queuedAt = at))
+                store.update((added.transitionTo(DownloadStatus.QUEUED) as TransitionResult.Moved).download)
+            }
+
+            store.list(DownloadStatus.QUEUED).map { it.queuedAt } shouldBe listOf(t0, t1, t2)
         }
 
     @Test

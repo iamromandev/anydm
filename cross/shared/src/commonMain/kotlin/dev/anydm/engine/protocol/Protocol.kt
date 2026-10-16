@@ -1,5 +1,8 @@
 package dev.anydm.engine.protocol
 
+import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.Mirror
+
 /**
  * One kind of source (DIRECT, SITE, TORRENT, FTP), driven by StepRunner (FND-03): [probe] while the job is PENDING,
  * then [plan], [transfer] and [finalize] once the queue gives it a slot. Expected failures are StepResult.Failed (with
@@ -26,4 +29,15 @@ interface Protocol {
 
     /** This kind's post-processing (merge, verify, move storage); the runner then renames the outputs. */
     suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult>
+
+    /**
+     * Whether [url] can replace [mirror]'s address for [download] (FND-12 relink): the same content, typically a fresh
+     * link for an expired one. Called outside the queue, so it may take a network round trip. A kind that can't tell
+     * keeps this default and refuses; HTTP implements it in #538.
+     */
+    suspend fun relink(
+        download: Download,
+        mirror: Mirror,
+        url: String,
+    ): StepResult<Unit> = StepResult.Failed(errorClass = null, message = "relink not supported")
 }

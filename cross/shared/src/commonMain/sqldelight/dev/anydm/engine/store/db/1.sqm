@@ -1,0 +1,6 @@
+-- Version 1 to 2 (#552): pause reasons and the time a job started waiting for a slot.
+ALTER TABLE download ADD COLUMN pause_reasons TEXT NOT NULL DEFAULT '';
+ALTER TABLE download ADD COLUMN queued_at INTEGER;
+
+DROP INDEX download_status;
+CREATE INDEX download_status ON download(status, priority DESC, queued_at, id);

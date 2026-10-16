@@ -22,7 +22,7 @@ interface DownloadStore : PlanStore {
     /** Every download, in the order added. */
     suspend fun list(): List<Download>
 
-    /** Downloads in [status], highest priority first, then in the order added (FND-04). */
+    /** Downloads in [status], highest priority first, then longest waiting (queuedAt, unknown first), then in the order added (FND-04). */
     suspend fun list(status: DownloadStatus): List<Download>
 
     /**
@@ -37,6 +37,9 @@ interface DownloadStore : PlanStore {
 
     /** Position 0 first. */
     suspend fun mirrors(id: DownloadId): List<Mirror>
+
+    /** Saves the mirror's url and position (a relink, #552). False if removed. */
+    suspend fun updateMirror(mirror: Mirror): Boolean
 
     /** Records a try that has started. */
     suspend fun addAttempt(new: NewAttempt): Attempt

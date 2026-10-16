@@ -100,10 +100,10 @@ class DatabaseFileTest {
 
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
-        // Bump this with the first .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 1L
+        // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
+        AnydmDb.Schema.version shouldBe 2L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 1L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 2L }
     }
 
     @Test
@@ -144,11 +144,12 @@ class DatabaseFileTest {
 
     @Test
     fun aDatabaseFromANewerAnydmIsRefused() {
-        rawDriver(file).use { it.exec("PRAGMA user_version = 2") }
+        val newer = AnydmDb.Schema.version + 1
+        rawDriver(file).use { it.exec("PRAGMA user_version = $newer") }
 
         shouldThrow<IncompatibleStoreException> { openDatabaseFile(file) }
 
-        rawDriver(file).use { it.userVersion() shouldBe 2L }
+        rawDriver(file).use { it.userVersion() shouldBe newer }
     }
 
     @Test
