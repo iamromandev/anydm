@@ -2,6 +2,7 @@ package dev.anydm.engine.http
 
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.PrepareOutcome
@@ -15,6 +16,8 @@ import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.platform.readBytes
 import dev.anydm.engine.platform.sizeOf
 import dev.anydm.engine.protocol.ProbeRequest
+import dev.anydm.engine.protocol.RelinkRequest
+import dev.anydm.engine.protocol.Relinked
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
@@ -44,11 +47,12 @@ class HttpDownloadTest {
     private val store = Store(openInMemoryDatabase(), Dispatchers.IO)
     private val bytes = Random(1).nextBytes(20 shl 20)
     private val credentials = InMemoryCredentials()
+    private val protocol = HttpProtocol(OkHttpTransport(), connections = { 4 }, credentials = credentials)
     private val runner =
         StepRunner(
             DesktopFileSystem(),
             store.downloads,
-            mapOf(DownloadKind.DIRECT to HttpProtocol(OkHttpTransport(), connections = { 4 }, credentials = credentials)),
+            mapOf(DownloadKind.DIRECT to protocol),
             root,
             freeSpaceReserve = 0,
             // Watermarks reach the store often enough for the resume test to see blocks finish.
@@ -159,6 +163,95 @@ class HttpDownloadTest {
                     .drop(before)
                     .mapNotNull { it.headers["Range"] }
                     .filter { it != "bytes=0-1023" } // the probe
+                    .map { it.removePrefix("bytes=").substringBefore('-').toLong() }
+            starts.isEmpty() shouldBe false
+            done.none { it.start in starts } shouldBe true
+        }
+
+    // #572: mirrors and relink
+
+    private fun rangedTo(path: String) =
+        server.requests.filter { it.url.encodedPath == path && it.headers["Range"] != null && it.headers["Range"] != "bytes=0-1023" }
+
+    @Test
+    fun aFileDownloadsFromTwoMirrors() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Throttle(8L shl 20))
+            server.serve("/m2.bin", bytes, etag = "\"v1\"")
+            val download =
+                store.downloads.add(
+                    NewDownload(
+                        DownloadKind.DIRECT,
+                        mirrors = listOf(server.url("/f.bin"), server.url("/m2.bin")),
+                        saveFolder = root.toString(),
+                    ),
+                )
+            val (first, second) = store.downloads.mirrors(download.id)
+            val ready =
+                runner
+                    .prepare(
+                        download,
+                        first,
+                        RunListener.None,
+                        others = listOf(second),
+                    ).shouldBeInstanceOf<PrepareOutcome.Ready>()
+
+            runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+            rangedTo("/f.bin").isEmpty() shouldBe false
+            rangedTo("/m2.bin").isEmpty() shouldBe false
+        }
+
+    @Test
+    fun aRelinkedDownloadResumesFromANewPath() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Throttle(1L shl 20))
+            val (download, mirror) = added()
+            val first = prepared(download, mirror)
+            val job = launch(Dispatchers.Default) { runner.run(first) }
+            while (true) {
+                val segments = store.downloads.files(download.id).flatMap { store.downloads.segments(it.id) }
+                if (segments.count { it.isComplete } >= 5) break
+                delay(20)
+            }
+            job.cancelAndJoin()
+            val done =
+                store.downloads
+                    .files(download.id)
+                    .flatMap { store.downloads.segments(it.id) }
+                    .filter { it.isComplete }
+            // The old link is dead; the same bytes are elsewhere, under another ETag.
+            server.fault("/f.bin", Fault.Status(404))
+            server.serve("/new.bin", bytes, etag = "\"v2\"")
+            val newUrl = server.url("/new.bin")
+
+            protocol.relink(RelinkRequest(first.download, mirror, newUrl, stored = runner.storedBytes(first.download))) shouldBe
+                StepResult.Ok(Relinked("etag:\"v2\""))
+
+            // As the queue does: store the url, adopt the validator, probe again.
+            val moved = mirror.copy(url = newUrl)
+            store.downloads.updateMirror(moved)
+            val relinked = first.download.copy(status = DownloadStatus.PENDING, sourceValidator = "etag:\"v2\"")
+            val before = server.requests.size
+            val startedOver = mutableListOf<String>()
+            val listener =
+                object : RunListener {
+                    override suspend fun startedOver(reason: String) {
+                        startedOver += reason
+                    }
+                }
+            val ready = runner.prepare(relinked, moved, listener).shouldBeInstanceOf<PrepareOutcome.Ready>()
+            runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+            startedOver shouldBe emptyList()
+            val starts =
+                server.requests
+                    .drop(before)
+                    .filter { it.url.encodedPath == "/new.bin" }
+                    .mapNotNull { it.headers["Range"] }
+                    .filter { it != "bytes=0-1023" }
                     .map { it.removePrefix("bytes=").substringBefore('-').toLong() }
             starts.isEmpty() shouldBe false
             done.none { it.start in starts } shouldBe true
