@@ -333,7 +333,7 @@ internal class RangeTransfer(
                     when (val attempt = fetch(file, size, block, source)) {
                         Attempt.Done -> break
                         is Attempt.Retry -> if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
-                        is Attempt.End -> end(attempt.failed)
+                        is Attempt.End -> end(attempt.failed.from(source))
                         is Attempt.Ignored -> switchTo(attempt.response)
                     }
                 }
@@ -618,6 +618,17 @@ internal class RangeTransfer(
         }
         return null
     }
+
+    /**
+     * The queue records a run's failure against the job's chosen mirror: a secondary's GONE or AUTH says nothing about
+     * that one, so the run ends TRANSIENT instead and the next run probes the mirrors again.
+     */
+    private fun StepResult.Failed.from(source: Source): StepResult.Failed =
+        if (source != primary && (errorClass == ErrorClass.GONE || errorClass == ErrorClass.AUTH)) {
+            StepResult.Failed(ErrorClass.TRANSIENT, message)
+        } else {
+            this
+        }
 
     private suspend fun end(failed: StepResult.Failed): Nothing {
         stateLock.withLock { if (ended == null) ended = failed }

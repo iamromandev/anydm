@@ -146,8 +146,8 @@ class StepRunner(
 
     /**
      * What earlier runs of [download] fetched, for a relink to compare with (HTTP-13): each stored file's ranges below
-     * its saved watermarks, read from its partial. A file whose partial is gone, or a job without a save folder, has
-     * nothing written: the next run would start it over anyway.
+     * its saved watermarks, touching ones merged (one range spans many blocks), read from its partial. A file whose
+     * partial is gone, or a job without a save folder, has nothing written: the next run would start it over anyway.
      */
     suspend fun storedBytes(download: Download): StoredBytes {
         val folder = download.saveFolder?.let(::Path) ?: return PartialBytes(fileSystem, emptyList(), emptyMap())
@@ -155,10 +155,11 @@ class StepRunner(
         val partials = mutableMapOf<Int, Path>()
         for (file in store.files(download.id)) {
             val partial = partialPath(targetPath(folder, file.path), download.id)
-            val present = fileSystem.size(partial) is FileResult.Ok
+            // Only a missing partial is nothing written: one the disk can't stat now still fails the compare.
+            val present = fileSystem.size(partial) !is FileResult.NotFound
             val written =
                 if (present) {
-                    store.segments(file.id).filter { it.watermark > it.start }.map { it.start until it.watermark }
+                    mergedRanges(store.segments(file.id).filter { it.watermark > it.start }.map { it.start until it.watermark })
                 } else {
                     emptyList()
                 }
@@ -608,6 +609,16 @@ class StepRunner(
         /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
         const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
     }
+}
+
+/** [ranges] sorted, with each one that starts where the previous ends joined to it. */
+private fun mergedRanges(ranges: List<LongRange>): List<LongRange> {
+    val merged = mutableListOf<LongRange>()
+    for (range in ranges.sortedBy { it.first }) {
+        val last = merged.lastOrNull()
+        if (last != null && last.last + 1 == range.first) merged[merged.size - 1] = last.first..range.last else merged += range
+    }
+    return merged
 }
 
 private fun StepResult.Failed.toFailure(step: Step) = StepFailure(step, errorClass, message, retryAfter)

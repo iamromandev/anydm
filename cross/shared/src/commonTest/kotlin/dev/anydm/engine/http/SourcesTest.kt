@@ -109,6 +109,21 @@ class SourcesTest {
             failed.map { it.rangeStart() }.toSet().size shouldBe 1
         }
 
+    // Final review: the queue records a run's GONE against the chosen mirror; a secondary's 404 must not mark it gone.
+    @Test
+    fun aSecondarysGoneDoesntBlameThePrimary() =
+        runTest {
+            val slow = paced(every = 1.seconds)
+            val transport =
+                FakeTransport { request ->
+                    if (request.url.startsWith("https://m2/")) response(404, finalUrl = request.url) else slow(request)
+                }
+            val transfer = transferOf(transport, RecordingIo(size, segments))
+            transfer.addSource(m2)
+
+            transfer.run(file) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 404 from m2")
+        }
+
     @Test
     fun eachSourceHoldsSlotsOfItsOwnOrigin() =
         runTest {

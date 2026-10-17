@@ -41,6 +41,29 @@ class PartialBytesTest {
             h.runner.storedBytes(download).files shouldBe listOf(StoredFile(0, 65536, listOf(0L until 12288L)))
         }
 
+    // Final review: one range per block put sample B in the middle of block 0, not deep in the written data.
+    @Test
+    fun touchingRangesAreMerged() =
+        runTest {
+            val h = StepHarness()
+            val download = stoppedAfter(h, 3.seconds)
+            h.runner.storedBytes(download).files shouldBe listOf(StoredFile(0, 65536, listOf(0L until 45056L)))
+        }
+
+    // Final review: only a missing partial means nothing is written; one the disk can't stat must still be compared.
+    @Test
+    fun aPartialThatCantBeStattedKeepsItsRanges() =
+        runTest {
+            val h = StepHarness()
+            val download = stoppedAfter(h, 1.seconds)
+            h.fs.faults[FakeFileSystem.Op.SIZE_OF] = { FileResult.IoError(it, "boom") }
+            h.runner
+                .storedBytes(download)
+                .files
+                .single()
+                .written shouldBe listOf(0L until 12288L)
+        }
+
     @Test
     fun readGivesThePartialsBytes() =
         runTest {
