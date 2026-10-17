@@ -44,6 +44,34 @@ abstract class FileSystemContract {
         }
 
     @Test
+    fun readTakesBytesFromAnOffset() =
+        runTest {
+            val file = Path(root, "a.bin").also { writeText(it, "0123456789") }
+            fileSystem(trash).read(file, 3, 4).value() shouldBe "3456".encodeToByteArray()
+        }
+
+    @Test
+    fun readPastTheEndIsShort() =
+        runTest {
+            val file = Path(root, "a.bin").also { writeText(it, "0123456789") }
+            fileSystem(trash).read(file, 8, 10).value() shouldBe "89".encodeToByteArray()
+            fileSystem(trash).read(file, 10, 5).value() shouldBe ByteArray(0)
+        }
+
+    @Test
+    fun readOfAMissingFileIsNotFound() =
+        runTest {
+            val missing = Path(root, "missing.bin")
+            fileSystem(trash).read(missing, 0, 1) shouldBe FileResult.NotFound(missing)
+        }
+
+    @Test
+    fun readOfAFolderIsAFolderInTheWay() =
+        runTest {
+            fileSystem(trash).read(trash, 0, 1).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe trash
+        }
+
+    @Test
     fun sizeOfAFolderIsAFolderInTheWay() =
         runTest {
             fileSystem(trash).size(trash).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe trash

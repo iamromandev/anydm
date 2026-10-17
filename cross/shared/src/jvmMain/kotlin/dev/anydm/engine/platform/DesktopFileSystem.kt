@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.StandardOpenOption.CREATE_NEW
 import java.nio.file.StandardOpenOption.DELETE_ON_CLOSE
+import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.SPARSE
 import java.nio.file.StandardOpenOption.WRITE
 import java.util.UUID
@@ -173,6 +174,40 @@ class DesktopFileSystem internal constructor(
                 !Files.exists(file, NOFOLLOW_LINKS) -> FileResult.NotFound(path)
                 Files.isDirectory(file, NOFOLLOW_LINKS) -> FileResult.AlreadyExists(path, "a folder is in the way")
                 else -> attempt(path) { Files.size(file) }
+            }
+        }
+    }
+
+    override suspend fun read(
+        path: Path,
+        offset: Long,
+        length: Int,
+    ): FileResult<ByteArray> {
+        require(offset >= 0) { "offset must be >= 0: $offset" }
+        require(length >= 0) { "length must be >= 0: $length" }
+        requireAbsolute(path)
+        return blocking {
+            val file = path.nio()
+            when {
+                !Files.exists(file, NOFOLLOW_LINKS) -> {
+                    FileResult.NotFound(path)
+                }
+
+                Files.isDirectory(file, NOFOLLOW_LINKS) -> {
+                    FileResult.AlreadyExists(path, "a folder is in the way")
+                }
+
+                else -> {
+                    attempt(path) {
+                        FileChannel.open(file, READ).use { channel ->
+                            val buffer = ByteBuffer.allocate(length)
+                            while (buffer.hasRemaining()) {
+                                if (channel.read(buffer, offset + buffer.position()) < 0) break
+                            }
+                            buffer.array().copyOf(buffer.position())
+                        }
+                    }
+                }
             }
         }
     }
