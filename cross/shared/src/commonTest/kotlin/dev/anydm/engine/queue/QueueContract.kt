@@ -736,6 +736,67 @@ abstract class QueueContract : QueueTestBase() {
         }
 
     @Test
+    fun aRelinkAdoptsTheValidatorWhenItsMirrorIsNext() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", relinkAnswer = StepResult.Ok(Relinked("etag:\"v2\"")))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            protocol.validator = "etag:\"v2\"" // the new server's token
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v2\""
+            h.status(a) shouldBe COMPLETED
+            protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L // nothing fetched twice: no start-over
+        }
+
+    @Test
+    fun aRelinkOfAMirrorThatIsntNextKeepsTheValidator() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", relinkAnswer = StepResult.Ok(Relinked("etag:\"v2\"")))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob(mirrors = listOf("https://a.example/f", "https://b.example/f"))
+            advanceTimeBy(1.seconds)
+            val second = h.store.downloads.mirrors(a)[1]
+
+            h.queue.relink(a, second.id, "https://c.example/f").shouldBeInstanceOf<CommandResult.Done>()
+
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v1\""
+        }
+
+    @Test
+    fun aPausedJobKeepsTheAdoptedValidator() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", relinkAnswer = StepResult.Ok(Relinked("etag:\"v2\"")))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.queue.pause(a).shouldBeInstanceOf<CommandResult.Done>()
+            runCurrent()
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+
+            h.status(a) shouldBe PAUSED
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v2\""
+        }
+
+    @Test
+    fun aRelinkWithoutAValidatorKeepsTheOld() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", relinkAnswer = StepResult.Ok(Relinked(null)))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            h.queue.relink(a, h.mirrorOf(a).id, "https://example.com/new").shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v1\""
+        }
+
+    @Test
     fun aRunGetsTheMirrorsNotGoneThisRound() =
         runTest {
             val h = started { QueueHarness(it, newStore(), FakeProtocol(gone = setOf("https://a.example/f"))) }

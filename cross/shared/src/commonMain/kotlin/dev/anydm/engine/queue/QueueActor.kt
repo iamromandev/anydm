@@ -436,10 +436,11 @@ internal class QueueActor(
             } catch (e: Throwable) {
                 return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, internalError(e)))
             }
-        when (checked) {
-            is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
-            is StepResult.Ok -> Unit
-        }
+        val relinked =
+            when (checked) {
+                is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
+                is StepResult.Ok -> checked.value
+            }
         return callLater { reply ->
             when (val found = relinkTarget(id, mirrorId)) {
                 is RelinkTarget.Refused -> {
@@ -448,9 +449,14 @@ internal class QueueActor(
 
                 is RelinkTarget.Found -> {
                     downloads.updateMirror(found.mirror.copy(url = url))
-                    observer.mirrorsChanged(id, downloads.mirrors(id))
+                    val mirrors = downloads.mirrors(id)
+                    observer.mirrorsChanged(id, mirrors)
+                    // The new link's validator becomes the job's only if the reprobe asks that mirror; another mirror's
+                    // own token must not make the next probe see a changed source (FND-10).
+                    val validator = relinked.validator?.takeIf { mirrorToStart(mirrors, downloads.attempts(id))?.id == mirrorId }
+                    val op: suspend (Download) -> CommandResult = { job -> reprobe(job, validator) }
                     val slot = slots[id]
-                    if (slot == null) reply.complete(reprobe(found.job)) else stop(slot, ::reprobe, reply)
+                    if (slot == null) reply.complete(op(found.job)) else stop(slot, op, reply)
                 }
             }
         }
@@ -480,8 +486,12 @@ internal class QueueActor(
 
     // After a relink: a job that was running or waiting probes again (the new link) before it transfers, at once and
     // with a fresh retry budget. A job that was waiting keeps its place; one that was running waits at the back of its
-    // priority. A job at rest (paused, failed, finished) keeps its status; it probes when it next runs.
-    private suspend fun reprobe(job: Download): CommandResult {
+    // priority. A job at rest (paused, failed, finished) keeps its status; it probes when it next runs. A [validator] the
+    // relink adopted replaces the job's.
+    private suspend fun reprobe(
+        job: Download,
+        validator: String?,
+    ): CommandResult {
         val again =
             when (job.status) {
                 DOWNLOADING, QUEUED -> job.moved(PENDING)
@@ -490,7 +500,7 @@ internal class QueueActor(
 
                 // reached MUXING before the stop landed
                 else -> job
-            }.copy(nextAttemptAt = null, attemptCount = 0)
+            }.copy(nextAttemptAt = null, attemptCount = 0, sourceValidator = validator ?: job.sourceValidator)
         if (again.status !in WAITING) return CommandResult.Done(if (again != job) save(again) else again)
         val queuedAt = if (job.status in WAITING) job.queuedAt else clock.now()
         return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = queuedAt))))
