@@ -42,11 +42,9 @@ class RangeTransferThreadsTest {
                 withContext(Dispatchers.Default) {
                     RangeTransfer(
                         transport,
-                        "https://h/f.bin",
-                        emptyList(),
+                        Source("https://h/f.bin", emptyList(), "https://h:443"),
                         RecordingIo(size, segments),
                         HostSlots { 4 },
-                        "https://h:443",
                         rampEvery = 1.milliseconds,
                     ).run(file)
                 }

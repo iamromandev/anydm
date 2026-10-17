@@ -41,8 +41,15 @@ internal const val RACE_SLOWER = 2.0
 /** How many finished block attempts give the run's speed per connection. */
 private const val RECENT = 4
 
+/** Where blocks can come from: a URL, what its requests carry, and the origin whose [HostSlots] its workers hold. */
+internal data class Source(
+    val url: String,
+    val headers: List<Pair<String, String>>,
+    val origin: String,
+)
+
 /**
- * Fetches one file's incomplete blocks with workers that each hold one of [origin]'s [slots] (HTTP-05, HTTP-06). It
+ * Fetches one file's incomplete blocks with workers that each hold one of their source origin's [slots] (HTTP-05, HTTP-06). It
  * starts with one; every [rampEvery] a controller adds another while blocks wait and a slot is free, and stops adding
  * once an addition didn't raise the speed by 10%. A worker that finishes a block gives its slot to another download
  * waiting for the same host if this run holds more than one. A worker that finds no block left races the in-flight
@@ -56,14 +63,17 @@ private const val RECENT = 4
  * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
  * request with 200: that body is read from byte 0, bytes below each block's watermark are discarded, and the rest
  * written.
+ *
+ * Other mirrors with the same content join through [addSource] (HTTP-12). Each worker is bound to one source, whose
+ * origin's slot it holds, and takes blocks from the shared queue, so a faster mirror takes more of them. A source that
+ * joins while blocks wait gets a worker at once if its origin has a free slot; the ramp adds each new worker to the
+ * source with the fewest. Every source follows the same failure rules. Plain streams use the primary only.
  */
 internal class RangeTransfer(
     private val transport: HttpTransport,
-    private val url: String,
-    private val headers: List<Pair<String, String>>,
+    private val primary: Source,
     private val io: TransferIo,
     private val slots: HostSlots,
-    private val origin: String,
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     private val rampEvery: Duration = 1.seconds,
     private val clock: Clock = Clock.System,
@@ -91,6 +101,14 @@ internal class RangeTransfer(
 
         /** Raced once in this attempt already; reset by the next attempt only while no racer runs. */
         @Volatile var raced = false
+    }
+
+    /** A source in this run, with its workers (under [takeLock]); [order] breaks ties, the primary first. */
+    private class Live(
+        val source: Source,
+        val order: Int,
+    ) {
+        var workers = 0
     }
 
     private sealed interface Attempt {
@@ -131,6 +149,10 @@ internal class RangeTransfer(
     private var waiting = 0
     private var workers = 0
     private val inFlight = mutableSetOf<Block>()
+    private val live = mutableListOf(Live(primary, 0))
+
+    /** Sources added by [addSource], taken in by the run; closed when the run ends, so later ones are dropped. */
+    private val joining = Channel<Source>(Channel.UNLIMITED)
 
     /** Speeds of the last [RECENT] block attempts that finished, bytes per second; under [takeLock]. */
     private val finished = ArrayDeque<Double>()
@@ -142,7 +164,19 @@ internal class RangeTransfer(
     private val stateLock = Mutex()
     private var ended: StepResult.Failed? = null
 
-    suspend fun run(file: TransferFile): StepResult<Unit> {
+    /** Adds a source with the same content (HTTP-12); thread-safe, before or during [run], ignored after it. */
+    fun addSource(source: Source) {
+        joining.trySend(source)
+    }
+
+    suspend fun run(file: TransferFile): StepResult<Unit> =
+        try {
+            runBlocks(file)
+        } finally {
+            joining.close()
+        }
+
+    private suspend fun runBlocks(file: TransferFile): StepResult<Unit> {
         val size = file.file.size
         if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else withSlot { stream(file, size, emptyList(), null) }
         requireNotNull(size) { "a file in blocks has a size" }
@@ -156,11 +190,17 @@ internal class RangeTransfer(
         waiting = incomplete.size
         try {
             coroutineScope {
-                slots.acquire(origin, this@RangeTransfer)
-                // The controller first: the first worker may finish every block before it suspends.
+                slots.acquire(primary.origin, this@RangeTransfer)
+                // The controller and the joiner first: the first worker may finish every block before it suspends.
                 lateinit var controller: Job
-                controller = launch { ramp(file, size, queue) { controller.cancel() } }
-                worker(file, size, queue) { controller.cancel() }
+                lateinit var joiner: Job
+                val lastOut = {
+                    controller.cancel()
+                    joiner.cancel()
+                }
+                controller = launch { ramp(file, size, queue, lastOut) }
+                joiner = launch { join(file, size, queue, lastOut) }
+                worker(file, size, queue, live.first(), lastOut)
             }
         } catch (_: RunEnded) {
             return checkNotNull(ended)
@@ -184,40 +224,50 @@ internal class RangeTransfer(
         file: TransferFile,
         size: Long,
         queue: Channel<Block>,
+        from: Live,
         lastOut: () -> Unit,
     ) = launch(start = CoroutineStart.UNDISPATCHED) {
         var yielded = false
+        val source = from.source
         try {
-            takeLock.withLock { workers++ }
+            takeLock.withLock {
+                workers++
+                from.workers++
+            }
             while (true) {
                 val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
                 if (block == null) {
                     val seen = changes.value
                     val target = raceTarget()
                     if (target != null) {
-                        race(file, size, target)
+                        race(file, size, target, source)
                         continue
                     }
                     // Nothing to race yet: a block may turn slow later, so look again next tick, unless the blocks
                     // are all done or another download needs the slot.
                     if (takeLock.withLock { inFlight.none { !it.done } }) break
-                    if (slots.tryYield(origin, this@RangeTransfer)) {
+                    if (slots.tryYield(source.origin, this@RangeTransfer)) {
                         yielded = true
                         break
                     }
                     changes.first { it != seen }
                     continue
                 }
-                original(file, size, block)
-                if (slots.tryYield(origin, this@RangeTransfer)) {
+                original(file, size, block, source)
+                if (slots.tryYield(source.origin, this@RangeTransfer)) {
                     yielded = true
                     break
                 }
             }
         } finally {
             withContext(NonCancellable) {
-                if (!yielded) slots.release(origin, this@RangeTransfer)
-                if (takeLock.withLock { --workers == 0 && waiting == 0 }) lastOut()
+                if (!yielded) slots.release(source.origin, this@RangeTransfer)
+                val last =
+                    takeLock.withLock {
+                        from.workers--
+                        --workers == 0 && waiting == 0
+                    }
+                if (last) lastOut()
             }
         }
     }
@@ -245,10 +295,23 @@ internal class RangeTransfer(
             before = null
             // Keeps ticking after the ramp stops: idle workers wake on each tick. The last worker out cancels this.
             if (stopped || takeLock.withLock { waiting } == 0) continue
-            if (slots.tryAcquire(origin, this@RangeTransfer)) {
-                worker(file, size, queue, lastOut)
-                before = speed
-            }
+            val candidates = takeLock.withLock { live.sortedWith(compareBy({ it.workers }, { it.order })) }
+            val chosen = candidates.firstOrNull { slots.tryAcquire(it.source.origin, this@RangeTransfer) } ?: continue
+            worker(file, size, queue, chosen, lastOut)
+            before = speed
+        }
+    }
+
+    /** Takes in each source [addSource] sends, with a worker at once if blocks wait and its origin has a free slot. */
+    private suspend fun CoroutineScope.join(
+        file: TransferFile,
+        size: Long,
+        queue: Channel<Block>,
+        lastOut: () -> Unit,
+    ) {
+        for (source in joining) {
+            val (joined, blocksWait) = takeLock.withLock { Live(source, live.size).also { live += it } to (waiting > 0) }
+            if (blocksWait && slots.tryAcquire(source.origin, this@RangeTransfer)) worker(file, size, queue, joined, lastOut)
         }
     }
 
@@ -257,6 +320,7 @@ internal class RangeTransfer(
         file: TransferFile,
         size: Long,
         block: Block,
+        source: Source,
     ) = coroutineScope {
         val attempts =
             launch(start = CoroutineStart.LAZY) {
@@ -266,7 +330,7 @@ internal class RangeTransfer(
                         block.attemptBytes = 0
                         if (block.racer == null) block.raced = false
                     }
-                    when (val attempt = fetch(file, size, block)) {
+                    when (val attempt = fetch(file, size, block, source)) {
                         Attempt.Done -> break
                         is Attempt.Retry -> if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
                         is Attempt.End -> end(attempt.failed)
@@ -329,12 +393,13 @@ internal class RangeTransfer(
         file: TransferFile,
         size: Long,
         block: Block,
+        source: Source,
     ) = coroutineScope {
         // Claimed under the lock, and the job made only after: a LAZY child never started would hang this scope.
         val job =
             block.lock.withLock {
                 if (block.done || block.racer != null) return@coroutineScope
-                launch(start = CoroutineStart.LAZY) { racer(file, size, block) }.also { block.racer = it }
+                launch(start = CoroutineStart.LAZY) { racer(file, size, block, source) }.also { block.racer = it }
             }
         try {
             job.start()
@@ -349,12 +414,13 @@ internal class RangeTransfer(
         file: TransferFile,
         size: Long,
         block: Block,
+        source: Source,
     ) {
         val from = block.watermark
         val last = block.segment.end - 1
         val response =
             try {
-                transport.open(HttpRequest(url, headers = listOf("Range" to "bytes=$from-$last") + headers))
+                transport.open(HttpRequest(source.url, headers = listOf("Range" to "bytes=$from-$last") + source.headers))
             } catch (_: HttpIoException) {
                 return
             }
@@ -417,13 +483,13 @@ internal class RangeTransfer(
         original?.cancel()
     }
 
-    /** Runs [block] holding one slot of [origin]. */
+    /** Runs [block] holding one slot of the primary's origin. */
     private suspend fun <T> withSlot(block: suspend () -> T): T {
-        slots.acquire(origin, this)
+        slots.acquire(primary.origin, this)
         try {
             return block()
         } finally {
-            withContext(NonCancellable) { slots.release(origin, this@RangeTransfer) }
+            withContext(NonCancellable) { slots.release(primary.origin, this@RangeTransfer) }
         }
     }
 
@@ -443,7 +509,7 @@ internal class RangeTransfer(
         repeat(ATTEMPTS) {
             val response =
                 next ?: try {
-                    transport.open(HttpRequest(url, headers = headers))
+                    transport.open(HttpRequest(primary.url, headers = primary.headers))
                 } catch (e: HttpIoException) {
                     val failed = failedOf(e)
                     if (failed.errorClass != ErrorClass.TRANSIENT) return failed
@@ -571,12 +637,13 @@ internal class RangeTransfer(
         file: TransferFile,
         size: Long,
         block: Block,
+        source: Source,
     ): Attempt {
         val first = block.watermark
         val last = block.segment.end - 1
         val response =
             try {
-                transport.open(HttpRequest(url, headers = listOf("Range" to "bytes=$first-$last") + headers))
+                transport.open(HttpRequest(source.url, headers = listOf("Range" to "bytes=$first-$last") + source.headers))
             } catch (e: HttpIoException) {
                 return ioAttempt(e)
             }

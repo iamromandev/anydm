@@ -125,7 +125,7 @@ class HttpProtocol(
                     all.filterNot { it.first.lowercase() in credentialHeaders }
                 }
             }
-        return RangeTransfer(auth, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource, clock = clock)
+        return RangeTransfer(auth, Source(probe.finalUrl, headers, originOf(probe.finalUrl)), io, slots, timeSource, clock = clock)
             .run(file)
     }
 

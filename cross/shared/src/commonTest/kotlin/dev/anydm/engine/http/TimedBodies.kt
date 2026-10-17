@@ -118,6 +118,7 @@ class HangingBody(
 fun pacedRanges(
     bytes: ByteArray,
     finalUrl: String = "https://h/f.bin",
+    etag: String? = null,
     body: (ByteArray) -> HttpBody,
 ): suspend (HttpRequest) -> HttpResponse =
     { request ->
@@ -132,6 +133,7 @@ fun pacedRanges(
         response(
             206,
             "Content-Range" to "bytes $start-$last/${bytes.size}",
+            *etagOf(etag),
             finalUrl = finalUrl,
             body = body(bytes.copyOfRange(start.toInt(), last + 1)),
         )
