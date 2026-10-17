@@ -58,7 +58,7 @@ class Log(
         try {
             val text =
                 buildString {
-                    append(timestamp(clock.now()))
+                    append(logTimestamp(clock.now()))
                         .append(' ')
                         .append(level.name.padEnd(5))
                         .append(' ')
@@ -90,12 +90,12 @@ class Log(
                         override fun now() = Instant.fromEpochMilliseconds(0)
                     },
             ).apply { silent = true }
-
-        // ISO-8601 in UTC, always with three digits of milliseconds.
-        private fun timestamp(now: Instant): String {
-            val text = Instant.fromEpochMilliseconds(now.toEpochMilliseconds()).toString()
-            val dot = text.indexOf('.')
-            return if (dot < 0) text.removeSuffix("Z") + ".000Z" else text.substring(0, dot + 4) + "Z"
-        }
     }
+}
+
+/** ISO-8601 in UTC, always with three digits of milliseconds: how log lines and the bundle write a time. */
+internal fun logTimestamp(now: Instant): String {
+    val text = Instant.fromEpochMilliseconds(now.toEpochMilliseconds()).toString()
+    val dot = text.indexOf('.')
+    return if (dot < 0) text.removeSuffix("Z") + ".000Z" else text.substring(0, dot + 4) + "Z"
 }
