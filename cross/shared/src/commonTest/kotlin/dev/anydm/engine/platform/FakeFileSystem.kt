@@ -1,5 +1,6 @@
 package dev.anydm.engine.platform
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.io.files.Path
 
 /**
@@ -47,6 +48,9 @@ internal class FakeFileSystem(
     /** False: [moveToTrash] says there is no trash. True: it takes the path away and records it in [trashed]. */
     var trashAvailable = false
     val trashed = mutableListOf<Path>()
+
+    /** When set, every [read] waits for it first, so a test can stop a run while it reads. */
+    var readGate: CompletableDeferred<Unit>? = null
 
     fun read(path: Path): ByteArray? = files[path]?.copyOf()
 
@@ -168,6 +172,7 @@ internal class FakeFileSystem(
         length: Int,
     ): FileResult<ByteArray> {
         require(offset >= 0 && length >= 0)
+        readGate?.await()
         log("read", path)
         fault(Op.READ, path)?.let { return it }
         if (path in folders) return FileResult.AlreadyExists(path, "a folder is in the way")
