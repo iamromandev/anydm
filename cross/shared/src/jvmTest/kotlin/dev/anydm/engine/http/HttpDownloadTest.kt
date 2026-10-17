@@ -14,6 +14,8 @@ import dev.anydm.engine.platform.namesIn
 import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.platform.readBytes
 import dev.anydm.engine.platform.sizeOf
+import dev.anydm.engine.protocol.ProbeRequest
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openInMemoryDatabase
@@ -29,8 +31,10 @@ import kotlinx.io.files.Path
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.time.measureTime
 
 /** HttpProtocol on OkHttp, the real runner, store and file system, against the fault server (#569). */
@@ -39,11 +43,12 @@ class HttpDownloadTest {
     private val server = FaultServer()
     private val store = Store(openInMemoryDatabase(), Dispatchers.IO)
     private val bytes = Random(1).nextBytes(20 shl 20)
+    private val credentials = InMemoryCredentials()
     private val runner =
         StepRunner(
             DesktopFileSystem(),
             store.downloads,
-            mapOf(DownloadKind.DIRECT to HttpProtocol(OkHttpTransport(), connections = { 4 })),
+            mapOf(DownloadKind.DIRECT to HttpProtocol(OkHttpTransport(), connections = { 4 }, credentials = credentials)),
             root,
             freeSpaceReserve = 0,
             // Watermarks reach the store often enough for the resume test to see blocks finish.
@@ -178,5 +183,55 @@ class HttpDownloadTest {
                     .substringBefore('-')
                     .toLong() in firstBlock
             } shouldBe 2
+        }
+
+    // #571: auth and Retry-After
+
+    @Test
+    fun aDigestDownloadLogsInOnce() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Digest("u", "p"))
+            credentials.set(server.url("/"), Credentials("u", "p"))
+            val (download, mirror) = added()
+            runner.run(prepared(download, mirror)).shouldBeInstanceOf<RunOutcome.Finished>()
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+            server.requests.count { it.headers["Authorization"] == null } shouldBe 1
+            ranged().size shouldBe 16
+        }
+
+    @Test
+    fun aBasicDownloadLogsIn() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Basic("u", "p"))
+            credentials.set(server.url("/"), Credentials("u", "p"))
+            val (download, mirror) = added()
+            runner.run(prepared(download, mirror)).shouldBeInstanceOf<RunOutcome.Finished>()
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+            server.requests.count { it.headers["Authorization"] == null } shouldBe 1
+        }
+
+    @Test
+    fun aWrongPasswordFailsWithAuth() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Digest("u", "p"))
+            credentials.set(server.url("/"), Credentials("u", "x"))
+            val (download, mirror) = added()
+            val failed = runner.prepare(download, mirror, RunListener.None).shouldBeInstanceOf<PrepareOutcome.Failed>()
+            failed.failure.errorClass shouldBe ErrorClass.AUTH
+            failed.failure.message shouldBe "HTTP 401 from ${hostOf(server.url("/"))}"
+            server.requests.size shouldBe 2
+        }
+
+    @Test
+    fun aProbe503WithADateWaits() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Once(Fault.Status(503, "Sun, 06 Nov 1994 08:49:37 GMT")))
+            val clock =
+                object : Clock {
+                    override fun now() = Instant.parse("1994-11-06T08:49:00Z")
+                }
+            val (download, mirror) = added()
+            HttpProtocol(OkHttpTransport(), clock = clock).probe(ProbeRequest(download, mirror)) shouldBe
+                StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from ${hostOf(server.url("/"))}", 37.seconds)
         }
 }
