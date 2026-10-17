@@ -28,6 +28,7 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.goneMirrors
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
@@ -602,9 +603,13 @@ internal class QueueActor(
     private suspend fun launchSlot(waiting: Download) {
         // The retry is happening now.
         val download = if (waiting.nextAttemptAt != null) save(waiting.copy(nextAttemptAt = null)) else waiting
-        val mirror = mirrorToStart(downloads.mirrors(download.id), downloads.attempts(download.id))
+        val mirrors = downloads.mirrors(download.id)
+        val attempts = downloads.attempts(download.id)
+        val mirror = mirrorToStart(mirrors, attempts)
+        val gone = goneMirrors(mirrors, attempts)
+        val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
-        val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
@@ -659,7 +664,7 @@ internal class QueueActor(
                 override suspend fun checkpointed() = observer.checkpointed(slot.id)
             }
         val ready =
-            when (val prepared = runner.prepare(pending, mirror, listener)) {
+            when (val prepared = runner.prepare(pending, mirror, listener, slot.others)) {
                 is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }

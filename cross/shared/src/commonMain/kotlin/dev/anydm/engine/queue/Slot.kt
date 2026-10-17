@@ -21,6 +21,8 @@ internal class Slot(
     val attempt: Attempt,
     /** The bytes the job's stored watermarks held when the run started, to tell whether it made progress. */
     val writtenAtStart: Long,
+    /** The job's other mirrors not gone this round, which the run may fetch from too (HTTP-12). */
+    val others: List<Mirror> = emptyList(),
 ) {
     val id: DownloadId = download.id
     lateinit var job: Job

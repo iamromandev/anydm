@@ -16,6 +16,8 @@ sealed interface PrepareOutcome {
         override val download: Download,
         val mirror: Mirror,
         val probe: ProbeResult,
+        /** The job's other mirrors not gone this round, for Transfer.mirrors. */
+        val others: List<Mirror> = emptyList(),
     ) : PrepareOutcome
 
     data class Failed(

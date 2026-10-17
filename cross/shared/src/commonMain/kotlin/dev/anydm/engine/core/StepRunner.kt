@@ -93,6 +93,7 @@ class StepRunner(
         download: Download,
         mirror: Mirror,
         listener: RunListener = RunListener.None,
+        others: List<Mirror> = emptyList(),
     ): PrepareOutcome {
         require(download.status == PENDING) { "prepare needs a PENDING download, not ${download.status}" }
         require(mirror.downloadId == download.id) { "mirror ${mirror.id.value} isn't download ${download.id.value}'s" }
@@ -138,7 +139,7 @@ class StepRunner(
                     sourceValidator = probed ?: stored,
                 ).moveTo(QUEUED)
         listener.moved(queued)
-        return PrepareOutcome.Ready(queued, mirror, probe)
+        return PrepareOutcome.Ready(queued, mirror, probe, others)
     }
 
     /** True when the download has stored files and every one of their segments is written to its end. */
@@ -440,7 +441,7 @@ class StepRunner(
             writers[file.id] = writer
             files += TransferFile(file, segments, partial, target)
         }
-        return StepResult.Ok(Transfer(download, job.mirror, job.probe, files))
+        return StepResult.Ok(Transfer(download, job.mirror, job.probe, files, job.others))
     }
 
     /**

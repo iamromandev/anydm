@@ -87,6 +87,23 @@ class StepRunnerTest {
         }
 
     @Test
+    fun theRunHandsTheOtherMirrorsToTheTransfer() =
+        runTest {
+            val h = StepHarness()
+            h.store.register(DownloadId(1))
+            val other = Mirror(MirrorId(2), DownloadId(1), "https://two.example/f", 1)
+            val ready =
+                h.runner
+                    .prepare(aPendingDownload(), aMirror(), h.listener, others = listOf(other))
+                    .shouldBeInstanceOf<PrepareOutcome.Ready>()
+            ready.others shouldBe listOf(other)
+            h.runner.run(ready, h.listener).shouldBeInstanceOf<RunOutcome.Finished>()
+            h.protocol.transfers
+                .single()
+                .mirrors shouldBe listOf(other)
+        }
+
+    @Test
     fun aFailureAtAnyStepLeavesTheJobWhereItFailed() =
         runTest {
             val mismatches =

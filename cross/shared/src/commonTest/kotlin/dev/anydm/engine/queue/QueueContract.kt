@@ -712,6 +712,21 @@ abstract class QueueContract : QueueTestBase() {
     private suspend fun QueueHarness.mirrorOf(id: DownloadId) = store.downloads.mirrors(id).single()
 
     @Test
+    fun aRunGetsTheMirrorsNotGoneThisRound() =
+        runTest {
+            val h = started { QueueHarness(it, newStore(), FakeProtocol(gone = setOf("https://a.example/f"))) }
+            val a = h.addJob(mirrors = listOf("https://a.example/f", "https://b.example/f", "https://c.example/f"))
+            settle()
+            val (_, b, c) = h.store.downloads.mirrors(a)
+            h.protocol.transfers
+                .single()
+                .mirror shouldBe b
+            h.protocol.transfers
+                .single()
+                .mirrors shouldBe listOf(c)
+        }
+
+    @Test
     fun theDefaultRelinkIsRefused() =
         runTest {
             val h = started()
