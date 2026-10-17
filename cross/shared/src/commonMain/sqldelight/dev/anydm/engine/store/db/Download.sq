@@ -30,6 +30,8 @@ CREATE TABLE download (
     queued_at INTEGER AS Instant,
     -- What the source said it is at the last probe (an ETag...), so a later probe can tell it changed (#554).
     source_validator TEXT,
+    -- What the finished file must hash to, as `sha256:<hex>` (Checksum.toString), the user's (#573).
+    checksum TEXT,
     CHECK (parent_id <> id)
 );
 
@@ -40,8 +42,8 @@ CREATE INDEX download_parent ON download(parent_id);
 
 insert:
 INSERT INTO download(kind, status, parent_id, collection, category_id, profile_id, save_folder, file_name, size,
-    priority, speed_limit, attempt_count, next_attempt_at, pause_reasons, queued_at, source_validator)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    priority, speed_limit, attempt_count, next_attempt_at, pause_reasons, queued_at, source_validator, checksum)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Only meaningful in the transaction that inserted (the JDBC driver opens a connection per statement outside one).
 selectLastInserted:
@@ -59,7 +61,7 @@ SELECT * FROM download WHERE status = ? ORDER BY priority DESC, queued_at, id;
 update:
 UPDATE download SET kind = ?, status = ?, parent_id = ?, collection = ?, category_id = ?, profile_id = ?,
     save_folder = ?, file_name = ?, size = ?, priority = ?, speed_limit = ?, attempt_count = ?, next_attempt_at = ?,
-    pause_reasons = ?, queued_at = ?, source_validator = ?
+    pause_reasons = ?, queued_at = ?, source_validator = ?, checksum = ?
 WHERE id = ?;
 
 delete:

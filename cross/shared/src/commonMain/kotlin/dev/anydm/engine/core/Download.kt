@@ -44,6 +44,8 @@ data class Download(
     val queuedAt: Instant? = null,
     /** What the source said it is at the last probe (ProbeResult.validator); a different one starts it over (#554). */
     val sourceValidator: String? = null,
+    /** What the finished file must hash to, as the user gave it (HTTP-14); it wins over the server's. */
+    val checksum: Checksum? = null,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }

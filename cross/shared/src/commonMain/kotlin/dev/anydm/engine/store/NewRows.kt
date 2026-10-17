@@ -1,6 +1,7 @@
 package dev.anydm.engine.store
 
 import dev.anydm.engine.core.CategoryId
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.CollectionKind
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
@@ -32,6 +33,8 @@ data class NewDownload(
     val speedLimit: Long? = null,
     /** What its requests carry besides the URL (HTTP-10); stored with it. */
     val context: RequestContext? = null,
+    /** What the finished file must hash to (HTTP-14). */
+    val checksum: Checksum? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }
