@@ -48,3 +48,41 @@ fun response(
     body: HttpBody = bytesBody(),
     redirects: Int = 0,
 ) = HttpResponse(status, Headers(headers.toList()), finalUrl, redirects, body)
+
+private val rangeHeader = Regex("""bytes=(\d+)-(\d+)""")
+
+/** Where this request's `Range: bytes=a-b` starts, or null without one. */
+fun HttpRequest.rangeStart(): Long? =
+    headers
+        .firstOrNull { it.first == "Range" }
+        ?.second
+        ?.let(rangeHeader::matchEntire)
+        ?.groupValues
+        ?.get(1)
+        ?.toLong()
+
+/** Serves [bytes]: 206 with an exact Content-Range for `Range: bytes=a-b`, 200 and the whole of it otherwise. */
+fun servingRanges(
+    bytes: ByteArray,
+    finalUrl: String = "https://h/f.bin",
+): suspend (HttpRequest) -> HttpResponse =
+    { request ->
+        val range =
+            request.headers
+                .firstOrNull { it.first == "Range" }
+                ?.second
+                ?.let(rangeHeader::matchEntire)
+        if (range == null) {
+            response(200, "Content-Length" to "${bytes.size}", finalUrl = finalUrl, body = bytesBody(bytes))
+        } else {
+            val (a, b) = range.destructured
+            val first = a.toInt()
+            val last = minOf(b.toInt(), bytes.size - 1)
+            response(
+                206,
+                "Content-Range" to "bytes $first-$last/${bytes.size}",
+                finalUrl = finalUrl,
+                body = bytesBody(bytes.copyOfRange(first, last + 1)),
+            )
+        }
+    }

@@ -99,7 +99,14 @@ class HttpProtocol(
     override suspend fun transfer(
         transfer: Transfer,
         io: TransferIo,
-    ): StepResult<Unit> = notYet
+    ): StepResult<Unit> {
+        val probe = transfer.probe
+        check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
+        val file = transfer.files.single()
+        if (file.segments.isEmpty()) return notYet
+        val connections = connections().coerceIn(1, 16)
+        return RangeTransfer(transport, probe.finalUrl, requestHeaders(probe.context), io, connections).run(file)
+    }
 
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = notYet
 
