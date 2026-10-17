@@ -38,13 +38,34 @@ class HttpResponse(
     val body: HttpBody,
 )
 
-enum class HttpIoKind { CONNECT, TIMEOUT, RESET, TOO_MANY_REDIRECTS, OTHER }
+enum class HttpIoKind { CONNECT, TIMEOUT, RESET, TLS, TOO_MANY_REDIRECTS, BAD_URL, OTHER }
 
+/**
+ * A request that got no HTTP answer. The message names only the [kind] and [host] (no user, password, path, query or
+ * the [cause]'s own text, which may hold any of them).
+ */
 class HttpIoException(
     val kind: HttpIoKind,
-    message: String,
+    val host: String,
     cause: Throwable? = null,
-) : Exception(message, cause)
+) : Exception(messageOf(kind, host), cause)
+
+private fun messageOf(
+    kind: HttpIoKind,
+    host: String,
+): String {
+    val what =
+        when (kind) {
+            HttpIoKind.CONNECT -> "can't connect"
+            HttpIoKind.TIMEOUT -> "timed out"
+            HttpIoKind.RESET -> "connection broke"
+            HttpIoKind.TLS -> "TLS handshake failed"
+            HttpIoKind.TOO_MANY_REDIRECTS -> "more than 5 redirects"
+            HttpIoKind.BAD_URL -> "not an HTTP URL"
+            HttpIoKind.OTHER -> "network error"
+        }
+    return "$what ($host)"
+}
 
 /** How HTTP requests leave the engine; OkHttp on the JVM. */
 interface HttpTransport {

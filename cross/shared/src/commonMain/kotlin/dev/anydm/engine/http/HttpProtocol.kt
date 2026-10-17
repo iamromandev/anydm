@@ -1,6 +1,5 @@
 package dev.anydm.engine.http
 
-import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.PlanContext
@@ -13,6 +12,7 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewSegment
+import kotlin.time.Clock
 import kotlin.time.TimeSource
 
 /** What a probe learned about a direct URL (HTTP-01, HTTP-03). */
@@ -38,6 +38,7 @@ class HttpProtocol(
     private val userAgent: String = "anydm",
     private val connections: () -> Int = { 4 },
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    private val clock: Clock = Clock.System,
 ) : Protocol {
     /** Connection slots per host, shared by every download this protocol serves (HTTP-06). */
     internal val slots = HostSlots { connections().coerceIn(1, 16) }
@@ -48,7 +49,7 @@ class HttpProtocol(
             try {
                 transport.open(HttpRequest(request.mirror.url, headers = headers))
             } catch (e: HttpIoException) {
-                return failed(e)
+                return failedOf(e)
             }
         try {
             skimBody(response.body)
@@ -68,11 +69,11 @@ class HttpProtocol(
             416 -> {
                 unsatisfied(response.headers["Content-Range"])
                     ?.let { StepResult.Ok(probeOf(response, size = it, rangesSupported = true, request.context)) }
-                    ?: failed(response)
+                    ?: failedOf(response, clock.now())
             }
 
             else -> {
-                failed(response)
+                failedOf(response, clock.now())
             }
         }
     }
@@ -161,15 +162,6 @@ class HttpProtocol(
         )
     }
 
-    private fun failed(response: HttpResponse): StepResult.Failed =
-        StepResult.Failed(classOf(response.status), "HTTP ${response.status} from ${hostOf(response.finalUrl)}")
-
-    private fun failed(e: HttpIoException): StepResult.Failed =
-        StepResult.Failed(
-            errorClass = if (e.kind == HttpIoKind.TOO_MANY_REDIRECTS) null else ErrorClass.TRANSIENT,
-            message = e.message?.takeUnless { it.isBlank() } ?: e.kind.name.lowercase(),
-        )
-
     private companion object {
         const val PROBE_BYTES = 1024
         val ownedHeaders = setOf("range", "accept-encoding")
@@ -220,16 +212,6 @@ class HttpProtocol(
     private fun validatorOf(headers: Headers): String? =
         headers["ETag"]?.trim()?.takeIf { it.isNotEmpty() }?.let { "etag:$it" }
             ?: headers["Last-Modified"]?.trim()?.takeIf { it.isNotEmpty() }?.let { "last-modified:$it" }
-
-    private fun classOf(status: Int): ErrorClass? =
-        when (status) {
-            401, 403 -> ErrorClass.AUTH
-            404, 410 -> ErrorClass.GONE
-            429 -> ErrorClass.RATE_LIMITED
-            408 -> ErrorClass.TRANSIENT
-            in 500..599 -> ErrorClass.TRANSIENT
-            else -> null
-        }
 }
 
 /** The host of [url], without any user or password. */

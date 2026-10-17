@@ -13,6 +13,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import java.security.cert.CertificateException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
@@ -69,7 +73,9 @@ class OkHttpTransportTest {
         runBlocking<Unit> {
             server.serve("/a.bin", file)
             server.fault("/a.bin", Fault.Redirects(6))
-            shouldThrow<HttpIoException> { get("/a.bin") }.kind shouldBe HttpIoKind.TOO_MANY_REDIRECTS
+            val e = shouldThrow<HttpIoException> { get("/a.bin") }
+            e.kind shouldBe HttpIoKind.TOO_MANY_REDIRECTS
+            e.host shouldBe hostOf(server.url("/"))
         }
 
     @Test
@@ -146,7 +152,9 @@ class OkHttpTransportTest {
             server.fault("/d.bin", Fault.DropAfter(100))
             val response = get("/d.bin")
             response.status shouldBe 200
-            shouldThrow<HttpIoException> { response.body.readAll() }.kind shouldBe HttpIoKind.RESET
+            val e = shouldThrow<HttpIoException> { response.body.readAll() }
+            e.kind shouldBe HttpIoKind.RESET
+            e.host shouldBe hostOf(server.url("/"))
         }
 
     // Final review: a read on a closed body never returned, and a cancelled read could still be using the body.
@@ -173,6 +181,25 @@ class OkHttpTransportTest {
     fun aRefusedConnectionIsAConnectFailure() =
         runBlocking<Unit> {
             val closed = FaultServer().apply { close() }
-            shouldThrow<HttpIoException> { transport.open(HttpRequest(closed.url("/a.bin"))) }.kind shouldBe HttpIoKind.CONNECT
+            val e = shouldThrow<HttpIoException> { transport.open(HttpRequest(closed.url("/a.bin"))) }
+            e.kind shouldBe HttpIoKind.CONNECT
+            e.host shouldBe hostOf(closed.url("/"))
+        }
+
+    @Test
+    fun tlsFailuresAreTls() {
+        httpIoExceptionOf(SSLHandshakeException("bad cert for secret.example/x"), "h").kind shouldBe HttpIoKind.TLS
+        httpIoExceptionOf(SSLPeerUnverifiedException("x"), "h").kind shouldBe HttpIoKind.TLS
+        httpIoExceptionOf(SSLException("x", CertificateException("y")), "h").kind shouldBe HttpIoKind.TLS
+        httpIoExceptionOf(SSLException("connection reset"), "h").kind shouldBe HttpIoKind.RESET
+        httpIoExceptionOf(SSLHandshakeException("bad cert for secret.example/x"), "h").message shouldBe "TLS handshake failed (h)"
+    }
+
+    @Test
+    fun aNonHttpUrlIsBadUrl() =
+        runBlocking<Unit> {
+            val e = shouldThrow<HttpIoException> { transport.open(HttpRequest("ftp://u:p@h/f")) }
+            e.kind shouldBe HttpIoKind.BAD_URL
+            e.host shouldBe "h"
         }
 }
