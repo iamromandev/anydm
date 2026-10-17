@@ -20,16 +20,19 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,6 +40,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -84,6 +88,20 @@ class Engine(
     // Jobs holding a slot, written from slots and the queue at once.
     private val inSlots = MutableStateFlow<Set<DownloadId>>(emptySet())
 
+    // What each running job's slot reports, written from slots and read by the publisher: no lock needed.
+    private class Live {
+        val progress = MutableStateFlow<Pair<Long, Long?>?>(null)
+        val bytes = MutableStateFlow(0L)
+    }
+
+    private val live = MutableStateFlow<Map<DownloadId, Live>>(emptyMap())
+
+    // The publisher's own: what runs, what was last published, and the loops that run while anything does.
+    private val running = mutableSetOf<DownloadId>()
+    private val published = mutableMapOf<DownloadId, Pair<Long, Long?>>()
+    private val totalSamples = ArrayDeque<Long>()
+    private var loops: Job? = null
+
     private val runner = StepRunner(fileSystem, store.downloads, protocols, defaultFolder, checkpointEvery = checkpointEvery)
     private val queue =
         Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, Observer())
@@ -114,6 +132,10 @@ class Engine(
             val id: DownloadId,
         ) : Fact
 
+        data class SlotStarted(
+            val id: DownloadId,
+        ) : Fact
+
         data class SlotEnded(
             val id: DownloadId,
         ) : Fact
@@ -135,7 +157,26 @@ class Engine(
 
         override fun checkpointed(id: DownloadId) = send(Fact.Checkpointed(id))
 
-        override fun slotStarted(id: DownloadId) = inSlots.update { it + id }
+        override fun progress(
+            id: DownloadId,
+            downloaded: Long,
+            total: Long?,
+        ) {
+            live.value[id]?.progress?.value = downloaded to total
+        }
+
+        override fun received(
+            id: DownloadId,
+            bytes: Long,
+        ) {
+            live.value[id]?.bytes?.update { it + bytes }
+        }
+
+        override fun slotStarted(id: DownloadId) {
+            live.update { it + (id to Live()) }
+            inSlots.update { it + id }
+            send(Fact.SlotStarted(id))
+        }
 
         override fun slotEnded(id: DownloadId) {
             inSlots.update { it - id }
@@ -253,13 +294,12 @@ class Engine(
                 if (cache.contains(fact.id)) cache.filesChanged(fact.id, filesOf(fact.id))
             }
 
+            is Fact.SlotStarted -> {
+                started(fact.id)
+            }
+
             is Fact.SlotEnded -> {
-                if (cache.contains(
-                        fact.id,
-                    )
-                ) {
-                    cache.filesChanged(fact.id, filesOf(fact.id)).also { cache.stoppedRunning(fact.id) }
-                }
+                ended(fact.id)
             }
 
             is Fact.Event -> {
@@ -268,6 +308,73 @@ class Engine(
         }
         publish()
         if (fact is Fact.Event) eventFlow.tryEmit(fact.event)
+    }
+
+    private fun started(id: DownloadId) {
+        running += id
+        if (loops?.isActive != true) {
+            loops =
+                scope.launch(publisher) {
+                    launch { every(PROGRESS_EVERY) { publishProgress() } }
+                    launch { every(SPEED_EVERY) { sampleSpeed() } }
+                }
+        }
+    }
+
+    // Its last progress counts; then it shows what its checkpoints hold, and no speed.
+    private suspend fun ended(id: DownloadId) {
+        running -= id
+        published -= id
+        live.value[id]
+            ?.progress
+            ?.value
+            ?.let { (downloaded, total) -> cache.progress(id, downloaded, total) }
+        live.update { it - id }
+        if (cache.contains(id)) {
+            cache.filesChanged(id, filesOf(id))
+            cache.stoppedRunning(id)
+        }
+        if (running.isEmpty()) {
+            loops?.cancel()
+            loops = null
+            speedFlow.value = SpeedWindow(0, totalSamples.toList())
+        }
+    }
+
+    private suspend fun every(
+        period: Duration,
+        block: () -> Unit,
+    ) {
+        while (true) {
+            delay(period)
+            block()
+        }
+    }
+
+    // At most every PROGRESS_EVERY per job (FND-11): only what changed since the last publish.
+    private fun publishProgress() {
+        var changed = false
+        for (id in running) {
+            val now = live.value[id]?.progress?.value ?: continue
+            if (published[id] == now) continue
+            published[id] = now
+            cache.progress(id, now.first, now.second)
+            changed = true
+        }
+        if (changed) publish()
+    }
+
+    private fun sampleSpeed() {
+        var total = 0L
+        for (id in running) {
+            val sample = live.value[id]?.bytes?.getAndUpdate { 0L } ?: 0L
+            cache.speed(id, sample)
+            total += sample
+        }
+        totalSamples.addLast(total)
+        while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
+        speedFlow.value = SpeedWindow(total, totalSamples.toList())
+        publish()
     }
 
     private fun publish() {
@@ -287,5 +394,10 @@ class Engine(
         eventFlow.tryEmit(EngineEvent.EngineFailed(error))
         scope.cancel()
         runCatching { store.close() }
+    }
+
+    private companion object {
+        val PROGRESS_EVERY = 200.milliseconds
+        val SPEED_EVERY = 1.seconds
     }
 }
