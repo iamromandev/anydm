@@ -45,6 +45,7 @@ internal class QueueHarness(
     /** A harness made after a restart passes the first one's, so the files survive it. */
     val fs: FakeFileSystem = FakeFileSystem(),
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
+    observer: QueueObserver = QueueObserver.None,
 ) {
     val finished = mutableListOf<DownloadId>()
     val runner =
@@ -65,7 +66,7 @@ internal class QueueHarness(
             freeSpaceReserve = 0,
             checkpointEvery = checkpointEvery,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy)
+    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy, observer)
 
     private var added = 0
 

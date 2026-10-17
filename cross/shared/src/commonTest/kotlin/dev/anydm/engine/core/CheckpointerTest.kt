@@ -135,4 +135,20 @@ class CheckpointerTest {
 
             s.store.saves shouldBe listOf(1 to mapOf(s.segments[1].id to 30L))
         }
+
+    @Test
+    fun aSaveIsReported() =
+        runTest {
+            val s = setup()
+            var saves = 0
+            val checkpointer = Checkpointer(emptyMap(), s.store, s.segments.associate { it.id to it.fileId }) { saves++ }
+
+            checkpointer.flush()
+            saves shouldBe 0
+            checkpointer.record(mapOf(s.segments[0].id to 10L))
+            checkpointer.flush()
+            checkpointer.flush()
+
+            saves shouldBe 1
+        }
 }
