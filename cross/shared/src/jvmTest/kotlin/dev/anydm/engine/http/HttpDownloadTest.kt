@@ -30,6 +30,8 @@ import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.measureTime
 
 /** HttpProtocol on OkHttp, the real runner, store and file system, against the fault server (#569). */
 class HttpDownloadTest {
@@ -155,5 +157,26 @@ class HttpDownloadTest {
                     .map { it.removePrefix("bytes=").substringBefore('-').toLong() }
             starts.isEmpty() shouldBe false
             done.none { it.start in starts } shouldBe true
+        }
+
+    // #570: a slow block is raced and the first to finish wins
+
+    @Test
+    fun aSlowBlockIsRacedEndToEnd() =
+        runBlocking<Unit> {
+            val (download, mirror) = added()
+            val ready = prepared(download, mirror)
+            // The first ranged request (block 0, 1.25 MiB) at 64 KiB/s would take about 20 s alone.
+            server.fault("/f.bin", Fault.Once(Fault.Throttle(64L * 1024)))
+            val took = measureTime { runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>() }
+            (took < 10.seconds) shouldBe true
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+            val firstBlock = 0L until (bytes.size / 16).toLong()
+            ranged().count {
+                it.headers["Range"]!!
+                    .removePrefix("bytes=")
+                    .substringBefore('-')
+                    .toLong() in firstBlock
+            } shouldBe 2
         }
 }
