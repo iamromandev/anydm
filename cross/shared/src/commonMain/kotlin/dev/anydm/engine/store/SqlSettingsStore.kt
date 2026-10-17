@@ -1,5 +1,6 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.store.db.AnydmDb
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
@@ -9,6 +10,7 @@ import kotlinx.io.files.Path
 internal class SqlSettingsStore(
     private val database: AnydmDb,
     private val io: CoroutineDispatcher,
+    private val log: Log = Log.None,
 ) : SettingsStore {
     private val queries = database.settingQueries
 
@@ -23,13 +25,25 @@ internal class SqlSettingsStore(
     // A value this version can't read gets its default: a bad setting must not stop the engine from starting.
     private fun read(): Settings {
         val stored = queries.selectAll().executeAsList().associate { it.name to it.data_ }
+
+        // A stored value that doesn't parse is reported and replaced by the default.
+        fun <T> read(
+            name: String,
+            default: T,
+            parse: (String) -> T?,
+        ): T {
+            val data = stored[name] ?: return default
+            return parse(data) ?: default.also { log.warn("store") { "setting $name unreadable, using the default" } }
+        }
         return Settings(
-            concurrencyLimit = stored[CONCURRENCY_LIMIT]?.toIntOrNull()?.takeIf { it >= 1 } ?: DEFAULTS.concurrencyLimit,
+            concurrencyLimit = read(CONCURRENCY_LIMIT, DEFAULTS.concurrencyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
             defaultSaveFolder =
-                stored[DEFAULT_SAVE_FOLDER]?.takeIf { it.isNotEmpty() }?.let(::Path)?.takeIf { it.isAbsolute }
-                    ?: DEFAULTS.defaultSaveFolder,
-            globalPause = stored[GLOBAL_PAUSE]?.toBooleanStrictOrNull() ?: DEFAULTS.globalPause,
-            maxRetries = stored[MAX_RETRIES]?.toIntOrNull()?.takeIf { it >= 0 } ?: DEFAULTS.maxRetries,
+                read(DEFAULT_SAVE_FOLDER, DEFAULTS.defaultSaveFolder) { data ->
+                    data.takeIf { it.isNotEmpty() }?.let(::Path)?.takeIf { it.isAbsolute }
+                },
+            globalPause = read(GLOBAL_PAUSE, DEFAULTS.globalPause) { it.toBooleanStrictOrNull() },
+            maxRetries = read(MAX_RETRIES, DEFAULTS.maxRetries) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
+            debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
         )
     }
 
@@ -39,6 +53,7 @@ internal class SqlSettingsStore(
         put(DEFAULT_SAVE_FOLDER, settings.defaultSaveFolder.takeIf { it != DEFAULTS.defaultSaveFolder }?.toString())
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
+        put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
     }
 
     private fun put(
@@ -54,5 +69,6 @@ internal class SqlSettingsStore(
         const val GLOBAL_PAUSE = "queue.global_pause"
         const val DEFAULT_SAVE_FOLDER = "files.default_save_folder"
         const val MAX_RETRIES = "retry.max_retries"
+        const val DEBUG_LOGGING = "log.debug"
     }
 }

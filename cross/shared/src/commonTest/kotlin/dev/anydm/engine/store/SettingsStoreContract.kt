@@ -1,9 +1,14 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.log.Log
+import dev.anydm.engine.log.RecordingLogSink
+import dev.anydm.engine.platform.virtualClock
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemTemporaryDirectory
@@ -124,5 +129,31 @@ abstract class SettingsStoreContract : StoreTestBase() {
             shouldThrow<IllegalStateException> { store.update { error("boom") } }
 
             rows() shouldBe listOf("queue.global_pause=true")
+        }
+
+    @Test
+    fun anUnreadableSettingIsLogged() =
+        runTest {
+            val sink = RecordingLogSink()
+            val raw = newDriver()
+            val store = Store(raw, StandardTestDispatcher(testScheduler), Log(sink, virtualClock()))
+            raw.exec("INSERT INTO setting(name, data) VALUES ('queue.concurrency_limit', 'x')")
+
+            store.settings.load().concurrencyLimit shouldBe 3
+
+            sink.lines.single() shouldContain "WARN  store setting queue.concurrency_limit unreadable, using the default"
+            raw.close()
+        }
+
+    @Test
+    fun debugLoggingRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().debugLogging shouldBe false
+
+            settings.update { it.copy(debugLogging = true) }
+
+            settings.load().debugLogging shouldBe true
+            driver.longs("SELECT count(*) FROM setting WHERE name = 'log.debug'") shouldBe listOf(1L)
         }
 }
