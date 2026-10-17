@@ -12,6 +12,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +36,9 @@ internal const val RACE_MIN_LEFT = 256L * 1024
 
 /** A block is raced when its speed is less than 1 / this of the run's speed per connection. */
 internal const val RACE_SLOWER = 2.0
+
+/** How many finished block attempts give the run's speed per connection. */
+private const val RECENT = 4
 
 /**
  * Fetches one file's incomplete blocks with workers that each hold one of [origin]'s [slots] (HTTP-05, HTTP-06). It
@@ -77,11 +83,12 @@ internal class RangeTransfer(
         @Volatile var attemptBytes = 0L
 
         /** The current attempt, which a winning racer cancels; and the racer, which a winning original cancels. */
-        var original: Job? = null
-        var racer: Job? = null
+        @Volatile var original: Job? = null
 
-        /** Raced once in this attempt already. */
-        var raced = false
+        @Volatile var racer: Job? = null
+
+        /** Raced once in this attempt already; reset by the next attempt only while no racer runs. */
+        @Volatile var raced = false
     }
 
     private sealed interface Attempt {
@@ -123,8 +130,11 @@ internal class RangeTransfer(
     private var workers = 0
     private val inFlight = mutableSetOf<Block>()
 
-    /** The run's speed in the last tick, bytes per second. */
-    @Volatile private var lastSpeed = 0.0
+    /** Speeds of the last [RECENT] block attempts that finished, bytes per second; under [takeLock]. */
+    private val finished = ArrayDeque<Double>()
+
+    /** Bumped on every tick and whenever a block or race ends: what idle workers wait for. */
+    private val changes = MutableStateFlow(0L)
 
     /** Guards [ended] and [switched], which workers on other threads may set at once. */
     private val stateLock = Mutex()
@@ -180,6 +190,7 @@ internal class RangeTransfer(
             while (true) {
                 val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
                 if (block == null) {
+                    val seen = changes.value
                     val target = raceTarget()
                     if (target != null) {
                         race(file, size, target)
@@ -192,7 +203,7 @@ internal class RangeTransfer(
                         yielded = true
                         break
                     }
-                    delay(rampEvery)
+                    changes.first { it != seen }
                     continue
                 }
                 original(file, size, block)
@@ -227,10 +238,10 @@ internal class RangeTransfer(
             val now = progressLock.withLock { received }
             val speed = now - last
             last = now
-            lastSpeed = speed * 1000.0 / rampEvery.inWholeMilliseconds.coerceAtLeast(1)
+            changes.update { it + 1 }
             before?.let { if (speed < it * 1.1) stopped = true }
             before = null
-            // Keeps sampling after the ramp stops: racing needs the speed. The last worker out cancels this.
+            // Keeps ticking after the ramp stops: idle workers wake on each tick. The last worker out cancels this.
             if (stopped || takeLock.withLock { waiting } == 0) continue
             if (slots.tryAcquire(origin, this@RangeTransfer)) {
                 worker(file, size, queue, lastOut)
@@ -251,7 +262,7 @@ internal class RangeTransfer(
                     block.lock.withLock {
                         block.attemptStart = timeSource.markNow()
                         block.attemptBytes = 0
-                        block.raced = false
+                        if (block.racer == null) block.raced = false
                     }
                     when (val attempt = fetch(file, size, block)) {
                         Attempt.Done -> break
@@ -266,8 +277,17 @@ internal class RangeTransfer(
         try {
             attempts.start()
             attempts.join()
+            val elapsed = block.attemptStart?.elapsedNow()
+            if (block.done && elapsed != null && elapsed.isPositive()) {
+                val speed = block.attemptBytes / (elapsed.inWholeMilliseconds.coerceAtLeast(1) / 1000.0)
+                takeLock.withLock {
+                    finished.addLast(speed)
+                    if (finished.size > RECENT) finished.removeFirst()
+                }
+            }
         } finally {
             withContext(NonCancellable) { takeLock.withLock { inFlight -= block } }
+            changes.update { it + 1 }
         }
         // Done first: the racer's buffer goes nowhere.
         block.lock.withLock { block.racer }?.cancel()
@@ -279,24 +299,27 @@ internal class RangeTransfer(
      */
     private suspend fun raceTarget(): Block? =
         takeLock.withLock {
-            // Per connection that is fetching: idle workers waiting for a race target carry nothing.
-            val perConnection = lastSpeed / inFlight.size.coerceAtLeast(1)
+            // What one connection does: the last few blocks that finished. A tick's speed over the blocks in flight now
+            // overstates it at the tail, where blocks finish within the tick.
+            if (finished.isEmpty()) return@withLock null
+            val perConnection = finished.average()
             inFlight
-                .filter { !it.done && !it.raced && it.segment.end - it.watermark >= RACE_MIN_LEFT }
-                .map { it to speedOf(it) }
+                .filter { !it.done && !it.raced && it.racer == null && it.segment.end - it.watermark >= RACE_MIN_LEFT }
+                .mapNotNull { block -> speedOf(block)?.let { block to it } }
                 .filter { (_, speed) -> speed * RACE_SLOWER < perConnection }
                 .maxByOrNull { (block, speed) -> (block.segment.end - block.watermark) / speed.coerceAtLeast(1e-9) }
                 ?.first
                 ?.also { it.raced = true }
         }
 
-    private fun speedOf(block: Block): Double {
-        val seconds =
-            block.attemptStart
-                ?.elapsedNow()
-                ?.inWholeMilliseconds
-                ?.div(1000.0) ?: return 0.0
-        return if (seconds <= 0) 0.0 else block.attemptBytes / seconds
+    /**
+     * Bytes per second in the block's current attempt; null until it has run one [rampEvery], which also covers the time
+     * to its first byte.
+     */
+    private fun speedOf(block: Block): Double? {
+        val elapsed = block.attemptStart?.elapsedNow() ?: return null
+        if (elapsed < rampEvery) return null
+        return block.attemptBytes / (elapsed.inWholeMilliseconds / 1000.0)
     }
 
     /** Races [block] from its watermark into memory; quietly gives up on any failure but a 200, which switches. */
@@ -305,16 +328,18 @@ internal class RangeTransfer(
         size: Long,
         block: Block,
     ) = coroutineScope {
-        val job = launch(start = CoroutineStart.LAZY) { racer(file, size, block) }
-        block.lock.withLock {
-            if (block.done) return@coroutineScope
-            block.racer = job
-        }
+        // Claimed under the lock, and the job made only after: a LAZY child never started would hang this scope.
+        val job =
+            block.lock.withLock {
+                if (block.done || block.racer != null) return@coroutineScope
+                launch(start = CoroutineStart.LAZY) { racer(file, size, block) }.also { block.racer = it }
+            }
         try {
             job.start()
             job.join()
         } finally {
             withContext(NonCancellable) { block.lock.withLock { if (block.racer === job) block.racer = null } }
+            changes.update { it + 1 }
         }
     }
 

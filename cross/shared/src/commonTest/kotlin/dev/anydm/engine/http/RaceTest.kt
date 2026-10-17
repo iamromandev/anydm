@@ -258,4 +258,94 @@ class RaceTest {
             io.bytes shouldBe content
             script.block0Starts.size shouldBe 2
         }
+
+    // Final review
+
+    /** Notes the virtual time of the last write. */
+    private class TimedIo(
+        val inner: RecordingIo,
+        val now: () -> Long,
+    ) : dev.anydm.engine.protocol.TransferIo by inner {
+        var lastWrite = 0L
+
+        override suspend fun write(
+            file: FileId,
+            offset: Long,
+            bytes: ByteArray,
+            startIndex: Int,
+            endIndex: Int,
+        ): StepResult<Unit> {
+            lastWrite = now()
+            return inner.write(file, offset, bytes, startIndex, endIndex)
+        }
+    }
+
+    @Test
+    fun aRunEndsRightAfterItsLastByte() =
+        runTest(timeout = 15.seconds) {
+            val six = 6 * mib
+            val blocks = planBlocks(six, 4).mapIndexed { i, s -> Segment(SegmentId(i + 1L), FileId(1), s.start, s.end) }
+            val bytes = content.copyOf(six.toInt()).let { b -> ByteArray(six.toInt()) { (it % 251).toByte() } }
+            val io = TimedIo(RecordingIo(six, blocks)) { testScheduler.currentTime }
+            val file = File(FileId(1), DownloadId(1), 0, "f.bin", six)
+            val probe = HttpProbe("f.bin", six, null, true, "https://h/f.bin", null)
+            val transfer =
+                Transfer(
+                    aDownload(),
+                    Mirror(MirrorId(1), DownloadId(1), "https://h/f.bin", 0),
+                    probe,
+                    listOf(TransferFile(file, blocks, Path("/p"), Path("/f"))),
+                )
+            protocol(FakeTransport(pacedRanges(bytes) { paced(it, fast) })).transfer(transfer, io) shouldBe StepResult.Ok(Unit)
+            (testScheduler.currentTime - io.lastWrite < 200) shouldBe true
+            io.inner.bytes shouldBe bytes
+        }
+
+    @Test
+    fun aHealthyServerGetsNoDuplicateRequests() =
+        runTest(timeout = 30.seconds) {
+            for ((mibs, firstByte) in listOf(16 to Duration.ZERO, 8 to 300.milliseconds)) {
+                val n = mibs * mib
+                val blocks = planBlocks(n, 4).mapIndexed { i, s -> Segment(SegmentId(i + 1L), FileId(1), s.start, s.end) }
+                val bytes = ByteArray(n.toInt()) { (it % 251).toByte() }
+                val transport = FakeTransport(pacedRanges(bytes) { PacedBody(it, fast, firstByte = firstByte) })
+                val file = File(FileId(1), DownloadId(1), 0, "f.bin", n)
+                val probe = HttpProbe("f.bin", n, null, true, "https://h/f.bin", null)
+                val transfer =
+                    Transfer(
+                        aDownload(),
+                        Mirror(MirrorId(1), DownloadId(1), "https://h/f.bin", 0),
+                        probe,
+                        listOf(TransferFile(file, blocks, Path("/p"), Path("/f"))),
+                    )
+                protocol(transport).transfer(transfer, RecordingIo(n, blocks)) shouldBe StepResult.Ok(Unit)
+                transport.requests.size shouldBe blocks.size
+            }
+        }
+
+    @Test
+    fun aSecondRacerNeverOrphansTheFirst() =
+        runTest(timeout = 15.seconds) {
+            val script =
+                Script(content, { n, bytes ->
+                    when (n) {
+                        1 -> PacedBody(bytes, 500.milliseconds, failAfter = 512 * 1024)
+
+                        2 -> PacedBody(bytes, fast, stallAfter = bytes.size - 64 * 1024)
+
+                        // the racer, stalling near its end
+                        3 -> PacedBody(bytes, 500.milliseconds, firstByte = 3.seconds)
+
+                        // the original's slow retry
+                        else -> paced(bytes, fast)
+                    }
+                }) { paced(it, fast) }
+            val io = RecordingIo(size, segments)
+            val run = async { protocol(script.transport()).transfer(transferOf(), io) }
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            run.isCompleted shouldBe true
+            run.await() shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe content
+        }
 }

@@ -76,15 +76,38 @@ class HostSlotsTest {
     @Test
     fun aCancelledWaiterStopsWaiting() =
         runTest {
-            val slots = HostSlots { 1 }
+            val slots = HostSlots { 2 }
+            slots.acquire(a, first)
             slots.acquire(a, first)
             val waiter = launch { slots.acquire(a, second) }
             runCurrent()
+            slots.shouldYield(a, first) shouldBe true
             waiter.cancel()
             runCurrent()
             slots.shouldYield(a, first) shouldBe false
             slots.release(a, first)
+            slots.release(a, first)
             slots.held(a) shouldBe 0
+        }
+
+    // Final review: a raised cap left a queued download waiting until another slot came back.
+    @Test
+    fun raisingTheCapServesAWaiter() =
+        runTest {
+            var cap = 1
+            val slots = HostSlots { cap }
+            slots.acquire(a, first)
+            var got = false
+            launch {
+                slots.acquire(a, second)
+                got = true
+            }
+            runCurrent()
+            cap = 4
+            slots.tryAcquire(a, first) shouldBe true
+            runCurrent()
+            got shouldBe true
+            slots.held(a) shouldBe 3
         }
 
     @Test

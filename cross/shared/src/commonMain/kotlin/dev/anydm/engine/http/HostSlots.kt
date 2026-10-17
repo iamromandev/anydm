@@ -49,6 +49,7 @@ internal class HostSlots(
         val waiter =
             lock.withLock {
                 val host = hosts.getOrPut(origin) { Host() }
+                serve(host)
                 if (host.waiters.isEmpty() && host.total < cap()) {
                     host.take(owner)
                     return
@@ -76,6 +77,7 @@ internal class HostSlots(
     ): Boolean =
         lock.withLock {
             val host = hosts.getOrPut(origin) { Host() }
+            serve(host)
             if (host.waiters.isNotEmpty() || host.total >= cap()) return@withLock false
             host.take(owner)
             true
@@ -116,11 +118,16 @@ internal class HostSlots(
         owner: Any,
     ) {
         host.give(owner)
+        serve(host)
+        if (host.total == 0 && host.waiters.isEmpty()) hosts.remove(origin)
+    }
+
+    /** Grants waiters in order while the cap allows: after a release, and on every call, since the cap may have risen. */
+    private fun serve(host: Host) {
         while (host.waiters.isNotEmpty() && host.total < cap()) {
             val next = host.waiters.removeFirst()
             host.take(next.owner)
             next.granted.complete(Unit)
         }
-        if (host.total == 0 && host.waiters.isEmpty()) hosts.remove(origin)
     }
 }
