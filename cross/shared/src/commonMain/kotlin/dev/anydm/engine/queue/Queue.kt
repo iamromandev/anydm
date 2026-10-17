@@ -96,6 +96,9 @@ class Queue internal constructor(
         url: String,
     ): CommandResult = actor.relink(id, mirrorId, url)
 
+    /** For an engine stopped before it started: the commands waiting for start() fail with [error] (#555). */
+    internal fun abandon(error: Throwable) = actor.abandon(error)
+
     /** For tests: what holds a slot right now. */
     internal suspend fun inspect(): QueueState = actor.inspect()
 }

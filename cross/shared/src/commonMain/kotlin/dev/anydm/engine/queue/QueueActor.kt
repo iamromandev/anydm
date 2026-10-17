@@ -148,6 +148,13 @@ internal class QueueActor(
         started.await()
     }
 
+    /** A queue that will never start: every command sent so far, and every later one, fails with [error]. */
+    fun abandon(error: Throwable) {
+        if (launched) return
+        inbox.close()
+        while (true) abandon(inbox.tryReceive().getOrNull() ?: break, error)
+    }
+
     /** Runs [block] on the queue's coroutine and returns what it returned. */
     suspend fun call(block: suspend QueueActor.() -> CommandResult): CommandResult = callLater { it.complete(block()) }
 
