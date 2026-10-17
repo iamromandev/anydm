@@ -243,4 +243,19 @@ class RaceTest {
             script.bodies.filterIsInstance<HangingBody>().all { it.closed } shouldBe true
             protocol.slots.held("https://h:443") shouldBe 0
         }
+
+    // Task 4 found it end to end: the queue emptied while block 0 still looked fast, the idle worker left, and nobody
+    // was there to race block 0 when it stalled.
+    @Test
+    fun aBlockThatStallsAfterTheQueueEmptiesIsRaced() =
+        runTest(timeout = 15.seconds) {
+            val script =
+                Script(content, { n, bytes -> if (n == 1) PacedBody(bytes, fast, stallAfter = 768 * 1024) else paced(bytes, fast) }) {
+                    paced(it, fast)
+                }
+            val io = RecordingIo(size, segments)
+            protocol(script.transport()).transfer(transferOf(), io) shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe content
+            script.block0Starts.size shouldBe 2
+        }
 }

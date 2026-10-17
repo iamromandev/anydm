@@ -10,7 +10,8 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * A body that hands out [chunk] bytes every [every] of (virtual) time. With [failAfter] it throws a reset once that many
- * bytes are out; with [gate] it waits for it before handing out its last chunk.
+ * bytes are out; with [stallAfter] it hands out nothing more once that many are out; with [gate] it waits for it
+ * before handing out its last chunk.
  */
 class PacedBody(
     private val bytes: ByteArray,
@@ -18,6 +19,7 @@ class PacedBody(
     private val chunk: Int = 64 * 1024,
     private val failAfter: Int? = null,
     private val gate: CompletableDeferred<Unit>? = null,
+    private val stallAfter: Int? = null,
 ) : HttpBody {
     private var at = 0
     var closed = false
@@ -32,6 +34,7 @@ class PacedBody(
     ): Int {
         if (at == bytes.size) return -1
         if (failAfter != null && at >= failAfter) throw HttpIoException(HttpIoKind.RESET, "connection reset")
+        if (stallAfter != null && at >= stallAfter) awaitCancellation()
         delay(every)
         if (gate != null && at + minOf(chunk, length) >= bytes.size) {
             atGate = true

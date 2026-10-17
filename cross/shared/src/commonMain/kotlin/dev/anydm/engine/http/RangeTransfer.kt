@@ -180,8 +180,19 @@ internal class RangeTransfer(
             while (true) {
                 val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
                 if (block == null) {
-                    val target = raceTarget() ?: break
-                    race(file, size, target)
+                    val target = raceTarget()
+                    if (target != null) {
+                        race(file, size, target)
+                        continue
+                    }
+                    // Nothing to race yet: a block may turn slow later, so look again next tick, unless the blocks
+                    // are all done or another download needs the slot.
+                    if (takeLock.withLock { inFlight.none { !it.done } }) break
+                    if (slots.tryYield(origin, this@RangeTransfer)) {
+                        yielded = true
+                        break
+                    }
+                    delay(rampEvery)
                     continue
                 }
                 original(file, size, block)
@@ -268,7 +279,8 @@ internal class RangeTransfer(
      */
     private suspend fun raceTarget(): Block? =
         takeLock.withLock {
-            val perConnection = lastSpeed / workers.coerceAtLeast(1)
+            // Per connection that is fetching: idle workers waiting for a race target carry nothing.
+            val perConnection = lastSpeed / inFlight.size.coerceAtLeast(1)
             inFlight
                 .filter { !it.done && !it.raced && it.segment.end - it.watermark >= RACE_MIN_LEFT }
                 .map { it to speedOf(it) }
