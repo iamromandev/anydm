@@ -71,4 +71,7 @@ private fun messageOf(
 interface HttpTransport {
     /** Sends [request], following up to 5 redirects. Throws HttpIoException for network failures; HTTP errors are responses. */
     suspend fun open(request: HttpRequest): HttpResponse
+
+    /** [url] as [open] would send it (host, path and query as they go on the wire); unchanged by default. */
+    fun canonicalUrl(url: String): String = url
 }

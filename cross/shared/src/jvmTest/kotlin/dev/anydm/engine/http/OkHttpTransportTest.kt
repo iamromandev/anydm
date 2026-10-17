@@ -13,6 +13,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import java.io.EOFException
+import java.net.SocketException
 import java.security.cert.CertificateException
 import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
@@ -201,5 +203,43 @@ class OkHttpTransportTest {
             val e = shouldThrow<HttpIoException> { transport.open(HttpRequest("ftp://u:p@h/f")) }
             e.kind shouldBe HttpIoKind.BAD_URL
             e.host shouldBe "h"
+        }
+
+    // Final review
+
+    @Test
+    fun aResetDuringTheHandshakeIsAReset() {
+        httpIoExceptionOf(SSLHandshakeException("Remote host terminated the handshake").apply { initCause(EOFException()) }, "h")
+            .kind shouldBe HttpIoKind.RESET
+        httpIoExceptionOf(SSLHandshakeException("x").apply { initCause(SocketException("reset")) }, "h").kind shouldBe HttpIoKind.RESET
+    }
+
+    @Test
+    fun urlsAreCanonicalAsSent() {
+        hostOf(transport.canonicalUrl("https://evil.example\\@good.example/f")) shouldBe "evil.example"
+        transport.canonicalUrl("https://h/a b/../c.zip?q=O'B") shouldBe "https://h/c.zip?q=O%27B"
+        transport.canonicalUrl("ftp://h/f") shouldBe "ftp://h/f"
+    }
+
+    @Test
+    fun aSameOriginRedirectDropsADigestAnswer() =
+        runBlocking<Unit> {
+            server.serve("/a.bin", file)
+            server.fault("/a.bin", Fault.Redirects(1))
+            get("/a.bin", "Authorization" to "Digest username=\"u\"").body.close()
+            server.requests
+                .last()
+                .headers["Authorization"]
+                .shouldBeNull()
+            get("/a.bin", "Authorization" to "Basic dTpw").body.close()
+            server.requests.last().headers["Authorization"] shouldBe "Basic dTpw"
+        }
+
+    @Test
+    fun aNonAsciiAuthorizationIsSent() =
+        runBlocking<Unit> {
+            server.serve("/a.bin", file)
+            get("/a.bin", "Authorization" to "Digest username=\"jürgen\"").body.close()
+            server.requests.last().headers["Authorization"] shouldBe "Digest username=\"jürgen\""
         }
 }

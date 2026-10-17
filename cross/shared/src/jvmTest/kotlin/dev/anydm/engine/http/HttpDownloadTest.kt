@@ -234,4 +234,14 @@ class HttpDownloadTest {
             HttpProtocol(OkHttpTransport(), clock = clock).probe(ProbeRequest(download, mirror)) shouldBe
                 StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from ${hostOf(server.url("/"))}", 37.seconds)
         }
+
+    @Test
+    fun aNonAsciiDigestLoginWorks() =
+        runBlocking<Unit> {
+            server.fault("/f.bin", Fault.Digest("jürgen", "pässword"))
+            credentials.set(server.url("/"), Credentials("jürgen", "pässword"))
+            val (download, mirror) = added()
+            runner.run(prepared(download, mirror)).shouldBeInstanceOf<RunOutcome.Finished>()
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+        }
 }

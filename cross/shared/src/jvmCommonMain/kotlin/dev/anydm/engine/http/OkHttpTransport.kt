@@ -74,10 +74,18 @@ class OkHttpTransport(
                 throw HttpIoException(HttpIoKind.TOO_MANY_REDIRECTS, hostOf(url.toString()))
             }
             if (response.code == 303 && method != "HEAD") method = "GET"
+            // A Digest answer names the old path in its `uri`; the new one challenges again (AuthTransport answers).
+            headers =
+                headers.filterNot {
+                    it.first.equals("Authorization", ignoreCase = true) &&
+                        it.second.startsWith("Digest ", ignoreCase = true)
+                }
             if (!sameOrigin(url, location)) headers = headers.filterNot { it.first.lowercase() in credentialHeaders }
             url = location
         }
     }
+
+    override fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
 
     private fun okRequest(
         url: HttpUrl,
@@ -88,8 +96,13 @@ class OkHttpTransport(
             .Builder()
             .url(url)
             .method(method, null)
-            .apply { headers.forEach { (name, value) -> addHeader(name, value) } }
-            .build()
+            // Unsafe only in name: a non-ASCII Digest user or realm goes out as the UTF-8 it was hashed as.
+            .headers(
+                okhttp3.Headers
+                    .Builder()
+                    .apply { headers.forEach { (name, value) -> addUnsafeNonAscii(name, value) } }
+                    .build(),
+            ).build()
 
     private suspend fun Call.await(host: String): Response =
         suspendCancellableCoroutine { continuation ->
@@ -168,8 +181,8 @@ class OkHttpTransport(
 }
 
 /**
- * What [e] means for a request to [host]: a refused or rejected TLS handshake (or certificate) is TLS, any other TLS
- * failure a broken connection; the message is never [e]'s own, which may hold the URL.
+ * What [e] means for a request to [host]: a rejected TLS handshake or certificate is TLS, a handshake the peer broke
+ * off and any other TLS failure a broken connection; the message is never [e]'s own, which may hold the URL.
  */
 internal fun httpIoExceptionOf(
     e: IOException,
@@ -177,7 +190,8 @@ internal fun httpIoExceptionOf(
 ): HttpIoException {
     val kind =
         when (e) {
-            is SSLHandshakeException, is SSLPeerUnverifiedException -> HttpIoKind.TLS
+            is SSLHandshakeException -> if (e.droppedMidway()) HttpIoKind.RESET else HttpIoKind.TLS
+            is SSLPeerUnverifiedException -> HttpIoKind.TLS
             is SSLException -> if (e.causes().any { it is CertificateException }) HttpIoKind.TLS else HttpIoKind.RESET
             is ConnectException, is UnknownHostException, is NoRouteToHostException -> HttpIoKind.CONNECT
             is InterruptedIOException -> HttpIoKind.TIMEOUT
@@ -186,5 +200,9 @@ internal fun httpIoExceptionOf(
         }
     return HttpIoException(kind, host, e)
 }
+
+/** A handshake the peer broke off (a reset or EOF under it, no certificate problem): a dropped connection. */
+private fun Throwable.droppedMidway(): Boolean =
+    causes().none { it is CertificateException } && causes().any { it is SocketException || it is EOFException }
 
 private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause.takeUnless { c -> c === it } }

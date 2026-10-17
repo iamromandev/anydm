@@ -101,4 +101,10 @@ class HttpFailuresTest {
     fun messagesHoldOnlyTheHost() {
         failedOf(response(503, finalUrl = "https://u:p@h:8443/a/f.zip?token=s"), now).message shouldBe "HTTP 503 from h:8443"
     }
+
+    @Test
+    fun aZeroRetryAfterIsDropped() {
+        failedOf(response(503, "Retry-After" to "0"), now).retryAfter.shouldBeNull()
+        failedOf(response(429, "Retry-After" to "Sun, 06 Nov 1994 08:49:37 GMT"), now).retryAfter.shouldBeNull()
+    }
 }

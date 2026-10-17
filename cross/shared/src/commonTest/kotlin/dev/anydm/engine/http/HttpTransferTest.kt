@@ -214,6 +214,25 @@ class HttpTransferTest {
         }
 
     @Test
+    fun a503WithRetryAfterZeroIsRetriedInPlace() =
+        runTest {
+            val serve = servingRanges(content)
+            var failedOnce = false
+            val transport =
+                FakeTransport { r ->
+                    if (r.rangeStart() == 0L && !failedOnce) {
+                        failedOnce = true
+                        response(503, "Retry-After" to "0")
+                    } else {
+                        serve(r)
+                    }
+                }
+            val io = RecordingIo(size, segments)
+            transfer(transport, io) shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe content
+        }
+
+    @Test
     fun a503WithRetryAfterKeepsWatermarks() =
         runTest {
             val serve = servingRanges(content)

@@ -4,6 +4,7 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldBeUnique
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
@@ -248,5 +249,89 @@ class AuthTransportTest {
                 .single()
                 .authorization()
                 .shouldBeNull()
+        }
+
+    // Final review
+
+    /** [inner], sending URLs the way [canonical] spells them (as OkHttp does). */
+    private class Canonical(
+        private val inner: FakeTransport,
+        private val canonical: (String) -> String,
+    ) : HttpTransport by inner {
+        override fun canonicalUrl(url: String) = canonical(url)
+    }
+
+    @Test
+    fun aCachedLoginFollowsTheCanonicalHost() =
+        runTest {
+            store.set("https://good", user)
+            val fake = FakeTransport(basicServer())
+            val auth = auth(Canonical(fake) { if (it.startsWith("https://evil")) "https://evil/@good/f" else it })
+            auth.open(HttpRequest("https://good/f"))
+            auth.open(HttpRequest("https://evil\\@good/f"))
+            fake.requests
+                .last()
+                .authorization()
+                .shouldBeNull()
+        }
+
+    @Test
+    fun digestUriIsCanonical() =
+        runTest {
+            store.set("https://h", user)
+            val server = DigestServer()
+            val fake = FakeTransport(server.respond)
+            val auth = auth(Canonical(fake) { it.replace(" ", "%20") })
+            auth.open(HttpRequest("https://h/f"))
+            auth.open(HttpRequest("https://h/a b.zip"))
+            fake.requests.size shouldBe 3
+            server.sent(fake.requests.last())!!["uri"] shouldBe "/a%20b.zip"
+        }
+
+    @Test
+    fun concurrentStaleAnswersShareTheNonce() =
+        runTest {
+            store.set("https://h", user)
+            val server = DigestServer()
+            val transport =
+                FakeTransport { r ->
+                    delay(10)
+                    server.respond(r)
+                }
+            val auth = auth(transport)
+            auth.open(HttpRequest("https://h/f"))
+            server.nonce = "n2"
+            repeat(4) { launch { auth.open(HttpRequest("https://h/f")).status shouldBe 200 } }
+            testScheduler.advanceUntilIdle()
+            val answers =
+                transport.requests
+                    .drop(2)
+                    .mapNotNull { server.sent(it) }
+                    .filter { it["nonce"] == "n2" }
+            answers.size shouldBe 4
+            answers.map { it["nc"] }.shouldBeUnique()
+        }
+
+    @Test
+    fun aRemovedLoginIsNotSent() =
+        runTest {
+            store.set("https://h", user)
+            val transport = FakeTransport(basicServer())
+            val auth = auth(transport)
+            auth.open(HttpRequest("https://h/f")).status shouldBe 200
+            store.remove("https://h")
+            auth.open(HttpRequest("https://h/f")).status shouldBe 401
+            transport.requests.drop(2).map { it.authorization() } shouldBe listOf(null)
+        }
+
+    @Test
+    fun anotherUrlUserIsNotOverridden() =
+        runTest {
+            val transport = FakeTransport(basicServer())
+            val auth = auth(transport)
+            auth.open(HttpRequest("https://u:p@h/f"))
+            auth.open(HttpRequest("https://bob:pw@h/g"))
+            transport.requests[2].authorization().shouldBeNull()
+            transport.requests[3].authorization() shouldBe basicAuthorization(Credentials("bob", "pw"))
         }
 }

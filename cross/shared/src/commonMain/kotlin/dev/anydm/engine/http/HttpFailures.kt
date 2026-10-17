@@ -2,6 +2,7 @@ package dev.anydm.engine.http
 
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.protocol.StepResult
+import kotlin.time.Duration
 import kotlin.time.Instant
 
 /**
@@ -25,7 +26,7 @@ internal fun classOf(kind: HttpIoKind): ErrorClass? =
         HttpIoKind.CONNECT, HttpIoKind.TIMEOUT, HttpIoKind.RESET, HttpIoKind.OTHER -> ErrorClass.TRANSIENT
     }
 
-/** [response]'s status as a failure naming only the host; 408, 429 and 5xx carry the server's `Retry-After`. */
+/** [response]'s status as a failure naming only the host; 408, 429 and 5xx carry the server's `Retry-After` if > 0. */
 internal fun failedOf(
     response: HttpResponse,
     now: Instant,
@@ -35,7 +36,8 @@ internal fun failedOf(
     return StepResult.Failed(
         errorClass = classOf(status),
         message = "HTTP $status from ${hostOf(response.finalUrl)}",
-        retryAfter = if (waits) retryAfterOf(response.headers["Retry-After"], now) else null,
+        // Zero (or a date already past) asks for nothing the queue's backoff and in-place retries don't already do.
+        retryAfter = if (waits) retryAfterOf(response.headers["Retry-After"], now)?.takeIf { it > Duration.ZERO } else null,
     )
 }
 
