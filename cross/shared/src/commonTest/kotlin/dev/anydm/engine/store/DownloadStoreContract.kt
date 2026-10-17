@@ -15,6 +15,7 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.core.TransitionResult
@@ -253,6 +254,35 @@ abstract class DownloadStoreContract : StoreTestBase() {
             val added = store.add(NewDownload(DownloadKind.DIRECT))
 
             store.updateMirror(Mirror(MirrorId(999), added.id, "https://u", 0)) shouldBe false
+        }
+
+    @Test
+    fun aRequestContextRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            val context =
+                RequestContext(listOf("X-A" to "1", "X-B" to "two"), referrer = "https://r/", userAgent = "UA", cookies = "a=1; b=2")
+            val added = store.add(NewDownload(DownloadKind.DIRECT, context = context))
+
+            store.context(added.id) shouldBe context
+            val other = RequestContext(userAgent = "Other")
+            store.setContext(added.id, other) shouldBe true
+            store.context(added.id) shouldBe other
+            store.setContext(added.id, null) shouldBe true
+            store.context(added.id) shouldBe null
+            store.setContext(DownloadId(999), other) shouldBe false
+        }
+
+    @Test
+    fun aRequestContextGoesWithItsDownload() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT, context = RequestContext(userAgent = "UA")))
+
+            store.remove(added.id)
+
+            store.context(added.id) shouldBe null
+            driver.count("request_context") shouldBe 0L
         }
 
     @Test

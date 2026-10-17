@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.RequestContext
 import kotlin.time.Instant
 
 /**
@@ -41,6 +42,12 @@ interface DownloadStore : PlanStore {
 
     /** Deletes the download with its mirrors, files, segments, attempts and child downloads. False if absent. */
     suspend fun remove(id: DownloadId): Boolean
+
+    /** Replaces the download's request context; null removes it. False if the download is gone. */
+    suspend fun setContext(
+        id: DownloadId,
+        context: RequestContext?,
+    ): Boolean
 
     /** Position 0 first. */
     suspend fun mirrors(id: DownloadId): List<Mirror>

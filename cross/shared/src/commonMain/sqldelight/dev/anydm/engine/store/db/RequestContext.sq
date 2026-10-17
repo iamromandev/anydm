@@ -1,0 +1,20 @@
+import dev.anydm.engine.core.DownloadId;
+
+-- What a download's requests carry besides the URL (HTTP-10): headers as "Name: value" lines, referrer, user agent,
+-- cookies (until the keychain takes them, #542). At most one row per download, gone with it.
+CREATE TABLE request_context (
+    download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    headers TEXT NOT NULL DEFAULT '',
+    referrer TEXT,
+    user_agent TEXT,
+    cookies TEXT
+);
+
+put:
+INSERT OR REPLACE INTO request_context(download_id, headers, referrer, user_agent, cookies) VALUES (?, ?, ?, ?, ?);
+
+selectByDownload:
+SELECT * FROM request_context WHERE download_id = ?;
+
+delete:
+DELETE FROM request_context WHERE download_id = ?;

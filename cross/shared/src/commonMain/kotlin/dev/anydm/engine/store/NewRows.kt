@@ -9,6 +9,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import kotlin.time.Instant
 
@@ -29,6 +30,8 @@ data class NewDownload(
     val size: Long? = null,
     val priority: Int = 0,
     val speedLimit: Long? = null,
+    /** What its requests carry besides the URL (HTTP-10); stored with it. */
+    val context: RequestContext? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }
