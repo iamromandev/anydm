@@ -107,7 +107,7 @@ private fun unquoted(raw: String): String {
 private fun extendedValue(value: String): String? {
     val parts = value.split('\'', limit = 3)
     if (parts.size != 3) return null
-    val bytes = percentDecoded(parts[2]) ?: return null
+    val bytes = percentDecodedBytes(parts[2]) ?: return null
     return when (parts[0].trim().uppercase()) {
         "UTF-8" -> bytes.decodeToString()
         "ISO-8859-1" -> bytes.map { (it.toInt() and 0xFF).toChar() }.joinToString("")
@@ -121,25 +121,5 @@ private fun lastPathSegment(url: String): String? {
     val slash = afterScheme.indexOf('/')
     if (slash < 0) return null
     val segment = afterScheme.substring(slash + 1).split('/').lastOrNull { it.isNotEmpty() } ?: return null
-    return percentDecoded(segment)?.decodeToString() ?: segment
-}
-
-/** The bytes [text] stands for; null if a `%` isn't followed by two hex digits. */
-private fun percentDecoded(text: String): ByteArray? {
-    val out = ArrayList<Byte>(text.length)
-    var i = 0
-    while (i < text.length) {
-        val c = text[i]
-        if (c == '%') {
-            if (i + 2 >= text.length) return null
-            val high = text[i + 1].digitToIntOrNull(16) ?: return null
-            val low = text[i + 2].digitToIntOrNull(16) ?: return null
-            out += ((high shl 4) or low).toByte()
-            i += 3
-        } else {
-            out += c.toString().encodeToByteArray().toList()
-            i++
-        }
-    }
-    return out.toByteArray()
+    return percentDecodedBytes(segment)?.decodeToString() ?: segment
 }
