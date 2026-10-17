@@ -23,6 +23,7 @@ class RotatingFileSink internal constructor(
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val keep: Int = DEFAULT_KEEP,
     private val open: (NioPath) -> OutputStream,
+    private val move: (NioPath, NioPath) -> Unit = { from, to -> Files.move(from, to, StandardCopyOption.REPLACE_EXISTING) },
 ) : LogSink {
     constructor(
         folder: Path,
@@ -41,6 +42,9 @@ class RotatingFileSink internal constructor(
     private var size = 0L
     private var closed = false
 
+    // After a rotation failed (another program holds a file): keep appending, and try again this far on.
+    private var retryRotationAt = 0L
+
     /** Lines lost since the last one written; for tests. */
     internal var dropped = 0
         private set
@@ -55,8 +59,8 @@ class RotatingFileSink internal constructor(
                     dropped = 0
                 }
                 val bytes = (line + "\n").toByteArray(Charsets.UTF_8)
-                if (size > 0 && size + bytes.size > maxBytes) {
-                    rotate()
+                if (size > 0 && size + bytes.size > maxBytes && size + bytes.size > retryRotationAt) {
+                    if (!rotate()) retryRotationAt = size + maxBytes
                     out = opened()
                 }
                 out.write(bytes)
@@ -92,20 +96,45 @@ class RotatingFileSink internal constructor(
         size += bytes.size
     }
 
-    // Closed first: Windows can't rename an open file.
-    private fun rotate() {
+    /**
+     * Closed first: Windows can't rename an open file. anydm.log moves aside before anything older is touched, so a
+     * file another program holds stops the rotation without deleting history; then it is false and writing goes on.
+     */
+    private fun rotate(): Boolean {
         closeStream()
+        val current = dir.resolve(CURRENT)
         if (keep == 1) {
-            Files.deleteIfExists(dir.resolve(CURRENT))
-        } else {
+            return try {
+                Files.deleteIfExists(current)
+                size = 0
+                true
+            } catch (_: IOException) {
+                false
+            }
+        }
+        val staging = dir.resolve("$CURRENT.rolling")
+        try {
+            move(current, staging)
+        } catch (_: IOException) {
+            return false
+        }
+        return try {
             Files.deleteIfExists(dir.resolve(rolled(keep - 1)))
             for (n in keep - 2 downTo 1) {
                 val from = dir.resolve(rolled(n))
-                if (Files.exists(from)) Files.move(from, dir.resolve(rolled(n + 1)), StandardCopyOption.REPLACE_EXISTING)
+                if (Files.exists(from)) move(from, dir.resolve(rolled(n + 1)))
             }
-            Files.move(dir.resolve(CURRENT), dir.resolve(rolled(1)), StandardCopyOption.REPLACE_EXISTING)
+            move(staging, dir.resolve(rolled(1)))
+            size = 0
+            true
+        } catch (_: IOException) {
+            try {
+                move(staging, current)
+            } catch (_: IOException) {
+                // It stays as anydm.log.rolling; nothing is deleted.
+            }
+            false
         }
-        size = 0
     }
 
     private fun closeStream() {

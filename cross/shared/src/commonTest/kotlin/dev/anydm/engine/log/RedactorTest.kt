@@ -10,6 +10,7 @@ import io.kotest.property.arbitrary.string
 import io.kotest.property.checkAll
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.measureTime
 
 class RedactorTest {
     private val redactor = Redactor()
@@ -78,5 +79,47 @@ class RedactorTest {
     fun nonAsciiTextIsKept() {
         redactor.redact("файл видео 🎬.mp4") shouldBe "файл видео 🎬.mp4"
         redactor.redact("https://h/a?token=видео") shouldBe "https://h/a?token=***"
+    }
+
+    // Final review: secrets that got through, and a slow pattern
+
+    private val reviewCases =
+        listOf(
+            "{\"Cookie\":\"sid=abc\"}" to "{\"Cookie\":\"***\"}",
+            "{\"headers\":{\"Set-Cookie\":\"sid=abc; Path=/\"}}" to "{\"headers\":{\"Set-Cookie\":\"***\"}}",
+            "https://h/cb#access_token=abc&token_type=bearer" to "https://h/cb#access_token=***&token_type=bearer",
+            "Authorization: \"Bearer abc\"" to "Authorization: \"***\"",
+            "--password 'hunter 2' next" to "--password *** next",
+            "--password \"hunter 2\" next" to "--password *** next",
+            "[yt-dlp, --password, hunter2, URL]" to "[yt-dlp, --password, ***, URL]",
+            "[\"--password\",\"hunter 2\"]" to "[\"--password\",***]",
+            "https://ann:p@ss@host/a" to "https://***:***@host/a",
+            "https://s.example/o?X-Goog-Signature=abc&alt=media" to "https://s.example/o?X-Goog-Signature=***&alt=media",
+            "?client_secret=s1&auth_token=s2" to "?client_secret=***&auth_token=***",
+            "{\"accessToken\":\"a\",\"api-key\":\"b\"}" to "{\"accessToken\":\"***\",\"api-key\":\"***\"}",
+            "X-Api-Key: k1" to "X-Api-Key: ***",
+            "\"token\":123456" to "\"token\":\"***\"",
+        )
+
+    @Test
+    fun secretsTheReviewFoundAreMasked() {
+        for ((input, expected) in reviewCases) withClue(input) { redactor.redact(input) shouldBe expected }
+    }
+
+    @Test
+    fun theReviewCasesRedactTheSameTwice() {
+        for ((input, _) in reviewCases) {
+            val once = redactor.redact(input)
+            withClue(input) { redactor.redact(once) shouldBe once }
+        }
+    }
+
+    @Test
+    fun aLongHostileLineRedactsQuickly() {
+        for (unit in listOf("a.", "a-", "a+")) {
+            val line = unit.repeat(100_000)
+            val took = measureTime { redactor.redact(line) }
+            withClue("$unit took $took") { (took.inWholeMilliseconds < 1_000) shouldBe true }
+        }
     }
 }

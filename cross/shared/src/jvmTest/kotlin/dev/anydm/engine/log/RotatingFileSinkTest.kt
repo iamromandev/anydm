@@ -8,6 +8,7 @@ import io.kotest.matchers.string.shouldEndWith
 import kotlinx.io.files.Path
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
@@ -118,5 +119,34 @@ class RotatingFileSinkTest {
         }
 
         linesOf("anydm.log") shouldBe listOf("файл видео 🎬.mp4")
+    }
+
+    @Test
+    fun aRotationThatFailsKeepsWritingAndKeepsHistory() {
+        Files.createDirectories(folder.toNioPath())
+        Files.writeString(Path(folder, "anydm.1.log").toNioPath(), "old one\n")
+        Files.writeString(Path(folder, "anydm.2.log").toNioPath(), "old two\n")
+        // anydm.log is held open by another program: it can't be moved.
+        val sink =
+            RotatingFileSink(folder, maxBytes = 30, open = {
+                Files.newOutputStream(
+                    it,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND,
+                )
+            }, move = {
+                from,
+                to,
+                ->
+                if (from.fileName.toString() == "anydm.log") throw IOException("in use")
+                Files.move(from, to, StandardCopyOption.REPLACE_EXISTING)
+            })
+        for (n in 1..6) sink.write("line $n of the log")
+        sink.close()
+
+        linesOf("anydm.log") shouldBe (1..6).map { "line $it of the log" }
+        linesOf("anydm.1.log") shouldBe listOf("old one")
+        linesOf("anydm.2.log") shouldBe listOf("old two")
+        sink.dropped shouldBe 0
     }
 }
