@@ -90,8 +90,12 @@ internal class FakeProtocol(
     /** Each probe's mirror url, in order. */
     val probed = mutableListOf<String>()
 
+    /** Every probe request, to check what the runner passed (its request context, #567). */
+    val requests = mutableListOf<ProbeRequest>()
+
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         log("probe")
+        requests += request
         probed += request.mirror.url
         if (request.mirror.url in gone) return StepResult.Failed(ErrorClass.GONE, "gone: ${request.mirror.url}")
         when (val scripted = failure) {

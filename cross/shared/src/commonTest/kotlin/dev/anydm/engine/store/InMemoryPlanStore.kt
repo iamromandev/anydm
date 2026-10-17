@@ -3,6 +3,7 @@ package dev.anydm.engine.store
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
 
@@ -18,6 +19,17 @@ internal class InMemoryPlanStore : PlanStore {
     private val downloads = mutableSetOf<DownloadId>()
     private val fileRows = mutableMapOf<DownloadId, List<File>>()
     private val segmentRows = mutableMapOf<FileId, List<Segment>>()
+    private val contexts = mutableMapOf<DownloadId, RequestContext>()
+
+    /** Gives [id] a request context, as the download store would. */
+    fun setContext(
+        id: DownloadId,
+        context: RequestContext,
+    ) {
+        contexts[id] = context
+    }
+
+    override suspend fun context(id: DownloadId): RequestContext? = contexts[id]
 
     /** Makes [id] a download that files can belong to. */
     fun register(id: DownloadId) {

@@ -20,6 +20,7 @@ import dev.anydm.engine.store.db.Attempt as AttemptRow
 import dev.anydm.engine.store.db.Download as DownloadRow
 import dev.anydm.engine.store.db.File_ as FileRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
+import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
 
 internal fun createDatabase(driver: SqlDriver): AnydmDb {
@@ -63,6 +64,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 download_idAdapter = downloadId,
                 positionAdapter = IntAdapter("mirror.position"),
             ),
+        request_contextAdapter = RequestContextRow.Adapter(download_idAdapter = downloadId),
         segmentAdapter =
             SegmentRow.Adapter(
                 idAdapter = IdAdapter(::SegmentId, SegmentId::value),

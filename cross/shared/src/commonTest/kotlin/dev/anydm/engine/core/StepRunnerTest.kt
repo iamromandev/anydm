@@ -900,4 +900,19 @@ class StepRunnerTest {
             h.fs.read(Path(stepRoot, "a.bin")) shouldBe fakeContent(0, 0, 4096)
             h.fs.read(Path(stepRoot, "b.bin")) shouldBe fakeContent(1, 0, 4096)
         }
+
+    @Test
+    fun theProbeGetsTheJobsContext() =
+        runTest {
+            val h = StepHarness()
+            val context = RequestContext(userAgent = "UA", cookies = "a=1")
+            h.store.register(DownloadId(1))
+            h.store.setContext(DownloadId(1), context)
+
+            h.prepare()
+
+            h.protocol.requests
+                .single()
+                .context shouldBe context
+        }
 }

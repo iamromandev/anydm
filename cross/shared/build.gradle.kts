@@ -19,6 +19,10 @@ kotlin {
         val jvmCommonMain =
             create("jvmCommonMain") {
                 dependsOn(commonMain.get())
+                dependencies {
+                    // The HTTP transport (#567).
+                    implementation(libs.okhttp)
+                }
             }
         val jvmCommonTest =
             create("jvmCommonTest") {
@@ -43,6 +47,10 @@ kotlin {
             implementation(libs.ktor.client.cio)
             // SQLite over JDBC for desktop. Not jvmCommon: Android brings its own driver.
             implementation(libs.sqldelight.sqlite.driver)
+        }
+        jvmTest.dependencies {
+            // FaultServer: a local server with ranges and injected faults (#567).
+            implementation(libs.okhttp.mockwebserver)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

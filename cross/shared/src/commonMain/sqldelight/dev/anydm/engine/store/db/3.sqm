@@ -1,0 +1,8 @@
+-- Version 3 to 4 (#567): the request context of each download.
+CREATE TABLE request_context (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    headers TEXT NOT NULL DEFAULT '',
+    referrer TEXT,
+    user_agent TEXT,
+    cookies TEXT
+);

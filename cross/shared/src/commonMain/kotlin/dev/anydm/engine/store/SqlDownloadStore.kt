@@ -8,6 +8,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.store.db.AnydmDb
@@ -27,6 +28,7 @@ internal class SqlDownloadStore(
 ) : DownloadStore {
     private val downloadQueries = database.downloadQueries
     private val mirrorQueries = database.mirrorQueries
+    private val contextQueries = database.requestContextQueries
     private val fileQueries = database.fileQueries
     private val segmentQueries = database.segmentQueries
     private val attemptQueries = database.attemptQueries
@@ -69,6 +71,7 @@ internal class SqlDownloadStore(
             new.mirrors.forEachIndexed { position, url ->
                 mirrorQueries.insert(download_id = download.id, url = url, position = position)
             }
+            new.context?.let { putContext(download.id, it) }
             download
         }
 
@@ -105,6 +108,46 @@ internal class SqlDownloadStore(
         }
 
     override suspend fun remove(id: DownloadId): Boolean = writing { downloadQueries.delete(id).value > 0 }
+
+    override suspend fun context(id: DownloadId): RequestContext? =
+        inTransaction {
+            contextQueries.selectByDownload(id).executeAsOneOrNull()?.let { row ->
+                RequestContext(
+                    headers =
+                        row.headers.lines().filter { it.isNotEmpty() }.map {
+                            it.substringBefore(
+                                ": ",
+                            ) to it.substringAfter(": ", "")
+                        },
+                    referrer = row.referrer,
+                    userAgent = row.user_agent,
+                    cookies = row.cookies,
+                )
+            }
+        }
+
+    override suspend fun setContext(
+        id: DownloadId,
+        context: RequestContext?,
+    ): Boolean =
+        writing {
+            if (downloadQueries.selectById(id).executeAsOneOrNull() == null) return@writing false
+            if (context == null) contextQueries.delete(id) else putContext(id, context)
+            true
+        }
+
+    private fun putContext(
+        id: DownloadId,
+        context: RequestContext,
+    ) {
+        contextQueries.put(
+            download_id = id,
+            headers = context.headers.joinToString("\n") { (name, value) -> "$name: $value" },
+            referrer = context.referrer,
+            user_agent = context.userAgent,
+            cookies = context.cookies,
+        )
+    }
 
     override suspend fun mirrors(id: DownloadId): List<Mirror> =
         inTransaction { mirrorQueries.selectByDownload(id).executeAsList().map { it.toMirror() } }
