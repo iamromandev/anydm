@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 
 class HttpTransferTest {
     private val mib = 1L shl 20
@@ -204,6 +205,69 @@ class HttpTransferTest {
         }
 
     @Test
+    fun a503WithRetryAfterEndsTheRun() =
+        runTest {
+            val serve = servingRanges(content)
+            val transport = FakeTransport { r -> if (r.rangeStart() == 0L) response(503, "Retry-After" to "2") else serve(r) }
+            transfer(transport, RecordingIo(size, segments)) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from h", 2.seconds)
+            requestsFor(transport, 0) shouldBe 1
+        }
+
+    @Test
+    fun a503WithRetryAfterZeroIsRetriedInPlace() =
+        runTest {
+            val serve = servingRanges(content)
+            var failedOnce = false
+            val transport =
+                FakeTransport { r ->
+                    if (r.rangeStart() == 0L && !failedOnce) {
+                        failedOnce = true
+                        response(503, "Retry-After" to "0")
+                    } else {
+                        serve(r)
+                    }
+                }
+            val io = RecordingIo(size, segments)
+            transfer(transport, io) shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe content
+        }
+
+    @Test
+    fun a503WithRetryAfterKeepsWatermarks() =
+        runTest {
+            val serve = servingRanges(content)
+            val transport =
+                FakeTransport { r -> if (r.rangeStart() == segments[1].start) response(503, "Retry-After" to "2") else serve(r) }
+            val io = RecordingIo(size, segments)
+            transfer(transport, io, connections = 1) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from h", 2.seconds)
+            io.lastWatermark(segments[0].id) shouldBe segments[0].end
+            requestsFor(transport, segments[1].start) shouldBe 1
+        }
+
+    @Test
+    fun a429CarriesRetryAfter() =
+        runTest {
+            transfer(FakeTransport { response(429, "Retry-After" to "30") }, RecordingIo(size, segments)) shouldBe
+                StepResult.Failed(ErrorClass.RATE_LIMITED, "HTTP 429 from h", 30.seconds)
+        }
+
+    @Test
+    fun permanentNetworkFailuresEndTheRun() =
+        runTest {
+            for (kind in listOf(HttpIoKind.TLS, HttpIoKind.TOO_MANY_REDIRECTS, HttpIoKind.BAD_URL)) {
+                withClue(kind) {
+                    val transport = FakeTransport { throw HttpIoException(kind, "h") }
+                    val failed = transfer(transport, RecordingIo(size, segments)).shouldBeInstanceOf<StepResult.Failed>()
+                    failed.errorClass shouldBe null
+                    transport.requests
+                        .groupBy { it.rangeStart() }
+                        .values
+                        .all { it.size == 1 } shouldBe true
+                }
+            }
+        }
+
+    @Test
     fun aFullDiskEndsTheTransfer() =
         runTest {
             val io = RecordingIo(size, segments).apply { failWriteAt = 3 * mib }
@@ -343,6 +407,23 @@ class HttpTransferTest {
         io: RecordingIo,
         size: Long?,
     ) = HttpProtocol(transport).transfer(transferOf(emptyList(), size), io)
+
+    @Test
+    fun theStreamHonoursRetryAfter() =
+        runTest {
+            val transport = FakeTransport { response(503, "Retry-After" to "5") }
+            streamed(transport, RecordingIo(size, emptyList()), size) shouldBe
+                StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from h", 5.seconds)
+            transport.requests.size shouldBe 1
+        }
+
+    @Test
+    fun theStreamStopsOnAPermanentNetworkFailure() =
+        runTest {
+            val transport = FakeTransport { throw HttpIoException(HttpIoKind.TLS, "h") }
+            streamed(transport, RecordingIo(size, emptyList()), size) shouldBe StepResult.Failed(null, "TLS handshake failed (h)")
+            transport.requests.size shouldBe 1
+        }
 
     @Test
     fun aFileWithoutSegmentsIsOneStream() =

@@ -1,6 +1,5 @@
 package dev.anydm.engine.http
 
-import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.PlanContext
@@ -13,6 +12,7 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewSegment
+import kotlin.time.Clock
 import kotlin.time.TimeSource
 
 /** What a probe learned about a direct URL (HTTP-01, HTTP-03). */
@@ -32,13 +32,19 @@ data class HttpProbe(
  * Direct HTTP(S) downloads. The probe asks for the first KiB with a `Range` so one round trip shows the size, range
  * support and validator; every request carries the job's [RequestContext] (HTTP-10). A file with a known size on a
  * server with ranges is planned in blocks (HTTP-05) fetched over connections that grow up to the per-host cap [connections] (HTTP-06).
+ * A 401 is answered with the login [credentials] hold for that origin (HTTP-11).
  */
 class HttpProtocol(
-    private val transport: HttpTransport,
+    transport: HttpTransport,
     private val userAgent: String = "anydm",
     private val connections: () -> Int = { 4 },
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    private val clock: Clock = Clock.System,
+    credentials: CredentialStore = InMemoryCredentials(),
 ) : Protocol {
+    /** Every request goes through it, so the probe and each block worker log in (HTTP-11). */
+    private val auth = AuthTransport(transport, credentials)
+
     /** Connection slots per host, shared by every download this protocol serves (HTTP-06). */
     internal val slots = HostSlots { connections().coerceIn(1, 16) }
 
@@ -46,9 +52,9 @@ class HttpProtocol(
         val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + requestHeaders(request.context)
         val response =
             try {
-                transport.open(HttpRequest(request.mirror.url, headers = headers))
+                auth.open(HttpRequest(request.mirror.url, headers = headers))
             } catch (e: HttpIoException) {
-                return failed(e)
+                return failedOf(e)
             }
         try {
             skimBody(response.body)
@@ -68,11 +74,11 @@ class HttpProtocol(
             416 -> {
                 unsatisfied(response.headers["Content-Range"])
                     ?.let { StepResult.Ok(probeOf(response, size = it, rangesSupported = true, request.context)) }
-                    ?: failed(response)
+                    ?: failedOf(response, clock.now())
             }
 
             else -> {
-                failed(response)
+                failedOf(response, clock.now())
             }
         }
     }
@@ -119,7 +125,8 @@ class HttpProtocol(
                     all.filterNot { it.first.lowercase() in credentialHeaders }
                 }
             }
-        return RangeTransfer(transport, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource).run(file)
+        return RangeTransfer(auth, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource, clock = clock)
+            .run(file)
     }
 
     /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
@@ -160,15 +167,6 @@ class HttpProtocol(
             context = context,
         )
     }
-
-    private fun failed(response: HttpResponse): StepResult.Failed =
-        StepResult.Failed(classOf(response.status), "HTTP ${response.status} from ${hostOf(response.finalUrl)}")
-
-    private fun failed(e: HttpIoException): StepResult.Failed =
-        StepResult.Failed(
-            errorClass = if (e.kind == HttpIoKind.TOO_MANY_REDIRECTS) null else ErrorClass.TRANSIENT,
-            message = e.message?.takeUnless { it.isBlank() } ?: e.kind.name.lowercase(),
-        )
 
     private companion object {
         const val PROBE_BYTES = 1024
@@ -220,16 +218,6 @@ class HttpProtocol(
     private fun validatorOf(headers: Headers): String? =
         headers["ETag"]?.trim()?.takeIf { it.isNotEmpty() }?.let { "etag:$it" }
             ?: headers["Last-Modified"]?.trim()?.takeIf { it.isNotEmpty() }?.let { "last-modified:$it" }
-
-    private fun classOf(status: Int): ErrorClass? =
-        when (status) {
-            401, 403 -> ErrorClass.AUTH
-            404, 410 -> ErrorClass.GONE
-            429 -> ErrorClass.RATE_LIMITED
-            408 -> ErrorClass.TRANSIENT
-            in 500..599 -> ErrorClass.TRANSIENT
-            else -> null
-        }
 }
 
 /** The host of [url], without any user or password. */

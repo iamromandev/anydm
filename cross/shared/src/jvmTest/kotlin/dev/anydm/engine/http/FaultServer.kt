@@ -6,6 +6,8 @@ import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
 import mockwebserver3.SocketEffect
 import okio.Buffer
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -37,6 +39,20 @@ sealed interface Fault {
         val fault: Fault,
     ) : Fault
 
+    /** Answers 401 with a Basic challenge unless the request logs in as [user]:[password]. */
+    data class Basic(
+        val user: String,
+        val password: String,
+    ) : Fault
+
+    /** Answers 401 with a Digest challenge ([algorithm], with `qop=auth` if [qop]) unless the request answers it. */
+    data class Digest(
+        val user: String,
+        val password: String,
+        val algorithm: String = "SHA-256",
+        val qop: Boolean = true,
+    ) : Fault
+
     /** Redirects [hops] times before serving the file; hops alternate absolute and path-relative Locations. */
     data class Redirects(
         val hops: Int,
@@ -49,6 +65,11 @@ sealed interface Fault {
  * path.
  */
 class FaultServer : AutoCloseable {
+    private companion object {
+        const val NONCE = "fault-nonce"
+        val authParam = Regex("""(\w+)=(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))""")
+    }
+
     private class Served(
         val bytes: ByteArray,
         val etag: String?,
@@ -124,6 +145,9 @@ class FaultServer : AutoCloseable {
                     .build()
             }
         }
+        if (fault is Fault.Basic || fault is Fault.Digest) {
+            denied(fault, request)?.let { return it }
+        }
         if (fault is Fault.Status) {
             return MockResponse
                 .Builder()
@@ -180,6 +204,72 @@ class FaultServer : AutoCloseable {
             }
         }
         return builder.build()
+    }
+
+    /** A 401 with [fault]'s challenge, or null when [request] logs in; checked with this server's own digest code. */
+    private fun denied(
+        fault: Fault,
+        request: RecordedRequest,
+    ): MockResponse? {
+        val authorization = request.headers["Authorization"]
+        val (accepted, challenge) =
+            when (fault) {
+                is Fault.Basic -> {
+                    val expected = "Basic " + Base64.getEncoder().encodeToString("${fault.user}:${fault.password}".toByteArray())
+                    (authorization == expected) to "Basic realm=\"fault\""
+                }
+
+                is Fault.Digest -> {
+                    val qop = if (fault.qop) ", qop=\"auth\"" else ""
+                    digestAccepted(fault, request, authorization) to
+                        "Digest realm=\"fault\", nonce=\"$NONCE\", algorithm=${fault.algorithm}$qop"
+                }
+
+                else -> {
+                    return null
+                }
+            }
+        if (accepted) return null
+        return MockResponse
+            .Builder()
+            .code(401)
+            .addHeader("WWW-Authenticate", challenge)
+            .body("log in")
+            .build()
+    }
+
+    private fun digestAccepted(
+        fault: Fault.Digest,
+        request: RecordedRequest,
+        authorization: String?,
+    ): Boolean {
+        if (authorization == null || !authorization.startsWith("Digest ")) return false
+        val p =
+            authParam
+                .findAll(authorization.removePrefix("Digest "))
+                .associate {
+                    it.groupValues[1].lowercase() to (
+                        it.groups[2]?.value?.replace(
+                            Regex("""\\(.)"""),
+                            "$1",
+                        ) ?: it.groupValues[3]
+                    )
+                }
+        val target = request.url.encodedPath + (request.url.encodedQuery?.let { "?$it" } ?: "")
+        if (p["username"] != fault.user || p["realm"] != "fault" || p["nonce"] != NONCE || p["uri"] != target) return false
+        val name = if (fault.algorithm.startsWith("SHA-256")) "SHA-256" else "MD5"
+
+        fun h(text: String) = MessageDigest.getInstance(name).digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+        val ha1 = h("${fault.user}:fault:${fault.password}")
+        val ha2 = h("${request.method}:$target")
+        val expected =
+            if (fault.qop) {
+                if (p["qop"] != "auth") return false
+                h("$ha1:$NONCE:${p["nc"]}:${p["cnonce"]}:auth:$ha2")
+            } else {
+                h("$ha1:$NONCE:$ha2")
+            }
+        return p["response"] == expected
     }
 
     private sealed interface RangeOf

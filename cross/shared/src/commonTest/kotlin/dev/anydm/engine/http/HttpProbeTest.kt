@@ -15,6 +15,9 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 class HttpProbeTest {
     private fun request(
@@ -138,10 +141,45 @@ class HttpProbeTest {
     @Test
     fun networkFailuresAreTransient() =
         runTest {
-            val reset = FakeTransport { throw HttpIoException(HttpIoKind.RESET, "connection reset") }
-            HttpProtocol(reset).probe(request()) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "connection reset")
-            val loop = FakeTransport { throw HttpIoException(HttpIoKind.TOO_MANY_REDIRECTS, "more than 5 redirects") }
-            HttpProtocol(loop).probe(request()) shouldBe StepResult.Failed(null, "more than 5 redirects")
+            val reset = FakeTransport { throw HttpIoException(HttpIoKind.RESET, "h") }
+            HttpProtocol(reset).probe(request()) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "connection broke (h)")
+            val loop = FakeTransport { throw HttpIoException(HttpIoKind.TOO_MANY_REDIRECTS, "h") }
+            HttpProtocol(loop).probe(request()) shouldBe StepResult.Failed(null, "more than 5 redirects (h)")
+        }
+
+    @Test
+    fun aProbe503CarriesRetryAfter() =
+        runTest {
+            val clock = fixedClock(Instant.parse("1994-11-06T08:49:00Z"))
+            val transport = FakeTransport { response(503, "Retry-After" to "Sun, 06 Nov 1994 08:49:37 GMT") }
+            HttpProtocol(transport, clock = clock).probe(request()) shouldBe
+                StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 503 from h", 37.seconds)
+        }
+
+    @Test
+    fun theProbeLogsIn() =
+        runTest {
+            val store = InMemoryCredentials().apply { set("https://h", Credentials("u", "p")) }
+            val transport =
+                FakeTransport { r ->
+                    if (r.headers.any { it == ("Authorization" to "Basic dTpw") }) {
+                        response(206, "Content-Range" to "bytes 0-1023/5000")
+                    } else {
+                        response(401, "WWW-Authenticate" to "Basic realm=\"r\"")
+                    }
+                }
+            HttpProtocol(transport, credentials = store).probe(request()).shouldBeInstanceOf<StepResult.Ok<HttpProbe>>()
+        }
+
+    @Test
+    fun tlsAndBadUrlFailAtOnce() =
+        runTest {
+            for (kind in listOf(HttpIoKind.TLS, HttpIoKind.BAD_URL)) {
+                withClue(kind) {
+                    val failed = HttpProtocol(FakeTransport { throw HttpIoException(kind, "h") }).probe(request())
+                    failed.shouldBeInstanceOf<StepResult.Failed>().errorClass.shouldBeNull()
+                }
+            }
         }
 
     @Test
@@ -194,4 +232,9 @@ class HttpProbeTest {
         }
 
     // Review Focus 5 (CR/LF in context values) is RequestContextTest: such a context can't be made.
+
+    private fun fixedClock(at: Instant) =
+        object : Clock {
+            override fun now() = at
+        }
 }

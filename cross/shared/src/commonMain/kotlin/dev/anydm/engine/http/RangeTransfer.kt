@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.time.Clock
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -49,8 +50,8 @@ private const val RECENT = 4
  * whoever has the last byte first writes the tail and cancels the other. Each block is fetched from its watermark with a
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
  * range. A failed attempt is retried by the same worker from the block's new watermark; [ATTEMPTS] per block, then the
- * run fails, so a server that fails everything gets at most about [ATTEMPTS] × the cap requests. An HTTP error
- * that retrying can't fix ends the run at once.
+ * run fails, so a server that fails everything gets at most about [ATTEMPTS] × the cap requests. An error that
+ * retrying can't fix, or a `Retry-After` (HTTP-09), ends the run at once.
  *
  * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
  * request with 200: that body is read from byte 0, bytes below each block's watermark are discarded, and the rest
@@ -65,6 +66,7 @@ internal class RangeTransfer(
     private val origin: String,
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     private val rampEvery: Duration = 1.seconds,
+    private val clock: Clock = Clock.System,
 ) {
     private class Block(
         val segment: Segment,
@@ -443,7 +445,9 @@ internal class RangeTransfer(
                 next ?: try {
                     transport.open(HttpRequest(url, headers = headers))
                 } catch (e: HttpIoException) {
-                    last = ioFailed(e)
+                    val failed = failedOf(e)
+                    if (failed.errorClass != ErrorClass.TRANSIENT) return failed
+                    last = failed
                     return@repeat
                 }
             next = null
@@ -452,7 +456,7 @@ internal class RangeTransfer(
                     if (response.status == 200) {
                         copyStream(response, file, size, blocks, hostOf(response.finalUrl))
                     } else {
-                        statusAttempt(response.status, hostOf(response.finalUrl))
+                        statusAttempt(response)
                     }
                 } finally {
                     response.body.close()
@@ -489,7 +493,7 @@ internal class RangeTransfer(
                 try {
                     body.read(buffer, 0, want)
                 } catch (e: HttpIoException) {
-                    return Attempt.Retry(ioFailed(e))
+                    return ioAttempt(e)
                 }
             if (n < 0) {
                 return if (size == null) Attempt.Done else Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "short body from $host"))
@@ -574,7 +578,7 @@ internal class RangeTransfer(
             try {
                 transport.open(HttpRequest(url, headers = listOf("Range" to "bytes=$first-$last") + headers))
             } catch (e: HttpIoException) {
-                return Attempt.Retry(ioFailed(e))
+                return ioAttempt(e)
             }
         var handedOver = false
         try {
@@ -583,7 +587,7 @@ internal class RangeTransfer(
                 handedOver = true
                 return Attempt.Ignored(response)
             }
-            if (response.status != 206) return statusAttempt(response.status, host)
+            if (response.status != 206) return statusAttempt(response)
             if (contentRangeOf(response.headers["Content-Range"]) != Triple(first, last, size)) {
                 return Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "wrong Content-Range from $host"))
             }
@@ -607,7 +611,7 @@ internal class RangeTransfer(
                 try {
                     body.read(buffer, 0, want)
                 } catch (e: HttpIoException) {
-                    return Attempt.Retry(ioFailed(e))
+                    return ioAttempt(e)
                 }
             if (n < 0) return Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "short body from $host"))
             if (n == 0) continue
@@ -635,19 +639,21 @@ internal class RangeTransfer(
         return Attempt.Done
     }
 
-    private fun statusAttempt(
-        status: Int,
-        host: String,
-    ): Attempt {
-        val message = "HTTP $status from $host"
-        return when (status) {
-            408, in 500..599 -> Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, message))
-            401, 403 -> Attempt.End(StepResult.Failed(ErrorClass.AUTH, message))
-            404, 410 -> Attempt.End(StepResult.Failed(ErrorClass.GONE, message))
-            429 -> Attempt.End(StepResult.Failed(ErrorClass.RATE_LIMITED, message))
-            416 -> Attempt.End(StepResult.Failed(ErrorClass.TRANSIENT, message))
-            else -> Attempt.End(StepResult.Failed(null, message))
-        }
+    /**
+     * A 408 or 5xx is retried in place unless the server said when to come back (`Retry-After`): then, like every other
+     * error status, it ends the run, and the queue waits.
+     */
+    private fun statusAttempt(response: HttpResponse): Attempt {
+        val failed = failedOf(response, clock.now())
+        val status = response.status
+        val retriable = (status == 408 || status in 500..599) && failed.retryAfter == null
+        return if (retriable) Attempt.Retry(failed) else Attempt.End(failed)
+    }
+
+    /** A network failure is retried in place only if it is TRANSIENT; TLS, redirect loops and bad URLs end the run. */
+    private fun ioAttempt(e: HttpIoException): Attempt {
+        val failed = failedOf(e)
+        return if (failed.errorClass == ErrorClass.TRANSIENT) Attempt.Retry(failed) else Attempt.End(failed)
     }
 
     private companion object {
@@ -657,8 +663,5 @@ internal class RangeTransfer(
             val (a, b, n) = header?.trim()?.let(contentRange::matchEntire)?.destructured ?: return null
             return Triple(a.toLongOrNull() ?: return null, b.toLongOrNull() ?: return null, n.toLongOrNull() ?: return null)
         }
-
-        fun ioFailed(e: HttpIoException) =
-            StepResult.Failed(ErrorClass.TRANSIENT, e.message?.takeUnless { it.isBlank() } ?: e.kind.name.lowercase())
     }
 }

@@ -24,8 +24,12 @@ import java.net.NoRouteToHostException
 import java.net.ProtocolException
 import java.net.SocketException
 import java.net.UnknownHostException
+import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -48,13 +52,13 @@ class OkHttpTransport(
     private val client: OkHttpClient = defaultClient(),
 ) : HttpTransport {
     override suspend fun open(request: HttpRequest): HttpResponse {
-        var url = request.url.toHttpUrlOrNull() ?: throw HttpIoException(HttpIoKind.OTHER, "not an HTTP URL: ${hostOf(request.url)}")
+        var url = request.url.toHttpUrlOrNull() ?: throw HttpIoException(HttpIoKind.BAD_URL, hostOf(request.url))
         var method = request.method
         var headers = request.headers
         var redirects = 0
         while (true) {
             val call = client.newCall(okRequest(url, method, headers))
-            val response = call.await()
+            val response = call.await(hostOf(url.toString()))
             val location = response.header("Location")?.let(url::resolve)
             if (response.code !in redirectCodes || location == null) {
                 return HttpResponse(
@@ -62,18 +66,26 @@ class OkHttpTransport(
                     headers = Headers(response.headers.map { it.first to it.second }),
                     finalUrl = url.toString(),
                     redirects = redirects,
-                    body = OkHttpBody(call, response),
+                    body = OkHttpBody(call, response, hostOf(url.toString())),
                 )
             }
             response.close()
             if (++redirects > MAX_REDIRECTS) {
-                throw HttpIoException(HttpIoKind.TOO_MANY_REDIRECTS, "more than $MAX_REDIRECTS redirects from ${url.host}")
+                throw HttpIoException(HttpIoKind.TOO_MANY_REDIRECTS, hostOf(url.toString()))
             }
             if (response.code == 303 && method != "HEAD") method = "GET"
+            // A Digest answer names the old path in its `uri`; the new one challenges again (AuthTransport answers).
+            headers =
+                headers.filterNot {
+                    it.first.equals("Authorization", ignoreCase = true) &&
+                        it.second.startsWith("Digest ", ignoreCase = true)
+                }
             if (!sameOrigin(url, location)) headers = headers.filterNot { it.first.lowercase() in credentialHeaders }
             url = location
         }
     }
+
+    override fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
 
     private fun okRequest(
         url: HttpUrl,
@@ -84,10 +96,15 @@ class OkHttpTransport(
             .Builder()
             .url(url)
             .method(method, null)
-            .apply { headers.forEach { (name, value) -> addHeader(name, value) } }
-            .build()
+            // Unsafe only in name: a non-ASCII Digest user or realm goes out as the UTF-8 it was hashed as.
+            .headers(
+                okhttp3.Headers
+                    .Builder()
+                    .apply { headers.forEach { (name, value) -> addUnsafeNonAscii(name, value) } }
+                    .build(),
+            ).build()
 
-    private suspend fun Call.await(): Response =
+    private suspend fun Call.await(host: String): Response =
         suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { cancel() }
             enqueue(
@@ -103,7 +120,7 @@ class OkHttpTransport(
                         call: Call,
                         e: IOException,
                     ) {
-                        continuation.resumeWithException(ioException(e))
+                        continuation.resumeWithException(httpIoExceptionOf(e, host))
                     }
                 },
             )
@@ -112,6 +129,7 @@ class OkHttpTransport(
     private class OkHttpBody(
         private val call: Call,
         private val response: Response,
+        private val host: String,
     ) : HttpBody {
         private val source = response.body.source()
 
@@ -143,7 +161,7 @@ class OkHttpTransport(
                 }
             } catch (e: IOException) {
                 currentCoroutineContext().ensureActive()
-                throw ioException(e)
+                throw httpIoExceptionOf(e, host)
             }
         }
 
@@ -159,16 +177,32 @@ class OkHttpTransport(
             a: HttpUrl,
             b: HttpUrl,
         ) = a.scheme == b.scheme && a.host == b.host && a.port == b.port
-
-        fun ioException(e: IOException): HttpIoException {
-            val kind =
-                when (e) {
-                    is ConnectException, is UnknownHostException, is NoRouteToHostException -> HttpIoKind.CONNECT
-                    is InterruptedIOException -> HttpIoKind.TIMEOUT
-                    is SocketException, is EOFException, is ProtocolException -> HttpIoKind.RESET
-                    else -> if (e.javaClass.simpleName == "StreamResetException") HttpIoKind.RESET else HttpIoKind.OTHER
-                }
-            return HttpIoException(kind, e.message?.takeUnless { it.isBlank() } ?: kind.name.lowercase(), e)
-        }
     }
 }
+
+/**
+ * What [e] means for a request to [host]: a rejected TLS handshake or certificate is TLS, a handshake the peer broke
+ * off and any other TLS failure a broken connection; the message is never [e]'s own, which may hold the URL.
+ */
+internal fun httpIoExceptionOf(
+    e: IOException,
+    host: String,
+): HttpIoException {
+    val kind =
+        when (e) {
+            is SSLHandshakeException -> if (e.droppedMidway()) HttpIoKind.RESET else HttpIoKind.TLS
+            is SSLPeerUnverifiedException -> HttpIoKind.TLS
+            is SSLException -> if (e.causes().any { it is CertificateException }) HttpIoKind.TLS else HttpIoKind.RESET
+            is ConnectException, is UnknownHostException, is NoRouteToHostException -> HttpIoKind.CONNECT
+            is InterruptedIOException -> HttpIoKind.TIMEOUT
+            is SocketException, is EOFException, is ProtocolException -> HttpIoKind.RESET
+            else -> if (e.javaClass.simpleName == "StreamResetException") HttpIoKind.RESET else HttpIoKind.OTHER
+        }
+    return HttpIoException(kind, host, e)
+}
+
+/** A handshake the peer broke off (a reset or EOF under it, no certificate problem): a dropped connection. */
+private fun Throwable.droppedMidway(): Boolean =
+    causes().none { it is CertificateException } && causes().any { it is SocketException || it is EOFException }
+
+private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause.takeUnless { c -> c === it } }

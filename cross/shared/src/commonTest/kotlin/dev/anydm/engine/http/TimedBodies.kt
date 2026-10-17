@@ -34,7 +34,7 @@ class PacedBody(
         length: Int,
     ): Int {
         if (at == bytes.size) return -1
-        if (failAfter != null && at >= failAfter) throw HttpIoException(HttpIoKind.RESET, "connection reset")
+        if (failAfter != null && at >= failAfter) throw HttpIoException(HttpIoKind.RESET, "h")
         if (stallAfter != null && at >= stallAfter) awaitCancellation()
         if (at == 0) delay(firstByte)
         delay(every)
