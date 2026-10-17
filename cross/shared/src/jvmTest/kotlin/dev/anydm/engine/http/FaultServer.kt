@@ -32,6 +32,11 @@ sealed interface Fault {
         val bytesPerSecond: Long,
     ) : Fault
 
+    /** Applies [fault] to the next request for the path only, then serves it normally. */
+    data class Once(
+        val fault: Fault,
+    ) : Fault
+
     /** Redirects [hops] times before serving the file; hops alternate absolute and path-relative Locations. */
     data class Redirects(
         val hops: Int,
@@ -89,6 +94,11 @@ class FaultServer : AutoCloseable {
         faults[path] = fault
     }
 
+    /** Serves [path] normally again. */
+    fun clear(path: String) {
+        faults.remove(path)
+    }
+
     fun url(path: String): String = server.url(path).toString()
 
     override fun close() = server.close()
@@ -98,7 +108,11 @@ class FaultServer : AutoCloseable {
         val hop = hopOf(target)
         val path = hop?.second ?: target
         val served = files[path] ?: return MockResponse.Builder().code(404).build()
-        val fault = faults[path]
+        val fault =
+            when (val set = faults[path]) {
+                is Fault.Once -> set.fault.also { faults.remove(path, set) }
+                else -> set
+            }
         if (fault is Fault.Redirects) {
             val next = (hop?.first ?: 0) + 1
             if (next <= fault.hops) {
