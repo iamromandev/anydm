@@ -25,5 +25,6 @@ class CredentialsTest {
         userInfoOf("https://h/f").shouldBeNull()
         userInfoOf("https://h/a@b").shouldBeNull()
         userInfoOf("https://a%3Ab:p@h/f").shouldBeNull()
+        userInfoOf("https://u%+1:p@h/f").shouldBeNull()
     }
 }

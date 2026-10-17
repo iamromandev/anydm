@@ -53,26 +53,8 @@ internal fun userInfoOf(url: String): Credentials? {
             .substringBefore('#')
     if ('@' !in authority) return null
     val info = authority.substringBeforeLast('@')
-    val user = percentDecoded(info.substringBefore(':'))
-    val password = percentDecoded(info.substringAfter(':', ""))
+    val user = percentDecodedBytes(info.substringBefore(':'))?.decodeToString()
+    val password = percentDecodedBytes(info.substringAfter(':', ""))?.decodeToString()
     if (user == null || password == null) return null
     return runCatching { Credentials(user, password) }.getOrNull()
-}
-
-/** `%XX` escapes decoded as UTF-8; null for a malformed escape. */
-private fun percentDecoded(text: String): String? {
-    val bytes = mutableListOf<Byte>()
-    var i = 0
-    while (i < text.length) {
-        val c = text[i]
-        if (c == '%') {
-            val byte = text.substring(i + 1, minOf(i + 3, text.length)).takeIf { it.length == 2 }?.toIntOrNull(16) ?: return null
-            bytes += byte.toByte()
-            i += 3
-        } else {
-            bytes += c.toString().encodeToByteArray().toList()
-            i++
-        }
-    }
-    return bytes.toByteArray().decodeToString()
 }
