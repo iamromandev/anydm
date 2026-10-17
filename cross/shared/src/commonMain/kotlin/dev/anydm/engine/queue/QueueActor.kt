@@ -254,6 +254,7 @@ internal class QueueActor(
         lastStatus[added.id] = added.status
         observer.event(EngineEvent.Added(added.id))
         observer.jobChanged(added)
+        observer.mirrorsChanged(added.id, downloads.mirrors(added.id))
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }

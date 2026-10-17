@@ -1,5 +1,6 @@
 package dev.anydm.engine
 
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
@@ -10,11 +11,20 @@ import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.choice
+import io.kotest.property.arbitrary.constant
+import io.kotest.property.arbitrary.int
+import io.kotest.property.arbitrary.list
+import io.kotest.property.arbitrary.map
+import io.kotest.property.checkAll
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -267,5 +277,109 @@ abstract class EngineContract : StoreTestBase() {
             (saved > 0) shouldBe true
             snapshot.speed shouldBe 0L
             h.engine.stop()
+        }
+
+    @Test
+    fun anAddedJobShowsItsMirrors() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            runCurrent()
+
+            h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file.zip")
+            h.engine.stop()
+        }
+
+    // Consistency
+
+    private sealed interface Command {
+        data object Add : Command
+
+        data class Pause(
+            val job: Int,
+        ) : Command
+
+        data class Resume(
+            val job: Int,
+        ) : Command
+
+        data class Cancel(
+            val job: Int,
+        ) : Command
+
+        data class Remove(
+            val job: Int,
+        ) : Command
+
+        data class Reprioritize(
+            val job: Int,
+            val priority: Int,
+        ) : Command
+
+        data class SetLimit(
+            val limit: Int,
+        ) : Command
+
+        data object PauseAll : Command
+
+        data object ResumeAll : Command
+    }
+
+    private val arbCommand: Arb<Command> =
+        Arb.choice(
+            Arb.constant(Command.Add),
+            Arb.constant(Command.Add),
+            Arb.int(0..9).map(Command::Pause),
+            Arb.int(0..9).map(Command::Resume),
+            Arb.int(0..9).map(Command::Cancel),
+            Arb.int(0..9).map(Command::Remove),
+            Arb.int(0..9).map { Command.Reprioritize(it, it % 3) },
+            Arb.int(1..4).map(Command::SetLimit),
+            Arb.constant(Command.PauseAll),
+            Arb.constant(Command.ResumeAll),
+        )
+
+    @Test
+    fun snapshotsMatchTheStoreAfterConcurrentCommands() =
+        runTest {
+            val test = this
+            checkAll(50, Arb.list(arbCommand, 1..30)) { commands ->
+                val h = EngineHarness(test, newStore())
+                h.engine.start()
+                val added = mutableListOf<DownloadId>()
+
+                fun pick(i: Int) = if (added.isEmpty()) DownloadId(Long.MAX_VALUE) else added[i % added.size]
+                commands
+                    .chunked((commands.size + 2) / 3)
+                    .map { part ->
+                        test.launch {
+                            for (command in part) {
+                                when (command) {
+                                    Command.Add -> added += h.addJob()
+                                    is Command.Pause -> h.engine.pause(pick(command.job))
+                                    is Command.Resume -> h.engine.resume(pick(command.job))
+                                    is Command.Cancel -> h.engine.cancel(pick(command.job))
+                                    is Command.Remove -> h.engine.remove(pick(command.job), RemoveFiles.KEEP)
+                                    is Command.Reprioritize -> h.engine.reprioritize(pick(command.job), command.priority)
+                                    is Command.SetLimit -> h.engine.setLimit(command.limit)
+                                    Command.PauseAll -> h.engine.pauseAll()
+                                    Command.ResumeAll -> h.engine.resumeAll()
+                                }
+                            }
+                        }
+                    }.joinAll()
+                test.settle()
+
+                val stored = h.store.downloads.list()
+                withClue(commands) {
+                    h.engine.downloads.value
+                        .map { it.download } shouldBe stored
+                    for (snapshot in h.engine.downloads.value) {
+                        snapshot.attempts shouldBe h.store.downloads.attempts(snapshot.download.id)
+                        snapshot.mirrors shouldBe h.store.downloads.mirrors(snapshot.download.id)
+                    }
+                }
+                h.engine.stop()
+            }
         }
 }
