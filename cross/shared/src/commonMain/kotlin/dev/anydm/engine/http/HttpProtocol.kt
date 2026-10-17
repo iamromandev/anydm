@@ -13,6 +13,7 @@ import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewSegment
+import kotlin.time.TimeSource
 
 /** What a probe learned about a direct URL (HTTP-01, HTTP-03). */
 data class HttpProbe(
@@ -30,13 +31,17 @@ data class HttpProbe(
 /**
  * Direct HTTP(S) downloads. The probe asks for the first KiB with a `Range` so one round trip shows the size, range
  * support and validator; every request carries the job's [RequestContext] (HTTP-10). A file with a known size on a
- * server with ranges is planned in blocks (HTTP-05) fetched over [connections] connections, read once per run.
+ * server with ranges is planned in blocks (HTTP-05) fetched over connections that grow up to the per-host cap [connections] (HTTP-06).
  */
 class HttpProtocol(
     private val transport: HttpTransport,
     private val userAgent: String = "anydm",
     private val connections: () -> Int = { 4 },
+    private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) : Protocol {
+    /** Connection slots per host, shared by every download this protocol serves (HTTP-06). */
+    internal val slots = HostSlots { connections().coerceIn(1, 16) }
+
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + requestHeaders(request.context)
         val response =
@@ -103,7 +108,6 @@ class HttpProtocol(
         val probe = transfer.probe
         check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
         val file = transfer.files.single()
-        val connections = connections().coerceIn(1, 16)
         // The probe sent credentials only to the mirror's origin; a redirect elsewhere dropped them, and so do we.
         val headers =
             requestHeaders(probe.context).let { all ->
@@ -115,7 +119,7 @@ class HttpProtocol(
                     all.filterNot { it.first.lowercase() in credentialHeaders }
                 }
             }
-        return RangeTransfer(transport, probe.finalUrl, headers, io, connections).run(file)
+        return RangeTransfer(transport, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource).run(file)
     }
 
     /** The transfer already checked that every byte arrived; the runner renames the partial into place. */

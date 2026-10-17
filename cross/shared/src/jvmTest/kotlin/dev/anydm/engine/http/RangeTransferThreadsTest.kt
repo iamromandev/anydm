@@ -15,6 +15,7 @@ import kotlinx.io.files.Path
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.milliseconds
 
 /** RangeTransfer on a multi-threaded dispatcher, as StepRunner runs it in production. */
 class RangeTransferThreadsTest {
@@ -39,7 +40,15 @@ class RangeTransferThreadsTest {
                         bytesBody(content).also { bodies += it }.let { response(200, body = it) }
                     }
                 withContext(Dispatchers.Default) {
-                    RangeTransfer(transport, "https://h/f.bin", emptyList(), RecordingIo(size, segments), 4).run(file)
+                    RangeTransfer(
+                        transport,
+                        "https://h/f.bin",
+                        emptyList(),
+                        RecordingIo(size, segments),
+                        HostSlots { 4 },
+                        "https://h:443",
+                        rampEvery = 1.milliseconds,
+                    ).run(file)
                 }
                 bodies.all { it.closed } shouldBe true
             }

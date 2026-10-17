@@ -18,7 +18,7 @@ data class Settings(
     val maxRetries: Int = 5,
     /** Write DEBUG lines to the log too (#556): every status move. */
     val debugLogging: Boolean = false,
-    /** How many connections one HTTP download uses (HTTP-05); #570 makes it the cap. */
+    /** The most connections HTTP downloads open to one host, shared by all of them (HTTP-06). */
     val connectionsPerDownload: Int = 4,
 ) {
     init {

@@ -5,13 +5,25 @@ import dev.anydm.engine.core.Segment
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
+import kotlin.time.ComparableTimeMark
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** Tries per block (or per single stream) in one run before the run fails. */
 internal const val ATTEMPTS = 3
@@ -19,11 +31,25 @@ internal const val ATTEMPTS = 3
 /** The most bytes read, written and checkpointed at once. */
 internal const val CHUNK = 64 * 1024
 
+/** A block with less left than this is never raced (HTTP-07). */
+internal const val RACE_MIN_LEFT = 256L * 1024
+
+/** A block is raced when its speed is less than 1 / this of the run's speed per connection. */
+internal const val RACE_SLOWER = 2.0
+
+/** How many finished block attempts give the run's speed per connection. */
+private const val RECENT = 4
+
 /**
- * Fetches one file's incomplete blocks over [connections] workers (HTTP-05), each block from its watermark with a
+ * Fetches one file's incomplete blocks with workers that each hold one of [origin]'s [slots] (HTTP-05, HTTP-06). It
+ * starts with one; every [rampEvery] a controller adds another while blocks wait and a slot is free, and stops adding
+ * once an addition didn't raise the speed by 10%. A worker that finishes a block gives its slot to another download
+ * waiting for the same host if this run holds more than one. A worker that finds no block left races the in-flight
+ * block that would finish last, if it is slow enough (HTTP-07): the racer buffers the rest of the block in memory, and
+ * whoever has the last byte first writes the tail and cancels the other. Each block is fetched from its watermark with a
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
  * range. A failed attempt is retried by the same worker from the block's new watermark; [ATTEMPTS] per block, then the
- * run fails, so a server that fails everything gets at most about [ATTEMPTS] × [connections] requests. An HTTP error
+ * run fails, so a server that fails everything gets at most about [ATTEMPTS] × the cap requests. An HTTP error
  * that retrying can't fix ends the run at once.
  *
  * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
@@ -35,13 +61,35 @@ internal class RangeTransfer(
     private val url: String,
     private val headers: List<Pair<String, String>>,
     private val io: TransferIo,
-    private val connections: Int,
+    private val slots: HostSlots,
+    private val origin: String,
+    private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    private val rampEvery: Duration = 1.seconds,
 ) {
     private class Block(
         val segment: Segment,
-        var watermark: Long,
+        @Volatile var watermark: Long,
         var attempts: Int = 0,
-    )
+    ) {
+        /** Taken around every write and watermark move, by the original and a winning racer. */
+        val lock = Mutex()
+
+        /** Every byte written, by whoever got there first. */
+        @Volatile var done = false
+
+        /** When the current attempt started and what it has written since, for its speed. */
+        @Volatile var attemptStart: ComparableTimeMark? = null
+
+        @Volatile var attemptBytes = 0L
+
+        /** The current attempt, which a winning racer cancels; and the racer, which a winning original cancels. */
+        @Volatile var original: Job? = null
+
+        @Volatile var racer: Job? = null
+
+        /** Raced once in this attempt already; reset by the next attempt only while no racer runs. */
+        @Volatile var raced = false
+    }
 
     private sealed interface Attempt {
         data object Done : Attempt
@@ -73,13 +121,28 @@ internal class RangeTransfer(
     private val progressLock = Mutex()
     private var downloaded = 0L
 
+    /** Bytes received this run, for the ramp's speed; under [progressLock]. */
+    private var received = 0L
+
+    /** Guards [waiting] and [workers]: blocks not yet taken, and workers running. */
+    private val takeLock = Mutex()
+    private var waiting = 0
+    private var workers = 0
+    private val inFlight = mutableSetOf<Block>()
+
+    /** Speeds of the last [RECENT] block attempts that finished, bytes per second; under [takeLock]. */
+    private val finished = ArrayDeque<Double>()
+
+    /** Bumped on every tick and whenever a block or race ends: what idle workers wait for. */
+    private val changes = MutableStateFlow(0L)
+
     /** Guards [ended] and [switched], which workers on other threads may set at once. */
     private val stateLock = Mutex()
     private var ended: StepResult.Failed? = null
 
     suspend fun run(file: TransferFile): StepResult<Unit> {
         val size = file.file.size
-        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else stream(file, size, emptyList(), null)
+        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else withSlot { stream(file, size, emptyList(), null) }
         requireNotNull(size) { "a file in blocks has a size" }
         downloaded = file.segments.sumOf { it.written }
         val blocks = file.segments.map { Block(it, it.watermark) }
@@ -88,34 +151,278 @@ internal class RangeTransfer(
         val queue = Channel<Block>(Channel.UNLIMITED)
         incomplete.forEach { queue.trySend(it) }
         queue.close()
+        waiting = incomplete.size
         try {
             coroutineScope {
-                repeat(minOf(connections, incomplete.size)) {
-                    launch {
-                        for (block in queue) {
-                            while (true) {
-                                when (val attempt = fetch(file, size, block)) {
-                                    Attempt.Done -> break
-                                    is Attempt.Retry -> if (++block.attempts >= ATTEMPTS) end(attempt.failed)
-                                    is Attempt.End -> end(attempt.failed)
-                                    is Attempt.Ignored -> switchTo(attempt.response)
-                                }
-                            }
-                        }
-                    }
-                }
+                slots.acquire(origin, this@RangeTransfer)
+                // The controller first: the first worker may finish every block before it suspends.
+                lateinit var controller: Job
+                controller = launch { ramp(file, size, queue) { controller.cancel() } }
+                worker(file, size, queue) { controller.cancel() }
             }
         } catch (_: RunEnded) {
             return checkNotNull(ended)
         } catch (_: RangesIgnored) {
             val whole = checkNotNull(switched)
             switched = null
-            return stream(file, size, blocks, whole)
+            return withSlot { stream(file, size, blocks, whole) }
         } finally {
             // A 200 a worker got while the run was ending or being cancelled.
             switched?.body?.close()
         }
         return StepResult.Ok(Unit)
+    }
+
+    /**
+     * Starts a worker holding a slot already taken: UNDISPATCHED, so its `finally` runs even if the scope is cancelled
+     * before it gets a thread. It takes blocks until none wait, or until it gives its slot to another download; the
+     * last worker out stops the ramp ([lastOut]).
+     */
+    private fun CoroutineScope.worker(
+        file: TransferFile,
+        size: Long,
+        queue: Channel<Block>,
+        lastOut: () -> Unit,
+    ) = launch(start = CoroutineStart.UNDISPATCHED) {
+        var yielded = false
+        try {
+            takeLock.withLock { workers++ }
+            while (true) {
+                val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
+                if (block == null) {
+                    val seen = changes.value
+                    val target = raceTarget()
+                    if (target != null) {
+                        race(file, size, target)
+                        continue
+                    }
+                    // Nothing to race yet: a block may turn slow later, so look again next tick, unless the blocks
+                    // are all done or another download needs the slot.
+                    if (takeLock.withLock { inFlight.none { !it.done } }) break
+                    if (slots.tryYield(origin, this@RangeTransfer)) {
+                        yielded = true
+                        break
+                    }
+                    changes.first { it != seen }
+                    continue
+                }
+                original(file, size, block)
+                if (slots.tryYield(origin, this@RangeTransfer)) {
+                    yielded = true
+                    break
+                }
+            }
+        } finally {
+            withContext(NonCancellable) {
+                if (!yielded) slots.release(origin, this@RangeTransfer)
+                if (takeLock.withLock { --workers == 0 && waiting == 0 }) lastOut()
+            }
+        }
+    }
+
+    /**
+     * Every [rampEvery]: compares the speed after the last addition with the speed before it (a gain under 10% stops
+     * the ramp; two zeros don't), then adds a worker if blocks wait and a slot is free. Ends with the last block.
+     */
+    private suspend fun CoroutineScope.ramp(
+        file: TransferFile,
+        size: Long,
+        queue: Channel<Block>,
+        lastOut: () -> Unit,
+    ) {
+        var last = 0L
+        var before: Long? = null
+        var stopped = false
+        while (true) {
+            delay(rampEvery)
+            val now = progressLock.withLock { received }
+            val speed = now - last
+            last = now
+            changes.update { it + 1 }
+            before?.let { if (speed < it * 1.1) stopped = true }
+            before = null
+            // Keeps ticking after the ramp stops: idle workers wake on each tick. The last worker out cancels this.
+            if (stopped || takeLock.withLock { waiting } == 0) continue
+            if (slots.tryAcquire(origin, this@RangeTransfer)) {
+                worker(file, size, queue, lastOut)
+                before = speed
+            }
+        }
+    }
+
+    /** Fetches [block] as its original, in its own job so a winning racer can cancel it; retried in place. */
+    private suspend fun original(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) = coroutineScope {
+        val attempts =
+            launch(start = CoroutineStart.LAZY) {
+                while (!block.done) {
+                    block.lock.withLock {
+                        block.attemptStart = timeSource.markNow()
+                        block.attemptBytes = 0
+                        if (block.racer == null) block.raced = false
+                    }
+                    when (val attempt = fetch(file, size, block)) {
+                        Attempt.Done -> break
+                        is Attempt.Retry -> if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
+                        is Attempt.End -> end(attempt.failed)
+                        is Attempt.Ignored -> switchTo(attempt.response)
+                    }
+                }
+            }
+        block.lock.withLock { block.original = attempts }
+        takeLock.withLock { inFlight += block }
+        try {
+            attempts.start()
+            attempts.join()
+            val elapsed = block.attemptStart?.elapsedNow()
+            if (block.done && elapsed != null && elapsed.isPositive()) {
+                val speed = block.attemptBytes / (elapsed.inWholeMilliseconds.coerceAtLeast(1) / 1000.0)
+                takeLock.withLock {
+                    finished.addLast(speed)
+                    if (finished.size > RECENT) finished.removeFirst()
+                }
+            }
+        } finally {
+            withContext(NonCancellable) { takeLock.withLock { inFlight -= block } }
+            changes.update { it + 1 }
+        }
+        // Done first: the racer's buffer goes nowhere.
+        block.lock.withLock { block.racer }?.cancel()
+    }
+
+    /**
+     * The in-flight block that would finish last, if it has at least [RACE_MIN_LEFT] left, no racer in this attempt,
+     * and a speed under 1 / [RACE_SLOWER] of the run's speed per connection; claimed for racing, or null.
+     */
+    private suspend fun raceTarget(): Block? =
+        takeLock.withLock {
+            // What one connection does: the last few blocks that finished. A tick's speed over the blocks in flight now
+            // overstates it at the tail, where blocks finish within the tick.
+            if (finished.isEmpty()) return@withLock null
+            val perConnection = finished.average()
+            inFlight
+                .filter { !it.done && !it.raced && it.racer == null && it.segment.end - it.watermark >= RACE_MIN_LEFT }
+                .mapNotNull { block -> speedOf(block)?.let { block to it } }
+                .filter { (_, speed) -> speed * RACE_SLOWER < perConnection }
+                .maxByOrNull { (block, speed) -> (block.segment.end - block.watermark) / speed.coerceAtLeast(1e-9) }
+                ?.first
+                ?.also { it.raced = true }
+        }
+
+    /**
+     * Bytes per second in the block's current attempt; null until it has run one [rampEvery], which also covers the time
+     * to its first byte.
+     */
+    private fun speedOf(block: Block): Double? {
+        val elapsed = block.attemptStart?.elapsedNow() ?: return null
+        if (elapsed < rampEvery) return null
+        return block.attemptBytes / (elapsed.inWholeMilliseconds / 1000.0)
+    }
+
+    /** Races [block] from its watermark into memory; quietly gives up on any failure but a 200, which switches. */
+    private suspend fun race(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) = coroutineScope {
+        // Claimed under the lock, and the job made only after: a LAZY child never started would hang this scope.
+        val job =
+            block.lock.withLock {
+                if (block.done || block.racer != null) return@coroutineScope
+                launch(start = CoroutineStart.LAZY) { racer(file, size, block) }.also { block.racer = it }
+            }
+        try {
+            job.start()
+            job.join()
+        } finally {
+            withContext(NonCancellable) { block.lock.withLock { if (block.racer === job) block.racer = null } }
+            changes.update { it + 1 }
+        }
+    }
+
+    private suspend fun racer(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) {
+        val from = block.watermark
+        val last = block.segment.end - 1
+        val response =
+            try {
+                transport.open(HttpRequest(url, headers = listOf("Range" to "bytes=$from-$last") + headers))
+            } catch (_: HttpIoException) {
+                return
+            }
+        var handedOver = false
+        try {
+            if (response.status == 200) {
+                handedOver = true
+                switchTo(response)
+            }
+            if (response.status != 206 || contentRangeOf(response.headers["Content-Range"]) != Triple(from, last, size)) return
+            val buffer = ByteArray((block.segment.end - from).toInt())
+            var got = 0
+            while (got < buffer.size) {
+                val n =
+                    try {
+                        response.body.read(buffer, got, minOf(CHUNK, buffer.size - got))
+                    } catch (_: HttpIoException) {
+                        return
+                    }
+                if (n < 0) return
+                if (n == 0) continue
+                io.limiter.acquire(n)
+                io.meter.record(n.toLong())
+                progressLock.withLock { received += n }
+                got += n
+            }
+            win(file, block, from, buffer)
+        } finally {
+            if (!handedOver) response.body.close()
+        }
+    }
+
+    /** The racer has every byte: unless the original got there first, write the tail and cancel the original. */
+    private suspend fun win(
+        file: TransferFile,
+        block: Block,
+        from: Long,
+        buffer: ByteArray,
+    ) {
+        val original =
+            block.lock.withLock {
+                if (block.done) return
+                block.done = true
+                val start = block.watermark
+                var at = start
+                while (at < block.segment.end) {
+                    val n = minOf(CHUNK.toLong(), block.segment.end - at).toInt()
+                    val written = io.write(file.file.id, at, buffer, (at - from).toInt(), (at - from).toInt() + n)
+                    if (written is StepResult.Failed) end(written)
+                    at += n
+                }
+                block.watermark = block.segment.end
+                io.checkpoint(mapOf(block.segment.id to block.watermark))
+                progressLock.withLock {
+                    downloaded += block.segment.end - start
+                    io.progress(downloaded)
+                }
+                block.original
+            }
+        original?.cancel()
+    }
+
+    /** Runs [block] holding one slot of [origin]. */
+    private suspend fun <T> withSlot(block: suspend () -> T): T {
+        slots.acquire(origin, this)
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) { slots.release(origin, this@RangeTransfer) }
+        }
     }
 
     /**
@@ -236,6 +543,7 @@ internal class RangeTransfer(
             block.watermark = to
             io.checkpoint(mapOf(block.segment.id to to))
             downloaded += to - from
+            received += to - from
             io.progress(downloaded)
         }
         return null
@@ -305,14 +613,24 @@ internal class RangeTransfer(
             if (n == 0) continue
             io.limiter.acquire(n)
             io.meter.record(n.toLong())
-            val written = io.write(file.file.id, block.watermark, buffer, 0, n)
-            if (written is StepResult.Failed) return Attempt.End(written)
-            block.watermark += n
-            io.checkpoint(mapOf(block.segment.id to block.watermark))
-            progressLock.withLock {
-                downloaded += n
-                io.progress(downloaded)
-            }
+            progressLock.withLock { received += n }
+            val failed =
+                block.lock.withLock {
+                    // A racer that won wrote the rest already.
+                    if (block.done) return Attempt.Done
+                    val written = io.write(file.file.id, block.watermark, buffer, 0, n)
+                    if (written is StepResult.Failed) return@withLock written
+                    block.watermark += n
+                    block.attemptBytes += n
+                    if (block.watermark == block.segment.end) block.done = true
+                    io.checkpoint(mapOf(block.segment.id to block.watermark))
+                    progressLock.withLock {
+                        downloaded += n
+                        io.progress(downloaded)
+                    }
+                    null
+                }
+            if (failed != null) return Attempt.End(failed)
         }
         return Attempt.Done
     }
