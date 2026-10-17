@@ -32,14 +32,19 @@ data class HttpProbe(
  * Direct HTTP(S) downloads. The probe asks for the first KiB with a `Range` so one round trip shows the size, range
  * support and validator; every request carries the job's [RequestContext] (HTTP-10). A file with a known size on a
  * server with ranges is planned in blocks (HTTP-05) fetched over connections that grow up to the per-host cap [connections] (HTTP-06).
+ * A 401 is answered with the login [credentials] hold for that origin (HTTP-11).
  */
 class HttpProtocol(
-    private val transport: HttpTransport,
+    transport: HttpTransport,
     private val userAgent: String = "anydm",
     private val connections: () -> Int = { 4 },
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     private val clock: Clock = Clock.System,
+    credentials: CredentialStore = InMemoryCredentials(),
 ) : Protocol {
+    /** Every request goes through it, so the probe and each block worker log in (HTTP-11). */
+    private val auth = AuthTransport(transport, credentials)
+
     /** Connection slots per host, shared by every download this protocol serves (HTTP-06). */
     internal val slots = HostSlots { connections().coerceIn(1, 16) }
 
@@ -47,7 +52,7 @@ class HttpProtocol(
         val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + requestHeaders(request.context)
         val response =
             try {
-                transport.open(HttpRequest(request.mirror.url, headers = headers))
+                auth.open(HttpRequest(request.mirror.url, headers = headers))
             } catch (e: HttpIoException) {
                 return failedOf(e)
             }
@@ -120,7 +125,7 @@ class HttpProtocol(
                     all.filterNot { it.first.lowercase() in credentialHeaders }
                 }
             }
-        return RangeTransfer(transport, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource, clock = clock)
+        return RangeTransfer(auth, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource, clock = clock)
             .run(file)
     }
 

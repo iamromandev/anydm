@@ -157,6 +157,21 @@ class HttpProbeTest {
         }
 
     @Test
+    fun theProbeLogsIn() =
+        runTest {
+            val store = InMemoryCredentials().apply { set("https://h", Credentials("u", "p")) }
+            val transport =
+                FakeTransport { r ->
+                    if (r.headers.any { it == ("Authorization" to "Basic dTpw") }) {
+                        response(206, "Content-Range" to "bytes 0-1023/5000")
+                    } else {
+                        response(401, "WWW-Authenticate" to "Basic realm=\"r\"")
+                    }
+                }
+            HttpProtocol(transport, credentials = store).probe(request()).shouldBeInstanceOf<StepResult.Ok<HttpProbe>>()
+        }
+
+    @Test
     fun tlsAndBadUrlFailAtOnce() =
         runTest {
             for (kind in listOf(HttpIoKind.TLS, HttpIoKind.BAD_URL)) {
