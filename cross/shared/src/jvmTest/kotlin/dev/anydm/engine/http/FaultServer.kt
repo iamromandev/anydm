@@ -76,6 +76,7 @@ class FaultServer : AutoCloseable {
         val lastModified: String?,
         val disposition: String?,
         val contentType: String?,
+        val digest: String?,
     )
 
     private val files = ConcurrentHashMap<String, Served>()
@@ -103,8 +104,9 @@ class FaultServer : AutoCloseable {
         lastModified: String? = null,
         disposition: String? = null,
         contentType: String? = null,
+        digest: String? = null,
     ) {
-        files[path] = Served(bytes, etag, lastModified, disposition, contentType)
+        files[path] = Served(bytes, etag, lastModified, disposition, contentType, digest)
     }
 
     /** Replaces [path]'s fault. */
@@ -163,6 +165,7 @@ class FaultServer : AutoCloseable {
         served.lastModified?.let { builder.addHeader("Last-Modified", it) }
         served.disposition?.let { builder.addHeader("Content-Disposition", it) }
         served.contentType?.let { builder.addHeader("Content-Type", it) }
+        served.digest?.let { builder.addHeader("Digest", it) }
         val bytes =
             when (range) {
                 null -> {
