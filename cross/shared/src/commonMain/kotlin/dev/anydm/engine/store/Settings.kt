@@ -16,6 +16,8 @@ data class Settings(
     val globalPause: Boolean = false,
     /** How many automatic retries in a row a job gets before it fails (FND-07); 0 never retries. */
     val maxRetries: Int = 5,
+    /** Write DEBUG lines to the log too (#556): every status move. */
+    val debugLogging: Boolean = false,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

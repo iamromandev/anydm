@@ -1,6 +1,7 @@
 package dev.anydm.engine.store
 
 import app.cash.sqldelight.db.SqlDriver
+import dev.anydm.engine.log.Log
 import kotlinx.coroutines.CoroutineDispatcher
 
 /**
@@ -12,11 +13,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 class Store internal constructor(
     private val driver: SqlDriver,
     io: CoroutineDispatcher,
+    log: Log = Log.None,
 ) : AutoCloseable {
     private val database = createDatabase(driver)
 
     val downloads: DownloadStore = SqlDownloadStore(database, io)
-    val settings: SettingsStore = SqlSettingsStore(database, io)
+    val settings: SettingsStore = SqlSettingsStore(database, io, log)
 
     /**
      * Closes the driver. With the JDBC driver on a file there is nothing held open between calls, so this changes

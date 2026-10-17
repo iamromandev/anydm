@@ -7,6 +7,7 @@ import dev.anydm.engine.core.FixedRandom
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
@@ -34,6 +35,7 @@ internal class EngineHarness(
     val clock: Clock = test.virtualClock(),
     stopTimeout: Duration = 10.seconds,
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
+    log: Log = Log.None,
 ) {
     val engine =
         Engine(
@@ -46,6 +48,7 @@ internal class EngineHarness(
             stopTimeout = stopTimeout,
             checkpointEvery = checkpointEvery,
             retryPolicy = RetryPolicy(random = FixedRandom(0.0)),
+            log = log,
         )
 
     private var added = 0

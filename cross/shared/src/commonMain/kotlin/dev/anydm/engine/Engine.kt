@@ -4,10 +4,13 @@ import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.log.Log
+import dev.anydm.engine.log.LogLevel
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.queue.CommandResult
@@ -65,6 +68,7 @@ class Engine(
     private val stopTimeout: Duration = 10.seconds,
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     retryPolicy: RetryPolicy = RetryPolicy(),
+    private val log: Log = Log.None,
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -110,7 +114,7 @@ class Engine(
     internal val observer: QueueObserver = Observer()
 
     private val queue =
-        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, observer)
+        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
 
     private sealed interface Fact {
         data class Changed(
@@ -203,8 +207,10 @@ class Engine(
         // snapshots. A failure here fails the engine.
         val startup =
             scope.async {
+                if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
                 queue.start()
                 val jobs = store.downloads.list()
+                log.info("engine") { "engine started (${jobs.size} jobs)" }
                 val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
                 val mirrors = jobs.associate { it.id to store.downloads.mirrors(it.id) }
                 val files = jobs.associate { it.id to filesOf(it.id) }
@@ -244,7 +250,11 @@ class Engine(
                 if (!stateFlow.compareAndSet(now, EngineState.Stopping)) return stop()
                 queueJob.cancel()
                 val ended = withTimeoutOrNull(stopTimeout) { queueJob.join() }
-                if (ended == null) eventFlow.tryEmit(EngineEvent.StopTimedOut(inSlots.value.sortedBy { it.value }))
+                if (ended == null) {
+                    val still = inSlots.value.sortedBy { it.value }
+                    log.error("engine") { "stop timed out, still saving: ${still.joinToString { it.value.toString() }}" }
+                    eventFlow.tryEmit(EngineEvent.StopTimedOut(still))
+                }
             }
         }
         engineJob.cancel()
@@ -252,6 +262,7 @@ class Engine(
         withTimeoutOrNull(stopTimeout) { engineJob.join() }
         runCatching { store.close() }
         stateFlow.value = EngineState.Stopped
+        log.info("engine") { "engine stopped" }
     }
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
@@ -330,7 +341,55 @@ class Engine(
             }
         }
         publish()
-        if (fact is Fact.Event) eventFlow.tryEmit(fact.event)
+        if (fact is Fact.Event) {
+            logEvent(fact.event)
+            eventFlow.tryEmit(fact.event)
+        }
+    }
+
+    private fun logEvent(event: EngineEvent) {
+        when (event) {
+            is EngineEvent.Added -> {
+                log.info("job") { "job ${event.id.value} added" }
+            }
+
+            is EngineEvent.Removed -> {
+                log.info("job") { "job ${event.id.value} removed" }
+            }
+
+            is EngineEvent.StatusChanged -> {
+                log.debug("job") { "job ${event.id.value} ${event.from} -> ${event.to}" }
+                if (event.to == DownloadStatus.DOWNLOADING) log.info("job") { "job ${event.id.value} started" }
+            }
+
+            is EngineEvent.Completed -> {
+                log.info("job") { "job ${event.id.value} completed (${event.outputs.joinToString()})" }
+            }
+
+            is EngineEvent.Failed -> {
+                log.warn("job") { "job ${event.id.value} failed (${event.errorClass ?: "no class"}): ${event.message}" }
+            }
+
+            is EngineEvent.RetryScheduled -> {
+                log.info("job") { "job ${event.id.value} retry ${event.attempt} at ${event.at}" }
+            }
+
+            is EngineEvent.MovedToMirror -> {
+                log.info("job") { "job ${event.id.value} moved to mirror ${event.mirror.value}" }
+            }
+
+            is EngineEvent.StartedOver -> {
+                log.info("job") { "job ${event.id.value} started over: ${event.reason}" }
+            }
+
+            is EngineEvent.PausedForDisk -> {
+                log.info("job") { "job ${event.id.value} paused: disk full" }
+            }
+
+            is EngineEvent.StopTimedOut, is EngineEvent.EngineFailed -> {
+                Unit
+            }
+        }
     }
 
     private fun started(id: DownloadId) {
@@ -410,6 +469,7 @@ class Engine(
         val now = stateFlow.value
         if (now != EngineState.Running && now != EngineState.NotStarted) return
         if (!stateFlow.compareAndSet(now, EngineState.Failed(error))) return failed(error)
+        log.error("engine", error) { "engine failed" }
         eventFlow.tryEmit(EngineEvent.EngineFailed(error))
         scope.cancel()
         runCatching { store.close() }

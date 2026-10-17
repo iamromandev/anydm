@@ -8,6 +8,7 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
@@ -35,8 +36,9 @@ class Queue internal constructor(
     clock: Clock = Clock.System,
     retryPolicy: RetryPolicy = RetryPolicy(),
     observer: QueueObserver = QueueObserver.None,
+    log: Log = Log.None,
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)

@@ -32,6 +32,7 @@ import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Meter
@@ -71,6 +72,7 @@ internal class QueueActor(
     private val clock: Clock,
     private val retryPolicy: RetryPolicy,
     private val observer: QueueObserver,
+    private val log: Log,
 ) {
     private sealed interface Message {
         class Command(
@@ -143,6 +145,7 @@ internal class QueueActor(
                     stopped(IllegalStateException("the queue has stopped", e), started)
                     throw e
                 } catch (e: Throwable) {
+                    log.error("queue", e) { "queue stopped" }
                     stopped(e, started)
                     throw e
                 }
@@ -612,6 +615,7 @@ internal class QueueActor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
+                    log.error("queue", e) { "job ${slot.id.value} crashed" }
                     end = SlotEnd.Crashed(e)
                 }
             }
@@ -715,6 +719,7 @@ internal class QueueActor(
 
                 // Nobody stopped it: a cancellation that escaped the protocol (a stray timeout) is a crash too.
                 SlotEnd.Cancelled -> {
+                    if (!slot.stopping) log.warn("queue") { "job ${slot.id.value} was cancelled unexpectedly" }
                     if (slot.stopping) null else afterCrash(slot)
                 }
             }

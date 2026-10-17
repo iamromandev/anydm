@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.AppDirs
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
@@ -34,13 +35,14 @@ internal const val DATABASE_FILE = "anydm.db"
 suspend fun openStore(
     appDirs: AppDirs,
     fileSystem: FileSystem,
+    log: Log = Log.None,
 ): FileResult<Store> {
     val folder = fileSystem.prepareFolder(appDirs.data)
     if (folder is FileResult.Failed) return folder
     // One call at a time: SQLite has one writer, and our own connections then never wait on each other.
     val io = Dispatchers.IO.limitedParallelism(1)
     val driver = withContext(io) { openDatabaseFile(Path(appDirs.data, DATABASE_FILE)) }
-    return FileResult.Ok(Store(driver, io))
+    return FileResult.Ok(Store(driver, io, log))
 }
 
 internal fun openDatabaseFile(
