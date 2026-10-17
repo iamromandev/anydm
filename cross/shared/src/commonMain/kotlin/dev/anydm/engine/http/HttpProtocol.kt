@@ -78,7 +78,7 @@ class HttpProtocol(
 
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = notYet
 
-    /** The context's headers, then Referer, User-Agent and Cookie; a header that would break the request is dropped. */
+    /** The context's headers, then Referer, User-Agent and Cookie (RequestContext admits only what HTTP can send). */
     private fun contextHeaders(context: RequestContext?): List<Pair<String, String>> {
         val derived =
             listOfNotNull(
@@ -88,7 +88,7 @@ class HttpProtocol(
             )
         val own = context?.headers.orEmpty().filterNot { it.first.equals("Range", ignoreCase = true) }
         val overridden = own.map { it.first.lowercase() }.toSet()
-        return (own + derived.filterNot { it.first.lowercase() in overridden }).filter(::isSafe)
+        return own + derived.filterNot { it.first.lowercase() in overridden }
     }
 
     private fun probeOf(
@@ -121,7 +121,6 @@ class HttpProtocol(
         val notYet = StepResult.Failed(null, "HTTP transfers arrive with #569")
         val totalRange = Regex("""bytes\s+\d+-\d+/(\d+|\*)""", RegexOption.IGNORE_CASE)
         val unsatisfiedRange = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
-        val tokenName = Regex("""[!#$%&'*+.^_`|~0-9A-Za-z-]+""")
     }
 
     /** Reads at most [PROBE_BYTES]: the headers are the answer, and a server that ignores the range isn't drained. */
@@ -176,9 +175,6 @@ class HttpProtocol(
             in 500..599 -> ErrorClass.TRANSIENT
             else -> null
         }
-
-    private fun isSafe(header: Pair<String, String>): Boolean =
-        tokenName.matches(header.first) && header.second.none { it == '\r' || it == '\n' || it == '\u0000' }
 }
 
 /** The host of [url], without any user or password. */

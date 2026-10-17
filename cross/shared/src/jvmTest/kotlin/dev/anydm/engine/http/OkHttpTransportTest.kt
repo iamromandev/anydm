@@ -10,11 +10,13 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
 
 class OkHttpTransportTest {
@@ -145,6 +147,26 @@ class OkHttpTransportTest {
             val response = get("/d.bin")
             response.status shouldBe 200
             shouldThrow<HttpIoException> { response.body.readAll() }.kind shouldBe HttpIoKind.RESET
+        }
+
+    // Final review: a read on a closed body never returned, and a cancelled read could still be using the body.
+
+    @Test
+    fun readingAClosedBodyFails() =
+        runBlocking<Unit> {
+            server.serve("/a.bin", file)
+            val body = get("/a.bin").body
+            body.close()
+            withTimeout(5.seconds) { shouldThrow<IllegalStateException> { body.read(ByteArray(10)) } }
+        }
+
+    @Test
+    fun aBadRangeFailsInsteadOfHanging() =
+        runBlocking<Unit> {
+            server.serve("/a.bin", file)
+            val body = get("/a.bin").body
+            withTimeout(5.seconds) { shouldThrow<IndexOutOfBoundsException> { body.read(ByteArray(10), 0, 20) } }
+            body.close()
         }
 
     @Test

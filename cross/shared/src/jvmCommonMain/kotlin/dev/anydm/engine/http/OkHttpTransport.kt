@@ -1,6 +1,13 @@
 package dev.anydm.engine.http
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -18,7 +25,7 @@ import java.net.ProtocolException
 import java.net.SocketException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.EmptyCoroutineContext
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -112,18 +119,33 @@ class OkHttpTransport(
             into: ByteArray,
             offset: Int,
             length: Int,
-        ): Int =
-            // A blocked socket read doesn't notice cancellation; cancelling the call closes the socket under it.
-            suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation { call.cancel() }
-                Dispatchers.IO.dispatch(EmptyCoroutineContext) {
+        ): Int {
+            // Bytes already buffered need no thread; and close() is never called while a read is in flight.
+            if (source.buffer.size > 0) return source.read(into, offset, length)
+            return try {
+                coroutineScope {
+                    val done = AtomicBoolean(false)
+                    // A blocked socket read doesn't notice cancellation; cancelling the call closes the socket under it.
+                    val watcher =
+                        launch(start = CoroutineStart.UNDISPATCHED) {
+                            try {
+                                awaitCancellation()
+                            } finally {
+                                if (!done.get()) call.cancel()
+                            }
+                        }
                     try {
-                        continuation.resume(source.read(into, offset, length))
-                    } catch (e: IOException) {
-                        continuation.resumeWithException(ioException(e))
+                        runInterruptible(Dispatchers.IO) { source.read(into, offset, length) }
+                    } finally {
+                        done.set(true)
+                        watcher.cancel()
                     }
                 }
+            } catch (e: IOException) {
+                currentCoroutineContext().ensureActive()
+                throw ioException(e)
             }
+        }
 
         override fun close() = response.close()
     }
