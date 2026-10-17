@@ -8,6 +8,8 @@ import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
 import dev.anydm.engine.protocol.ProbeResult
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.RelinkRequest
+import dev.anydm.engine.protocol.Relinked
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
@@ -160,6 +162,43 @@ class HttpProtocol(
         val all = requestHeaders(context)
         val headers = if (originOf(finalUrl) == originOf(chosen.url)) all else all.filterNot { it.first.lowercase() in credentialHeaders }
         return Source(finalUrl, headers, originOf(finalUrl))
+    }
+
+    /**
+     * Probes [RelinkRequest.url], refuses another size, then compares up to two samples of the bytes already stored
+     * with the new link's (HTTP-13). Returns the new link's validator for the queue to adopt.
+     */
+    override suspend fun relink(request: RelinkRequest): StepResult<Relinked> {
+        val probe =
+            when (val probed = probeUrl(request.url, request.context, credentials = true)) {
+                is StepResult.Failed -> return probed
+                is StepResult.Ok -> probed.value
+            }
+        val old = request.download.size
+        val new = probe.size
+        if (old != null && new != null && old != new) return StepResult.Failed(null, "new link is $new bytes, not $old")
+        val samples =
+            samplesOf(
+                request.stored.files
+                    .firstOrNull { it.index == 0 }
+                    ?.written
+                    .orEmpty(),
+            )
+        if (samples.isNotEmpty()) {
+            // The samples go where the probe was answered; credentials only if that is still the new link's origin.
+            val headers =
+                requestHeaders(request.context).let { all ->
+                    if (originOf(probe.finalUrl) ==
+                        originOf(request.url)
+                    ) {
+                        all
+                    } else {
+                        all.filterNot { it.first.lowercase() in credentialHeaders }
+                    }
+                }
+            compareSamples(auth, probe, headers, request.stored, samples, clock::now)?.let { return it }
+        }
+        return StepResult.Ok(Relinked(probe.validator))
     }
 
     /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
