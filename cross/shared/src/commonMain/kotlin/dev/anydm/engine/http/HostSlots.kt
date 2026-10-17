@@ -96,6 +96,18 @@ internal class HostSlots(
             (host.held[owner] ?: 0) > 1 && host.waiters.any { it.owner !== owner }
         }
 
+    /** Gives up one of [owner]'s slots, in the same step as [shouldYield] decides it should; true if it did. */
+    suspend fun tryYield(
+        origin: String,
+        owner: Any,
+    ): Boolean =
+        lock.withLock {
+            val host = hosts[origin] ?: return@withLock false
+            val yields = (host.held[owner] ?: 0) > 1 && host.waiters.any { it.owner !== owner }
+            if (yields) giveBack(origin, host, owner)
+            yields
+        }
+
     suspend fun held(origin: String): Int = lock.withLock { hosts[origin]?.total ?: 0 }
 
     private fun giveBack(

@@ -5,13 +5,20 @@ import dev.anydm.engine.core.Segment
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** Tries per block (or per single stream) in one run before the run fails. */
 internal const val ATTEMPTS = 3
@@ -20,10 +27,13 @@ internal const val ATTEMPTS = 3
 internal const val CHUNK = 64 * 1024
 
 /**
- * Fetches one file's incomplete blocks over [connections] workers (HTTP-05), each block from its watermark with a
+ * Fetches one file's incomplete blocks with workers that each hold one of [origin]'s [slots] (HTTP-05, HTTP-06). It
+ * starts with one; every [rampEvery] a controller adds another while blocks wait and a slot is free, and stops adding
+ * once an addition didn't raise the speed by 10%. A worker that finishes a block gives its slot to another download
+ * waiting for the same host if this run holds more than one. Each block is fetched from its watermark with a
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
  * range. A failed attempt is retried by the same worker from the block's new watermark; [ATTEMPTS] per block, then the
- * run fails, so a server that fails everything gets at most about [ATTEMPTS] × [connections] requests. An HTTP error
+ * run fails, so a server that fails everything gets at most about [ATTEMPTS] × the cap requests. An HTTP error
  * that retrying can't fix ends the run at once.
  *
  * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
@@ -35,7 +45,10 @@ internal class RangeTransfer(
     private val url: String,
     private val headers: List<Pair<String, String>>,
     private val io: TransferIo,
-    private val connections: Int,
+    private val slots: HostSlots,
+    private val origin: String,
+    private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    private val rampEvery: Duration = 1.seconds,
 ) {
     private class Block(
         val segment: Segment,
@@ -73,13 +86,21 @@ internal class RangeTransfer(
     private val progressLock = Mutex()
     private var downloaded = 0L
 
+    /** Bytes received this run, for the ramp's speed; under [progressLock]. */
+    private var received = 0L
+
+    /** Guards [waiting] and [workers]: blocks not yet taken, and workers running. */
+    private val takeLock = Mutex()
+    private var waiting = 0
+    private var workers = 0
+
     /** Guards [ended] and [switched], which workers on other threads may set at once. */
     private val stateLock = Mutex()
     private var ended: StepResult.Failed? = null
 
     suspend fun run(file: TransferFile): StepResult<Unit> {
         val size = file.file.size
-        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else stream(file, size, emptyList(), null)
+        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else withSlot { stream(file, size, emptyList(), null) }
         requireNotNull(size) { "a file in blocks has a size" }
         downloaded = file.segments.sumOf { it.written }
         val blocks = file.segments.map { Block(it, it.watermark) }
@@ -88,34 +109,100 @@ internal class RangeTransfer(
         val queue = Channel<Block>(Channel.UNLIMITED)
         incomplete.forEach { queue.trySend(it) }
         queue.close()
+        waiting = incomplete.size
         try {
             coroutineScope {
-                repeat(minOf(connections, incomplete.size)) {
-                    launch {
-                        for (block in queue) {
-                            while (true) {
-                                when (val attempt = fetch(file, size, block)) {
-                                    Attempt.Done -> break
-                                    is Attempt.Retry -> if (++block.attempts >= ATTEMPTS) end(attempt.failed)
-                                    is Attempt.End -> end(attempt.failed)
-                                    is Attempt.Ignored -> switchTo(attempt.response)
-                                }
-                            }
-                        }
-                    }
-                }
+                slots.acquire(origin, this@RangeTransfer)
+                // The controller first: the first worker may finish every block before it suspends.
+                lateinit var controller: Job
+                controller = launch { ramp(file, size, queue) { controller.cancel() } }
+                worker(file, size, queue) { controller.cancel() }
             }
         } catch (_: RunEnded) {
             return checkNotNull(ended)
         } catch (_: RangesIgnored) {
             val whole = checkNotNull(switched)
             switched = null
-            return stream(file, size, blocks, whole)
+            return withSlot { stream(file, size, blocks, whole) }
         } finally {
             // A 200 a worker got while the run was ending or being cancelled.
             switched?.body?.close()
         }
         return StepResult.Ok(Unit)
+    }
+
+    /**
+     * Starts a worker holding a slot already taken: UNDISPATCHED, so its `finally` runs even if the scope is cancelled
+     * before it gets a thread. It takes blocks until none wait, or until it gives its slot to another download; the
+     * last worker out stops the ramp ([lastOut]).
+     */
+    private fun CoroutineScope.worker(
+        file: TransferFile,
+        size: Long,
+        queue: Channel<Block>,
+        lastOut: () -> Unit,
+    ) = launch(start = CoroutineStart.UNDISPATCHED) {
+        var yielded = false
+        try {
+            takeLock.withLock { workers++ }
+            while (true) {
+                val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } } ?: break
+                while (true) {
+                    when (val attempt = fetch(file, size, block)) {
+                        Attempt.Done -> break
+                        is Attempt.Retry -> if (++block.attempts >= ATTEMPTS) end(attempt.failed)
+                        is Attempt.End -> end(attempt.failed)
+                        is Attempt.Ignored -> switchTo(attempt.response)
+                    }
+                }
+                if (slots.tryYield(origin, this@RangeTransfer)) {
+                    yielded = true
+                    break
+                }
+            }
+        } finally {
+            withContext(NonCancellable) {
+                if (!yielded) slots.release(origin, this@RangeTransfer)
+                if (takeLock.withLock { --workers == 0 && waiting == 0 }) lastOut()
+            }
+        }
+    }
+
+    /**
+     * Every [rampEvery]: compares the speed after the last addition with the speed before it (a gain under 10% stops
+     * the ramp; two zeros don't), then adds a worker if blocks wait and a slot is free. Ends with the last block.
+     */
+    private suspend fun CoroutineScope.ramp(
+        file: TransferFile,
+        size: Long,
+        queue: Channel<Block>,
+        lastOut: () -> Unit,
+    ) {
+        var last = 0L
+        var before: Long? = null
+        while (true) {
+            delay(rampEvery)
+            val now = progressLock.withLock { received }
+            val speed = now - last
+            last = now
+            before?.let { if (speed < it * 1.1) return }
+            before = null
+            if (takeLock.withLock { waiting } == 0) return
+            if (slots.tryAcquire(origin, this@RangeTransfer)) {
+                worker(file, size, queue, lastOut)
+                before = speed
+            }
+        }
+    }
+
+    /** Runs [block] holding one slot of [origin]. */
+    private suspend fun <T> withSlot(block: suspend () -> T): T {
+        slots.acquire(origin, this)
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) { slots.release(origin, this@RangeTransfer) }
+        }
     }
 
     /**
@@ -236,6 +323,7 @@ internal class RangeTransfer(
             block.watermark = to
             io.checkpoint(mapOf(block.segment.id to to))
             downloaded += to - from
+            received += to - from
             io.progress(downloaded)
         }
         return null
@@ -311,6 +399,7 @@ internal class RangeTransfer(
             io.checkpoint(mapOf(block.segment.id to block.watermark))
             progressLock.withLock {
                 downloaded += n
+                received += n
                 io.progress(downloaded)
             }
         }

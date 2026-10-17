@@ -94,4 +94,25 @@ class HostSlotsTest {
             slots.acquire(a, first)
             slots.tryAcquire(b, first) shouldBe true
         }
+
+    // Two workers of one owner checking shouldYield at once could both leave; tryYield decides and releases in one step.
+    @Test
+    fun tryYieldReleasesOnlyWhenSomeoneWaits() =
+        runTest {
+            val slots = HostSlots { 2 }
+            slots.acquire(a, first)
+            slots.acquire(a, first)
+            slots.tryYield(a, first) shouldBe false
+            var got = false
+            launch {
+                slots.acquire(a, second)
+                got = true
+            }
+            runCurrent()
+            slots.tryYield(a, first) shouldBe true
+            runCurrent()
+            got shouldBe true
+            slots.tryYield(a, first) shouldBe false
+            slots.held(a) shouldBe 2
+        }
 }
