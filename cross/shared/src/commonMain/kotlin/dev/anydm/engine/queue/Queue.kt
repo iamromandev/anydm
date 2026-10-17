@@ -26,7 +26,7 @@ import kotlin.time.Clock
  * store. A store failure stops the queue: the coroutine fails into [scope], and later commands throw
  * IllegalStateException. The Engine (#555) owns [scope] and decides what to do then.
  */
-class Queue(
+class Queue internal constructor(
     private val scope: CoroutineScope,
     store: Store,
     runner: StepRunner,
@@ -34,8 +34,9 @@ class Queue(
     fileSystem: FileSystem,
     clock: Clock = Clock.System,
     retryPolicy: RetryPolicy = RetryPolicy(),
+    observer: QueueObserver = QueueObserver.None,
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)

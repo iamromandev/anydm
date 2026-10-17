@@ -1,5 +1,7 @@
 package dev.anydm.engine.queue
 
+import dev.anydm.engine.EngineEvent
+import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -13,6 +15,7 @@ import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FailureAction
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
@@ -65,6 +68,7 @@ internal class QueueActor(
     private val fileSystem: FileSystem,
     private val clock: Clock,
     private val retryPolicy: RetryPolicy,
+    private val observer: QueueObserver,
 ) {
     private sealed interface Message {
         class Command(
@@ -105,6 +109,9 @@ internal class QueueActor(
     private val inbox = Channel<Message>(Channel.UNLIMITED)
     private val downloads = store.downloads
     private val slots = mutableMapOf<DownloadId, Slot>()
+
+    // Each job's status as last stored, to report StatusChanged (#555).
+    private val lastStatus = mutableMapOf<DownloadId, DownloadStatus>()
     private lateinit var settings: Settings
     private lateinit var slotScope: CoroutineScope
     private var launched = false
@@ -123,6 +130,7 @@ internal class QueueActor(
                 // Inside the scope, before it waits for the slots: a slot may be waiting for an ack only stopped() gives.
                 try {
                     settings = store.settings.load()
+                    for (job in downloads.list()) lastStatus[job.id] = job.status
                     reconcile()
                     reschedule()
                     started.complete(Unit)
@@ -235,6 +243,9 @@ internal class QueueActor(
 
     suspend fun add(new: NewDownload): CommandResult {
         val added = downloads.add(new, queuedAt = clock.now())
+        lastStatus[added.id] = added.status
+        observer.event(EngineEvent.Added(added.id))
+        observer.jobChanged(added)
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }
@@ -360,7 +371,7 @@ internal class QueueActor(
      */
     private suspend fun reconcile() {
         val now = clock.now()
-        for (open in downloads.openAttempts()) downloads.updateAttempt(open.copy(endedAt = now, message = "the app stopped"))
+        for (open in downloads.openAttempts()) updateAttempt(open.copy(endedAt = now, message = "the app stopped"))
         for (job in downloads.list()) {
             var fixed =
                 when (job.status) {
@@ -420,6 +431,7 @@ internal class QueueActor(
 
                 is RelinkTarget.Found -> {
                     downloads.updateMirror(found.mirror.copy(url = url))
+                    observer.mirrorsChanged(id, downloads.mirrors(id))
                     val slot = slots[id]
                     if (slot == null) reply.complete(reprobe(found.job)) else stop(slot, ::reprobe, reply)
                 }
@@ -481,6 +493,9 @@ internal class QueueActor(
             }
         }
         downloads.remove(job.id)
+        lastStatus.remove(job.id)
+        observer.jobRemoved(job.id)
+        observer.event(EngineEvent.Removed(job.id))
         return CommandResult.Done(null)
     }
 
@@ -573,7 +588,7 @@ internal class QueueActor(
         // The retry is happening now.
         val download = if (waiting.nextAttemptAt != null) save(waiting.copy(nextAttemptAt = null)) else waiting
         val mirror = mirrorToStart(downloads.mirrors(download.id), downloads.attempts(download.id))
-        val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id))
+        val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
         val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
         slots[slot.id] = slot
         var end: SlotEnd = SlotEnd.Cancelled
@@ -652,7 +667,7 @@ internal class QueueActor(
         val slot = message.slot
         if (slots[slot.id] !== slot) return
         slots.remove(slot.id)
-        endAttempt(slot, message.end)
+        val (errorClass, problem) = endAttempt(slot, message.end)
         val after =
             when (val end = message.end) {
                 is SlotEnd.Finished -> {
@@ -673,6 +688,12 @@ internal class QueueActor(
                 }
             }
         if (after != null && after != slot.download) save(after)
+        val end = message.end
+        when {
+            after?.status == COMPLETED && end is SlotEnd.Finished -> observer.event(EngineEvent.Completed(slot.id, end.outcome.outputs))
+            after?.status == COMPLETED -> observer.event(EngineEvent.Completed(slot.id, emptyList()))
+            after?.status == FAILED -> observer.event(EngineEvent.Failed(slot.id, errorClass, problem ?: "failed"))
+        }
         for (next in slot.afterStop) {
             val result = withJob(slot.id, next.op)
             next.reply?.complete(result)
@@ -687,13 +708,20 @@ internal class QueueActor(
     ) {
         if (slots[slot.id] !== slot) return
         slot.note = reason
-        downloads.updateAttempt(slot.attempt.copy(message = reason))
+        updateAttempt(slot.attempt.copy(message = reason))
+        observer.event(EngineEvent.StartedOver(slot.id, reason))
     }
 
+    private suspend fun updateAttempt(attempt: Attempt) {
+        downloads.updateAttempt(attempt)
+        observer.attemptChanged(attempt)
+    }
+
+    // The class and message it stored, which a FAILED end reports as its event.
     private suspend fun endAttempt(
         slot: Slot,
         end: SlotEnd,
-    ) {
+    ): Pair<ErrorClass?, String?> {
         val (errorClass, message) =
             when (end) {
                 is SlotEnd.Finished -> null to slot.note
@@ -701,7 +729,8 @@ internal class QueueActor(
                 is SlotEnd.Crashed -> null to internalError(end.error)
                 SlotEnd.Cancelled -> null to if (slot.stopping) "stopped" else "internal error: cancelled unexpectedly"
             }
-        downloads.updateAttempt(slot.attempt.copy(endedAt = clock.now(), errorClass = errorClass, message = message))
+        updateAttempt(slot.attempt.copy(endedAt = clock.now(), errorClass = errorClass, message = message))
+        return errorClass to message
     }
 
     /**
@@ -719,16 +748,19 @@ internal class QueueActor(
         val next = nextMirror(downloads.mirrors(slot.id), downloads.attempts(slot.id))
         return when (val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now())) {
             is FailureAction.Retry -> {
+                observer.event(EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount))
                 holdIfGlobal(
                     job.backToWaiting().copy(attemptCount = action.attemptCount, nextAttemptAt = action.at, queuedAt = action.at),
                 )
             }
 
             is FailureAction.NextMirror -> {
+                next?.let { observer.event(EngineEvent.MovedToMirror(slot.id, it.id)) }
                 holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
             }
 
             is FailureAction.Pause -> {
+                if (action.reason == PauseReason.LOW_DISK) observer.event(EngineEvent.PausedForDisk(slot.id))
                 (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
             }
 
@@ -744,8 +776,12 @@ internal class QueueActor(
         return if (reported != null && reported.status in FINISHED) slot.download.takeRun(reported) else slot.download.toFailed()
     }
 
+    /** Stores the row and reports it, with a StatusChanged when the status moved since the last save. */
     private suspend fun save(download: Download): Download {
         downloads.update(download)
+        val before = lastStatus.put(download.id, download.status)
+        observer.jobChanged(download)
+        if (before != null && before != download.status) observer.event(EngineEvent.StatusChanged(download.id, before, download.status))
         return download
     }
 
