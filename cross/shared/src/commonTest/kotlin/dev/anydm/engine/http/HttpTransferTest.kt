@@ -357,4 +357,120 @@ class HttpTransferTest {
             bodies.all { it.closed } shouldBe true
             io.written.size shouldBe writes
         }
+
+    // One stream: files without segments, and a server that ignores ranges
+
+    private suspend fun streamed(
+        transport: FakeTransport,
+        io: RecordingIo,
+        size: Long?,
+    ) = HttpProtocol(transport).transfer(transferOf(emptyList(), size), io)
+
+    @Test
+    fun aFileWithoutSegmentsIsOneStream() =
+        runTest {
+            val transport = FakeTransport(servingRanges(content))
+            val io = RecordingIo(size, emptyList())
+            streamed(transport, io, size) shouldBe StepResult.Ok(Unit)
+            transport.requests
+                .single()
+                .headers
+                .none { it.first == "Range" } shouldBe true
+            io.bytes shouldBe content
+            io.checkpoints.size shouldBe 0
+            io.progress.last() shouldBe size
+        }
+
+    @Test
+    fun anUnknownSizeEndsWithTheStream() =
+        runTest {
+            val bytes = content.copyOf(3000)
+            val io = RecordingIo(3000, emptyList())
+            streamed(FakeTransport { response(200, body = bytesBody(bytes)) }, io, null) shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe bytes
+            io.progress.last() shouldBe 3000
+        }
+
+    @Test
+    fun aStreamShorterThanTheSizeIsRetried() =
+        runTest {
+            var calls = 0
+            val retried =
+                FakeTransport {
+                    val body = if (calls++ == 0) content.copyOf(1000) else content
+                    response(200, body = bytesBody(body))
+                }
+            val io = RecordingIo(size, emptyList())
+            streamed(retried, io, size) shouldBe StepResult.Ok(Unit)
+            io.bytes shouldBe content
+            retried.requests.size shouldBe 2
+
+            val short = FakeTransport { response(200, body = bytesBody(content.copyOf(1000))) }
+            streamed(short, RecordingIo(size, emptyList()), size).shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe
+                ErrorClass.TRANSIENT
+            short.requests.size shouldBe 3
+        }
+
+    @Test
+    fun anEmptyFileMakesNoRequest() =
+        runTest {
+            val transport = FakeTransport { error("no requests") }
+            streamed(transport, RecordingIo(0, emptyList()), 0) shouldBe StepResult.Ok(Unit)
+            transport.requests.size shouldBe 0
+        }
+
+    private val small = 4 * mib
+    private val smallContent = content.copyOf(small.toInt())
+
+    @Test
+    fun aServerThatIgnoresRangesSwitchesToOneStream() =
+        runTest {
+            val blocks = segmentsOf(small)
+            blocks.size shouldBe 4
+            val half = blocks[1].start + (blocks[1].end - blocks[1].start) / 2
+            val resumed = listOf(blocks[0].copy(watermark = blocks[0].end), blocks[1].copy(watermark = half)) + blocks.drop(2)
+            val bodies = mutableListOf<BytesBody>()
+            val transport =
+                FakeTransport {
+                    bytesBody(smallContent).also { bodies += it }.let { response(200, body = it) }
+                }
+            val io = RecordingIo(small, resumed)
+            HttpProtocol(transport).transfer(transferOf(resumed, small), io) shouldBe StepResult.Ok(Unit)
+            bodies.count { it.read == smallContent.size } shouldBe 1
+            bodies.all { it.closed } shouldBe true
+            io.bytes.copyOfRange(half.toInt(), small.toInt()) shouldBe smallContent.copyOfRange(half.toInt(), small.toInt())
+            io.written.none { it.first < half } shouldBe true
+            for (block in resumed) io.lastWatermark(block.id)?.let { it shouldBe block.end }
+            for (block in resumed.drop(1)) io.lastWatermark(block.id) shouldBe block.end
+        }
+
+    @Test
+    fun theOneStreamIsRetriedAsAStream() =
+        runTest {
+            val blocks = segmentsOf(small)
+            var plain = 0
+            val transport =
+                FakeTransport { request ->
+                    if (request.rangeStart() != null) {
+                        response(200, body = bytesBody(smallContent.copyOf(1000)))
+                    } else {
+                        plain++
+                        response(200, body = bytesBody(smallContent))
+                    }
+                }
+            val io = RecordingIo(small, blocks)
+            HttpProtocol(transport).transfer(transferOf(blocks, small), io) shouldBe StepResult.Ok(Unit)
+            plain shouldBe 1
+            io.bytes shouldBe smallContent
+        }
+
+    @Test
+    fun finalizeReturnsThePath() =
+        runTest {
+            HttpProtocol(FakeTransport { error("none") }).finalize(transferOf(segments)) shouldBe
+                StepResult.Ok(
+                    dev.anydm.engine.protocol
+                        .FinalizeResult(listOf("f.bin")),
+                )
+        }
 }

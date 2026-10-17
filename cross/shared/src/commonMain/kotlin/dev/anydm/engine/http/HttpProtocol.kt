@@ -103,12 +103,13 @@ class HttpProtocol(
         val probe = transfer.probe
         check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
         val file = transfer.files.single()
-        if (file.segments.isEmpty()) return notYet
         val connections = connections().coerceIn(1, 16)
         return RangeTransfer(transport, probe.finalUrl, requestHeaders(probe.context), io, connections).run(file)
     }
 
-    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = notYet
+    /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
+    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> =
+        StepResult.Ok(FinalizeResult(transfer.files.map { it.file.path }))
 
     /**
      * What every request sends: the context's headers, then Referer, User-Agent and Cookie (RequestContext admits only
@@ -157,7 +158,6 @@ class HttpProtocol(
     private companion object {
         const val PROBE_BYTES = 1024
         val ownedHeaders = setOf("range", "accept-encoding")
-        val notYet = StepResult.Failed(null, "HTTP transfers arrive with #569")
         val totalRange = Regex("""bytes\s+\d+-\d+/(\d+|\*)""", RegexOption.IGNORE_CASE)
         val unsatisfiedRange = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
     }

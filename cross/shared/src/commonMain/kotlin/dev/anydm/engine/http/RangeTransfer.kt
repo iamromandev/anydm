@@ -22,6 +22,10 @@ internal const val CHUNK = 64 * 1024
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
  * range. A failed attempt puts the block back from its new watermark; [ATTEMPTS] per block, then the run fails. An HTTP
  * error that retrying can't fix ends the run at once.
+ *
+ * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
+ * request with 200: that body is read from byte 0, bytes below each block's watermark are discarded, and the rest
+ * written.
  */
 internal class RangeTransfer(
     private val transport: HttpTransport,
@@ -48,19 +52,32 @@ internal class RangeTransfer(
         data class End(
             val failed: StepResult.Failed,
         ) : Attempt
+
+        /** A 200 to a ranged request: the server ignores ranges, and [response] is the whole file. */
+        class Ignored(
+            val response: HttpResponse,
+        ) : Attempt
     }
 
     /** Thrown by the worker that ends the run, so the scope cancels the others; the reason is in [ended]. */
     private class RunEnded : Exception()
+
+    /** Thrown by the worker that got a 200, so the scope cancels the others; the body is in [switched]. */
+    private class RangesIgnored : Exception()
+
+    private var switched: HttpResponse? = null
 
     private val progressLock = Mutex()
     private var downloaded = 0L
     private var ended: StepResult.Failed? = null
 
     suspend fun run(file: TransferFile): StepResult<Unit> {
-        val size = requireNotNull(file.file.size) { "a file in blocks has a size" }
+        val size = file.file.size
+        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else stream(file, size, emptyList(), null)
+        requireNotNull(size) { "a file in blocks has a size" }
         downloaded = file.segments.sumOf { it.written }
-        val incomplete = file.segments.filterNot { it.isComplete }.map { Block(it, it.watermark) }
+        val blocks = file.segments.map { Block(it, it.watermark) }
+        val incomplete = blocks.filterNot { it.watermark == it.segment.end }
         if (incomplete.isEmpty()) return StepResult.Ok(Unit)
         val queue = Channel<Block>(Channel.UNLIMITED)
         incomplete.forEach { queue.trySend(it) }
@@ -83,6 +100,11 @@ internal class RangeTransfer(
                                 is Attempt.End -> {
                                     end(attempt.failed)
                                 }
+
+                                is Attempt.Ignored -> {
+                                    if (switched == null) switched = attempt.response else attempt.response.body.close()
+                                    throw RangesIgnored()
+                                }
                             }
                         }
                     }
@@ -90,8 +112,122 @@ internal class RangeTransfer(
             }
         } catch (_: RunEnded) {
             return checkNotNull(ended)
+        } catch (_: RangesIgnored) {
+            val whole = checkNotNull(switched)
+            switched = null
+            return stream(file, size, blocks, whole)
+        } finally {
+            // A 200 a worker got while the run was ending or being cancelled.
+            switched?.body?.close()
         }
         return StepResult.Ok(Unit)
+    }
+
+    /**
+     * One plain stream from byte 0, starting with [first] if a worker already has it. With [blocks], a byte below its
+     * block's watermark is discarded and any other is written and checkpointed; without, everything is written. With a
+     * known [size] the stream must reach it (and is never read past it); with an unknown one, its end is the file's.
+     */
+    private suspend fun stream(
+        file: TransferFile,
+        size: Long?,
+        blocks: List<Block>,
+        first: HttpResponse?,
+    ): StepResult<Unit> {
+        var next = first
+        var last: StepResult.Failed? = null
+        repeat(ATTEMPTS) {
+            val response =
+                next ?: try {
+                    transport.open(HttpRequest(url, headers = headers))
+                } catch (e: HttpIoException) {
+                    last = ioFailed(e)
+                    return@repeat
+                }
+            next = null
+            val attempt =
+                try {
+                    if (response.status == 200) {
+                        copyStream(response.body, file, size, blocks, hostOf(response.finalUrl))
+                    } else {
+                        statusAttempt(response.status, hostOf(response.finalUrl))
+                    }
+                } finally {
+                    response.body.close()
+                }
+            when (attempt) {
+                is Attempt.Retry -> last = attempt.failed
+                is Attempt.End -> return attempt.failed
+                else -> return StepResult.Ok(Unit)
+            }
+        }
+        return checkNotNull(last)
+    }
+
+    private suspend fun copyStream(
+        body: HttpBody,
+        file: TransferFile,
+        size: Long?,
+        blocks: List<Block>,
+        host: String,
+    ): Attempt {
+        val buffer = ByteArray(CHUNK)
+        var offset = 0L
+        while (size == null || offset < size) {
+            val want = if (size == null) CHUNK else minOf(CHUNK.toLong(), size - offset).toInt()
+            val n =
+                try {
+                    body.read(buffer, 0, want)
+                } catch (e: HttpIoException) {
+                    return Attempt.Retry(ioFailed(e))
+                }
+            if (n < 0) {
+                return if (size == null) Attempt.Done else Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "short body from $host"))
+            }
+            if (n == 0) continue
+            io.limiter.acquire(n)
+            io.meter.record(n.toLong())
+            val failed = if (blocks.isEmpty()) writeAll(file, offset, buffer, n) else writeBlocks(file, offset, buffer, n, blocks)
+            if (failed != null) return Attempt.End(failed)
+            offset += n
+        }
+        return Attempt.Done
+    }
+
+    /** Without blocks a stream starts over at 0, so its progress is the stream's own position. */
+    private suspend fun writeAll(
+        file: TransferFile,
+        offset: Long,
+        buffer: ByteArray,
+        n: Int,
+    ): StepResult.Failed? {
+        val written = io.write(file.file.id, offset, buffer, 0, n)
+        if (written is StepResult.Failed) return written
+        io.progress(offset + n)
+        return null
+    }
+
+    /** Writes the part of [buffer] (stream bytes [offset, offset + n)) at or past each block's watermark. */
+    private suspend fun writeBlocks(
+        file: TransferFile,
+        offset: Long,
+        buffer: ByteArray,
+        n: Int,
+        blocks: List<Block>,
+    ): StepResult.Failed? {
+        val end = offset + n
+        for (block in blocks) {
+            val from = maxOf(block.watermark, offset)
+            val to = minOf(block.segment.end, end)
+            if (from >= to || from != block.watermark) continue
+            val written = io.write(file.file.id, from, buffer, (from - offset).toInt(), (to - offset).toInt())
+            if (written is StepResult.Failed) return written
+            block.watermark = to
+            io.checkpoint(mapOf(block.segment.id to to))
+            downloaded += to - from
+            io.progress(downloaded)
+        }
+        return null
     }
 
     private fun end(failed: StepResult.Failed): Nothing {
@@ -112,15 +248,20 @@ internal class RangeTransfer(
             } catch (e: HttpIoException) {
                 return Attempt.Retry(ioFailed(e))
             }
+        var handedOver = false
         try {
             val host = hostOf(response.finalUrl)
+            if (response.status == 200) {
+                handedOver = true
+                return Attempt.Ignored(response)
+            }
             if (response.status != 206) return statusAttempt(response.status, host)
             if (contentRangeOf(response.headers["Content-Range"]) != Triple(first, last, size)) {
                 return Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "wrong Content-Range from $host"))
             }
             return copy(response.body, file, block, host)
         } finally {
-            response.body.close()
+            if (!handedOver) response.body.close()
         }
     }
 
