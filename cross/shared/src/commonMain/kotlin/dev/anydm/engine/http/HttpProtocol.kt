@@ -120,7 +120,8 @@ class HttpProtocol(
                     all.filterNot { it.first.lowercase() in credentialHeaders }
                 }
             }
-        return RangeTransfer(transport, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource).run(file)
+        return RangeTransfer(transport, probe.finalUrl, headers, io, slots, originOf(probe.finalUrl), timeSource, clock = clock)
+            .run(file)
     }
 
     /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
