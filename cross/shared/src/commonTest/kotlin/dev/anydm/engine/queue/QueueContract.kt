@@ -889,6 +889,28 @@ abstract class QueueContract : QueueTestBase() {
             h.job(a)!!.checksum shouldBe rightChecksum
         }
 
+    // Final review: after an INTEGRITY failure every byte is fetched, and the all-fetched rule kept that bad copy even
+    // when the source changed, so a fixed source was never downloaded.
+    @Test
+    fun aChangedSourceIsFetchedAgainAfterAnIntegrityFailure() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", checksum = Checksum(ChecksumAlgorithm.MD5, "0".repeat(32)))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            settle()
+            h.status(a) shouldBe FAILED
+            protocol.fetched.clear()
+            protocol.validator = "etag:\"v2\"" // the server published a fixed file
+            protocol.checksum = null
+
+            h.queue.retry(a).shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v2\""
+        }
+
     @Test
     fun setChecksumOfAnUnknownJobIsNotFound() =
         runTest {

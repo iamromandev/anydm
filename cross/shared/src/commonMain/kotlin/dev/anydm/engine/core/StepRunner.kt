@@ -96,6 +96,8 @@ class StepRunner(
         mirror: Mirror,
         listener: RunListener = RunListener.None,
         others: List<Mirror> = emptyList(),
+        /** The stored bytes failed their checksum (the last attempt ended INTEGRITY): a changed source replaces them. */
+        failedCheck: Boolean = false,
     ): PrepareOutcome {
         require(download.status == PENDING) { "prepare needs a PENDING download, not ${download.status}" }
         require(mirror.downloadId == download.id) { "mirror ${mirror.id.value} isn't download ${download.id.value}'s" }
@@ -120,7 +122,8 @@ class StepRunner(
         var probed = probe.validator
         // Every byte already fetched is one whole copy of the old source (its outputs may be placed): nothing would be
         // appended, so it is kept, still marked with the old validator.
-        if (stored != null && probed != null && probed != stored && allFetched(download.id)) probed = stored
+        // A copy that failed its checksum is no copy worth keeping (HTTP-14).
+        if (stored != null && probed != null && probed != stored && !failedCheck && allFetched(download.id)) probed = stored
         if (stored != null && probed != null && probed != stored) {
             val dropped = dropPartials(download, folder)
             if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)

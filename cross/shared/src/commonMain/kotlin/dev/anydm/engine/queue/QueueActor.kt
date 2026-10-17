@@ -631,7 +631,8 @@ internal class QueueActor(
         val gone = goneMirrors(mirrors, attempts)
         val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
-        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others)
+        val failedCheck = attempts.lastOrNull()?.errorClass == ErrorClass.INTEGRITY
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
@@ -686,7 +687,7 @@ internal class QueueActor(
                 override suspend fun checkpointed() = observer.checkpointed(slot.id)
             }
         val ready =
-            when (val prepared = runner.prepare(pending, mirror, listener, slot.others)) {
+            when (val prepared = runner.prepare(pending, mirror, listener, slot.others, slot.failedCheck)) {
                 is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }
