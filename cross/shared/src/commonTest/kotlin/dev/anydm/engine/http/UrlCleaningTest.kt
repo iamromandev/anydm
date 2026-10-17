@@ -56,7 +56,22 @@ class UrlCleaningTest {
             "https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fh%2Ff.zip" to "https://h/f.zip",
             "https://vk.com/away.php?to=https%3A%2F%2Fh%2Ff.zip" to "https://h/f.zip",
             "https://slack-redir.net/link?url=https%3A%2F%2Fh%2Ff.zip" to "https://h/f.zip",
-            "https://disq.us/url?url=https%3A%2F%2Fh%2Ff.zip%3AaBc123&cuid=1" to "https://h/f.zip",
+            "https://disq.us/url?url=https%3A%2F%2Fh%2Ff.zip%3AaBc123aBc123aBc123aBc123a&cuid=1" to "https://h/f.zip",
+        )
+
+    // Final review: Google's search-result links carry an empty q= before the real url=.
+    @Test
+    fun anEmptyFirstChoiceFallsBackToTheNext() =
+        check(
+            "https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&url=https%3A%2F%2Fh%2Ff.zip&usg=AOv" to "https://h/f.zip",
+        )
+
+    // Final review: Disqus hashes are 27 characters of base64url, so they can hold - and _; a short :8080 is a port.
+    @Test
+    fun theDisqusHashIsBase64UrlAndAPortStays() =
+        check(
+            "https://disq.us/url?url=https%3A%2F%2Fh%2Fwatch%3Fv%3D1%3AJgvW8tj7-PpDSbyy85MQuj0hD5UY&cuid=1" to "https://h/watch?v=1",
+            "https://disq.us/url?url=https%3A%2F%2Fh%3A8080" to "https://h:8080",
         )
 
     @Test

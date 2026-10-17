@@ -83,7 +83,9 @@ private fun isTracking(
 private fun isYouTube(host: String) = host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be"
 
 private val google = Regex("""(www\.)?google(\.[a-z]{2,3}){1,2}""")
-private val disqusSuffix = Regex(""":[A-Za-z0-9]+$""")
+
+/** Disqus appends `:` and a 27-character base64url hash; a short tail such as `:8080` is a port, not a hash. */
+private val disqusSuffix = Regex(""":[A-Za-z0-9_-]{20,}$""")
 
 /** The URL [url] wraps, if it is a known redirect link with an http(s) target; null otherwise. */
 private fun unwrapped(url: String): String? {
@@ -103,8 +105,10 @@ private fun unwrapped(url: String): String? {
             host == "disq.us" && path == "/url" -> listOf("url")
             else -> return null
         }
-    val raw = names.firstNotNullOfOrNull { parts.raw(it) } ?: return null
-    val decoded = percentDecodedBytes(raw)?.decodeToString() ?: return null
-    val target = if (host == "disq.us") decoded.replace(disqusSuffix, "") else decoded
-    return target.takeIf(::isHttp)
+    // Each name in turn: Google's result links carry an empty q= before the real url=.
+    return names.firstNotNullOfOrNull { name ->
+        val decoded = parts.raw(name)?.let { percentDecodedBytes(it)?.decodeToString() }
+        val target = if (host == "disq.us") decoded?.replace(disqusSuffix, "") else decoded
+        target?.takeIf(::isHttp)
+    }
 }
