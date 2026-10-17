@@ -5,8 +5,11 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
+import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
@@ -22,6 +25,8 @@ import io.kotest.property.arbitrary.int
 import io.kotest.property.arbitrary.list
 import io.kotest.property.arbitrary.map
 import io.kotest.property.checkAll
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.joinAll
@@ -288,6 +293,111 @@ abstract class EngineContract : StoreTestBase() {
 
             h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file.zip")
             h.engine.stop()
+        }
+
+    // Final review fixes
+
+    @Test
+    fun stopDuringStartAnswersStart() =
+        runTest {
+            val h = EngineHarness(this, newStore())
+            val starting = async(start = CoroutineStart.UNDISPATCHED) { runCatching { h.engine.start() } }
+
+            h.engine.stop()
+            advanceTimeBy(1.minutes)
+            runCurrent()
+
+            starting.isCompleted shouldBe true
+            starting.await().isFailure shouldBe true
+            h.engine.state.value shouldBe EngineState.Stopped
+        }
+
+    @Test
+    fun aCancelledStartStillStarts() =
+        runTest {
+            val h = EngineHarness(this, newStore())
+            val starting = launch(start = CoroutineStart.UNDISPATCHED) { h.engine.start() }
+
+            starting.cancel()
+            runCurrent()
+            val a = h.addJob()
+            runCurrent()
+
+            h.engine.state.value shouldBe EngineState.Running
+            (h.snapshot(a) != null) shouldBe true
+            h.engine.stop()
+        }
+
+    @Test
+    fun aSlotThatRestartsAtOnceKeepsItsProgress() =
+        runTest {
+            val store = newStore()
+            val a = store.downloads.add(NewDownload(DownloadKind.DIRECT, size = 1_000)).id
+            store.settings.update { it.copy(globalPause = true) }
+            val h = EngineHarness(this, store)
+            h.engine.start()
+            runCurrent()
+
+            // The old run ends and a new one starts before the engine has applied either.
+            h.engine.observer.slotStarted(a)
+            h.engine.observer.slotEnded(a)
+            h.engine.observer.slotStarted(a)
+            h.engine.observer.progress(a, 500, 1_000)
+            advanceTimeBy(250.milliseconds)
+            runCurrent()
+
+            h.snapshot(a)!!.downloaded shouldBe 500L
+            h.engine.observer.slotEnded(a)
+            h.engine.stop()
+        }
+
+    @Test
+    fun anEventFollowsItsSnapshot() =
+        runTest {
+            val h =
+                started {
+                    EngineHarness(
+                        it,
+                        newStore(),
+                        FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.DISK_FULL, "full"))),
+                    )
+                }
+            val seen = mutableListOf<String>()
+            backgroundScope.launch(Dispatchers.Unconfined) {
+                h.engine.events.collect { event ->
+                    when (event) {
+                        is EngineEvent.Added -> seen += "added ${h.snapshot(event.id) != null}"
+                        is EngineEvent.PausedForDisk -> seen += "disk ${h.status(event.id)}"
+                        else -> Unit
+                    }
+                }
+            }
+            runCurrent()
+            h.addJob()
+            settle()
+
+            seen shouldBe listOf("added true", "disk PAUSED")
+            h.engine.stop()
+        }
+
+    @Test
+    fun aFailureWhileStoppingIsNotReported() =
+        runTest {
+            val h = started { EngineHarness(it, newStore(), FakeProtocol(stopDelay = 30.seconds), stopTimeout = 1.seconds) }
+            val events = mutableListOf<EngineEvent>()
+            backgroundScope.launch { h.engine.events.collect { events += it } }
+            h.addJob()
+            advanceTimeBy(1.seconds)
+            val stopping = async { h.engine.stop() }
+            advanceTimeBy(500.milliseconds)
+            h.engine.state.value shouldBe EngineState.Stopping
+
+            h.engine.failed(IllegalStateException("a late store error"))
+            stopping.await()
+            runCurrent()
+
+            h.engine.state.value shouldBe EngineState.Stopped
+            events.filterIsInstance<EngineEvent.EngineFailed>() shouldBe emptyList()
         }
 
     // Consistency

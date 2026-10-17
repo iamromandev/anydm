@@ -16,12 +16,14 @@ import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -103,8 +105,12 @@ class Engine(
     private var loops: Job? = null
 
     private val runner = StepRunner(fileSystem, store.downloads, protocols, defaultFolder, checkpointEvery = checkpointEvery)
+
+    /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
+    internal val observer: QueueObserver = Observer()
+
     private val queue =
-        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, Observer())
+        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, observer)
 
     private sealed interface Fact {
         data class Changed(
@@ -178,7 +184,9 @@ class Engine(
             send(Fact.SlotStarted(id))
         }
 
+        // The holder goes now, not when the fact is applied: a new slot for the job may start before then.
         override fun slotEnded(id: DownloadId) {
+            live.update { it - id }
             inSlots.update { it - id }
             send(Fact.SlotEnded(id))
         }
@@ -191,16 +199,29 @@ class Engine(
     /** Loads the store, starts the queue and publishes every job. Once only. */
     suspend fun start() {
         check(stateFlow.compareAndSet(EngineState.NotStarted, EngineState.Running)) { "the engine was already started" }
-        queue.start()
-        val jobs = store.downloads.list()
-        val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
-        val mirrors = jobs.associate { it.id to store.downloads.mirrors(it.id) }
-        val files = jobs.associate { it.id to filesOf(it.id) }
-        withContext(publisher) {
-            cache.load(jobs, attempts, mirrors, files)
-            publish()
+        // On the engine's scope, not the caller's: a caller cancelled half way must not leave the queue running with no
+        // snapshots. A failure here fails the engine.
+        val startup =
+            scope.async {
+                queue.start()
+                val jobs = store.downloads.list()
+                val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
+                val mirrors = jobs.associate { it.id to store.downloads.mirrors(it.id) }
+                val files = jobs.associate { it.id to filesOf(it.id) }
+                withContext(publisher) {
+                    cache.load(jobs, attempts, mirrors, files)
+                    publish()
+                }
+                scope.launch(publisher) { for (fact in facts) apply(fact) }
+            }
+        try {
+            startup.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            failed(e)
+            throw e
         }
-        scope.launch(publisher) { for (fact in facts) apply(fact) }
     }
 
     /**
@@ -227,6 +248,8 @@ class Engine(
             }
         }
         engineJob.cancel()
+        // The publisher may be reading the store: let it finish before the store closes.
+        withTimeoutOrNull(stopTimeout) { engineJob.join() }
         runCatching { store.close() }
         stateFlow.value = EngineState.Stopped
     }
@@ -325,11 +348,6 @@ class Engine(
     private suspend fun ended(id: DownloadId) {
         running -= id
         published -= id
-        live.value[id]
-            ?.progress
-            ?.value
-            ?.let { (downloaded, total) -> cache.progress(id, downloaded, total) }
-        live.update { it - id }
         if (cache.contains(id)) {
             cache.filesChanged(id, filesOf(id))
             cache.stoppedRunning(id)
@@ -387,10 +405,11 @@ class Engine(
         }
 
     // The queue's coroutine failed (the store): the engine stops with it.
-    private fun failed(error: Throwable) {
+    internal fun failed(error: Throwable) {
+        // Only a running (or starting) engine fails; one that is stopping or stopped keeps its course.
         val now = stateFlow.value
-        if (now is EngineState.Failed || now == EngineState.Stopped) return
-        stateFlow.value = EngineState.Failed(error)
+        if (now != EngineState.Running && now != EngineState.NotStarted) return
+        if (!stateFlow.compareAndSet(now, EngineState.Failed(error))) return failed(error)
         eventFlow.tryEmit(EngineEvent.EngineFailed(error))
         scope.cancel()
         runCatching { store.close() }

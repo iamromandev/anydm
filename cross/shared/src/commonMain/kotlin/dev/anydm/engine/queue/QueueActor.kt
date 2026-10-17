@@ -44,6 +44,7 @@ import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -125,7 +126,9 @@ internal class QueueActor(
         check(!launched) { "the queue is already started" }
         launched = true
         val started = CompletableDeferred<Unit>()
-        scope.launch {
+        // ATOMIC: even if the scope is cancelled at once, the body runs to its first suspension, so stopped() answers
+        // start() and every waiting command (#555).
+        scope.launch(start = CoroutineStart.ATOMIC) {
             coroutineScope {
                 slotScope = this
                 // Inside the scope, before it waits for the slots: a slot may be waiting for an ack only stopped() gives.
@@ -252,9 +255,9 @@ internal class QueueActor(
     suspend fun add(new: NewDownload): CommandResult {
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
-        observer.event(EngineEvent.Added(added.id))
         observer.jobChanged(added)
         observer.mirrorsChanged(added.id, downloads.mirrors(added.id))
+        observer.event(EngineEvent.Added(added.id))
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }
@@ -613,9 +616,11 @@ internal class QueueActor(
                 }
             }
         // Not a finally: a slot cancelled before its coroutine ran never runs one, and must still report.
+        // slotEnded first: the queue starts a new slot for this job only after it handles Ended, so the engine always
+        // hears of the old slot's end before the new one's start.
         slot.job.invokeOnCompletion {
-            inbox.trySend(Message.Ended(slot, end))
             observer.slotEnded(slot.id)
+            inbox.trySend(Message.Ended(slot, end))
         }
     }
 
@@ -692,6 +697,8 @@ internal class QueueActor(
         if (slots[slot.id] !== slot) return
         slots.remove(slot.id)
         val (errorClass, problem) = endAttempt(slot, message.end)
+        // Events about where the job went are told after the row is saved, so a listener sees the matching snapshot.
+        val later = mutableListOf<EngineEvent>()
         val after =
             when (val end = message.end) {
                 is SlotEnd.Finished -> {
@@ -699,7 +706,7 @@ internal class QueueActor(
                 }
 
                 is SlotEnd.Failed -> {
-                    afterFailure(slot, end)
+                    afterFailure(slot, end, later)
                 }
 
                 is SlotEnd.Crashed -> {
@@ -712,6 +719,7 @@ internal class QueueActor(
                 }
             }
         if (after != null && after != slot.download) save(after)
+        later.forEach(observer::event)
         val end = message.end
         when {
             after?.status == COMPLETED && end is SlotEnd.Finished -> observer.event(EngineEvent.Completed(slot.id, end.outcome.outputs))
@@ -765,6 +773,7 @@ internal class QueueActor(
     private suspend fun afterFailure(
         slot: Slot,
         end: SlotEnd.Failed,
+        later: MutableList<EngineEvent>,
     ): Download {
         val job = slot.download.takeRun(end.download)
         // Progress is what the stored watermarks gained: bytes a run fetched but never checkpointed are fetched again.
@@ -772,19 +781,19 @@ internal class QueueActor(
         val next = nextMirror(downloads.mirrors(slot.id), downloads.attempts(slot.id))
         return when (val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now())) {
             is FailureAction.Retry -> {
-                observer.event(EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount))
+                later += EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount)
                 holdIfGlobal(
                     job.backToWaiting().copy(attemptCount = action.attemptCount, nextAttemptAt = action.at, queuedAt = action.at),
                 )
             }
 
             is FailureAction.NextMirror -> {
-                next?.let { observer.event(EngineEvent.MovedToMirror(slot.id, it.id)) }
+                next?.let { later += EngineEvent.MovedToMirror(slot.id, it.id) }
                 holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
             }
 
             is FailureAction.Pause -> {
-                if (action.reason == PauseReason.LOW_DISK) observer.event(EngineEvent.PausedForDisk(slot.id))
+                if (action.reason == PauseReason.LOW_DISK) later += EngineEvent.PausedForDisk(slot.id)
                 (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
             }
 
