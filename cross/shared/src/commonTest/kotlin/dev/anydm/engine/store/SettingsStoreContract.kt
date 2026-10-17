@@ -4,6 +4,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.platform.virtualClock
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.CoroutineStart
@@ -97,6 +98,9 @@ abstract class SettingsStoreContract : StoreTestBase() {
                     "files.default_save_folder" to "relative/dir",
                     "retry.max_retries" to "x",
                     "retry.max_retries" to "-1",
+                    "http.connections" to "0",
+                    "http.connections" to "17",
+                    "http.connections" to "x",
                 )
             for ((name, data) in unreadable) {
                 driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('$name', '$data')")
@@ -156,4 +160,23 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.load().debugLogging shouldBe true
             driver.longs("SELECT count(*) FROM setting WHERE name = 'log.debug'") shouldBe listOf(1L)
         }
+
+    @Test
+    fun connectionsRoundTrip() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().connectionsPerDownload shouldBe 4
+            rows().none { it?.startsWith("http.connections=") == true } shouldBe true
+
+            settings.update { it.copy(connectionsPerDownload = 8) }
+
+            settings.load().connectionsPerDownload shouldBe 8
+            rows() shouldContain "http.connections=8"
+        }
+
+    @Test
+    fun aConnectionCountOutsideTheRangeIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 0) }
+        shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 17) }
+    }
 }

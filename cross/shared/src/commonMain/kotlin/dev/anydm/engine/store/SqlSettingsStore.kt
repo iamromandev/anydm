@@ -44,6 +44,7 @@ internal class SqlSettingsStore(
             globalPause = read(GLOBAL_PAUSE, DEFAULTS.globalPause) { it.toBooleanStrictOrNull() },
             maxRetries = read(MAX_RETRIES, DEFAULTS.maxRetries) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
+            connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
         )
     }
 
@@ -54,6 +55,7 @@ internal class SqlSettingsStore(
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
+        put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
     }
 
     private fun put(
@@ -70,5 +72,6 @@ internal class SqlSettingsStore(
         const val DEFAULT_SAVE_FOLDER = "files.default_save_folder"
         const val MAX_RETRIES = "retry.max_retries"
         const val DEBUG_LOGGING = "log.debug"
+        const val CONNECTIONS = "http.connections"
     }
 }

@@ -4,6 +4,7 @@ import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.PlanContext
+import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
 import dev.anydm.engine.protocol.ProbeResult
 import dev.anydm.engine.protocol.Protocol
@@ -11,6 +12,7 @@ import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
+import dev.anydm.engine.store.NewSegment
 
 /** What a probe learned about a direct URL (HTTP-01, HTTP-03). */
 data class HttpProbe(
@@ -21,18 +23,22 @@ data class HttpProbe(
     val rangesSupported: Boolean,
     val finalUrl: String,
     val contentType: String?,
+    /** What the probe sent besides the URL; transfers send the same (HTTP-10). */
+    val context: RequestContext? = null,
 ) : ProbeResult
 
 /**
  * Direct HTTP(S) downloads. The probe asks for the first KiB with a `Range` so one round trip shows the size, range
- * support and validator; every request carries the job's [RequestContext] (HTTP-10). Transfers arrive with #569.
+ * support and validator; every request carries the job's [RequestContext] (HTTP-10). A file with a known size on a
+ * server with ranges is planned in blocks (HTTP-05) fetched over [connections] connections, read once per run.
  */
 class HttpProtocol(
     private val transport: HttpTransport,
     private val userAgent: String = "anydm",
+    private val connections: () -> Int = { 4 },
 ) : Protocol {
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
-        val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + contextHeaders(request.context)
+        val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + requestHeaders(request.context)
         val response =
             try {
                 transport.open(HttpRequest(request.mirror.url, headers = headers))
@@ -47,16 +53,16 @@ class HttpProtocol(
         return when (response.status) {
             206 -> {
                 val range = contentRange(response.headers["Content-Range"])
-                StepResult.Ok(probeOf(response, size = range, rangesSupported = true))
+                StepResult.Ok(probeOf(response, size = range, rangesSupported = true, request.context))
             }
 
             200 -> {
-                StepResult.Ok(probeOf(response, size = plainSize(response.headers), rangesSupported = false))
+                StepResult.Ok(probeOf(response, size = plainSize(response.headers), rangesSupported = false, request.context))
             }
 
             416 -> {
                 unsatisfied(response.headers["Content-Range"])
-                    ?.let { StepResult.Ok(probeOf(response, size = it, rangesSupported = true)) }
+                    ?.let { StepResult.Ok(probeOf(response, size = it, rangesSupported = true, request.context)) }
                     ?: failed(response)
             }
 
@@ -69,32 +75,75 @@ class HttpProtocol(
     override fun plan(
         probe: ProbeResult,
         context: PlanContext,
-    ): StepResult<TransferPlan> = notYet
+    ): StepResult<TransferPlan> {
+        check(probe is HttpProbe) { "HttpProtocol can't plan a ${probe::class.simpleName}" }
+        val size = probe.size
+        val segments =
+            when {
+                size == null || size == 0L || !probe.rangesSupported -> {
+                    emptyList()
+                }
+
+                else -> {
+                    context.stored
+                        .firstOrNull { it.file.index == 0 && it.file.size == size && it.segments.isNotEmpty() }
+                        ?.segments
+                        ?.map { NewSegment(it.start, it.end) }
+                        ?: planBlocks(size, connections().coerceIn(1, 16))
+                }
+            }
+        val path = context.download.fileName ?: probe.name
+        return StepResult.Ok(TransferPlan(listOf(PlannedFile(index = 0, path = path, size = size, segments = segments))))
+    }
 
     override suspend fun transfer(
         transfer: Transfer,
         io: TransferIo,
-    ): StepResult<Unit> = notYet
+    ): StepResult<Unit> {
+        val probe = transfer.probe
+        check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
+        val file = transfer.files.single()
+        val connections = connections().coerceIn(1, 16)
+        // The probe sent credentials only to the mirror's origin; a redirect elsewhere dropped them, and so do we.
+        val headers =
+            requestHeaders(probe.context).let { all ->
+                if (originOf(probe.finalUrl) ==
+                    originOf(transfer.mirror.url)
+                ) {
+                    all
+                } else {
+                    all.filterNot { it.first.lowercase() in credentialHeaders }
+                }
+            }
+        return RangeTransfer(transport, probe.finalUrl, headers, io, connections).run(file)
+    }
 
-    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = notYet
+    /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
+    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> =
+        StepResult.Ok(FinalizeResult(transfer.files.map { it.file.path }))
 
-    /** The context's headers, then Referer, User-Agent and Cookie (RequestContext admits only what HTTP can send). */
-    private fun contextHeaders(context: RequestContext?): List<Pair<String, String>> {
+    /**
+     * What every request sends: the context's headers, then Referer, User-Agent and Cookie (RequestContext admits only
+     * what HTTP can send), and `Accept-Encoding: identity` — otherwise OkHttp asks for gzip and drops Content-Length,
+     * which breaks sizes and ranges. A context's own Range or Accept-Encoding is never sent.
+     */
+    internal fun requestHeaders(context: RequestContext?): List<Pair<String, String>> {
         val derived =
             listOfNotNull(
                 context?.referrer?.let { "Referer" to it },
                 "User-Agent" to (context?.userAgent ?: userAgent),
                 context?.cookies?.let { "Cookie" to it },
             )
-        val own = context?.headers.orEmpty().filterNot { it.first.equals("Range", ignoreCase = true) }
+        val own = context?.headers.orEmpty().filterNot { it.first.lowercase() in ownedHeaders }
         val overridden = own.map { it.first.lowercase() }.toSet()
-        return own + derived.filterNot { it.first.lowercase() in overridden }
+        return own + derived.filterNot { it.first.lowercase() in overridden } + ("Accept-Encoding" to "identity")
     }
 
     private fun probeOf(
         response: HttpResponse,
         size: Long?,
         rangesSupported: Boolean,
+        context: RequestContext?,
     ): HttpProbe {
         val contentType = response.headers["Content-Type"]
         return HttpProbe(
@@ -104,6 +153,7 @@ class HttpProtocol(
             rangesSupported = rangesSupported,
             finalUrl = response.finalUrl,
             contentType = contentType,
+            context = context,
         )
     }
 
@@ -118,7 +168,8 @@ class HttpProtocol(
 
     private companion object {
         const val PROBE_BYTES = 1024
-        val notYet = StepResult.Failed(null, "HTTP transfers arrive with #569")
+        val ownedHeaders = setOf("range", "accept-encoding")
+        val credentialHeaders = setOf("authorization", "proxy-authorization", "cookie")
         val totalRange = Regex("""bytes\s+\d+-\d+/(\d+|\*)""", RegexOption.IGNORE_CASE)
         val unsatisfiedRange = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
     }
@@ -185,3 +236,18 @@ internal fun hostOf(url: String): String =
         .substringBefore('?')
         .substringBefore('#')
         .substringAfterLast('@')
+
+/** Scheme, host and port of [url] (the port spelled out for http and https), without any user or password. */
+internal fun originOf(url: String): String {
+    val scheme = url.substringBefore("://", "").lowercase()
+    val authority = hostOf(url).lowercase()
+    val hasPort = authority.substringAfterLast(']').contains(':')
+    val port =
+        when {
+            hasPort -> ""
+            scheme == "https" -> ":443"
+            scheme == "http" -> ":80"
+            else -> ""
+        }
+    return "$scheme://$authority$port"
+}

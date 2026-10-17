@@ -18,10 +18,13 @@ data class Settings(
     val maxRetries: Int = 5,
     /** Write DEBUG lines to the log too (#556): every status move. */
     val debugLogging: Boolean = false,
+    /** How many connections one HTTP download uses (HTTP-05); #570 makes it the cap. */
+    val connectionsPerDownload: Int = 4,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
+        require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }
