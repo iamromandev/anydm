@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
+import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
@@ -26,11 +28,19 @@ internal const val ATTEMPTS = 3
 /** The most bytes read, written and checkpointed at once. */
 internal const val CHUNK = 64 * 1024
 
+/** A block with less left than this is never raced (HTTP-07). */
+internal const val RACE_MIN_LEFT = 256L * 1024
+
+/** A block is raced when its speed is less than 1 / this of the run's speed per connection. */
+internal const val RACE_SLOWER = 2.0
+
 /**
  * Fetches one file's incomplete blocks with workers that each hold one of [origin]'s [slots] (HTTP-05, HTTP-06). It
  * starts with one; every [rampEvery] a controller adds another while blocks wait and a slot is free, and stops adding
  * once an addition didn't raise the speed by 10%. A worker that finishes a block gives its slot to another download
- * waiting for the same host if this run holds more than one. Each block is fetched from its watermark with a
+ * waiting for the same host if this run holds more than one. A worker that finds no block left races the in-flight
+ * block that would finish last, if it is slow enough (HTTP-07): the racer buffers the rest of the block in memory, and
+ * whoever has the last byte first writes the tail and cancels the other. Each block is fetched from its watermark with a
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
  * range. A failed attempt is retried by the same worker from the block's new watermark; [ATTEMPTS] per block, then the
  * run fails, so a server that fails everything gets at most about [ATTEMPTS] × the cap requests. An HTTP error
@@ -52,9 +62,27 @@ internal class RangeTransfer(
 ) {
     private class Block(
         val segment: Segment,
-        var watermark: Long,
+        @Volatile var watermark: Long,
         var attempts: Int = 0,
-    )
+    ) {
+        /** Taken around every write and watermark move, by the original and a winning racer. */
+        val lock = Mutex()
+
+        /** Every byte written, by whoever got there first. */
+        @Volatile var done = false
+
+        /** When the current attempt started and what it has written since, for its speed. */
+        @Volatile var attemptStart: ComparableTimeMark? = null
+
+        @Volatile var attemptBytes = 0L
+
+        /** The current attempt, which a winning racer cancels; and the racer, which a winning original cancels. */
+        var original: Job? = null
+        var racer: Job? = null
+
+        /** Raced once in this attempt already. */
+        var raced = false
+    }
 
     private sealed interface Attempt {
         data object Done : Attempt
@@ -93,6 +121,10 @@ internal class RangeTransfer(
     private val takeLock = Mutex()
     private var waiting = 0
     private var workers = 0
+    private val inFlight = mutableSetOf<Block>()
+
+    /** The run's speed in the last tick, bytes per second. */
+    @Volatile private var lastSpeed = 0.0
 
     /** Guards [ended] and [switched], which workers on other threads may set at once. */
     private val stateLock = Mutex()
@@ -146,15 +178,13 @@ internal class RangeTransfer(
         try {
             takeLock.withLock { workers++ }
             while (true) {
-                val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } } ?: break
-                while (true) {
-                    when (val attempt = fetch(file, size, block)) {
-                        Attempt.Done -> break
-                        is Attempt.Retry -> if (++block.attempts >= ATTEMPTS) end(attempt.failed)
-                        is Attempt.End -> end(attempt.failed)
-                        is Attempt.Ignored -> switchTo(attempt.response)
-                    }
+                val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
+                if (block == null) {
+                    val target = raceTarget() ?: break
+                    race(file, size, target)
+                    continue
                 }
+                original(file, size, block)
                 if (slots.tryYield(origin, this@RangeTransfer)) {
                     yielded = true
                     break
@@ -180,19 +210,172 @@ internal class RangeTransfer(
     ) {
         var last = 0L
         var before: Long? = null
+        var stopped = false
         while (true) {
             delay(rampEvery)
             val now = progressLock.withLock { received }
             val speed = now - last
             last = now
-            before?.let { if (speed < it * 1.1) return }
+            lastSpeed = speed * 1000.0 / rampEvery.inWholeMilliseconds.coerceAtLeast(1)
+            before?.let { if (speed < it * 1.1) stopped = true }
             before = null
-            if (takeLock.withLock { waiting } == 0) return
+            // Keeps sampling after the ramp stops: racing needs the speed. The last worker out cancels this.
+            if (stopped || takeLock.withLock { waiting } == 0) continue
             if (slots.tryAcquire(origin, this@RangeTransfer)) {
                 worker(file, size, queue, lastOut)
                 before = speed
             }
         }
+    }
+
+    /** Fetches [block] as its original, in its own job so a winning racer can cancel it; retried in place. */
+    private suspend fun original(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) = coroutineScope {
+        val attempts =
+            launch(start = CoroutineStart.LAZY) {
+                while (!block.done) {
+                    block.lock.withLock {
+                        block.attemptStart = timeSource.markNow()
+                        block.attemptBytes = 0
+                        block.raced = false
+                    }
+                    when (val attempt = fetch(file, size, block)) {
+                        Attempt.Done -> break
+                        is Attempt.Retry -> if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
+                        is Attempt.End -> end(attempt.failed)
+                        is Attempt.Ignored -> switchTo(attempt.response)
+                    }
+                }
+            }
+        block.lock.withLock { block.original = attempts }
+        takeLock.withLock { inFlight += block }
+        try {
+            attempts.start()
+            attempts.join()
+        } finally {
+            withContext(NonCancellable) { takeLock.withLock { inFlight -= block } }
+        }
+        // Done first: the racer's buffer goes nowhere.
+        block.lock.withLock { block.racer }?.cancel()
+    }
+
+    /**
+     * The in-flight block that would finish last, if it has at least [RACE_MIN_LEFT] left, no racer in this attempt,
+     * and a speed under 1 / [RACE_SLOWER] of the run's speed per connection; claimed for racing, or null.
+     */
+    private suspend fun raceTarget(): Block? =
+        takeLock.withLock {
+            val perConnection = lastSpeed / workers.coerceAtLeast(1)
+            inFlight
+                .filter { !it.done && !it.raced && it.segment.end - it.watermark >= RACE_MIN_LEFT }
+                .map { it to speedOf(it) }
+                .filter { (_, speed) -> speed * RACE_SLOWER < perConnection }
+                .maxByOrNull { (block, speed) -> (block.segment.end - block.watermark) / speed.coerceAtLeast(1e-9) }
+                ?.first
+                ?.also { it.raced = true }
+        }
+
+    private fun speedOf(block: Block): Double {
+        val seconds =
+            block.attemptStart
+                ?.elapsedNow()
+                ?.inWholeMilliseconds
+                ?.div(1000.0) ?: return 0.0
+        return if (seconds <= 0) 0.0 else block.attemptBytes / seconds
+    }
+
+    /** Races [block] from its watermark into memory; quietly gives up on any failure but a 200, which switches. */
+    private suspend fun race(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) = coroutineScope {
+        val job = launch(start = CoroutineStart.LAZY) { racer(file, size, block) }
+        block.lock.withLock {
+            if (block.done) return@coroutineScope
+            block.racer = job
+        }
+        try {
+            job.start()
+            job.join()
+        } finally {
+            withContext(NonCancellable) { block.lock.withLock { if (block.racer === job) block.racer = null } }
+        }
+    }
+
+    private suspend fun racer(
+        file: TransferFile,
+        size: Long,
+        block: Block,
+    ) {
+        val from = block.watermark
+        val last = block.segment.end - 1
+        val response =
+            try {
+                transport.open(HttpRequest(url, headers = listOf("Range" to "bytes=$from-$last") + headers))
+            } catch (_: HttpIoException) {
+                return
+            }
+        var handedOver = false
+        try {
+            if (response.status == 200) {
+                handedOver = true
+                switchTo(response)
+            }
+            if (response.status != 206 || contentRangeOf(response.headers["Content-Range"]) != Triple(from, last, size)) return
+            val buffer = ByteArray((block.segment.end - from).toInt())
+            var got = 0
+            while (got < buffer.size) {
+                val n =
+                    try {
+                        response.body.read(buffer, got, minOf(CHUNK, buffer.size - got))
+                    } catch (_: HttpIoException) {
+                        return
+                    }
+                if (n < 0) return
+                if (n == 0) continue
+                io.limiter.acquire(n)
+                io.meter.record(n.toLong())
+                progressLock.withLock { received += n }
+                got += n
+            }
+            win(file, block, from, buffer)
+        } finally {
+            if (!handedOver) response.body.close()
+        }
+    }
+
+    /** The racer has every byte: unless the original got there first, write the tail and cancel the original. */
+    private suspend fun win(
+        file: TransferFile,
+        block: Block,
+        from: Long,
+        buffer: ByteArray,
+    ) {
+        val original =
+            block.lock.withLock {
+                if (block.done) return
+                block.done = true
+                val start = block.watermark
+                var at = start
+                while (at < block.segment.end) {
+                    val n = minOf(CHUNK.toLong(), block.segment.end - at).toInt()
+                    val written = io.write(file.file.id, at, buffer, (at - from).toInt(), (at - from).toInt() + n)
+                    if (written is StepResult.Failed) end(written)
+                    at += n
+                }
+                block.watermark = block.segment.end
+                io.checkpoint(mapOf(block.segment.id to block.watermark))
+                progressLock.withLock {
+                    downloaded += block.segment.end - start
+                    io.progress(downloaded)
+                }
+                block.original
+            }
+        original?.cancel()
     }
 
     /** Runs [block] holding one slot of [origin]. */
@@ -393,15 +576,24 @@ internal class RangeTransfer(
             if (n == 0) continue
             io.limiter.acquire(n)
             io.meter.record(n.toLong())
-            val written = io.write(file.file.id, block.watermark, buffer, 0, n)
-            if (written is StepResult.Failed) return Attempt.End(written)
-            block.watermark += n
-            io.checkpoint(mapOf(block.segment.id to block.watermark))
-            progressLock.withLock {
-                downloaded += n
-                received += n
-                io.progress(downloaded)
-            }
+            progressLock.withLock { received += n }
+            val failed =
+                block.lock.withLock {
+                    // A racer that won wrote the rest already.
+                    if (block.done) return Attempt.Done
+                    val written = io.write(file.file.id, block.watermark, buffer, 0, n)
+                    if (written is StepResult.Failed) return@withLock written
+                    block.watermark += n
+                    block.attemptBytes += n
+                    if (block.watermark == block.segment.end) block.done = true
+                    io.checkpoint(mapOf(block.segment.id to block.watermark))
+                    progressLock.withLock {
+                        downloaded += n
+                        io.progress(downloaded)
+                    }
+                    null
+                }
+            if (failed != null) return Attempt.End(failed)
         }
         return Attempt.Done
     }
