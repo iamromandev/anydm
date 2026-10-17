@@ -16,6 +16,8 @@ import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.protocol.StoredBytes
+import dev.anydm.engine.protocol.StoredFile
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferPlan
@@ -93,6 +95,7 @@ class StepRunner(
         download: Download,
         mirror: Mirror,
         listener: RunListener = RunListener.None,
+        others: List<Mirror> = emptyList(),
     ): PrepareOutcome {
         require(download.status == PENDING) { "prepare needs a PENDING download, not ${download.status}" }
         require(mirror.downloadId == download.id) { "mirror ${mirror.id.value} isn't download ${download.id.value}'s" }
@@ -138,7 +141,32 @@ class StepRunner(
                     sourceValidator = probed ?: stored,
                 ).moveTo(QUEUED)
         listener.moved(queued)
-        return PrepareOutcome.Ready(queued, mirror, probe)
+        return PrepareOutcome.Ready(queued, mirror, probe, others)
+    }
+
+    /**
+     * What earlier runs of [download] fetched, for a relink to compare with (HTTP-13): each stored file's ranges below
+     * its saved watermarks, touching ones merged (one range spans many blocks), read from its partial. A file whose
+     * partial is gone, or a job without a save folder, has nothing written: the next run would start it over anyway.
+     */
+    suspend fun storedBytes(download: Download): StoredBytes {
+        val folder = download.saveFolder?.let(::Path) ?: return PartialBytes(fileSystem, emptyList(), emptyMap())
+        val files = mutableListOf<StoredFile>()
+        val partials = mutableMapOf<Int, Path>()
+        for (file in store.files(download.id)) {
+            val partial = partialPath(targetPath(folder, file.path), download.id)
+            // Only a missing partial is nothing written: one the disk can't stat now still fails the compare.
+            val present = fileSystem.size(partial) !is FileResult.NotFound
+            val written =
+                if (present) {
+                    mergedRanges(store.segments(file.id).filter { it.watermark > it.start }.map { it.start until it.watermark })
+                } else {
+                    emptyList()
+                }
+            files += StoredFile(file.index, file.size, written)
+            partials[file.index] = partial
+        }
+        return PartialBytes(fileSystem, files, partials)
     }
 
     /** True when the download has stored files and every one of their segments is written to its end. */
@@ -440,7 +468,7 @@ class StepRunner(
             writers[file.id] = writer
             files += TransferFile(file, segments, partial, target)
         }
-        return StepResult.Ok(Transfer(download, job.mirror, job.probe, files))
+        return StepResult.Ok(Transfer(download, job.mirror, job.probe, files, job.others))
     }
 
     /**
@@ -581,6 +609,16 @@ class StepRunner(
         /** Left free after a download's bytes (FIL-08); #539 makes it a setting. */
         const val DEFAULT_FREE_SPACE_RESERVE: Long = 64L * 1024 * 1024
     }
+}
+
+/** [ranges] sorted, with each one that starts where the previous ends joined to it. */
+private fun mergedRanges(ranges: List<LongRange>): List<LongRange> {
+    val merged = mutableListOf<LongRange>()
+    for (range in ranges.sortedBy { it.first }) {
+        val last = merged.lastOrNull()
+        if (last != null && last.last + 1 == range.first) merged[merged.size - 1] = last.first..range.last else merged += range
+    }
+    return merged
 }
 
 private fun StepResult.Failed.toFailure(step: Step) = StepFailure(step, errorClass, message, retryAfter)

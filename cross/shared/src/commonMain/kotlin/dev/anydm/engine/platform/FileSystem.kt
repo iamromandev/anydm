@@ -68,6 +68,16 @@ interface FileSystem {
      * none, [FileResult.AlreadyExists] for a folder.
      */
     suspend fun size(path: Path): FileResult<Long>
+
+    /**
+     * Up to [length] bytes of the file at [path] from [offset] (a relink compares them with a new link, #572): fewer at
+     * its end, none at or past it. [FileResult.NotFound] if there is no file, [FileResult.AlreadyExists] for a folder.
+     */
+    suspend fun read(
+        path: Path,
+        offset: Long,
+        length: Int,
+    ): FileResult<ByteArray>
 }
 
 internal fun requireAbsolute(path: Path) = require(path.isAbsolute) { "path must be absolute: $path" }

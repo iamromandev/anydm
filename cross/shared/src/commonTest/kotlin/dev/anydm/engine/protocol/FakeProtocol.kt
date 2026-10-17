@@ -1,8 +1,6 @@
 package dev.anydm.engine.protocol
 
-import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.ErrorClass
-import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
 import kotlinx.coroutines.CancellationException
@@ -77,7 +75,7 @@ internal class FakeProtocol(
     /** How long a cancelled transfer takes to stop, so a test can see a slot while it is stopping. */
     var stopDelay: Duration = Duration.ZERO,
     /** What [relink] answers; null keeps the interface's default (not supported). */
-    var relinkAnswer: StepResult<Unit>? = null,
+    var relinkAnswer: StepResult<Relinked>? = null,
     /** When set, [relink] waits for it first. */
     var relinkGate: CompletableDeferred<Unit>? = null,
     /** Mirror urls whose probe answers GONE. */
@@ -89,6 +87,9 @@ internal class FakeProtocol(
 
     /** Each probe's mirror url, in order. */
     val probed = mutableListOf<String>()
+
+    /** Every transfer, to check what the runner passed (its other mirrors, #572). */
+    val transfers = mutableListOf<Transfer>()
 
     /** Every probe request, to check what the runner passed (its request context, #567). */
     val requests = mutableListOf<ProbeRequest>()
@@ -159,6 +160,7 @@ internal class FakeProtocol(
         io: TransferIo,
     ): StepResult<Unit> {
         log("transfer")
+        transfers += transfer
         val stop = failure as? FakeFailure.AtTransfer
         var sent = 0L
         var downloaded = transfer.files.sumOf { part -> part.segments.sumOf { it.written } }
@@ -192,14 +194,14 @@ internal class FakeProtocol(
         return stop?.failure ?: StepResult.Ok(Unit)
     }
 
-    override suspend fun relink(
-        download: Download,
-        mirror: Mirror,
-        url: String,
-    ): StepResult<Unit> {
+    /** Every relink request, to check what the queue passed (#572). */
+    val relinkRequests = mutableListOf<RelinkRequest>()
+
+    override suspend fun relink(request: RelinkRequest): StepResult<Relinked> {
         log("relink")
+        relinkRequests += request
         relinkGate?.await()
-        return relinkAnswer ?: super.relink(download, mirror, url)
+        return relinkAnswer ?: super.relink(request)
     }
 
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {

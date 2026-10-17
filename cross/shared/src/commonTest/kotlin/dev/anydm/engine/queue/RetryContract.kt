@@ -16,6 +16,7 @@ import dev.anydm.engine.platform.virtualEpoch
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.Relinked
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
@@ -549,7 +550,7 @@ abstract class RetryContract : QueueTestBase() {
         runTest {
             val h = started()
             h.protocol.failure = reset
-            h.protocol.relinkAnswer = StepResult.Ok(Unit)
+            h.protocol.relinkAnswer = StepResult.Ok(Relinked(null))
             val a = h.addJob()
             runCurrent()
             val waiting = h.job(a)!!

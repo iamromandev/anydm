@@ -72,6 +72,24 @@ class TransferPlanTest {
     }
 
     @Test
+    fun aTransfersMirrorsAreOtherMirrorsOfItsDownload() {
+        val download = Download(DownloadId(1), DownloadKind.DIRECT)
+        val own = Mirror(MirrorId(1), download.id, "https://a.example/f", 0)
+        val other = Mirror(MirrorId(2), download.id, "https://b.example/f", 1)
+        Transfer(download, own, FakeProbe("f", 10), emptyList(), mirrors = listOf(other)).mirrors shouldBe listOf(other)
+        shouldThrow<IllegalArgumentException> { Transfer(download, own, FakeProbe("f", 10), emptyList(), mirrors = listOf(own)) }
+        shouldThrow<IllegalArgumentException> {
+            Transfer(
+                download,
+                own,
+                FakeProbe("f", 10),
+                emptyList(),
+                mirrors = listOf(Mirror(MirrorId(3), DownloadId(99), "https://c.example/f", 0)),
+            )
+        }
+    }
+
+    @Test
     fun aFreshFileIsAPlannedFileLikeAnyOther() {
         PlannedFile(0, "a", 10, splitEvenly(10, 2), fresh = true).fresh shouldBe true
         PlannedFile(0, "a").fresh shouldBe false

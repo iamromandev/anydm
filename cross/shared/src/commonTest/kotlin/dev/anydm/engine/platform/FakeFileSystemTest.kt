@@ -70,4 +70,25 @@ class FakeFileSystemTest {
             fs.size(file) shouldBe FileResult.Ok(8L)
             fs.size(Path(folder, "missing")) shouldBe FileResult.NotFound(Path(folder, "missing"))
         }
+
+    @Test
+    fun readServesTheFakesBytes() =
+        runTest {
+            val fs = FakeFileSystem()
+            fs.put(file, "0123456789".encodeToByteArray())
+
+            fs.read(file, 3, 4).shouldBeInstanceOf<FileResult.Ok<ByteArray>>().value shouldBe "3456".encodeToByteArray()
+            fs.read(file, 8, 10).shouldBeInstanceOf<FileResult.Ok<ByteArray>>().value shouldBe "89".encodeToByteArray()
+            fs.read(Path(folder, "missing"), 0, 1) shouldBe FileResult.NotFound(Path(folder, "missing"))
+        }
+
+    @Test
+    fun readHonoursAFault() =
+        runTest {
+            val fs = FakeFileSystem()
+            fs.put(file, "0123456789".encodeToByteArray())
+            fs.faults[FakeFileSystem.Op.READ] = { FileResult.IoError(it, "boom") }
+
+            fs.read(file, 0, 1) shouldBe FileResult.IoError(file, "boom")
+        }
 }

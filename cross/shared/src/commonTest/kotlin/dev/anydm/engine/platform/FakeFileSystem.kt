@@ -15,7 +15,20 @@ internal class FakeFileSystem(
     var free: Long = Long.MAX_VALUE,
     private val journal: MutableList<String>? = null,
 ) : FileSystem {
-    enum class Op { PREPARE_FOLDER, PREALLOCATE, FREE_SPACE, ATOMIC_MOVE, MOVE_TO_TRASH, OPEN_WRITER, DELETE, WRITE, SIZE, SYNC, SIZE_OF }
+    enum class Op {
+        PREPARE_FOLDER,
+        PREALLOCATE,
+        FREE_SPACE,
+        ATOMIC_MOVE,
+        MOVE_TO_TRASH,
+        OPEN_WRITER,
+        DELETE,
+        WRITE,
+        SIZE,
+        SYNC,
+        SIZE_OF,
+        READ,
+    }
 
     val faults = mutableMapOf<Op, (Path) -> FileResult.Failed?>()
 
@@ -147,6 +160,20 @@ internal class FakeFileSystem(
         if (path in folders) return FileResult.AlreadyExists(path, "a folder is in the way")
         val bytes = files[path] ?: return FileResult.NotFound(path)
         return FileResult.Ok(bytes.size.toLong())
+    }
+
+    override suspend fun read(
+        path: Path,
+        offset: Long,
+        length: Int,
+    ): FileResult<ByteArray> {
+        require(offset >= 0 && length >= 0)
+        log("read", path)
+        fault(Op.READ, path)?.let { return it }
+        if (path in folders) return FileResult.AlreadyExists(path, "a folder is in the way")
+        val bytes = files[path] ?: return FileResult.NotFound(path)
+        val from = minOf(offset, bytes.size.toLong()).toInt()
+        return FileResult.Ok(bytes.copyOfRange(from, minOf(bytes.size.toLong(), from.toLong() + length).toInt()))
     }
 
     private fun fault(

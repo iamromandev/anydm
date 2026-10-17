@@ -10,7 +10,7 @@ class ProtocolDefaultsTest {
     @Test
     fun aProtocolThatCantRelinkSaysSo() =
         runTest {
-            FakeProtocol().relink(aPendingDownload(), aMirror(), "https://example.com/new") shouldBe
+            FakeProtocol().relink(RelinkRequest(aPendingDownload(), aMirror(), "https://example.com/new")) shouldBe
                 StepResult.Failed(null, "relink not supported")
         }
 }

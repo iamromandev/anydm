@@ -61,10 +61,14 @@ fun HttpRequest.rangeStart(): Long? =
         ?.get(1)
         ?.toLong()
 
-/** Serves [bytes]: 206 with an exact Content-Range for `Range: bytes=a-b`, 200 and the whole of it otherwise. */
+/**
+ * Serves [bytes]: 206 with an exact Content-Range for `Range: bytes=a-b`, 200 and the whole of it otherwise; with
+ * [etag], every answer carries it.
+ */
 fun servingRanges(
     bytes: ByteArray,
     finalUrl: String = "https://h/f.bin",
+    etag: String? = null,
 ): suspend (HttpRequest) -> HttpResponse =
     { request ->
         val range =
@@ -73,7 +77,7 @@ fun servingRanges(
                 ?.second
                 ?.let(rangeHeader::matchEntire)
         if (range == null) {
-            response(200, "Content-Length" to "${bytes.size}", finalUrl = finalUrl, body = bytesBody(bytes))
+            response(200, "Content-Length" to "${bytes.size}", *etagOf(etag), finalUrl = finalUrl, body = bytesBody(bytes))
         } else {
             val (a, b) = range.destructured
             val first = a.toInt()
@@ -81,8 +85,11 @@ fun servingRanges(
             response(
                 206,
                 "Content-Range" to "bytes $first-$last/${bytes.size}",
+                *etagOf(etag),
                 finalUrl = finalUrl,
                 body = bytesBody(bytes.copyOfRange(first, last + 1)),
             )
         }
     }
+
+internal fun etagOf(etag: String?): Array<Pair<String, String>> = if (etag == null) emptyArray() else arrayOf("ETag" to etag)

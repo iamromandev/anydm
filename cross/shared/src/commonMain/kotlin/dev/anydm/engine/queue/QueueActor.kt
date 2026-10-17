@@ -28,6 +28,7 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.goneMirrors
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
@@ -37,6 +38,7 @@ import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.RelinkRequest
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewAttempt
 import dev.anydm.engine.store.NewDownload
@@ -428,16 +430,17 @@ internal class QueueActor(
                 ?: return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "no protocol handles ${job.kind} downloads yet"))
         val checked =
             try {
-                protocol.relink(job, mirror, url)
+                protocol.relink(RelinkRequest(job, mirror, url, downloads.context(id), runner.storedBytes(job)))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, internalError(e)))
             }
-        when (checked) {
-            is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
-            is StepResult.Ok -> Unit
-        }
+        val relinked =
+            when (checked) {
+                is StepResult.Failed -> return CommandResult.RelinkFailed(StepFailure(Step.PROBE, checked.errorClass, checked.message))
+                is StepResult.Ok -> checked.value
+            }
         return callLater { reply ->
             when (val found = relinkTarget(id, mirrorId)) {
                 is RelinkTarget.Refused -> {
@@ -446,9 +449,14 @@ internal class QueueActor(
 
                 is RelinkTarget.Found -> {
                     downloads.updateMirror(found.mirror.copy(url = url))
-                    observer.mirrorsChanged(id, downloads.mirrors(id))
+                    val mirrors = downloads.mirrors(id)
+                    observer.mirrorsChanged(id, mirrors)
+                    // The new link's validator becomes the job's only if the reprobe asks that mirror; another mirror's
+                    // own token must not make the next probe see a changed source (FND-10).
+                    val validator = relinked.validator?.takeIf { mirrorToStart(mirrors, downloads.attempts(id))?.id == mirrorId }
+                    val op: suspend (Download) -> CommandResult = { job -> reprobe(job, validator) }
                     val slot = slots[id]
-                    if (slot == null) reply.complete(reprobe(found.job)) else stop(slot, ::reprobe, reply)
+                    if (slot == null) reply.complete(op(found.job)) else stop(slot, op, reply)
                 }
             }
         }
@@ -478,8 +486,12 @@ internal class QueueActor(
 
     // After a relink: a job that was running or waiting probes again (the new link) before it transfers, at once and
     // with a fresh retry budget. A job that was waiting keeps its place; one that was running waits at the back of its
-    // priority. A job at rest (paused, failed, finished) keeps its status; it probes when it next runs.
-    private suspend fun reprobe(job: Download): CommandResult {
+    // priority. A job at rest (paused, failed, finished) keeps its status; it probes when it next runs. A [validator] the
+    // relink adopted replaces the job's.
+    private suspend fun reprobe(
+        job: Download,
+        validator: String?,
+    ): CommandResult {
         val again =
             when (job.status) {
                 DOWNLOADING, QUEUED -> job.moved(PENDING)
@@ -488,7 +500,7 @@ internal class QueueActor(
 
                 // reached MUXING before the stop landed
                 else -> job
-            }.copy(nextAttemptAt = null, attemptCount = 0)
+            }.copy(nextAttemptAt = null, attemptCount = 0, sourceValidator = validator ?: job.sourceValidator)
         if (again.status !in WAITING) return CommandResult.Done(if (again != job) save(again) else again)
         val queuedAt = if (job.status in WAITING) job.queuedAt else clock.now()
         return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = queuedAt))))
@@ -602,9 +614,13 @@ internal class QueueActor(
     private suspend fun launchSlot(waiting: Download) {
         // The retry is happening now.
         val download = if (waiting.nextAttemptAt != null) save(waiting.copy(nextAttemptAt = null)) else waiting
-        val mirror = mirrorToStart(downloads.mirrors(download.id), downloads.attempts(download.id))
+        val mirrors = downloads.mirrors(download.id)
+        val attempts = downloads.attempts(download.id)
+        val mirror = mirrorToStart(mirrors, attempts)
+        val gone = goneMirrors(mirrors, attempts)
+        val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
-        val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
@@ -659,7 +675,7 @@ internal class QueueActor(
                 override suspend fun checkpointed() = observer.checkpointed(slot.id)
             }
         val ready =
-            when (val prepared = runner.prepare(pending, mirror, listener)) {
+            when (val prepared = runner.prepare(pending, mirror, listener, slot.others)) {
                 is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }
