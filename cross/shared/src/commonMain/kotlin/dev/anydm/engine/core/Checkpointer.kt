@@ -18,6 +18,8 @@ internal class Checkpointer(
     private val store: PlanStore,
     /** The file each segment belongs to: a checkpoint marks its file for sync, as a library may write it directly. */
     private val owners: Map<SegmentId, FileId>,
+    /** Called after each flush that saved watermarks (#555 refreshes the job's file rows on it). */
+    private val onSaved: suspend () -> Unit = {},
 ) {
     private val lock = Mutex()
     private val pending = mutableMapOf<SegmentId, Long>()
@@ -36,16 +38,21 @@ internal class Checkpointer(
         }
 
     /** Syncs every written file, then saves the watermarks. If a sync fails nothing is saved, and the next flush tries again. */
-    suspend fun flush(): StepResult<Unit> =
-        lock.withLock {
-            for (file in dirty) {
-                // A file placed by an earlier run has no writer, and nothing new to sync.
-                val synced = writers[file]?.sync() ?: continue
-                if (synced is FileResult.Failed) return@withLock synced.toStepFailed()
+    suspend fun flush(): StepResult<Unit> {
+        val saved =
+            lock.withLock {
+                for (file in dirty) {
+                    // A file placed by an earlier run has no writer, and nothing new to sync.
+                    val synced = writers[file]?.sync() ?: continue
+                    if (synced is FileResult.Failed) return synced.toStepFailed()
+                }
+                val any = pending.isNotEmpty()
+                if (any) store.saveWatermarks(pending.toMap())
+                pending.clear()
+                dirty.clear()
+                any
             }
-            if (pending.isNotEmpty()) store.saveWatermarks(pending.toMap())
-            pending.clear()
-            dirty.clear()
-            StepResult.Ok(Unit)
-        }
+        if (saved) onSaved()
+        return StepResult.Ok(Unit)
+    }
 }

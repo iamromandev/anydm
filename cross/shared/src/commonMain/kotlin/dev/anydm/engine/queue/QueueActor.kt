@@ -34,6 +34,7 @@ import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewAttempt
@@ -591,6 +592,7 @@ internal class QueueActor(
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
         val slot = Slot(download, mirror, attempt, writtenBytes(download.id))
         slots[slot.id] = slot
+        observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
         slot.job =
             slotScope.launch {
@@ -603,7 +605,10 @@ internal class QueueActor(
                 }
             }
         // Not a finally: a slot cancelled before its coroutine ran never runs one, and must still report.
-        slot.job.invokeOnCompletion { inbox.trySend(Message.Ended(slot, end)) }
+        slot.job.invokeOnCompletion {
+            inbox.trySend(Message.Ended(slot, end))
+            observer.slotEnded(slot.id)
+        }
     }
 
     private suspend fun writtenBytes(id: DownloadId): Long =
@@ -628,13 +633,24 @@ internal class QueueActor(
                 override suspend fun startedOver(reason: String) {
                     ask { noteStartOver(slot, reason) }
                 }
+
+                override fun progress(
+                    downloaded: Long,
+                    total: Long?,
+                ) = observer.progress(slot.id, downloaded, total)
+
+                override suspend fun checkpointed() = observer.checkpointed(slot.id)
             }
         val ready =
             when (val prepared = runner.prepare(pending, mirror, listener)) {
                 is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }
-        return when (val ran = runner.run(ready, listener)) {
+        val meter =
+            object : Meter {
+                override fun record(bytes: Long) = observer.received(slot.id, bytes)
+            }
+        return when (val ran = runner.run(ready, listener, meter = meter)) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }

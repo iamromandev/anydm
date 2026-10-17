@@ -244,7 +244,7 @@ class StepRunner(
             }
         val writers = mutableMapOf<FileId, FileWriter>()
         val owners = mutableMapOf<SegmentId, FileId>()
-        val checkpointer = Checkpointer(writers, store, owners)
+        val checkpointer = Checkpointer(writers, store, owners) { listener.checkpointed() }
         val result =
             try {
                 fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, owners, checkpointer)

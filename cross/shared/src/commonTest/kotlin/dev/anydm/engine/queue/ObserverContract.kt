@@ -18,8 +18,12 @@ import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
@@ -55,6 +59,38 @@ abstract class ObserverContract : QueueTestBase() {
             mirrors: List<Mirror>,
         ) {
             this.mirrors += id to mirrors
+        }
+
+        val progress = mutableListOf<Long>()
+        var received = 0L
+        var checkpoints = 0
+        val slots = mutableListOf<String>()
+
+        override fun progress(
+            id: DownloadId,
+            downloaded: Long,
+            total: Long?,
+        ) {
+            progress += downloaded
+        }
+
+        override fun received(
+            id: DownloadId,
+            bytes: Long,
+        ) {
+            received += bytes
+        }
+
+        override fun checkpointed(id: DownloadId) {
+            checkpoints++
+        }
+
+        override fun slotStarted(id: DownloadId) {
+            slots += "started ${id.value}"
+        }
+
+        override fun slotEnded(id: DownloadId) {
+            slots += "ended ${id.value}"
         }
     }
 
@@ -182,5 +218,34 @@ abstract class ObserverContract : QueueTestBase() {
             h.queue.relink(a, mirror.id, "https://example.com/new")
 
             o.mirrors.last() shouldBe (a to listOf(mirror.copy(url = "https://example.com/new")))
+        }
+
+    @Test
+    fun slotsReportProgressBytesAndCheckpoints() =
+        runTest {
+            val o = RecordingObserver()
+            val h = started { QueueHarness(it, newStore(), observer = o, checkpointEvery = 1.seconds) }
+            val a = h.addJob()
+            settle()
+
+            o.progress.last() shouldBe 64 * 1024L
+            o.received shouldBe 64 * 1024L
+            (o.checkpoints >= 1) shouldBe true
+            o.slots shouldBe listOf("started ${a.value}", "ended ${a.value}")
+        }
+
+    @Test
+    fun slotEndIsReportedAfterTheQueueStops() =
+        runTest {
+            val o = RecordingObserver()
+            val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+            val h = started { QueueHarness(it, newStore(), observer = o, scope = scope) }
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            scope.cancel()
+            runCurrent()
+
+            o.slots shouldBe listOf("started ${a.value}", "ended ${a.value}")
         }
 }
