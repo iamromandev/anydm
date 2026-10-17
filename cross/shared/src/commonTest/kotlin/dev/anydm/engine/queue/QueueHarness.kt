@@ -1,5 +1,6 @@
 package dev.anydm.engine.queue
 
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -75,6 +76,7 @@ internal class QueueHarness(
         priority: Int = 0,
         kind: DownloadKind = DownloadKind.DIRECT,
         mirrors: List<String> = listOf("https://example.com/file.zip"),
+        checksum: Checksum? = null,
     ): DownloadId {
         val added =
             queue.add(
@@ -84,6 +86,7 @@ internal class QueueHarness(
                     saveFolder = stepRoot.toString(),
                     fileName = "job-${++added}.zip",
                     priority = priority,
+                    checksum = checksum,
                 ),
             )
         return added.shouldBeInstanceOf<CommandResult.Done>().download!!.id

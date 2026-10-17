@@ -1,5 +1,6 @@
 package dev.anydm.engine.queue
 
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -66,6 +67,12 @@ class Queue internal constructor(
 
     /** Queues a FAILED job again with a fresh attempt count. */
     suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
+
+    /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
+    suspend fun setChecksum(
+        id: DownloadId,
+        checksum: Checksum?,
+    ): CommandResult = actor.call { setChecksum(id, checksum) }
 
     /** Sets the job's priority. It never stops a running job: the new order applies to the next free slot. */
     suspend fun reprioritize(

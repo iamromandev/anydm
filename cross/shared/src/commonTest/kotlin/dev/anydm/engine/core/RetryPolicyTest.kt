@@ -30,6 +30,7 @@ class RetryPolicyTest {
         madeProgress: Boolean = false,
         nextMirror: Mirror? = m1,
         retryAfter: Duration? = null,
+        integrityBefore: Boolean = false,
     ) = decide(
         job = aPendingDownload().copy(attemptCount = attemptCount),
         failure = StepFailure(Step.TRANSFER, errorClass, "failed", retryAfter),
@@ -37,7 +38,14 @@ class RetryPolicyTest {
         nextMirror = nextMirror,
         maxRetries = maxRetries,
         now = t0,
+        integrityBefore = integrityBefore,
     )
+
+    @Test
+    fun theFirstIntegrityFailureStartsOver() {
+        policy().decide(INTEGRITY, integrityBefore = false) shouldBe FailureAction.StartOver
+        policy().decide(INTEGRITY, integrityBefore = true) shouldBe FailureAction.Fail
+    }
 
     @Test
     fun eachErrorClassLeadsToItsAction() {
@@ -49,7 +57,7 @@ class RetryPolicyTest {
                 DISK_FULL to FailureAction.Pause(PauseReason.LOW_DISK),
                 AUTH to FailureAction.Fail,
                 FORMAT_WITHHELD to FailureAction.Fail,
-                INTEGRITY to FailureAction.Fail,
+                INTEGRITY to FailureAction.StartOver,
                 null to FailureAction.Fail,
             )
         expected.keys.filterNotNull().toSet() shouldBe ErrorClass.entries.toSet()
