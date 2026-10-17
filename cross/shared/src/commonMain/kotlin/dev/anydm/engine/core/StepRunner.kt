@@ -16,6 +16,8 @@ import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.protocol.StoredBytes
+import dev.anydm.engine.protocol.StoredFile
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferPlan
@@ -140,6 +142,30 @@ class StepRunner(
                 ).moveTo(QUEUED)
         listener.moved(queued)
         return PrepareOutcome.Ready(queued, mirror, probe, others)
+    }
+
+    /**
+     * What earlier runs of [download] fetched, for a relink to compare with (HTTP-13): each stored file's ranges below
+     * its saved watermarks, read from its partial. A file whose partial is gone, or a job without a save folder, has
+     * nothing written: the next run would start it over anyway.
+     */
+    suspend fun storedBytes(download: Download): StoredBytes {
+        val folder = download.saveFolder?.let(::Path) ?: return PartialBytes(fileSystem, emptyList(), emptyMap())
+        val files = mutableListOf<StoredFile>()
+        val partials = mutableMapOf<Int, Path>()
+        for (file in store.files(download.id)) {
+            val partial = partialPath(targetPath(folder, file.path), download.id)
+            val present = fileSystem.size(partial) is FileResult.Ok
+            val written =
+                if (present) {
+                    store.segments(file.id).filter { it.watermark > it.start }.map { it.start until it.watermark }
+                } else {
+                    emptyList()
+                }
+            files += StoredFile(file.index, file.size, written)
+            partials[file.index] = partial
+        }
+        return PartialBytes(fileSystem, files, partials)
     }
 
     /** True when the download has stored files and every one of their segments is written to its end. */

@@ -38,6 +38,7 @@ import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.RelinkRequest
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewAttempt
 import dev.anydm.engine.store.NewDownload
@@ -429,7 +430,7 @@ internal class QueueActor(
                 ?: return CommandResult.RelinkFailed(StepFailure(Step.PROBE, null, "no protocol handles ${job.kind} downloads yet"))
         val checked =
             try {
-                protocol.relink(job, mirror, url)
+                protocol.relink(RelinkRequest(job, mirror, url, downloads.context(id), runner.storedBytes(job)))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

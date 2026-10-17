@@ -15,6 +15,7 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeProtocol
+import dev.anydm.engine.protocol.Relinked
 import dev.anydm.engine.protocol.StepResult
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
@@ -208,7 +209,7 @@ abstract class ObserverContract : QueueTestBase() {
     @Test
     fun aRelinkReportsTheMirrors() =
         runTest {
-            val (h, o) = observed(FakeProtocol(relinkAnswer = StepResult.Ok(Unit)))
+            val (h, o) = observed(FakeProtocol(relinkAnswer = StepResult.Ok(Relinked(null))))
             val a = h.addJob()
             val mirror =
                 h.store.downloads
