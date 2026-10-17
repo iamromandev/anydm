@@ -104,7 +104,18 @@ class HttpProtocol(
         check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
         val file = transfer.files.single()
         val connections = connections().coerceIn(1, 16)
-        return RangeTransfer(transport, probe.finalUrl, requestHeaders(probe.context), io, connections).run(file)
+        // The probe sent credentials only to the mirror's origin; a redirect elsewhere dropped them, and so do we.
+        val headers =
+            requestHeaders(probe.context).let { all ->
+                if (originOf(probe.finalUrl) ==
+                    originOf(transfer.mirror.url)
+                ) {
+                    all
+                } else {
+                    all.filterNot { it.first.lowercase() in credentialHeaders }
+                }
+            }
+        return RangeTransfer(transport, probe.finalUrl, headers, io, connections).run(file)
     }
 
     /** The transfer already checked that every byte arrived; the runner renames the partial into place. */
@@ -158,6 +169,7 @@ class HttpProtocol(
     private companion object {
         const val PROBE_BYTES = 1024
         val ownedHeaders = setOf("range", "accept-encoding")
+        val credentialHeaders = setOf("authorization", "proxy-authorization", "cookie")
         val totalRange = Regex("""bytes\s+\d+-\d+/(\d+|\*)""", RegexOption.IGNORE_CASE)
         val unsatisfiedRange = Regex("""bytes\s+\*/(\d+)""", RegexOption.IGNORE_CASE)
     }
@@ -224,3 +236,18 @@ internal fun hostOf(url: String): String =
         .substringBefore('?')
         .substringBefore('#')
         .substringAfterLast('@')
+
+/** Scheme, host and port of [url] (the port spelled out for http and https), without any user or password. */
+internal fun originOf(url: String): String {
+    val scheme = url.substringBefore("://", "").lowercase()
+    val authority = hostOf(url).lowercase()
+    val hasPort = authority.substringAfterLast(']').contains(':')
+    val port =
+        when {
+            hasPort -> ""
+            scheme == "https" -> ":443"
+            scheme == "http" -> ":80"
+            else -> ""
+        }
+    return "$scheme://$authority$port"
+}

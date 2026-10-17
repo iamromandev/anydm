@@ -5,11 +5,13 @@ import dev.anydm.engine.core.Segment
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Tries per block (or per single stream) in one run before the run fails. */
 internal const val ATTEMPTS = 3
@@ -20,8 +22,9 @@ internal const val CHUNK = 64 * 1024
 /**
  * Fetches one file's incomplete blocks over [connections] workers (HTTP-05), each block from its watermark with a
  * `Range` request whose answer is checked (HTTP-08): 206, `Content-Range` exactly as asked, never more bytes than the
- * range. A failed attempt puts the block back from its new watermark; [ATTEMPTS] per block, then the run fails. An HTTP
- * error that retrying can't fix ends the run at once.
+ * range. A failed attempt is retried by the same worker from the block's new watermark; [ATTEMPTS] per block, then the
+ * run fails, so a server that fails everything gets at most about [ATTEMPTS] × [connections] requests. An HTTP error
+ * that retrying can't fix ends the run at once.
  *
  * A file without blocks is one plain stream from byte 0. So is the rest of a run whose server answered a ranged
  * request with 200: that body is read from byte 0, bytes below each block's watermark are discarded, and the rest
@@ -69,6 +72,9 @@ internal class RangeTransfer(
 
     private val progressLock = Mutex()
     private var downloaded = 0L
+
+    /** Guards [ended] and [switched], which workers on other threads may set at once. */
+    private val stateLock = Mutex()
     private var ended: StepResult.Failed? = null
 
     suspend fun run(file: TransferFile): StepResult<Unit> {
@@ -81,29 +87,18 @@ internal class RangeTransfer(
         if (incomplete.isEmpty()) return StepResult.Ok(Unit)
         val queue = Channel<Block>(Channel.UNLIMITED)
         incomplete.forEach { queue.trySend(it) }
-        var left = incomplete.size
-        val leftLock = Mutex()
+        queue.close()
         try {
             coroutineScope {
                 repeat(minOf(connections, incomplete.size)) {
                     launch {
                         for (block in queue) {
-                            when (val attempt = fetch(file, size, block)) {
-                                Attempt.Done -> {
-                                    leftLock.withLock { if (--left == 0) queue.close() }
-                                }
-
-                                is Attempt.Retry -> {
-                                    if (++block.attempts >= ATTEMPTS) end(attempt.failed) else queue.send(block)
-                                }
-
-                                is Attempt.End -> {
-                                    end(attempt.failed)
-                                }
-
-                                is Attempt.Ignored -> {
-                                    if (switched == null) switched = attempt.response else attempt.response.body.close()
-                                    throw RangesIgnored()
+                            while (true) {
+                                when (val attempt = fetch(file, size, block)) {
+                                    Attempt.Done -> break
+                                    is Attempt.Retry -> if (++block.attempts >= ATTEMPTS) end(attempt.failed)
+                                    is Attempt.End -> end(attempt.failed)
+                                    is Attempt.Ignored -> switchTo(attempt.response)
                                 }
                             }
                         }
@@ -148,7 +143,7 @@ internal class RangeTransfer(
             val attempt =
                 try {
                     if (response.status == 200) {
-                        copyStream(response.body, file, size, blocks, hostOf(response.finalUrl))
+                        copyStream(response, file, size, blocks, hostOf(response.finalUrl))
                     } else {
                         statusAttempt(response.status, hostOf(response.finalUrl))
                     }
@@ -164,13 +159,21 @@ internal class RangeTransfer(
         return checkNotNull(last)
     }
 
+    /** A whole-file body of another length is another file: the run ends, so the next probe plans it afresh. */
     private suspend fun copyStream(
-        body: HttpBody,
+        response: HttpResponse,
         file: TransferFile,
         size: Long?,
         blocks: List<Block>,
         host: String,
     ): Attempt {
+        val body = response.body
+        val length = response.headers["Content-Length"]?.trim()?.toLongOrNull()
+        val encoding = response.headers["Content-Encoding"]?.trim()
+        val encoded = !encoding.isNullOrEmpty() && !encoding.equals("identity", ignoreCase = true)
+        if (size != null && length != null && !encoded && length != size) {
+            return Attempt.End(StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 200 from $host is $length bytes, not $size"))
+        }
         val buffer = ByteArray(CHUNK)
         var offset = 0L
         while (size == null || offset < size) {
@@ -191,6 +194,14 @@ internal class RangeTransfer(
             if (failed != null) return Attempt.End(failed)
             offset += n
         }
+        // Reached the size: a body that goes on is another, longer file.
+        val more =
+            try {
+                body.read(buffer, 0, 1)
+            } catch (_: HttpIoException) {
+                -1 // every byte of the file arrived; a break after them changes nothing
+            }
+        if (more > 0) return Attempt.End(StepResult.Failed(ErrorClass.TRANSIENT, "HTTP 200 from $host is longer than $size bytes"))
         return Attempt.Done
     }
 
@@ -230,9 +241,18 @@ internal class RangeTransfer(
         return null
     }
 
-    private fun end(failed: StepResult.Failed): Nothing {
-        if (ended == null) ended = failed
+    private suspend fun end(failed: StepResult.Failed): Nothing {
+        stateLock.withLock { if (ended == null) ended = failed }
         throw RunEnded()
+    }
+
+    /** The first 200 wins and becomes the stream; one another worker got at the same time is closed. */
+    private suspend fun switchTo(response: HttpResponse): Nothing {
+        // Not cancellable: a sibling's switch cancels this worker, and the body in hand must still be kept or closed.
+        withContext(NonCancellable) {
+            stateLock.withLock { if (switched == null) switched = response else response.body.close() }
+        }
+        throw RangesIgnored()
     }
 
     private suspend fun fetch(

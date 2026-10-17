@@ -43,10 +43,12 @@ class HttpTransferTest {
     private fun transferOf(
         segments: List<Segment>,
         size: Long? = this.size,
+        mirrorUrl: String = "https://h/f.bin",
+        context: RequestContext = this.context,
     ): Transfer {
         val file = File(FileId(1), DownloadId(1), 0, "f.bin", size)
         val probe = HttpProbe("f.bin", size, null, true, "https://h/f.bin", null, context)
-        val mirror = Mirror(MirrorId(1), DownloadId(1), "https://h/f.bin", 0)
+        val mirror = Mirror(MirrorId(1), DownloadId(1), mirrorUrl, 0)
         return Transfer(aDownload(), mirror, probe, listOf(TransferFile(file, segments, Path("/d/f.bin.1.anydm"), Path("/d/f.bin"))))
     }
 
@@ -472,5 +474,59 @@ class HttpTransferTest {
                     dev.anydm.engine.protocol
                         .FinalizeResult(listOf("f.bin")),
                 )
+        }
+
+    // Final review
+
+    @Test
+    fun credentialsStayOnTheMirrorsOrigin() =
+        runTest {
+            val secret = RequestContext(headers = listOf("Authorization" to "Bearer t", "X-A" to "1"), cookies = "session=s")
+            val moved = FakeTransport(servingRanges(content))
+            val io = RecordingIo(size, segments)
+            HttpProtocol(moved).transfer(transferOf(segments, mirrorUrl = "https://site.example/dl?id=1", context = secret), io) shouldBe
+                StepResult.Ok(Unit)
+            for (request in moved.requests) {
+                request.headers.none { it.first == "Cookie" || it.first == "Authorization" } shouldBe true
+                request.headers shouldContain ("X-A" to "1")
+            }
+            val same = FakeTransport(servingRanges(content))
+            HttpProtocol(same).transfer(transferOf(segments, context = secret), RecordingIo(size, segments)) shouldBe StepResult.Ok(Unit)
+            same.requests.all { ("Cookie" to "session=s") in it.headers && ("Authorization" to "Bearer t") in it.headers } shouldBe true
+        }
+
+    @Test
+    fun aLongerStreamFails() =
+        runTest {
+            val io = RecordingIo(5000, emptyList())
+            val transport = FakeTransport { response(200, body = bytesBody(content.copyOf(10_000))) }
+            streamed(transport, io, 5000).shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.TRANSIENT
+            transport.requests.size shouldBe 1
+        }
+
+    @Test
+    fun aWholeBodyOfAnotherSizeIsNotWritten() =
+        runTest {
+            val blocks = segmentsOf(small)
+            val other = content.copyOf(8 * mib.toInt())
+            val transport = FakeTransport { response(200, "Content-Length" to "${other.size}", body = bytesBody(other)) }
+            val io = RecordingIo(small, blocks)
+            HttpProtocol(transport).transfer(transferOf(blocks, small), io).shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe
+                ErrorClass.TRANSIENT
+            io.written.size shouldBe 0
+        }
+
+    @Test
+    fun aDeadServerIsNotHammered() =
+        runTest {
+            val big = 40 * mib
+            val blocks = segmentsOf(big)
+            blocks.size shouldBe 16
+            val transport = FakeTransport { response(503) }
+            HttpProtocol(transport, connections = { 4 })
+                .transfer(transferOf(blocks, big), RecordingIo(big, blocks))
+                .shouldBeInstanceOf<StepResult.Failed>()
+                .errorClass shouldBe ErrorClass.TRANSIENT
+            (transport.requests.size <= ATTEMPTS * 4) shouldBe true
         }
 }
