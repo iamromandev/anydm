@@ -178,5 +178,20 @@ class HttpProbeTest {
             body.closed shouldBe true
         }
 
+    @Test
+    fun theProbeAsksForIdentity() =
+        runTest {
+            val transport = FakeTransport { response(200) }
+            HttpProtocol(transport).probe(request())
+            transport.requests.single().headers shouldContain ("Accept-Encoding" to "identity")
+        }
+
+    @Test
+    fun theProbeKeepsTheContext() =
+        runTest {
+            val context = RequestContext(cookies = "a=1")
+            probed(response(200), context).context shouldBe context
+        }
+
     // Review Focus 5 (CR/LF in context values) is RequestContextTest: such a context can't be made.
 }
