@@ -46,6 +46,8 @@ data class Download(
     val sourceValidator: String? = null,
     /** What the finished file must hash to, as the user gave it (HTTP-14); it wins over the server's. */
     val checksum: Checksum? = null,
+    /** Added anyway after a duplicate warning (FIL-06): the duplicate checks leave it alone. */
+    val allowDuplicate: Boolean = false,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }

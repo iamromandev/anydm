@@ -52,6 +52,9 @@ interface DownloadStore : PlanStore {
     /** Position 0 first. */
     suspend fun mirrors(id: DownloadId): List<Mirror>
 
+    /** Every mirror of every download, by download and position (the duplicate check, FIL-05). */
+    suspend fun allMirrors(): List<Mirror>
+
     /** Saves the mirror's url and position (a relink, #552). False if removed. */
     suspend fun updateMirror(mirror: Mirror): Boolean
 

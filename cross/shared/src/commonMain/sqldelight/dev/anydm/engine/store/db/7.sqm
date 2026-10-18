@@ -1,0 +1,2 @@
+-- Version 7 to 8 (#539): a download added anyway ("add anyway", FIL-06) skips the duplicate checks for good.
+ALTER TABLE download ADD COLUMN allow_duplicate INTEGER NOT NULL DEFAULT 0;

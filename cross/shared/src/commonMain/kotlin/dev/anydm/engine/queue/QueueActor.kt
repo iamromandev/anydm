@@ -16,6 +16,7 @@ import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FailureAction
 import dev.anydm.engine.core.Mirror
@@ -79,6 +80,7 @@ internal class QueueActor(
     private val observer: QueueObserver,
     private val log: Log,
     timeSource: TimeSource.WithComparableMarks,
+    private val duplicates: DuplicateCheck,
 ) {
     /** Every running job's speed limits (NET-01..03), shared by all of them. */
     private val bandwidth = Bandwidth(timeSource)
@@ -266,6 +268,7 @@ internal class QueueActor(
     // Commands
 
     suspend fun add(new: NewDownload): CommandResult {
+        duplicates.atAdd(new)?.let { return CommandResult.Duplicate(it) }
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
         observer.jobChanged(added)

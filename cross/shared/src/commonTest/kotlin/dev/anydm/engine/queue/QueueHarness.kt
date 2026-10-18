@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.FixedRandom
 import dev.anydm.engine.core.RetryPolicy
@@ -47,6 +48,7 @@ internal class QueueHarness(
     val fs: FakeFileSystem = FakeFileSystem(),
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     observer: QueueObserver = QueueObserver.None,
+    duplicates: DuplicateCheck = DuplicateCheck.None,
 ) {
     val finished = mutableListOf<DownloadId>()
     val runner =
@@ -65,9 +67,22 @@ internal class QueueHarness(
                     }
                 },
             freeSpaceReserve = 0,
+            duplicates = duplicates,
             checkpointEvery = checkpointEvery,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy, observer, timeSource = test.testScheduler.timeSource)
+    val queue =
+        Queue(
+            scope,
+            store,
+            runner,
+            protocols,
+            fs,
+            clock,
+            retryPolicy,
+            observer,
+            timeSource = test.testScheduler.timeSource,
+            duplicates = duplicates,
+        )
 
     private var added = 0
 

@@ -135,6 +135,12 @@ class StepRunner(
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, planned)
                 is StepResult.Ok -> planned.value
             }
+        duplicates.afterProbe(download, probe, Path(plan.folder, plan.fileName))?.let { found ->
+            val reason =
+                found.existing?.let { "already in the list as download ${it.value}" }
+                    ?: "already on disk: ${Path(plan.folder, plan.fileName)}"
+            return prepareFailed(download, Step.PROBE, StepResult.Failed(null, reason))
+        }
         if (plan.folder != folder) {
             val prepared = fileSystem.prepareFolder(plan.folder)
             if (prepared is FileResult.Failed) return prepareFailed(download, Step.PROBE, prepared.toStepFailed())
@@ -260,15 +266,13 @@ class StepRunner(
         return RunOutcome.Finished(finished, outputs)
     }
 
-    /** The duplicate check comes first, before anything is written to the disk. */
+    /** The save folder is checked and made before the probe, so a read-only disk fails early. */
     private suspend fun preflight(
         download: Download,
         mirror: Mirror,
     ): StepResult<Path> {
         val folder = download.saveFolder?.let(::Path) ?: defaultFolder
         if (!folder.isAbsolute) return StepResult.Failed(null, "the save folder must be a full path: $folder")
-        val duplicate = duplicates.duplicateOf(download, mirror)
-        if (duplicate != null) return StepResult.Failed(null, "already in the list as download ${duplicate.value}")
         val prepared = fileSystem.prepareFolder(folder)
         if (prepared is FileResult.Failed) return prepared.toStepFailed()
         if (download.size != null) {

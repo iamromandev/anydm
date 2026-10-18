@@ -35,6 +35,8 @@ data class NewDownload(
     val context: RequestContext? = null,
     /** What the finished file must hash to (HTTP-14). */
     val checksum: Checksum? = null,
+    /** Skip the duplicate checks for this one (FIL-06). */
+    val allowDuplicate: Boolean = false,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

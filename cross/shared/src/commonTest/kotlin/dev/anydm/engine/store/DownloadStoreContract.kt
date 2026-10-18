@@ -639,4 +639,30 @@ abstract class DownloadStoreContract : StoreTestBase() {
                 store.mirrors(added.id).map { it.url } shouldBe new.mirrors
             }
         }
+
+    @Test
+    fun allowDuplicateRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            store.add(NewDownload(DownloadKind.DIRECT)).allowDuplicate shouldBe false
+            val added = store.add(NewDownload(DownloadKind.DIRECT, allowDuplicate = true))
+            added.allowDuplicate shouldBe true
+            store.get(added.id)!!.allowDuplicate shouldBe true
+
+            store.update(added.copy(allowDuplicate = false)) shouldBe true
+
+            store.get(added.id)!!.allowDuplicate shouldBe false
+        }
+
+    @Test
+    fun allMirrorsListsTheMirrorsOfEveryDownload() =
+        runTest {
+            val store = newStore().downloads
+            val one = store.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://a/1", "https://b/1")))
+            val two = store.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://a/2")))
+            store.add(NewDownload(DownloadKind.DIRECT))
+
+            store.allMirrors().map { Triple(it.downloadId, it.url, it.position) } shouldBe
+                listOf(Triple(one.id, "https://a/1", 0), Triple(one.id, "https://b/1", 1), Triple(two.id, "https://a/2", 0))
+        }
 }

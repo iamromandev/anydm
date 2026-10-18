@@ -60,9 +60,9 @@ class StepRunnerTest {
             h.listener.moves.fold(aPendingDownload()) { d, m -> d.movedTo(m.status) } // every move legal (FND-02)
             h.journal shouldBe
                 listOf(
-                    "duplicateCheck",
                     "prepareFolder $stepRoot", // preflight (size unknown, so no space check yet)
                     "probe",
+                    "duplicateCheck", // once the probe has named and sized the file
                     "freeSpace $stepRoot",
                     "moved QUEUED", // probe, and the space its size needs
                     "moved DOWNLOADING",
@@ -383,17 +383,19 @@ class StepRunnerTest {
         }
 
     @Test
-    fun theDuplicateCheckRunsBeforeAnyDiskWrite() =
+    fun aDuplicateStopsThePrepareBeforeAnySpaceIsReserved() =
         runTest {
             val h = StepHarness()
             h.duplicate = DownloadId(7)
-            h
-                .runAll()
-                .failure
-                .shouldNotBeNull()
-                .step shouldBe Step.PREFLIGHT
-            h.journal.first() shouldBe "duplicateCheck"
-            h.journal.none { it.startsWith("prepareFolder") } shouldBe true
+            val failure =
+                h
+                    .runAll()
+                    .failure
+                    .shouldNotBeNull()
+            failure.step shouldBe Step.PROBE
+            failure.message shouldBe "already in the list as download 7"
+            h.journal.last() shouldBe "duplicateCheck"
+            h.journal.none { it.startsWith("freeSpace") || it.startsWith("preallocate") } shouldBe true
         }
 
     @Test

@@ -6,10 +6,12 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
 import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.OsProfile
@@ -87,6 +89,8 @@ class Engine(
     private val traffic: TrafficStore = store.traffic,
     /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). */
     osProfile: OsProfile = OsProfile.LINUX,
+    /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
+    duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, fileSystem),
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -139,6 +143,7 @@ class Engine(
             store.downloads,
             protocols,
             defaultFolder,
+            duplicates = duplicates,
             placement =
                 FilesPlacement(
                     NameCleaner(osProfile),
@@ -153,7 +158,18 @@ class Engine(
     internal val observer: QueueObserver = Observer()
 
     private val queue =
-        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
+        Queue(
+            CoroutineScope(scope.coroutineContext + queueJob),
+            store,
+            runner,
+            protocols,
+            fileSystem,
+            clock,
+            retryPolicy,
+            observer,
+            log,
+            duplicates = duplicates,
+        )
 
     private sealed interface Fact {
         data class Changed(

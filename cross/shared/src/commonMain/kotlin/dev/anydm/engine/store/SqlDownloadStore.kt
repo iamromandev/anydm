@@ -68,6 +68,7 @@ internal class SqlDownloadStore(
                 queued_at = queuedAt,
                 source_validator = null,
                 checksum = new.checksum?.toString(),
+                allow_duplicate = new.allowDuplicate,
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -106,6 +107,7 @@ internal class SqlDownloadStore(
                     queued_at = download.queuedAt,
                     source_validator = download.sourceValidator,
                     checksum = download.checksum?.toString(),
+                    allow_duplicate = download.allowDuplicate,
                     id = download.id,
                 ).value > 0
         }
@@ -151,6 +153,8 @@ internal class SqlDownloadStore(
             cookies = context.cookies,
         )
     }
+
+    override suspend fun allMirrors(): List<Mirror> = inTransaction { mirrorQueries.selectAll().executeAsList().map { it.toMirror() } }
 
     override suspend fun mirrors(id: DownloadId): List<Mirror> =
         inTransaction { mirrorQueries.selectByDownload(id).executeAsList().map { it.toMirror() } }
@@ -258,6 +262,7 @@ internal class SqlDownloadStore(
                 checksum?.let {
                     Checksum.parse(it) ?: throw IncompatibleStoreException("checksum holds '$it', which this version of anydm doesn't know")
                 },
+            allowDuplicate = allow_duplicate,
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)

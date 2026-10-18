@@ -291,7 +291,7 @@ abstract class EngineContract : StoreTestBase() {
             val a = h.addJob()
             runCurrent()
 
-            h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file.zip")
+            h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file-1.zip")
             h.engine.stop()
         }
 

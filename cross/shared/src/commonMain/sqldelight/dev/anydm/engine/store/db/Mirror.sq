@@ -13,6 +13,9 @@ CREATE TABLE mirror (
 insert:
 INSERT INTO mirror(download_id, url, position) VALUES (?, ?, ?);
 
+selectAll:
+SELECT * FROM mirror ORDER BY download_id, position;
+
 selectByDownload:
 SELECT * FROM mirror WHERE download_id = ? ORDER BY position;
 
