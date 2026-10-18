@@ -137,8 +137,8 @@ class FilesPlacement(
         val template = category?.template ?: return null
         val parsed = (NameTemplate.parse(template) as? TemplateParse.Ok)?.template ?: return null
         // A template with placeholders but nothing to put in them would name every file after its literal text.
-        if (parsed.hasFields && !parsed.usesAnyOf(NameFields())) return null
-        val stem = parsed.render(NameFields()).takeIf { it.isNotBlank() } ?: return null
+        if (parsed.hasFields && !parsed.usesAnyOf(probe.nameFields)) return null
+        val stem = parsed.render(probe.nameFields).takeIf { it.isNotBlank() } ?: return null
         val dot = probe.name.lastIndexOf('.')
         return if (dot > 0) stem + probe.name.substring(dot) else stem
     }

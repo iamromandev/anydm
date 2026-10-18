@@ -13,6 +13,7 @@ import dev.anydm.engine.protocol.RelinkRequest
 import dev.anydm.engine.protocol.Relinked
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
+import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewSegment
@@ -68,10 +69,10 @@ class HttpProtocol(
         probeUrl(request.mirror.url, request.context, credentials = true)
 
     /** The probe of [url]; without [credentials] the context's Authorization, Proxy-Authorization and Cookie stay home. */
-    private suspend fun probeUrl(
+    internal suspend fun probeUrl(
         url: String,
         context: RequestContext?,
-        credentials: Boolean,
+        credentials: Boolean = true,
     ): StepResult<HttpProbe> {
         val sent =
             requestHeaders(context).let { all ->
@@ -116,6 +117,20 @@ class HttpProtocol(
         context: PlanContext,
     ): StepResult<TransferPlan> {
         check(probe is HttpProbe) { "HttpProtocol can't plan a ${probe::class.simpleName}" }
+        val path = context.download.fileName ?: probe.name
+        return StepResult.Ok(TransferPlan(listOf(planFile(probe, 0, path, context.stored.firstOrNull { it.file.index == 0 }))))
+    }
+
+    /**
+     * The plan of one file fetched from [probe]: its blocks, or the blocks a [stored] run of the same size already
+     * has, so a resume continues from their watermarks. A protocol that fetches several files plans each with this.
+     */
+    internal fun planFile(
+        probe: HttpProbe,
+        index: Int,
+        path: String,
+        stored: TransferFile?,
+    ): PlannedFile {
         val size = probe.size
         val segments =
             when {
@@ -124,15 +139,14 @@ class HttpProtocol(
                 }
 
                 else -> {
-                    context.stored
-                        .firstOrNull { it.file.index == 0 && it.file.size == size && it.segments.isNotEmpty() }
+                    stored
+                        ?.takeIf { it.file.size == size && it.segments.isNotEmpty() }
                         ?.segments
                         ?.map { NewSegment(it.start, it.end) }
                         ?: planBlocks(size, connections().coerceIn(1, 16))
                 }
             }
-        val path = context.download.fileName ?: probe.name
-        return StepResult.Ok(TransferPlan(listOf(PlannedFile(index = 0, path = path, size = size, segments = segments))))
+        return PlannedFile(index = index, path = path, size = size, segments = segments)
     }
 
     override suspend fun transfer(
@@ -141,18 +155,31 @@ class HttpProtocol(
     ): StepResult<Unit> {
         val probe = transfer.probe
         check(probe is HttpProbe) { "HttpProtocol can't transfer a ${probe::class.simpleName}" }
-        val file = transfer.files.single()
-        val run = RangeTransfer(auth, sourceOf(probe.finalUrl, transfer.mirror, probe.context), io, slots, timeSource, clock = clock)
-        if (file.segments.isEmpty() || !isStrongEtag(probe.validator) || transfer.mirrors.isEmpty()) return run.run(file)
+        return transferFile(probe, transfer.files.single(), transfer.mirror, transfer.mirrors, io)
+    }
+
+    /**
+     * Fetches [file] from [probe]'s address through [io]; [others] join as their probes match (HTTP-12). The credentials
+     * of [mirror]'s context go only to its own origin.
+     */
+    internal suspend fun transferFile(
+        probe: HttpProbe,
+        file: TransferFile,
+        mirror: Mirror,
+        others: List<Mirror>,
+        io: TransferIo,
+    ): StepResult<Unit> {
+        val run = RangeTransfer(auth, sourceOf(probe.finalUrl, mirror, probe.context), io, slots, timeSource, clock = clock)
+        if (file.segments.isEmpty() || !isStrongEtag(probe.validator) || others.isEmpty()) return run.run(file)
         // Other mirrors join as their probes match; the run never waits for them (HTTP-12).
         return coroutineScope {
             val probes =
-                transfer.mirrors.map { mirror ->
+                others.map { other ->
                     launch {
-                        val credentials = originOf(mirror.url) == originOf(transfer.mirror.url)
-                        val other = (probeUrl(mirror.url, probe.context, credentials) as? StepResult.Ok)?.value ?: return@launch
-                        if (other.rangesSupported && other.size == probe.size && other.validator == probe.validator) {
-                            run.addSource(sourceOf(other.finalUrl, transfer.mirror, probe.context))
+                        val credentials = originOf(other.url) == originOf(mirror.url)
+                        val otherProbe = (probeUrl(other.url, probe.context, credentials) as? StepResult.Ok)?.value ?: return@launch
+                        if (otherProbe.rangesSupported && otherProbe.size == probe.size && otherProbe.validator == probe.validator) {
+                            run.addSource(sourceOf(otherProbe.finalUrl, mirror, probe.context))
                         }
                     }
                 }

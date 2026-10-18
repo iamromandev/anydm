@@ -3,6 +3,7 @@ package dev.anydm.engine.store
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
@@ -30,6 +31,16 @@ interface PlanStore {
 
     suspend fun files(id: DownloadId): List<File>
 
+    /** Adds a file after the others, selected, with the next free index: an output no plan listed (a merge's result). */
+    suspend fun addFile(
+        id: DownloadId,
+        path: String,
+        size: Long?,
+    ): File
+
+    /** Removes the file with its segments; one that isn't there is left alone. */
+    suspend fun removeFile(id: FileId)
+
     /** Records where the file's output was placed ([File.placedPath]); a file that isn't there is left alone. */
     suspend fun setPlacedPath(
         id: FileId,
@@ -38,6 +49,9 @@ interface PlanStore {
 
     /** What the download's requests carry besides the URL (HTTP-10), or null. */
     suspend fun context(id: DownloadId): RequestContext?
+
+    /** What the user wants from a media page (MED-09), or null. */
+    suspend fun format(id: DownloadId): Format?
 
     /**
      * Replaces the file's segments, each written up to its start. Returns them by start. Throws if the file doesn't

@@ -9,6 +9,7 @@ import dev.anydm.engine.core.DownloadStatus.SEEDING
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.FileWriter
+import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.Limiter
 import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.PlanContext
@@ -117,7 +118,7 @@ class StepRunner(
                 is StepResult.Ok -> checked.value
             }
         val probe =
-            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id)))) {
+            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id), store.format(download.id)))) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }
@@ -268,8 +269,39 @@ class StepRunner(
             ).moveTo(if (finalized.seeding) SEEDING else COMPLETED)
         listener.moved(finished)
         // The job is finished whatever happens from here, so a pause or cancel must not interrupt its hook.
-        withContext(NonCancellable) { finish.finished(finished, outputs) }
+        withContext(NonCancellable) {
+            recordOutputs(finished, folder, finalized, outputs)
+            finish.finished(finished, outputs)
+        }
         return RunOutcome.Finished(finished, outputs)
+    }
+
+    /**
+     * A finished job's outputs that no plan listed (a merge's result) get a file row, so removing the job finds them; the
+     * planned files the merge used up are deleted with their rows. It waits for COMPLETED: a run that stops earlier
+     * finds the plan's rows as it left them and resumes without downloading anything again.
+     */
+    private suspend fun recordOutputs(
+        download: Download,
+        folder: Path,
+        finalized: FinalizeResult,
+        landed: List<Path>,
+    ) {
+        val rows = store.files(download.id)
+        val known = rows.map { it.path }.toSet()
+        for ((planned, at) in finalized.outputs.zip(landed)) {
+            if (planned in known) continue
+            val relative = relativeTo(folder, at)
+            val row = store.addFile(download.id, relative, (fileSystem.size(at) as? FileResult.Ok)?.value)
+            store.setPlacedPath(row.id, relative)
+        }
+        for (path in finalized.consumed) {
+            val row = rows.firstOrNull { it.path == path } ?: continue
+            val target = targetPath(folder, path)
+            // Only the partial is the job's own: a file at the stream's final name is somebody else's.
+            fileSystem.delete(partialPath(target, download.id))
+            store.removeFile(row.id)
+        }
     }
 
     /** The save folder is checked and made before the probe, so a read-only disk fails early. */

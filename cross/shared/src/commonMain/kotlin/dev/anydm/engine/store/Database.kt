@@ -3,15 +3,19 @@ package dev.anydm.engine.store
 import app.cash.sqldelight.ColumnAdapter
 import app.cash.sqldelight.db.SqlDriver
 import dev.anydm.engine.core.AttemptId
+import dev.anydm.engine.core.AudioFormat
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.CollectionKind
+import dev.anydm.engine.core.Container
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.store.db.AnydmDb
 import kotlin.enums.EnumEntries
@@ -19,7 +23,9 @@ import kotlin.time.Instant
 import dev.anydm.engine.store.db.Attempt as AttemptRow
 import dev.anydm.engine.store.db.Category as CategoryRow
 import dev.anydm.engine.store.db.Download as DownloadRow
+import dev.anydm.engine.store.db.Extraction as ExtractionRow
 import dev.anydm.engine.store.db.File_ as FileRow
+import dev.anydm.engine.store.db.Format as FormatRow
 import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
@@ -64,6 +70,17 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
             HistoryRow.Adapter(
                 download_idAdapter = downloadId,
                 finished_atAdapter = InstantAdapter,
+            ),
+        extractionAdapter = ExtractionRow.Adapter(download_idAdapter = downloadId, extracted_atAdapter = InstantAdapter),
+        formatAdapter =
+            FormatRow.Adapter(
+                download_idAdapter = downloadId,
+                presetAdapter = EnumNameAdapter("format.preset", QualityPreset.entries),
+                heightAdapter = IntAdapter("format.height"),
+                fpsAdapter = IntAdapter("format.fps"),
+                hdrAdapter = EnumNameAdapter("format.hdr", HdrChoice.entries),
+                audio_onlyAdapter = EnumNameAdapter("format.audio_only", AudioFormat.entries),
+                containerAdapter = EnumNameAdapter("format.container", Container.entries),
             ),
         toolAdapter = ToolRow.Adapter(checked_atAdapter = InstantAdapter),
         file_Adapter =

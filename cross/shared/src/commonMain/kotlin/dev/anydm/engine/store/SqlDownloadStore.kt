@@ -7,6 +7,7 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RequestContext
@@ -30,6 +31,7 @@ internal class SqlDownloadStore(
     private val downloadQueries = database.downloadQueries
     private val mirrorQueries = database.mirrorQueries
     private val contextQueries = database.requestContextQueries
+    private val formatQueries = database.formatQueries
     private val fileQueries = database.fileQueries
     private val segmentQueries = database.segmentQueries
     private val attemptQueries = database.attemptQueries
@@ -75,6 +77,7 @@ internal class SqlDownloadStore(
                 mirrorQueries.insert(download_id = download.id, url = url, position = position)
             }
             new.context?.let { putContext(download.id, it) }
+            new.format?.let { putFormat(download.id, it) }
             download
         }
 
@@ -131,6 +134,39 @@ internal class SqlDownloadStore(
             }
         }
 
+    override suspend fun format(id: DownloadId): Format? =
+        inTransaction {
+            formatQueries.selectByDownload(id).executeAsOneOrNull()?.let { row ->
+                Format(
+                    preset = row.preset,
+                    height = row.height,
+                    fps = row.fps,
+                    hdr = row.hdr,
+                    videoCodec = row.video_codec,
+                    audioCodec = row.audio_codec,
+                    audioOnly = row.audio_only,
+                    container = row.container,
+                )
+            }
+        }
+
+    private fun putFormat(
+        id: DownloadId,
+        format: Format,
+    ) {
+        formatQueries.put(
+            download_id = id,
+            preset = format.preset,
+            height = format.height,
+            fps = format.fps,
+            hdr = format.hdr,
+            video_codec = format.videoCodec,
+            audio_codec = format.audioCodec,
+            audio_only = format.audioOnly,
+            container = format.container,
+        )
+    }
+
     override suspend fun setContext(
         id: DownloadId,
         context: RequestContext?,
@@ -186,6 +222,26 @@ internal class SqlDownloadStore(
 
     override suspend fun files(id: DownloadId): List<File> =
         inTransaction { fileQueries.selectByDownload(id).executeAsList().map { it.toFile() } }
+
+    override suspend fun addFile(
+        id: DownloadId,
+        path: String,
+        size: Long?,
+    ): File =
+        writing {
+            check(downloadQueries.selectById(id).executeAsOneOrNull() != null) { "download ${id.value} does not exist" }
+            val index = fileQueries.nextIndex(id).executeAsOne().toInt()
+            fileQueries.insert(download_id = id, file_index = index, path = path, size = size, selected = true)
+            fileQueries
+                .selectByDownload(id)
+                .executeAsList()
+                .first { it.file_index == index }
+                .toFile()
+        }
+
+    override suspend fun removeFile(id: FileId) {
+        writing { fileQueries.deleteById(id) }
+    }
 
     override suspend fun setPlacedPath(
         id: FileId,

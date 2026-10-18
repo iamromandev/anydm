@@ -6,6 +6,7 @@ import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.CollectionKind
+import dev.anydm.engine.core.Container
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -13,10 +14,13 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
@@ -285,6 +289,88 @@ abstract class DownloadStoreContract : StoreTestBase() {
 
             store.context(added.id) shouldBe null
             driver.count("request_context") shouldBe 0L
+        }
+
+    @Test
+    fun addFileTakesTheNextIndexAndSelectsIt() =
+        runTest {
+            val store = newStore().downloads
+            val id = store.add(NewDownload(DownloadKind.DIRECT)).id
+            store.replaceFiles(id, listOf(NewFile(0, "a.bin", 10), NewFile(3, "b.bin", 20)))
+
+            val added = store.addFile(id, "c.bin", 30)
+
+            added.index shouldBe 4
+            added.path shouldBe "c.bin"
+            added.size shouldBe 30L
+            added.selected shouldBe true
+            store.files(id).map { it.path } shouldBe listOf("a.bin", "b.bin", "c.bin")
+        }
+
+    @Test
+    fun addFileToAMissingDownloadThrows() =
+        runTest {
+            val store = newStore().downloads
+
+            shouldThrow<IllegalStateException> { store.addFile(DownloadId(999), "x.bin", null) }
+        }
+
+    @Test
+    fun removeFileDropsTheFileAndItsSegments() =
+        runTest {
+            val store = newStore().downloads
+            val id = store.add(NewDownload(DownloadKind.DIRECT)).id
+            val (first, second) = store.replaceFiles(id, listOf(NewFile(0, "a.bin", 10), NewFile(1, "b.bin", 10)))
+            store.replaceSegments(first.id, listOf(NewSegment(0, 10)))
+            store.replaceSegments(second.id, listOf(NewSegment(0, 10)))
+
+            store.removeFile(first.id)
+            store.removeFile(FileId(999))
+
+            store.files(id).map { it.path } shouldBe listOf("b.bin")
+            store.segments(first.id) shouldBe emptyList()
+            store.segments(second.id).size shouldBe 1
+        }
+
+    @Test
+    fun aFormatSurvivesTheStore() =
+        runTest {
+            val store = newStore().downloads
+            val format =
+                Format(
+                    QualityPreset.SMALL,
+                    height = 480,
+                    fps = 30,
+                    hdr = HdrChoice.NO,
+                    videoCodec = "avc1",
+                    audioCodec = "mp4a",
+                    container = Container.MKV,
+                )
+
+            val added = store.add(NewDownload(DownloadKind.SITE, format = format))
+
+            store.format(added.id) shouldBe format
+        }
+
+    @Test
+    fun noFormatReadsAsNull() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.SITE))
+
+            store.format(added.id) shouldBe null
+        }
+
+    @Test
+    fun removingADownloadDropsItsFormat() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.SITE, format = Format()))
+
+            store.remove(added.id)
+
+            store.format(added.id) shouldBe null
+            driver.count("format") shouldBe 0L
         }
 
     @Test
