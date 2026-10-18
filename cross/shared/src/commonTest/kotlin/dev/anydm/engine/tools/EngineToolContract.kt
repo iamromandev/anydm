@@ -1,6 +1,8 @@
 package dev.anydm.engine.tools
 
+import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineHarness
+import dev.anydm.engine.EngineState
 import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -25,6 +27,7 @@ import dev.anydm.engine.protocol.fakeContent
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -51,10 +54,32 @@ abstract class EngineToolContract : StoreTestBase() {
     }
 
     /** The tool "unpacks" ffmpeg and ffprobe when its job finalizes, and the SITE jobs stop failing at the same moment. */
-    private fun TestScope.rig(withManager: Boolean = true): Rig {
+    private suspend fun TestScope.rig(
+        withManager: Boolean = true,
+        preInstalled: Boolean = false,
+        withEntry: Boolean = true,
+        failOnce: Boolean = false,
+        releases: ReleaseSource = ReleaseSource { _, _ -> null },
+    ): Rig {
         val store = newStore()
         val fs = FakeFileSystem()
-        val site = FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TOOL_MISSING, "ffmpeg")))
+        val siteInner =
+            FakeProtocol(failure = if (preInstalled) null else FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TOOL_MISSING, "ffmpeg")))
+        // With failOnce the job's first probe finds the tool missing even though it is installed, as in a race.
+        var failures = if (failOnce) 1 else 0
+        val site: FakeProtocol = siteInner
+        val siteProtocol =
+            object : Protocol by siteInner {
+                override suspend fun probe(
+                    request: dev.anydm.engine.protocol.ProbeRequest,
+                ): StepResult<dev.anydm.engine.protocol.ProbeResult> {
+                    if (failures > 0) {
+                        failures--
+                        return StepResult.Failed(ErrorClass.TOOL_MISSING, "ffmpeg")
+                    }
+                    return siteInner.probe(request)
+                }
+            }
         val toolInner = FakeProtocol(files = listOf(FakeFile("ffmpeg-8.1.3.tar.xz", size)))
         val toolProtocol =
             object : Protocol by toolInner {
@@ -68,10 +93,14 @@ abstract class EngineToolContract : StoreTestBase() {
         val clock = virtualClock()
         val catalog =
             ToolCatalog(
-                mapOf(
-                    (Tool.FFMPEG to linux) to
-                        CatalogEntry("8.1.3", listOf(Artifact("https://example.com/ffmpeg-8.1.3.tar.xz", sum, ArchiveKind.TAR_XZ))),
-                ),
+                if (withEntry) {
+                    mapOf(
+                        (Tool.FFMPEG to linux) to
+                            CatalogEntry("8.1.3", listOf(Artifact("https://example.com/ffmpeg-8.1.3.tar.xz", sum, ArchiveKind.TAR_XZ))),
+                    )
+                } else {
+                    emptyMap()
+                },
                 mapOf(Tool.FFMPEG to ToolVersion.parse("6.0")!!),
             )
         val manager =
@@ -81,22 +110,32 @@ abstract class EngineToolContract : StoreTestBase() {
                 FakeProcessRunner(emptyList()),
                 fs,
                 finder = { null },
-                releases = { _, _ -> null },
+                releases = releases,
                 dirs = AppDirs(Path("/app/data"), Path("/app/logs"), Path("/app/cache")),
                 platform = linux,
                 settings = { store.settings.load() },
                 clock = clock,
-                jobStatus = { store.downloads.get(it)?.status },
+                toolJobs = { store.downloads.list().filter { it.kind == DownloadKind.TOOL } },
             )
         val h =
             EngineHarness(
                 this,
                 store,
-                protocols = mapOf(DownloadKind.SITE to site, DownloadKind.TOOL to toolProtocol, DownloadKind.DIRECT to site),
+                protocols =
+                    mapOf(
+                        DownloadKind.SITE to siteProtocol,
+                        DownloadKind.TOOL to toolProtocol,
+                        DownloadKind.DIRECT to siteProtocol,
+                    ),
                 fs = fs,
                 clock = clock,
                 tools = if (withManager) manager else null,
             )
+        if (preInstalled) {
+            fs.put(Path(folder, "bin", "ffmpeg"), byteArrayOf(1))
+            fs.put(Path(folder, "bin", "ffprobe"), byteArrayOf(1))
+            store.tools.put(ToolRecord(Tool.FFMPEG, "8.1.3", folder.toString(), null))
+        }
         return Rig(h, site, toolInner)
     }
 
@@ -185,6 +224,110 @@ abstract class EngineToolContract : StoreTestBase() {
 
                 r.toolJobs() shouldBe emptyList()
                 r.h.status(a) shouldBe PAUSED
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aJobThatPausesJustAfterTheToolWasInstalledIsStillReleased() =
+        runTest {
+            val r = rig(preInstalled = true, failOnce = true)
+            r.h.engine.start()
+            try {
+                val a = r.addSite("a")
+                settleEngine()
+
+                r.toolJobs() shouldBe emptyList()
+                r.h.status(a) shouldBe COMPLETED
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aJobPausedForToolsBeforeARestartIsReleasedAtStart() =
+        runTest {
+            val r = rig(preInstalled = true)
+            val stored =
+                r.h.store.downloads.add(
+                    NewDownload(DownloadKind.SITE, mirrors = listOf("https://example.com/a"), saveFolder = "/dl", fileName = "a.mp4"),
+                )
+            r.h.store.downloads
+                .update(stored.copy(status = PAUSED, pauseReasons = setOf(PauseReason.TOOLS)))
+            r.h.engine.start()
+            try {
+                settleEngine()
+
+                r.h.status(stored.id) shouldBe COMPLETED
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aToolJobCompletedBeforeARestartIsRecordedAtStart() =
+        runTest {
+            val r = rig(preInstalled = false)
+            r.h.fs.put(Path(folder, "bin", "ffmpeg"), byteArrayOf(1))
+            r.h.fs.put(Path(folder, "bin", "ffprobe"), byteArrayOf(1))
+            val stored =
+                r.h.store.downloads.add(
+                    NewDownload(
+                        DownloadKind.TOOL,
+                        mirrors = listOf("https://example.com/x"),
+                        saveFolder = folder.toString(),
+                        fileName = "x.tar.xz",
+                    ),
+                )
+            r.h.store.downloads
+                .update(stored.copy(status = COMPLETED))
+            r.h.engine.start()
+            try {
+                settleEngine()
+
+                r.h.store.tools
+                    .get(Tool.FFMPEG)!!
+                    .version shouldBe "8.1.3"
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aToolThatCannotBeFetchedIsReportedAndTheJobStaysPaused() =
+        runTest {
+            val r = rig(withEntry = false)
+            val events = mutableListOf<EngineEvent>()
+            backgroundScope.launch {
+                r.h.engine.events
+                    .collect { events += it }
+            }
+            runCurrent() // the collector is subscribed before anything is emitted
+            r.h.engine.start()
+            try {
+                val a = r.addSite("a")
+                settleEngine()
+
+                events.filterIsInstance<EngineEvent.ToolUnavailable>() shouldBe listOf(EngineEvent.ToolUnavailable(a, "ffmpeg"))
+                r.h.status(a) shouldBe PAUSED
+                r.toolJobs() shouldBe emptyList()
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aFailureInTheToolManagerDoesNotFailTheEngine() =
+        runTest {
+            val r = rig(releases = ReleaseSource { _, _ -> error("boom") })
+            r.site.failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TOOL_MISSING, "yt-dlp"))
+            r.h.engine.start()
+            try {
+                r.addSite("a")
+                settleEngine()
+
+                r.h.engine.state.value shouldBe EngineState.Running
             } finally {
                 r.h.engine.stop()
             }

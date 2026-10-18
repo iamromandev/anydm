@@ -119,4 +119,29 @@ class GithubReleasesTest {
         runTest {
             GithubReleases(FakeTransport(stableTag(tag = "nightly"))).latest(YtDlpChannel.STABLE, linux) shouldBe null
         }
+
+    @Test
+    fun aConnectionBrokenWhileReadingTheSumsHasNoRelease() =
+        runTest {
+            val broken =
+                object : dev.anydm.engine.http.HttpBody {
+                    override suspend fun read(
+                        into: ByteArray,
+                        offset: Int,
+                        length: Int,
+                    ): Int = throw HttpIoException(HttpIoKind.RESET, "github.com")
+
+                    override fun close() = Unit
+                }
+            val transport =
+                FakeTransport { request ->
+                    if (request.url.endsWith("/releases/latest")) {
+                        response(200, finalUrl = "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.01")
+                    } else {
+                        response(200, finalUrl = request.url, body = broken)
+                    }
+                }
+
+            GithubReleases(transport).latest(YtDlpChannel.STABLE, linux) shouldBe null
+        }
 }

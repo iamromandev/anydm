@@ -56,4 +56,22 @@ class ToolVersionTest {
         ToolVersion.fromOutput(Tool.DENO, "command not found") shouldBe null
         ToolVersion.fromOutput(Tool.YT_DLP, "") shouldBe null
     }
+
+    @Test
+    fun readsTheBannersOfTheBuildsWePin() {
+        ToolVersion.fromOutput(
+            Tool.FFMPEG,
+            "ffmpeg version n8.1.3-9-g29e619e767-20260930 Copyright (c) 2000-2026 the FFmpeg developers",
+        ) shouldBe
+            v("8.1.3")
+        ToolVersion.fromOutput(Tool.FFMPEG, "ffprobe version n7.1 Copyright (c) 2007-2024 the FFmpeg developers") shouldBe v("7.1")
+        ToolVersion.fromOutput(Tool.FFMPEG, "ffmpeg version N-127032-g6ae491a26c Copyright") shouldBe null
+    }
+
+    @Test
+    fun ffmpegIsAskedForItsVersionWithASingleDash() {
+        Tool.FFMPEG.versionArgument shouldBe "-version"
+        Tool.YT_DLP.versionArgument shouldBe "--version"
+        Tool.DENO.versionArgument shouldBe "--version"
+    }
 }

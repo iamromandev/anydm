@@ -28,7 +28,7 @@ class DesktopPathFinderTest {
         run: Boolean = true,
     ) = Files.writeString(folder.resolve(name), "#!/bin/sh\n").also { it.toFile().setExecutable(run) }
 
-    private fun finder(vararg folders: Any) = DesktopPathFinder { folders.joinToString(File.pathSeparator) }
+    private fun finder(vararg folders: Any) = DesktopPathFinder(extraFolders = emptyList()) { folders.joinToString(File.pathSeparator) }
 
     @Test
     fun findsAnExecutableInAFolderOfThePath() {
@@ -61,9 +61,26 @@ class DesktopPathFinderTest {
 
     @Test
     fun missingOrEmptyPathFindsNothing() {
-        DesktopPathFinder { null }.find("mytool") shouldBe null
+        DesktopPathFinder(extraFolders = emptyList()) { null }.find("mytool") shouldBe null
         finder("", "  ").find("mytool") shouldBe null
         executable(dir, "mytool")
         finder("\u0000bad", dir).find("mytool") shouldBe Path(dir.resolve("mytool").toString())
+    }
+
+    @Test
+    fun extraFoldersAreSearchedAfterThePath() {
+        executable(other, "mytool")
+
+        DesktopPathFinder(extraFolders = listOf(other.toString())) { dir.toString() }.find("mytool") shouldBe
+            Path(other.resolve("mytool").toString())
+        executable(dir, "mytool")
+        DesktopPathFinder(extraFolders = listOf(other.toString())) { dir.toString() }.find("mytool") shouldBe
+            Path(dir.resolve("mytool").toString())
+    }
+
+    @Test
+    fun theDefaultExtraFoldersOnAMacAreTheOnesHomebrewUses() {
+        DesktopPathFinder.extraFoldersFor("Mac OS X") shouldBe listOf("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin")
+        DesktopPathFinder.extraFoldersFor("Linux") shouldBe emptyList()
     }
 }

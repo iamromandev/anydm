@@ -61,7 +61,7 @@ class ToolManagerTest {
         var onPath = installed
         val latest = mutableListOf<Release?>()
         var release: Release? = null
-        val statuses = mutableMapOf<DownloadId, DownloadStatus>()
+        val jobs = mutableListOf<Download>()
         val added = mutableListOf<NewDownload>()
         var failAdd = false
         private var nextId = 0L
@@ -79,8 +79,15 @@ class ToolManagerTest {
                 platform = platform,
                 settings = { settings },
                 clock = clock,
-                jobStatus = { statuses[it] },
+                toolJobs = { jobs.toList() },
             )
+
+        fun setStatus(
+            id: DownloadId,
+            status: DownloadStatus,
+        ) {
+            jobs.replaceAll { if (it.id == id) it.copy(status = status) else it }
+        }
 
         val add: suspend (NewDownload) -> CommandResult = { new ->
             delay(1.milliseconds)
@@ -88,9 +95,9 @@ class ToolManagerTest {
                 CommandResult.Invalid("no")
             } else {
                 added += new
-                val id = DownloadId(++nextId)
-                statuses[id] = DownloadStatus.DOWNLOADING
-                CommandResult.Done(Download(id, DownloadKind.TOOL))
+                val job = Download(DownloadId(++nextId), DownloadKind.TOOL, DownloadStatus.DOWNLOADING, saveFolder = new.saveFolder)
+                jobs += job
+                CommandResult.Done(job)
             }
         }
     }
@@ -103,7 +110,8 @@ class ToolManagerTest {
     private fun version(
         exe: String,
         text: String,
-    ) = Scripted(listOf(exe, "--version"), stdout = listOf(text))
+        flag: String = "--version",
+    ) = Scripted(listOf(exe, flag), stdout = listOf(text))
 
     private fun Rig.install(
         tool: Tool,
@@ -146,7 +154,12 @@ class ToolManagerTest {
     @Test
     fun aSystemToolMustHaveAllItsExecutables() =
         runTest {
-            val r = rig(listOf(version("/usr/bin/ffmpeg", "ffmpeg version 7.0.2")), installed = mapOf("ffmpeg" to "/usr/bin/ffmpeg"))
+            val r =
+                rig(
+                    listOf(version("/usr/bin/ffmpeg", "ffmpeg version 7.0.2", "-version")),
+                    installed =
+                        mapOf("ffmpeg" to "/usr/bin/ffmpeg"),
+                )
 
             r.manager.resolve(Tool.FFMPEG) shouldBe null
         }
@@ -245,7 +258,7 @@ class ToolManagerTest {
         runTest {
             val r = rig()
             r.manager.ensure(Tool.FFMPEG, r.add)
-            r.statuses[DownloadId(1)] = DownloadStatus.FAILED
+            r.setStatus(DownloadId(1), DownloadStatus.FAILED)
 
             r.manager.ensure(Tool.FFMPEG, r.add) shouldBe true
 
@@ -257,7 +270,7 @@ class ToolManagerTest {
         runTest {
             val r = rig()
             r.manager.ensure(Tool.FFMPEG, r.add)
-            r.statuses[DownloadId(1)] = DownloadStatus.CANCELLED
+            r.setStatus(DownloadId(1), DownloadStatus.CANCELLED)
 
             r.manager.ensure(Tool.FFMPEG, r.add)
 
@@ -341,6 +354,7 @@ class ToolManagerTest {
         runTest {
             val r = rig()
             r.manager.ensure(Tool.DENO, r.add)
+            r.setStatus(DownloadId(1), DownloadStatus.COMPLETED)
             r.install(Tool.DENO, "2.9.7", "deno")
             r.manager.installed(toolJob(Tool.DENO, "2.9.7"), emptyList())
             r.store.put(ToolRecord(Tool.DENO, "2.9.7", "x", null))
@@ -488,5 +502,85 @@ class ToolManagerTest {
             r.manager.refreshIfStale(Tool.YT_DLP, r.add)
 
             r.added shouldBe emptyList()
+        }
+
+    @Test
+    fun aSystemFfmpegIsTestedWithItsOwnFlagAndReadWithTheNPrefix() =
+        runTest {
+            val r =
+                rig(
+                    listOf(
+                        version("/usr/bin/ffmpeg", "ffmpeg version n7.1 Copyright (c) 2000-2024", "-version"),
+                        version("/usr/bin/ffprobe", "ffprobe version n7.1 Copyright (c) 2007-2024", "-version"),
+                    ),
+                    installed = mapOf("ffmpeg" to "/usr/bin/ffmpeg", "ffprobe" to "/usr/bin/ffprobe"),
+                )
+
+            r.manager.resolve(Tool.FFMPEG)!!.version shouldBe ToolVersion.parse("7.1")
+        }
+
+    private fun foreign(
+        tool: Tool,
+        status: DownloadStatus,
+        id: Long = 9,
+    ) = Download(DownloadId(id), DownloadKind.TOOL, status, saveFolder = "/app/cache/tools/${tool.id}/8.1.3")
+
+    @Test
+    fun aToolJobFromBeforeARestartIsNotDuplicated() =
+        runTest {
+            val r = rig()
+            r.jobs += foreign(Tool.FFMPEG, DownloadStatus.DOWNLOADING)
+
+            r.manager.ensure(Tool.FFMPEG, r.add) shouldBe true
+
+            r.added shouldBe emptyList()
+        }
+
+    @Test
+    fun aCompletedJobNotYetInstalledStillCounts() =
+        runTest {
+            val r = rig()
+            r.jobs += foreign(Tool.FFMPEG, DownloadStatus.COMPLETED)
+
+            r.manager.ensure(Tool.FFMPEG, r.add) shouldBe true
+
+            r.added shouldBe emptyList()
+        }
+
+    @Test
+    fun aCompletedJobThatInstalledNothingIsFetchedAgain() =
+        runTest {
+            val r = rig()
+            val job = foreign(Tool.FFMPEG, DownloadStatus.COMPLETED)
+            r.jobs += job
+            r.install(Tool.FFMPEG, "8.1.3", "bin/ffmpeg") // ffprobe never came
+
+            r.manager.installed(job, emptyList()) shouldBe false
+            r.manager.ensure(Tool.FFMPEG, r.add) shouldBe true
+
+            r.added.size shouldBe 1
+        }
+
+    @Test
+    fun aJobOfAnotherToolDoesNotCount() =
+        runTest {
+            val r = rig()
+            r.jobs += foreign(Tool.DENO, DownloadStatus.DOWNLOADING)
+
+            r.manager.ensure(Tool.FFMPEG, r.add) shouldBe true
+
+            r.added.size shouldBe 1
+        }
+
+    @Test
+    fun reinstallingTheCurrentVersionKeepsThePreviousOne() =
+        runTest {
+            val r = rig()
+            for (v in listOf("1.0.0", "2.0.0", "2.0.0")) {
+                r.install(Tool.DENO, v, "deno")
+                r.manager.installed(toolJob(Tool.DENO, v), emptyList())
+            }
+
+            r.fs.exists(Path(toolsRoot, "deno", "1.0.0", "deno")) shouldBe true
         }
 }

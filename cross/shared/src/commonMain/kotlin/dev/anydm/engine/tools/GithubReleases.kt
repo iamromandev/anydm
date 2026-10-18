@@ -65,6 +65,8 @@ class GithubReleases(
                 all += buffer.copyOf(n)
             }
             return all.decodeToString()
+        } catch (e: HttpIoException) {
+            return null
         } finally {
             response.body.close()
         }

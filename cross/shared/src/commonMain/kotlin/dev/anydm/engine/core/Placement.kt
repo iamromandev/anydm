@@ -42,6 +42,8 @@ interface Placement {
 /** The plain rules: the job's own folder or the default one, its own name or the probe's, and never replace a file. */
 class DirectPlacement(
     private val fileSystem: FileSystem,
+    /** Replace a file already at the target instead of failing; for files the engine owns (a tool being reinstalled). */
+    private val replace: Boolean = false,
 ) : Placement {
     override suspend fun plan(
         download: Download,
@@ -59,7 +61,7 @@ class DirectPlacement(
         partial: Path,
         target: Path,
     ): FileResult<Path> =
-        when (val moved = fileSystem.atomicMove(partial, target, replace = false)) {
+        when (val moved = fileSystem.atomicMove(partial, target, replace)) {
             is FileResult.Ok -> FileResult.Ok(target)
             is FileResult.Failed -> moved
         }

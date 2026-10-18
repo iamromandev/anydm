@@ -301,6 +301,7 @@ class Engine(
                         checkDisk()
                     }
                 }
+                recoverTools()
             }
         try {
             startup.await()
@@ -457,11 +458,49 @@ class Engine(
             }
         }
 
-    // A job paused for a missing tool starts the install; the manager adds one TOOL job however many jobs wait.
+    // A job paused for a missing tool starts the install; the manager adds one TOOL job however many jobs wait. A tool
+    // that is already there (it finished between the job's probe and this event) just lets the waiting jobs go, after a
+    // pause so a job whose own lookup disagrees with the manager can't spin. Nothing here may fail the engine.
     private fun fetchTool(event: EngineEvent.PausedForTool) {
         val manager = tools ?: return
-        val tool = Tool.byId(event.tool) ?: return
-        scope.launch { manager.ensure(tool) { queue.add(it) } }
+        val tool = Tool.byId(event.tool)
+        if (tool == null) {
+            toolUnavailable(event)
+            return
+        }
+        scope.launch {
+            try {
+                if (manager.resolve(tool) != null) {
+                    delay(TOOL_RELEASE_DELAY)
+                    queue.applyToolState()
+                } else if (!manager.ensure(tool) { queue.add(it) }) {
+                    toolUnavailable(event)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("tools") { "can't fetch ${tool.id}: ${e.message}" }
+                toolUnavailable(event)
+            }
+        }
+    }
+
+    private fun toolUnavailable(event: EngineEvent.PausedForTool) {
+        log.warn("job") { "job ${event.id.value} waits for ${event.tool}, which can't be fetched" }
+        eventFlow.tryEmit(EngineEvent.ToolUnavailable(event.id, event.tool))
+    }
+
+    // After a restart: a TOOL job that completed but whose finish never ran gets recorded, and the jobs paused for tools
+    // get another go (those that still lack theirs pause again and ask for it).
+    private suspend fun recoverTools() {
+        val manager = tools ?: return
+        for (job in store.downloads
+            .list(
+                DownloadStatus.COMPLETED,
+            ).filter { it.kind == DownloadKind.TOOL }) {
+            manager.installed(job, emptyList())
+        }
+        queue.applyToolState()
     }
 
     private fun logEvent(event: EngineEvent) {
@@ -501,6 +540,10 @@ class Engine(
 
             is EngineEvent.PausedForDisk -> {
                 log.info("job") { "job ${event.id.value} paused: disk full" }
+            }
+
+            is EngineEvent.ToolUnavailable -> {
+                Unit
             }
 
             is EngineEvent.PausedForTool -> {
@@ -682,6 +725,7 @@ class Engine(
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds
         val DISK_CHECK_EVERY = 30.seconds
+        val TOOL_RELEASE_DELAY = 2.seconds
         val DISK_WATCHED = setOf(DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING)
     }
 }

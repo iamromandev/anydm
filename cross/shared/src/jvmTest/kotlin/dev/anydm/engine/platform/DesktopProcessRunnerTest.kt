@@ -133,4 +133,61 @@ class DesktopProcessRunnerTest {
             process.shouldBeInstanceOf<RunningProcess>()
         }
     }
+
+    @Test
+    fun cancellingTheCollectorStopsTheProcess() {
+        runBlocking {
+            val process = (runner.start(sh("sleep 30 & echo \$!; wait")) as ProcessOutcome.Ok).value
+            val pidSeen = kotlinx.coroutines.CompletableDeferred<Long>()
+            val job =
+                launch(Dispatchers.Default) {
+                    process.lines.collect {
+                        if (it.stream ==
+                            ProcessStream.STDOUT
+                        ) {
+                            pidSeen.complete(it.text.trim().toLong())
+                        }
+                    }
+                }
+            val pid = withTimeout(3_000) { pidSeen.await() }
+
+            job.cancelAndJoin()
+
+            gone(pid)
+        }
+    }
+
+    @Test
+    fun cancellingAwaitStopsTheProcess() {
+        runBlocking {
+            val pidFile = folder.resolve("pid")
+            val process = (runner.start(sh("echo \$\$ > $pidFile; exec sleep 30")) as ProcessOutcome.Ok).value
+            withTimeout(3_000) { while (!Files.exists(pidFile) || Files.size(pidFile) == 0L) delay(20) }
+            val pid = Files.readString(pidFile).trim().toLong()
+            val job = launch(Dispatchers.Default, CoroutineStart.UNDISPATCHED) { process.await() } // waiting before it is cancelled
+
+            job.cancelAndJoin()
+
+            gone(pid)
+        }
+    }
+
+    @Test
+    fun takingOneLineLeavesTheProcessRunning() {
+        runBlocking {
+            val process = (runner.start(sh("sleep 30 & echo \$!; wait")) as ProcessOutcome.Ok).value
+            val pid =
+                process.lines
+                    .first { it.stream == ProcessStream.STDOUT }
+                    .text
+                    .trim()
+                    .toLong()
+
+            delay(300)
+
+            ProcessHandle.of(pid).map { it.isAlive }.orElse(false) shouldBe true
+            process.stop()
+            gone(pid)
+        }
+    }
 }

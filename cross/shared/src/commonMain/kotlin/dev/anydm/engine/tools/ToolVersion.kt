@@ -56,7 +56,7 @@ class ToolVersion private constructor(
                 }
             }
 
-        private val ffmpeg = Regex("""(?:ffmpeg|ffprobe) version (\d+(?:\.\d+)*)""")
+        private val ffmpeg = Regex("""(?:ffmpeg|ffprobe) version n?(\d+(?:\.\d+)*)""")
         private val deno = Regex("""^deno (\d+(?:\.\d+)*)""", RegexOption.MULTILINE)
     }
 }

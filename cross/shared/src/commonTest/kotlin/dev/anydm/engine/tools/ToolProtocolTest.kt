@@ -86,9 +86,9 @@ class ToolProtocolTest {
     }
 
     private val versionOut =
-        Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "--version"), stdout = listOf("ffmpeg version 8.1.3-static"))
+        Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "-version"), stdout = listOf("ffmpeg version 8.1.3-static"))
     private val probeOut =
-        Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffprobe", "--version"), stdout = listOf("ffprobe version 8.1.3-static"))
+        Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffprobe", "-version"), stdout = listOf("ffprobe version 8.1.3-static"))
 
     @Test
     fun aWrongChecksumNeverRunsAnythingFromTheArchive() =
@@ -134,7 +134,7 @@ class ToolProtocolTest {
         runTest {
             val unpacker = FakeUnpacker(listOf("ffmpeg-8.1.3/bin/ffmpeg"))
             val tarOut =
-                Scripted(listOf("/cache/tools/ffmpeg/8.1.3/ffmpeg-8.1.3/bin/ffmpeg", "--version"), stdout = listOf("ffmpeg version 8.1.3"))
+                Scripted(listOf("/cache/tools/ffmpeg/8.1.3/ffmpeg-8.1.3/bin/ffmpeg", "-version"), stdout = listOf("ffmpeg version 8.1.3"))
 
             protocol(
                 FakeProcessRunner(listOf(tarOut)),
@@ -154,8 +154,8 @@ class ToolProtocolTest {
 
             runner.started.map { it.command } shouldBe
                 listOf(
-                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "--version"),
-                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffprobe", "--version"),
+                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "-version"),
+                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffprobe", "-version"),
                 )
             unpacker.marked.map { it.toString() } shouldBe
                 listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "/cache/tools/ffmpeg/8.1.3/bin/ffprobe")
@@ -185,7 +185,7 @@ class ToolProtocolTest {
     @Test
     fun aFailingSelfTestFailsTheJobWithNoErrorClass() =
         runTest {
-            val broken = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "--version"), exitCode = 1, stderr = listOf("bad cpu"))
+            val broken = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "-version"), exitCode = 1, stderr = listOf("bad cpu"))
 
             val failed =
                 protocol(
@@ -200,7 +200,7 @@ class ToolProtocolTest {
     @Test
     fun anUnparsableVersionFailsToo() =
         runTest {
-            val odd = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "--version"), stdout = listOf("ffmpeg version N-118000-gabc"))
+            val odd = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "-version"), stdout = listOf("ffmpeg version N-118000-gabc"))
 
             protocol(
                 FakeProcessRunner(listOf(odd)),
@@ -225,7 +225,7 @@ class ToolProtocolTest {
         runTest {
             val hung =
                 Scripted(
-                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "--version"),
+                    listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg", "-version"),
                     stdout = listOf("ffmpeg version 8.1.3"),
                     delay = 120.seconds,
                 )
@@ -253,7 +253,7 @@ class ToolProtocolTest {
     @Test
     fun windowsLooksForExeFiles() =
         runTest {
-            val exe = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg.exe", "--version"), stdout = listOf("ffmpeg version 8.1.3"))
+            val exe = Scripted(listOf("/cache/tools/ffmpeg/8.1.3/bin/ffmpeg.exe", "-version"), stdout = listOf("ffmpeg version 8.1.3"))
 
             protocol(FakeProcessRunner(listOf(exe)), FakeUnpacker(listOf("bin/ffmpeg.exe")), OsFamily.WINDOWS)
                 .finalize(transfer())

@@ -119,7 +119,7 @@ class ToolProtocol(
         tool: Tool,
         executable: Path,
     ): StepResult.Failed? {
-        val ran = withTimeoutOrNull(SELF_TEST_LIMIT) { runner.run(ProcessSpec(listOf(executable.toString(), "--version"))) }
+        val ran = withTimeoutOrNull(SELF_TEST_LIMIT) { runner.run(ProcessSpec(listOf(executable.toString(), tool.versionArgument))) }
         val result =
             when (ran) {
                 null -> return fail("${executable.name} --version timed out after $SELF_TEST_LIMIT")

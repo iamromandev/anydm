@@ -15,9 +15,11 @@ data class Platform(
 enum class Tool(
     val id: String,
     val executables: List<String>,
+    /** What to pass to ask it for its version: ffmpeg knows only the single-dash form. */
+    val versionArgument: String = "--version",
 ) {
     YT_DLP("yt-dlp", listOf("yt-dlp")),
-    FFMPEG("ffmpeg", listOf("ffmpeg", "ffprobe")),
+    FFMPEG("ffmpeg", listOf("ffmpeg", "ffprobe"), versionArgument = "-version"),
     DENO("deno", listOf("deno")),
     ;
 

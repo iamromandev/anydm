@@ -63,6 +63,12 @@ sealed interface EngineEvent {
         val tool: String,
     ) : EngineEvent
 
+    /** The job waits for [tool] (its id), which can't be fetched on this platform or couldn't be started (BIN-01). */
+    data class ToolUnavailable(
+        val id: DownloadId,
+        val tool: String,
+    ) : EngineEvent
+
     /** Its partial files were thrown away and it starts from zero (#554). */
     data class StartedOver(
         val id: DownloadId,

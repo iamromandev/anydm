@@ -59,7 +59,7 @@ class ToolCatalog(
 
     companion object {
         private const val DENO = "https://github.com/denoland/deno/releases/download/v2.9.7/"
-        private const val FFMPEG = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-17-20-51/"
+        private const val FFMPEG = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/"
 
         private fun deno(
             triple: String,
@@ -71,11 +71,11 @@ class ToolCatalog(
             extension: String,
             kind: ArchiveKind,
             sha256: String,
-        ) = CatalogEntry("8.1.3", listOf(Artifact("${FFMPEG}ffmpeg-n8.1.3-18-g46d899d7a0-$platform-lgpl-8.1.$extension", sha256, kind)))
+        ) = CatalogEntry("8.1.3", listOf(Artifact("${FFMPEG}ffmpeg-n8.1.3-9-g29e619e767-$platform-lgpl-8.1.$extension", sha256, kind)))
 
         /**
          * Deno 2.9.7 from the Deno releases, sums checked against the publisher's own `.sha256sum` files; ffmpeg 8.1.3 LGPL
-         * static builds for Windows and Linux from one BtbN autobuild release (its assets don't change), sums checked
+         * static builds for Windows and Linux from a BtbN month-end autobuild (BtbN keeps daily builds for about two weeks and month-end ones for good, so these URLs last), sums checked
          * against its `checksums.sha256`. No pinned ffmpeg for macOS: there is no official build, so there a system copy
          * (Homebrew) is the only way and the engine can't install one.
          */
@@ -94,20 +94,20 @@ class ToolCatalog(
                         (Tool.DENO to Platform(OsFamily.LINUX, Arch.ARM64)) to
                             deno("aarch64-unknown-linux-gnu", "c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf"),
                         (Tool.FFMPEG to Platform(OsFamily.WINDOWS, Arch.X64)) to
-                            ffmpeg("win64", "zip", ArchiveKind.ZIP, "de63d7eab2529dfa543852c6ad49dff1ae02651bfc2f88b8b80f0e43f7f1d677"),
+                            ffmpeg("win64", "zip", ArchiveKind.ZIP, "4a7642b2264c03e8a0ce8a3825b933ee5580656f45695a086fe7e294045ffc0a"),
                         (Tool.FFMPEG to Platform(OsFamily.LINUX, Arch.X64)) to
                             ffmpeg(
                                 "linux64",
                                 "tar.xz",
                                 ArchiveKind.TAR_XZ,
-                                "8329055495d9692eaebe68874152bab62736bc5123bb1172f05911b147009d3f",
+                                "dfa863a00ca81f1bdf58a372b18cff4820f0017e55de32778de8ecd8ed92a02e",
                             ),
                         (Tool.FFMPEG to Platform(OsFamily.LINUX, Arch.ARM64)) to
                             ffmpeg(
                                 "linuxarm64",
                                 "tar.xz",
                                 ArchiveKind.TAR_XZ,
-                                "e2400cfa283d07bfcfea318c6f001895754be58ba83abaffbc516e2d948d72cc",
+                                "8463881ca7a25015ca6e00f5c91dd2f1637eb73d33c8230413cb74db760a86b3",
                             ),
                     ),
                 minimums =

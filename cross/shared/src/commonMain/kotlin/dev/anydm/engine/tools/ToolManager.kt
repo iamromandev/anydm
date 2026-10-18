@@ -55,12 +55,15 @@ class ToolManager(
     private val platform: Platform,
     private val settings: suspend () -> Settings,
     private val clock: Clock,
-    /** The state of a job, so a fetch that failed or was cancelled isn't waited for. */
-    private val jobStatus: suspend (DownloadId) -> DownloadStatus?,
+    /** Every TOOL job the engine holds, so a fetch already running (even from before a restart) isn't started twice. */
+    private val toolJobs: suspend () -> List<Download>,
 ) {
     private val root = Path(dirs.cache, "tools")
     private val lock = Mutex()
-    private val inFlight = mutableMapOf<Tool, List<DownloadId>>()
+
+    // TOOL jobs whose finish [installed] has seen. A COMPLETED job counts as fetching until then, so a request that
+    // lands between the job's last save and its finish hook doesn't start a second one.
+    private val processed = mutableSetOf<DownloadId>()
 
     private fun names(tool: Tool) = tool.executables.associateWith { tool.fileName(it, platform.os) }
 
@@ -74,7 +77,7 @@ class ToolManager(
         val paths = names(tool).mapValues { (_, file) -> finder.find(file) ?: return null }
         var lowest: ToolVersion? = null
         for ((_, path) in paths) {
-            val ran = withTimeoutOrNull(VERSION_LIMIT) { runner.run(ProcessSpec(listOf(path.toString(), "--version"))) }
+            val ran = withTimeoutOrNull(VERSION_LIMIT) { runner.run(ProcessSpec(listOf(path.toString(), tool.versionArgument))) }
             val result = (ran as? ProcessOutcome.Ok)?.value ?: return null
             val version = ToolVersion.fromOutput(tool, result.stdout)?.takeIf { result.exitCode == 0 } ?: return null
             if (version < catalog.minimum(tool)) return null
@@ -93,8 +96,8 @@ class ToolManager(
     }
 
     /**
-     * Makes sure [tool] is on its way: true when it is installed, or a TOOL job for it is running or was just added;
-     * false when there is nothing to fetch for this platform or the job couldn't be added. A job that failed or was
+     * Makes sure [tool] is on its way: true when it is installed, or a TOOL job for it is running (also one from before a restart) or was
+     * just added; false when there is nothing to fetch for this platform or the job couldn't be added. A job that failed or was
      * cancelled doesn't count, so the next call tries again. Many callers at once add one job.
      */
     suspend fun ensure(
@@ -109,15 +112,15 @@ class ToolManager(
         }
 
     private suspend fun stillFetching(tool: Tool): Boolean {
-        val ids = inFlight[tool] ?: return false
-        val states = ids.map { jobStatus(it) }
-        val active =
-            states.any {
-                it != null && it != DownloadStatus.COMPLETED && it != DownloadStatus.FAILED &&
-                    it != DownloadStatus.CANCELLED
-            }
-        if (!active) inFlight.remove(tool)
-        return active
+        val folder = Path(root, tool.id)
+        return toolJobs().any { job ->
+            job.saveFolder?.let { Path(it).parent } == folder &&
+                when (job.status) {
+                    DownloadStatus.FAILED, DownloadStatus.CANCELLED -> false
+                    DownloadStatus.COMPLETED -> job.id !in processed
+                    else -> true
+                }
+        }
     }
 
     private class Plan(
@@ -142,7 +145,6 @@ class ToolManager(
         add: suspend (NewDownload) -> CommandResult,
     ): Boolean {
         val folder = Path(root, tool.id, plan.version).toString()
-        val ids = mutableListOf<DownloadId>()
         for (artifact in plan.artifacts) {
             // A bare binary is saved under its own executable name; finalize moves it there.
             val fileName =
@@ -162,10 +164,8 @@ class ToolManager(
                     checksum = Checksum(ChecksumAlgorithm.SHA256, artifact.sha256),
                     allowDuplicate = true,
                 )
-            val added = (add(job) as? CommandResult.Done)?.download ?: return false.also { inFlight.remove(tool) }
-            ids += added.id
+            if ((add(job) as? CommandResult.Done)?.download == null) return false
         }
-        inFlight[tool] = ids
         return true
     }
 
@@ -179,6 +179,7 @@ class ToolManager(
         outputs: List<Path>,
     ): Boolean =
         lock.withLock {
+            processed += download.id
             val folder = download.saveFolder?.let(::Path) ?: return false
             val tool = Tool.byId(folder.parent?.name.orEmpty())
             if (tool == null || folder.parent?.parent != root) return false
@@ -186,8 +187,8 @@ class ToolManager(
             if (findExecutables(fileSystem, folder, wanted).size < wanted.size) return false
             val before = store.get(tool)
             store.put(ToolRecord(tool, folder.name, folder.toString(), clock.now()))
-            inFlight.remove(tool)
-            tidy(tool, keep = setOfNotNull(folder.name, before?.version))
+            // The same version again (a repair, or a restart) keeps the earlier one that is the way back.
+            if (before?.version != folder.name) tidy(tool, keep = setOfNotNull(folder.name, before?.version))
             true
         }
 

@@ -3,12 +3,16 @@ package dev.anydm.engine.platform
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
@@ -76,10 +80,11 @@ class DesktopProcessRunner(
         // Read from the start, whoever collects: a program must never block on a full pipe because nobody is looking.
         // The channel is bounded, so a program whose output is never collected stalls after 1024 lines; collect or stop.
         private val channel = Channel<ProcessLine>(1024)
+        private val readers: List<Job>
 
         init {
             val scope = CoroutineScope(io + SupervisorJob())
-            val readers =
+            readers =
                 listOf(ProcessStream.STDOUT to process.inputStream, ProcessStream.STDERR to process.errorStream).map { (stream, source) ->
                     scope.launch {
                         try {
@@ -97,12 +102,24 @@ class DesktopProcessRunner(
             }
         }
 
-        override val lines: Flow<ProcessLine> = channel.receiveAsFlow()
+        // A collector whose coroutine is cancelled takes the program with it; one that just stops early (first, take)
+        // leaves it running.
+        override val lines: Flow<ProcessLine> = channel.receiveAsFlow().onCompletion { if (!currentCoroutineContext().isActive) stop() }
 
-        override suspend fun await(): Int = runInterruptible(io) { process.waitFor() }
+        override suspend fun await(): Int =
+            try {
+                runInterruptible(io) { process.waitFor() }
+            } catch (e: CancellationException) {
+                stop()
+                throw e
+            }
 
         override suspend fun stop() {
-            withContext(NonCancellable + io) { killTree(process) }
+            withContext(NonCancellable + io) {
+                killTree(process)
+                // A reader stuck sending into a full channel lets go of its pipe.
+                readers.forEach { it.cancel() }
+            }
         }
     }
 
