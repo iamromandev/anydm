@@ -17,6 +17,7 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 /**
  * Runs jobs at most `Settings.concurrencyLimit` at a time, highest priority first, then longest waiting (FND-04), and
@@ -38,8 +39,10 @@ class Queue internal constructor(
     retryPolicy: RetryPolicy = RetryPolicy(),
     observer: QueueObserver = QueueObserver.None,
     log: Log = Log.None,
+    /** What speed limits are measured on (NET-01): monotonic, or a test's virtual time. */
+    timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)

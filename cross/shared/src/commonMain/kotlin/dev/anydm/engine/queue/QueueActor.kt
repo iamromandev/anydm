@@ -35,6 +35,7 @@ import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Meter
@@ -60,6 +61,7 @@ import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.time.TimeSource
 
 /**
  * The queue's single coroutine and everything only it touches: the slots, the cached settings and every write of a
@@ -76,7 +78,11 @@ internal class QueueActor(
     private val retryPolicy: RetryPolicy,
     private val observer: QueueObserver,
     private val log: Log,
+    timeSource: TimeSource.WithComparableMarks,
 ) {
+    /** Every running job's speed limits (NET-01..03), shared by all of them. */
+    private val bandwidth = Bandwidth(timeSource)
+
     private sealed interface Message {
         class Command(
             val block: suspend QueueActor.(CompletableDeferred<CommandResult>) -> Unit,
@@ -139,6 +145,7 @@ internal class QueueActor(
                 // Inside the scope, before it waits for the slots: a slot may be waiting for an ack only stopped() gives.
                 try {
                     settings = store.settings.load()
+                    bandwidth.setGlobal(settings.globalSpeedLimit)
                     for (job in downloads.list()) lastStatus[job.id] = job.status
                     reconcile()
                     reschedule()
@@ -632,7 +639,8 @@ internal class QueueActor(
         val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
         val failedCheck = attempts.lastOrNull()?.errorClass == ErrorClass.INTEGRITY
-        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck)
+        val limiter = bandwidth.register(download.id, download.speedLimit, download.priority)
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck, limiter)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
@@ -695,7 +703,7 @@ internal class QueueActor(
             object : Meter {
                 override fun record(bytes: Long) = observer.received(slot.id, bytes)
             }
-        return when (val ran = runner.run(ready, listener, meter = meter)) {
+        return when (val ran = runner.run(ready, listener, slot.limiter, meter)) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }
@@ -728,6 +736,7 @@ internal class QueueActor(
         val slot = message.slot
         if (slots[slot.id] !== slot) return
         slots.remove(slot.id)
+        bandwidth.unregister(slot.id)
         val (errorClass, problem) = endAttempt(slot, message.end)
         // Events about where the job went are told after the row is saved, so a listener sees the matching snapshot.
         val later = mutableListOf<EngineEvent>()
