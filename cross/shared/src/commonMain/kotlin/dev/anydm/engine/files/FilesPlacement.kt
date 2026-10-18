@@ -1,6 +1,8 @@
 package dev.anydm.engine.files
 
+import dev.anydm.engine.core.DirectPlacement
 import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Placement
 import dev.anydm.engine.core.PlacementPlan
@@ -22,6 +24,9 @@ class FilesPlacement(
     private val policy: suspend () -> ClashPolicy,
     private val fileSystem: FileSystem,
 ) : Placement {
+    // The engine's own tool files go where their job says and replace an older copy: no category, no clash policy.
+    private val tools = DirectPlacement(fileSystem, replace = true)
+
     override suspend fun plan(
         download: Download,
         mirror: Mirror,
@@ -29,6 +34,7 @@ class FilesPlacement(
         defaultFolder: Path,
         firstPrepare: Boolean,
     ): StepResult<PlacementPlan> {
+        if (download.kind == DownloadKind.TOOL) return tools.plan(download, mirror, probe, defaultFolder, firstPrepare)
         val all = categories()
         val category = all.firstOrNull { it.id == download.categoryId } ?: categoryFor(all, download, mirror, probe)
         val folder = download.saveFolder?.let(::Path) ?: category?.folder?.let(::Path) ?: defaultFolder
@@ -45,6 +51,16 @@ class FilesPlacement(
 
     override suspend fun place(
         download: Download,
+        partial: Path,
+        target: Path,
+    ): FileResult<Path> =
+        if (download.kind == DownloadKind.TOOL) {
+            tools.place(download, partial, target)
+        } else {
+            placeByPolicy(partial, target)
+        }
+
+    private suspend fun placeByPolicy(
         partial: Path,
         target: Path,
     ): FileResult<Path> =

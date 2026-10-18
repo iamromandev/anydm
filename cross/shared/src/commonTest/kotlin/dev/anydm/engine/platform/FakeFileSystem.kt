@@ -28,6 +28,7 @@ internal class FakeFileSystem(
         SIZE,
         SYNC,
         SIZE_OF,
+        LIST,
         READ,
     }
 
@@ -160,6 +161,28 @@ internal class FakeFileSystem(
         if (path in folders) return FileResult.AlreadyExists(path, "a folder is in the way")
         durable.remove(path)
         return if (files.remove(path) != null) FileResult.Ok(Unit) else FileResult.NotFound(path)
+    }
+
+    override suspend fun deleteTree(path: Path): FileResult<Unit> {
+        log("deleteTree", path)
+        fault(Op.DELETE, path)?.let { return it }
+
+        fun inside(candidate: Path) = generateSequence(candidate) { it.parent }.any { it == path }
+        val removed = files.keys.filter(::inside) + folders.filter(::inside)
+        if (removed.isEmpty()) return FileResult.NotFound(path)
+        files.keys.removeAll(files.keys.filter(::inside).toSet())
+        durable.keys.removeAll(durable.keys.filter(::inside).toSet())
+        folders.removeAll(folders.filter(::inside).toSet())
+        return FileResult.Ok(Unit)
+    }
+
+    override suspend fun list(path: Path): FileResult<List<Path>> {
+        log("list", path)
+        fault(Op.LIST, path)?.let { return it }
+        if (path in files) return FileResult.AlreadyExists(path, "a file is in the way")
+        if (path !in folders) return FileResult.NotFound(path)
+        val children = (files.keys + folders).filter { it.parent == path }
+        return FileResult.Ok(children.sortedBy { it.toString() })
     }
 
     override suspend fun size(path: Path): FileResult<Long> {

@@ -22,4 +22,7 @@ enum class ErrorClass {
 
     /** The bytes received don't match the expected size or checksum. */
     INTEGRITY,
+
+    /** The job needs a runtime tool that isn't installed yet; the failure's message is the tool's id (BIN-01). */
+    TOOL_MISSING,
 }

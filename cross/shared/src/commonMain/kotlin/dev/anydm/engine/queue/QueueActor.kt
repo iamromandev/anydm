@@ -414,6 +414,16 @@ internal class QueueActor(
         if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
     }
 
+    /**
+     * A runtime tool was installed (BIN-01): every job paused for TOOLS lets go of that reason and waits for a slot
+     * again. One that still lacks its tool pauses again on its next probe, so nothing here needs to know which tool each
+     * job wants. A job also paused for another reason stays paused for that one.
+     */
+    suspend fun applyToolState(): CommandResult {
+        for (job in downloads.list(PAUSED)) if (PauseReason.TOOLS in job.pauseReasons) release(job, PauseReason.TOOLS)
+        return CommandResult.Done(null)
+    }
+
     private suspend fun pauseForDisk(job: Download) {
         val paused = (job.pause(PauseReason.LOW_DISK) as TransitionResult.Moved).download
         if (paused != job) save(paused)
@@ -913,6 +923,7 @@ internal class QueueActor(
 
             is FailureAction.Pause -> {
                 if (action.reason == PauseReason.LOW_DISK) later += EngineEvent.PausedForDisk(slot.id)
+                if (action.reason == PauseReason.TOOLS) later += EngineEvent.PausedForTool(slot.id, end.failure.message)
                 (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
             }
 

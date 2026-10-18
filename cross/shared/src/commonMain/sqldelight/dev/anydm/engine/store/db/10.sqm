@@ -1,0 +1,7 @@
+-- Version 10 to 11 (#540): the runtime tools (yt-dlp, ffmpeg, Deno) installed by the engine.
+CREATE TABLE tool (
+    name TEXT NOT NULL PRIMARY KEY,
+    version TEXT NOT NULL,
+    path TEXT NOT NULL,
+    checked_at INTEGER
+);

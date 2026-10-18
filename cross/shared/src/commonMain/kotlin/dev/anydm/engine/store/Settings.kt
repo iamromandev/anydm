@@ -2,6 +2,7 @@ package dev.anydm.engine.store
 
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
+import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.io.files.Path
 
 /**
@@ -30,6 +31,10 @@ data class Settings(
     val freeSpaceReserve: Long = StepRunner.DEFAULT_FREE_SPACE_RESERVE,
     /** How many finished downloads the history keeps (FIL-10); the oldest go first. */
     val historyLimit: Int = 1000,
+    /** Which yt-dlp builds to follow (BIN-04). */
+    val ytDlpChannel: YtDlpChannel = YtDlpChannel.STABLE,
+    /** Use a tool already on the machine (Homebrew, winget, apt) when it is new enough (BIN-03). */
+    val systemTools: Boolean = true,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

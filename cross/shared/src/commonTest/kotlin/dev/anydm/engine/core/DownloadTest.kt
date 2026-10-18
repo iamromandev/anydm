@@ -44,7 +44,7 @@ class DownloadTest {
     }
 
     @Test
-    fun kindsAreTheSpecsFour() {
-        DownloadKind.entries.map { it.name } shouldBe listOf("DIRECT", "SITE", "TORRENT", "FTP")
+    fun kindsAreTheSpecsFourAndTheEnginesOwnTool() {
+        DownloadKind.entries.map { it.name } shouldBe listOf("DIRECT", "SITE", "TORRENT", "FTP", "TOOL")
     }
 }

@@ -24,6 +24,7 @@ import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
+import dev.anydm.engine.store.db.Tool as ToolRow
 
 internal fun createDatabase(driver: SqlDriver): AnydmDb {
     val downloadId = IdAdapter(::DownloadId, DownloadId::value)
@@ -64,6 +65,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 download_idAdapter = downloadId,
                 finished_atAdapter = InstantAdapter,
             ),
+        toolAdapter = ToolRow.Adapter(checked_atAdapter = InstantAdapter),
         file_Adapter =
             FileRow.Adapter(
                 idAdapter = fileId,

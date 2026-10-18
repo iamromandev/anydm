@@ -6,6 +6,7 @@ import dev.anydm.engine.core.ErrorClass.FORMAT_WITHHELD
 import dev.anydm.engine.core.ErrorClass.GONE
 import dev.anydm.engine.core.ErrorClass.INTEGRITY
 import dev.anydm.engine.core.ErrorClass.RATE_LIMITED
+import dev.anydm.engine.core.ErrorClass.TOOL_MISSING
 import dev.anydm.engine.core.ErrorClass.TRANSIENT
 import dev.anydm.engine.platform.virtualEpoch
 import io.kotest.assertions.throwables.shouldThrow
@@ -55,6 +56,7 @@ class RetryPolicyTest {
                 RATE_LIMITED to FailureAction.Retry(t0 + 2.5.seconds, 1),
                 GONE to FailureAction.NextMirror(m1),
                 DISK_FULL to FailureAction.Pause(PauseReason.LOW_DISK),
+                TOOL_MISSING to FailureAction.Pause(PauseReason.TOOLS),
                 AUTH to FailureAction.Fail,
                 FORMAT_WITHHELD to FailureAction.Fail,
                 INTEGRITY to FailureAction.StartOver,

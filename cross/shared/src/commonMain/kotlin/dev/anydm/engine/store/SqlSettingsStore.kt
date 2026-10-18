@@ -3,6 +3,7 @@ package dev.anydm.engine.store
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.store.db.AnydmDb
+import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -47,6 +48,8 @@ internal class SqlSettingsStore(
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
             globalSpeedLimit = read(GLOBAL_SPEED_LIMIT, DEFAULTS.globalSpeedLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
+            ytDlpChannel = read(YT_DLP_CHANNEL, DEFAULTS.ytDlpChannel) { name -> YtDlpChannel.entries.firstOrNull { it.name == name } },
+            systemTools = read(SYSTEM_TOOLS, DEFAULTS.systemTools) { it.toBooleanStrictOrNull() },
             historyLimit = read(HISTORY_LIMIT, DEFAULTS.historyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
             freeSpaceReserve = read(FREE_SPACE_RESERVE, DEFAULTS.freeSpaceReserve) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
             clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
@@ -62,6 +65,8 @@ internal class SqlSettingsStore(
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
         put(GLOBAL_SPEED_LIMIT, settings.globalSpeedLimit?.toString())
+        put(YT_DLP_CHANNEL, settings.ytDlpChannel.takeIf { it != DEFAULTS.ytDlpChannel }?.name)
+        put(SYSTEM_TOOLS, settings.systemTools.takeIf { it != DEFAULTS.systemTools }?.toString())
         put(HISTORY_LIMIT, settings.historyLimit.takeIf { it != DEFAULTS.historyLimit }?.toString())
         put(FREE_SPACE_RESERVE, settings.freeSpaceReserve.takeIf { it != DEFAULTS.freeSpaceReserve }?.toString())
         put(CLASH_POLICY, settings.clashPolicy.takeIf { it != DEFAULTS.clashPolicy }?.name)
@@ -86,5 +91,7 @@ internal class SqlSettingsStore(
         const val CLASH_POLICY = "files.clash_policy"
         const val FREE_SPACE_RESERVE = "files.free_space_reserve"
         const val HISTORY_LIMIT = "files.history_limit"
+        const val YT_DLP_CHANNEL = "tools.yt_dlp_channel"
+        const val SYSTEM_TOOLS = "tools.system_tools"
     }
 }
