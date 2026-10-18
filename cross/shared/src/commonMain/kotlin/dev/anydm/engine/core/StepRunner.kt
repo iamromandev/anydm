@@ -131,7 +131,7 @@ class StepRunner(
             listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
         }
         val plan =
-            when (val planned = placement.plan(download, probe, defaultFolder)) {
+            when (val planned = placement.plan(download, mirror, probe, defaultFolder)) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, planned)
                 is StepResult.Ok -> planned.value
             }

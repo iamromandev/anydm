@@ -17,6 +17,7 @@ import dev.anydm.engine.store.db.AnydmDb
 import kotlin.enums.EnumEntries
 import kotlin.time.Instant
 import dev.anydm.engine.store.db.Attempt as AttemptRow
+import dev.anydm.engine.store.db.Category as CategoryRow
 import dev.anydm.engine.store.db.Download as DownloadRow
 import dev.anydm.engine.store.db.File_ as FileRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
@@ -37,6 +38,11 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 started_atAdapter = InstantAdapter,
                 ended_atAdapter = InstantAdapter,
                 error_classAdapter = EnumNameAdapter("attempt.error_class", ErrorClass.entries),
+            ),
+        categoryAdapter =
+            CategoryRow.Adapter(
+                idAdapter = IdAdapter(::CategoryId, CategoryId::value),
+                priorityAdapter = IntAdapter("category.priority"),
             ),
         downloadAdapter =
             DownloadRow.Adapter(

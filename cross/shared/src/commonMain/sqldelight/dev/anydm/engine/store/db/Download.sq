@@ -9,7 +9,7 @@ import kotlin.time.Instant;
 -- One job: dev.anydm.engine.core.Download. Enums are stored by name, times as epoch milliseconds.
 -- AUTOINCREMENT never reuses an id, so a stale id can't reach a newer download.
 -- A NULL passes a CHECK, so nullable columns need no IS NULL arm.
--- category_id and profile_id get foreign keys, if ever, with their tables (#539, #540).
+-- category_id has no foreign key (see 6.sqm): CategoryStore.remove clears it. profile_id gets one, if ever, with its table (#540).
 CREATE TABLE download (
     id INTEGER AS DownloadId PRIMARY KEY AUTOINCREMENT,
     kind TEXT AS DownloadKind NOT NULL,
@@ -66,3 +66,6 @@ WHERE id = ?;
 
 delete:
 DELETE FROM download WHERE id = ?;
+
+clearCategory:
+UPDATE download SET category_id = NULL WHERE category_id = ?;

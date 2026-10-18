@@ -48,6 +48,7 @@ internal data class FakeProbe(
     override val size: Long?,
     override val validator: String? = null,
     override val checksum: Checksum? = null,
+    override val mime: String? = null,
 ) : ProbeResult
 
 internal data class Fetched(
@@ -84,6 +85,8 @@ internal class FakeProtocol(
     var relinkGate: CompletableDeferred<Unit>? = null,
     /** Mirror urls whose probe answers GONE. */
     var gone: Set<String> = emptySet(),
+    /** What the probe says the content type is (ProbeResult.mime). */
+    var mime: String? = null,
     private val journal: MutableList<String>? = null,
 ) : Protocol {
     val calls = mutableListOf<String>()
@@ -122,7 +125,7 @@ internal class FakeProtocol(
             } else {
                 null
             }
-        return StepResult.Ok(FakeProbe(name ?: files.first().path.substringAfterLast('/'), size, validator, checksum))
+        return StepResult.Ok(FakeProbe(name ?: files.first().path.substringAfterLast('/'), size, validator, checksum, mime))
     }
 
     override fun plan(

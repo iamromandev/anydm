@@ -1,5 +1,6 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.store.db.AnydmDb
 import kotlinx.coroutines.CoroutineDispatcher
@@ -46,6 +47,7 @@ internal class SqlSettingsStore(
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
             globalSpeedLimit = read(GLOBAL_SPEED_LIMIT, DEFAULTS.globalSpeedLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
+            clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
         )
     }
 
@@ -58,6 +60,7 @@ internal class SqlSettingsStore(
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
         put(GLOBAL_SPEED_LIMIT, settings.globalSpeedLimit?.toString())
+        put(CLASH_POLICY, settings.clashPolicy.takeIf { it != DEFAULTS.clashPolicy }?.name)
     }
 
     private fun put(
@@ -76,5 +79,6 @@ internal class SqlSettingsStore(
         const val DEBUG_LOGGING = "log.debug"
         const val CONNECTIONS = "http.connections"
         const val GLOBAL_SPEED_LIMIT = "net.global_speed_limit"
+        const val CLASH_POLICY = "files.clash_policy"
     }
 }

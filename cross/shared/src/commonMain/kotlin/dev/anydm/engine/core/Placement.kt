@@ -18,6 +18,7 @@ data class PlacementPlan(
 interface Placement {
     suspend fun plan(
         download: Download,
+        mirror: Mirror,
         probe: ProbeResult,
         defaultFolder: Path,
     ): StepResult<PlacementPlan>
@@ -25,6 +26,7 @@ interface Placement {
     data object None : Placement {
         override suspend fun plan(
             download: Download,
+            mirror: Mirror,
             probe: ProbeResult,
             defaultFolder: Path,
         ): StepResult<PlacementPlan> =

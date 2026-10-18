@@ -1,0 +1,28 @@
+import dev.anydm.engine.core.CategoryId;
+
+-- One category (FIL-01): dev.anydm.engine.files.Category. `rules` is the JSON of its CategoryRule list.
+-- AUTOINCREMENT never reuses an id, so a stale id can't reach a newer category.
+CREATE TABLE category (
+    id INTEGER AS CategoryId PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    template TEXT,
+    rules TEXT NOT NULL,
+    priority INTEGER AS kotlin.Int NOT NULL
+);
+
+insert:
+INSERT INTO category(name, folder, template, rules, priority) VALUES (?, ?, ?, ?, ?);
+
+-- Only meaningful in the transaction that inserted.
+selectLastInserted:
+SELECT * FROM category WHERE id = last_insert_rowid();
+
+selectAll:
+SELECT * FROM category ORDER BY priority, id;
+
+update:
+UPDATE category SET name = ?, folder = ?, template = ?, rules = ?, priority = ? WHERE id = ?;
+
+delete:
+DELETE FROM category WHERE id = ?;

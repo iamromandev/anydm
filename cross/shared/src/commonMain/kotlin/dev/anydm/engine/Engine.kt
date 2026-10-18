@@ -139,7 +139,13 @@ class Engine(
             store.downloads,
             protocols,
             defaultFolder,
-            placement = FilesPlacement(NameCleaner(osProfile)),
+            placement =
+                FilesPlacement(
+                    NameCleaner(osProfile),
+                    categories = { store.categories.list() },
+                    policy = { store.settings.load().clashPolicy },
+                    fileSystem = fileSystem,
+                ),
             checkpointEvery = checkpointEvery,
         )
 

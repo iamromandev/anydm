@@ -1,5 +1,6 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.files.ClashPolicy
 import kotlinx.io.files.Path
 
 /**
@@ -22,6 +23,8 @@ data class Settings(
     val connectionsPerDownload: Int = 4,
     /** The most bytes per second every download together may take in (NET-02); null means no limit. */
     val globalSpeedLimit: Long? = null,
+    /** What happens when a finished file's name is taken (FIL-04). */
+    val clashPolicy: ClashPolicy = ClashPolicy.RENAME,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

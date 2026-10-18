@@ -34,7 +34,14 @@ data class HttpProbe(
     val context: RequestContext? = null,
     /** From `Digest` or `Repr-Digest` (HTTP-14). */
     override val checksum: Checksum? = null,
-) : ProbeResult
+) : ProbeResult {
+    override val mime: String? get() =
+        contentType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+            ?.takeIf { it.isNotEmpty() }
+}
 
 /**
  * Direct HTTP(S) downloads. The probe asks for the first KiB with a `Range` so one round trip shows the size, range
