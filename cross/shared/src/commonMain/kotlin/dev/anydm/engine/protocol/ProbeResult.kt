@@ -1,6 +1,7 @@
 package dev.anydm.engine.protocol
 
 import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.files.NameFields
 
 /**
  * What a probe learned. Each protocol returns its own implementation (#538 HttpProbe...) and gets it back unchanged;
@@ -25,4 +26,7 @@ interface ProbeResult {
 
     /** The content's MIME type, lowercase and without parameters, if the protocol learned one (category rules, FIL-01). */
     val mime: String? get() = null
+
+    /** What the protocol learned that a category's naming template can use (a media page's title, uploader), FIL-02. */
+    val nameFields: NameFields get() = NameFields()
 }
