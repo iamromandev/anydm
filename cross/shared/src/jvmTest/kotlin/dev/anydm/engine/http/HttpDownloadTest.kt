@@ -10,6 +10,7 @@ import dev.anydm.engine.core.PrepareOutcome
 import dev.anydm.engine.core.RunListener
 import dev.anydm.engine.core.RunOutcome
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.deleteRecursively
 import dev.anydm.engine.platform.namesIn
@@ -24,6 +25,7 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openInMemoryDatabase
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.comparables.shouldBeGreaterThanOrEqualTo
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +43,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.time.TimeSource
 import kotlin.time.measureTime
 
 /** HttpProtocol on OkHttp, the real runner, store and file system, against the fault server (#569). */
@@ -169,6 +172,25 @@ class HttpDownloadTest {
                     .map { it.removePrefix("bytes=").substringBefore('-').toLong() }
             starts.isEmpty() shouldBe false
             done.none { it.start in starts } shouldBe true
+        }
+
+    // #574: a speed limit paces a real download
+
+    @Test
+    fun aSpeedLimitPacesARealDownload() =
+        runBlocking<Unit> {
+            // 3 MiB at 1 MiB/s: one second's burst, then two seconds at the rate.
+            val small = Random(2).nextBytes(3 shl 20)
+            server.serve("/s.bin", small, etag = "\"s1\"")
+            val download =
+                store.downloads.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf(server.url("/s.bin")), saveFolder = root.toString()))
+            val ready = prepared(download, store.downloads.mirrors(download.id).single())
+            val limiter = Bandwidth(TimeSource.Monotonic).register(download.id, 1L shl 20, 0)
+
+            val took = measureTime { runner.run(ready, limiter = limiter).shouldBeInstanceOf<RunOutcome.Finished>() }
+
+            took shouldBeGreaterThanOrEqualTo 1800.milliseconds
+            readBytes(Path(root, "s.bin")) shouldBe small
         }
 
     // #573: checksums from the server's Digest
