@@ -1,0 +1,19 @@
+import kotlin.time.Instant;
+
+-- An installed runtime tool: dev.anydm.engine.tools.ToolRecord. `name` is Tool.id; a name this version doesn't know is
+-- skipped. `path` is the tool's version folder; `checked_at` is when its newer version was last looked for.
+CREATE TABLE tool (
+    name TEXT NOT NULL PRIMARY KEY,
+    version TEXT NOT NULL,
+    path TEXT NOT NULL,
+    checked_at INTEGER AS Instant
+);
+
+selectAll:
+SELECT * FROM tool ORDER BY name;
+
+selectByName:
+SELECT * FROM tool WHERE name = ?;
+
+put:
+INSERT OR REPLACE INTO tool(name, version, path, checked_at) VALUES (?, ?, ?, ?);
