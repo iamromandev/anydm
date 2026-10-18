@@ -70,8 +70,8 @@ class JobModelTest {
     }
 
     @Test
-    fun errorClassesAreTheSpecsSeven() {
+    fun errorClassesAreTheSpecsSevenAndAMissingTool() {
         ErrorClass.entries.map { it.name } shouldBe
-            listOf("TRANSIENT", "RATE_LIMITED", "AUTH", "GONE", "DISK_FULL", "FORMAT_WITHHELD", "INTEGRITY")
+            listOf("TRANSIENT", "RATE_LIMITED", "AUTH", "GONE", "DISK_FULL", "FORMAT_WITHHELD", "INTEGRITY", "TOOL_MISSING")
     }
 }

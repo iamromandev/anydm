@@ -181,6 +181,16 @@ abstract class ObserverContract : QueueTestBase() {
         }
 
     @Test
+    fun aMissingToolIsReportedWithItsName() =
+        runTest {
+            val (h, o) = observed(FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.TOOL_MISSING, "yt-dlp"))))
+            val a = h.addJob()
+            settle()
+
+            o.events shouldContain EngineEvent.PausedForTool(a, "yt-dlp")
+        }
+
+    @Test
     fun aGoneMirrorReportsTheMove() =
         runTest {
             val (h, o) = observed(FakeProtocol(gone = setOf("https://one.example/f")))

@@ -478,6 +478,10 @@ class Engine(
                 log.info("job") { "job ${event.id.value} paused: disk full" }
             }
 
+            is EngineEvent.PausedForTool -> {
+                log.info("job") { "job ${event.id.value} paused: needs ${event.tool}" }
+            }
+
             is EngineEvent.StopTimedOut, is EngineEvent.EngineFailed -> {
                 Unit
             }

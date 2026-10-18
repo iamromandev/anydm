@@ -15,6 +15,7 @@ import kotlin.time.Instant
  * | TRANSIENT, RATE_LIMITED                | [FailureAction.Retry] while the budget lasts  |
  * | GONE                                   | [FailureAction.NextMirror] if one is left     |
  * | DISK_FULL                              | [FailureAction.Pause] for LOW_DISK            |
+ * | TOOL_MISSING                           | [FailureAction.Pause] for TOOLS               |
  * | INTEGRITY                              | [FailureAction.StartOver] the first time      |
  * | AUTH, FORMAT_WITHHELD, INTEGRITY, none | [FailureAction.Fail]                          |
  *
@@ -66,6 +67,10 @@ class RetryPolicy(
 
             ErrorClass.DISK_FULL -> {
                 FailureAction.Pause(PauseReason.LOW_DISK)
+            }
+
+            ErrorClass.TOOL_MISSING -> {
+                FailureAction.Pause(PauseReason.TOOLS)
             }
 
             ErrorClass.INTEGRITY -> {

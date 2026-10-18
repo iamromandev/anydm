@@ -13,4 +13,7 @@ enum class DownloadKind {
 
     /** FTP, including FTPS and SFTP. */
     FTP,
+
+    /** A runtime tool (yt-dlp, ffmpeg, Deno) the engine installs for its own use (BIN-01). */
+    TOOL,
 }

@@ -65,6 +65,9 @@ class Queue internal constructor(
         release: Set<DownloadId> = emptySet(),
     ): CommandResult = actor.callLater { applyDiskState(low, release, it) }
 
+    /** A runtime tool was installed: jobs paused for TOOLS wait for a slot again (BIN-01). */
+    suspend fun applyToolState(): CommandResult = actor.call { applyToolState() }
+
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
     suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }
 
