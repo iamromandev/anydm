@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The engine counts traffic and saves it every 10 s and when it stops (NET-04). FakeProtocol: 64 KiB in 4 s. */
@@ -110,21 +111,36 @@ abstract class EngineTrafficContract : StoreTestBase() {
             traffic.bytes shouldBe whole
         }
 
+    // Final review: the chunks after the last one-second sample (at 2.25 and 2.5 s) must count too.
     @Test
     fun aRemovedJobsBytesStillCountForTheDay() =
         runTest {
             val (h, traffic) = started()
             val a = h.addJob()
-            advanceTimeBy(2.seconds)
+            advanceTimeBy(2600.milliseconds)
             h.engine.remove(a, RemoveFiles.KEEP)
             advanceTimeBy(10.seconds)
             h.engine.stop()
 
-            traffic.bytes shouldBeGreaterThan 0L
+            traffic.bytes shouldBe h.protocol.fetched.sumOf { it.end - it.start }
             traffic.adds
                 .flatMap { it.days.keys }
                 .map { it.third }
                 .toSet() shouldBe setOf(DownloadKind.DIRECT)
+        }
+
+    // Final review: a stop while a job still runs saves the bytes since its last sample.
+    @Test
+    fun aStopMidTransferSavesEveryByte() =
+        runTest {
+            val (h, traffic) = started()
+            h.addJob()
+            advanceTimeBy(2600.milliseconds)
+
+            h.engine.stop()
+
+            traffic.bytes shouldBe h.protocol.fetched.sumOf { it.end - it.start }
+            traffic.bytes shouldBeGreaterThan 0L
         }
 
     @Test
