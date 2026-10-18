@@ -67,7 +67,7 @@ class StepRunnerPlacementTest {
     @Test
     fun noPlacementKeepsTheProbeNameAsIs() =
         runTest {
-            prepared(aPendingDownload(), "a:b?.txt", Placement.None).fileName shouldBe "a:b?.txt"
+            prepared(aPendingDownload(), "a:b?.txt", DirectPlacement(fs)).fileName shouldBe "a:b?.txt"
         }
 
     private val video =

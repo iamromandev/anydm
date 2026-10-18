@@ -77,7 +77,7 @@ class StepRunner(
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
-    private val placement: Placement = Placement.None,
+    private val placement: Placement = DirectPlacement(fileSystem),
     /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
     private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
 ) {
@@ -238,11 +238,22 @@ class StepRunner(
             if (checked is StepResult.Failed) return runFailed(muxing, Step.POST_PROCESS, checked)
         }
         val outputs =
-            when (val placed = placeOutputs(job.download.id, folder, finalized.outputs)) {
+            when (val placed = placeOutputs(job.download, folder, finalized.outputs)) {
                 is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed)
                 is StepResult.Ok -> placed.value
             }
-        val finished = muxing.moveTo(if (finalized.seeding) SEEDING else COMPLETED)
+        // A name clash can have renamed the one file: the job's name follows it.
+        val renamedTo = outputs.singleOrNull()?.takeIf { it != targetPath(folder, finalized.outputs.single()) }?.name
+        val finished =
+            (
+                if (renamedTo !=
+                    null
+                ) {
+                    muxing.copy(fileName = renamedTo)
+                } else {
+                    muxing
+                }
+            ).moveTo(if (finalized.seeding) SEEDING else COMPLETED)
         listener.moved(finished)
         // The job is finished whatever happens from here, so a pause or cancel must not interrupt its hook.
         withContext(NonCancellable) { finish.finished(finished, outputs) }
@@ -559,7 +570,7 @@ class StepRunner(
      * whose partial is gone but whose target is there is skipped (#554).
      */
     private suspend fun placeOutputs(
-        id: DownloadId,
+        download: Download,
         folder: Path,
         outputs: List<String>,
     ): StepResult<List<Path>> {
@@ -567,15 +578,15 @@ class StepRunner(
         val placed = mutableListOf<Path>()
         for (output in outputs) {
             val target = targetPath(folder, output)
-            val partial = partialPath(target, id)
-            val moved = fileSystem.atomicMove(partial, target, replace = false)
+            val partial = partialPath(target, download.id)
+            val moved = placement.place(download, partial, target)
             // No partial but the output is there: a stopped run placed it already.
             if (moved is FileResult.NotFound && moved.path == partial && fileSystem.size(target) is FileResult.Ok) {
                 placed += target
                 continue
             }
             if (moved is FileResult.Failed) return moved.toStepFailed()
-            placed += target
+            placed += (moved as FileResult.Ok).value
         }
         return StepResult.Ok(placed)
     }

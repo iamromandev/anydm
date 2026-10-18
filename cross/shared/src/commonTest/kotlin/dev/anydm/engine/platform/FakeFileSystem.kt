@@ -45,6 +45,9 @@ internal class FakeFileSystem(
     // The bytes each file had at its last sync, or when it was made: what a power cut leaves.
     private val durable = mutableMapOf<Path, ByteArray>()
 
+    /** Which volume a path is on; [atomicMove] between two volumes is [FileResult.CrossVolume], as on a real disk. */
+    var volumeOf: (Path) -> String = { "" }
+
     /** False: [moveToTrash] says there is no trash. True: it takes the path away and records it in [trashed]. */
     var trashAvailable = false
     val trashed = mutableListOf<Path>()
@@ -120,6 +123,7 @@ internal class FakeFileSystem(
     ): FileResult<Unit> {
         log("atomicMove", source)
         fault(Op.ATOMIC_MOVE, source)?.let { return it }
+        if (volumeOf(source) != volumeOf(target)) return FileResult.CrossVolume(source, target)
         val bytes = files[source] ?: return FileResult.NotFound(source)
         val folder = checkNotNull(target.parent)
         if (folder !in folders) return FileResult.NotFound(folder)
