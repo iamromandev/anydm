@@ -97,7 +97,27 @@ tasks.withType<app.cash.sqldelight.gradle.VerifyMigrationTask>().configureEach {
 tasks.named<Test>("jvmTest") {
     inputs.dir(schemaSnapshots).withPropertyName("schemaSnapshots").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("anydm.schemaDir", schemaSnapshots.asFile.absolutePath)
+    // The end-to-end tests run in real time against a child engine process: e2eTest runs them, check runs e2eTest.
+    filter { excludeTestsMatching("dev.anydm.engine.e2e.*") }
 }
+
+// #576: end to end through the real Engine against the fault server. -Pe2e.cases=N for more crash cases, -Pe2e.seed=S
+// to replay one.
+val e2eTest =
+    tasks.register<Test>("e2eTest") {
+        description = "End-to-end tests: the real engine, killed and restarted, against the fault server."
+        group = "verification"
+        val jvmTest = tasks.named<Test>("jvmTest").get()
+        testClassesDirs = jvmTest.testClassesDirs
+        classpath = jvmTest.classpath
+        useJUnit() // kotlin-test-junit, as jvmTest
+        filter { includeTestsMatching("dev.anydm.engine.e2e.*") }
+        systemProperty("anydm.schemaDir", schemaSnapshots.asFile.absolutePath)
+        systemProperty("e2e.cases", providers.gradleProperty("e2e.cases").orElse("12").get())
+        providers.gradleProperty("e2e.seed").orNull?.let { systemProperty("e2e.seed", it) }
+        shouldRunAfter(jvmTest)
+    }
+tasks.named("check") { dependsOn(e2eTest) }
 
 // Android isn't a target yet, so the compiler can't keep desktop-only APIs out of jvmCommon.
 val checkJvmCommonApis =
