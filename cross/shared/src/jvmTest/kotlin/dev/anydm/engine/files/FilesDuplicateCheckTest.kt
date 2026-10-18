@@ -1,12 +1,14 @@
 package dev.anydm.engine.files
 
 import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.DuplicateReason
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.protocol.FakeProbe
+import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openInMemoryDatabase
@@ -16,6 +18,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Instant
 
 class FilesDuplicateCheckTest {
     private val target = Path("/dl/a.zip")
@@ -24,7 +27,7 @@ class FilesDuplicateCheckTest {
         val store: Store,
         val fs: FakeFileSystem,
     ) {
-        val check = FilesDuplicateCheck(store.downloads, fs)
+        val check = FilesDuplicateCheck(store.downloads, store.history, fs)
     }
 
     private fun TestScope.rig() = Rig(Store(openInMemoryDatabase(), StandardTestDispatcher(testScheduler)), FakeFileSystem())
@@ -158,5 +161,39 @@ class FilesDuplicateCheckTest {
             val anyway = r.store.downloads.add(NewDownload(DownloadKind.DIRECT, allowDuplicate = true))
 
             r.check.afterProbe(anyway, FakeProbe("a.zip", 10, "etag:\"1\""), target) shouldBe null
+        }
+
+    private fun entry(
+        name: String = "a.zip",
+        size: Long? = 10,
+        url: String = "https://h/f.zip",
+    ) = HistoryEntry(DownloadId(99), name, "/dl/$name", size, Instant.fromEpochMilliseconds(1), url)
+
+    @Test
+    fun atAddFindsTheUrlInTheHistory() =
+        runTest {
+            val r = rig()
+            r.store.history.add(entry(url = "https://h/f.zip"))
+
+            r.check.atAdd(link("https://h/f.zip?utm_source=x")) shouldBe DuplicateFound(null, DuplicateReason.IN_HISTORY)
+        }
+
+    @Test
+    fun afterProbeFindsNameAndSizeInTheHistory() =
+        runTest {
+            val r = rig()
+            r.store.history.add(entry(name = "a.zip", size = 10))
+
+            r.check.afterProbe(r.current(), FakeProbe("a.zip", 10), target) shouldBe DuplicateFound(null, DuplicateReason.IN_HISTORY)
+            r.check.afterProbe(r.current(), FakeProbe("a.zip", 11), target) shouldBe null
+        }
+
+    @Test
+    fun allowDuplicateSkipsTheHistoryToo() =
+        runTest {
+            val r = rig()
+            r.store.history.add(entry(url = "https://h/f.zip"))
+
+            r.check.atAdd(link("https://h/f.zip", allowDuplicate = true)) shouldBe null
         }
 }

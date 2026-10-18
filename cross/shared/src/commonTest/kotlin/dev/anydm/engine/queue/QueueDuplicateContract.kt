@@ -19,7 +19,7 @@ abstract class QueueDuplicateContract : QueueTestBase() {
         started {
             val store = newStore()
             val fs = FakeFileSystem()
-            QueueHarness(it, store, fs = fs, duplicates = FilesDuplicateCheck(store.downloads, fs))
+            QueueHarness(it, store, fs = fs, duplicates = FilesDuplicateCheck(store.downloads, store.history, fs))
         }
 
     private fun link(

@@ -7,6 +7,7 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateCheck
+import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
@@ -15,6 +16,7 @@ import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
+import dev.anydm.engine.files.HistoryRecorder
 import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.log.Log
@@ -92,7 +94,9 @@ class Engine(
     /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). */
     osProfile: OsProfile = OsProfile.LINUX,
     /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
-    duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, fileSystem),
+    duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, store.history, fileSystem),
+    /** Told when a job finishes; the history by default (FIL-10). */
+    finish: FinishHook = HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -149,6 +153,7 @@ class Engine(
             defaultFolder,
             reserve = { store.settings.load().freeSpaceReserve },
             duplicates = duplicates,
+            finish = finish,
             placement =
                 FilesPlacement(
                     NameCleaner(osProfile),

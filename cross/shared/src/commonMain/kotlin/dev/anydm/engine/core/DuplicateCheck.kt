@@ -12,6 +12,9 @@ enum class DuplicateReason {
     /** Another download has the same name and size, and the same ETag when both know one. */
     SAME_FILE,
 
+    /** A finished download with that link, or that name and size, is in the history. */
+    IN_HISTORY,
+
     /** A file with that name and size is already in the save folder. */
     ON_DISK,
 }

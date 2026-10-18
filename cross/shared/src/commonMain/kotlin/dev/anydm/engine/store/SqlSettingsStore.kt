@@ -47,6 +47,7 @@ internal class SqlSettingsStore(
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
             globalSpeedLimit = read(GLOBAL_SPEED_LIMIT, DEFAULTS.globalSpeedLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
+            historyLimit = read(HISTORY_LIMIT, DEFAULTS.historyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
             freeSpaceReserve = read(FREE_SPACE_RESERVE, DEFAULTS.freeSpaceReserve) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
             clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
         )
@@ -61,6 +62,7 @@ internal class SqlSettingsStore(
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
         put(GLOBAL_SPEED_LIMIT, settings.globalSpeedLimit?.toString())
+        put(HISTORY_LIMIT, settings.historyLimit.takeIf { it != DEFAULTS.historyLimit }?.toString())
         put(FREE_SPACE_RESERVE, settings.freeSpaceReserve.takeIf { it != DEFAULTS.freeSpaceReserve }?.toString())
         put(CLASH_POLICY, settings.clashPolicy.takeIf { it != DEFAULTS.clashPolicy }?.name)
     }
@@ -83,5 +85,6 @@ internal class SqlSettingsStore(
         const val GLOBAL_SPEED_LIMIT = "net.global_speed_limit"
         const val CLASH_POLICY = "files.clash_policy"
         const val FREE_SPACE_RESERVE = "files.free_space_reserve"
+        const val HISTORY_LIMIT = "files.history_limit"
     }
 }

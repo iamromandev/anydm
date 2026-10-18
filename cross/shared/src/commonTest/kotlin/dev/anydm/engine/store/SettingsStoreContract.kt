@@ -223,4 +223,18 @@ abstract class SettingsStoreContract : StoreTestBase() {
             rows() shouldContain "files.free_space_reserve=1000"
             shouldThrow<IllegalArgumentException> { Settings(freeSpaceReserve = -1) }
         }
+
+    @Test
+    fun historyLimitRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().historyLimit shouldBe 1000
+            rows().none { it?.startsWith("files.history_limit=") == true } shouldBe true
+
+            settings.update { it.copy(historyLimit = 50) }
+
+            settings.load().historyLimit shouldBe 50
+            rows() shouldContain "files.history_limit=50"
+            shouldThrow<IllegalArgumentException> { Settings(historyLimit = 0) }
+        }
 }

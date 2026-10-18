@@ -28,9 +28,12 @@ data class Settings(
     val clashPolicy: ClashPolicy = ClashPolicy.RENAME,
     /** Bytes kept free after a download's own (FIL-08): a start needs room for the file plus this, and running jobs pause below it. */
     val freeSpaceReserve: Long = StepRunner.DEFAULT_FREE_SPACE_RESERVE,
+    /** How many finished downloads the history keeps (FIL-10); the oldest go first. */
+    val historyLimit: Int = 1000,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
+        require(historyLimit >= 1) { "historyLimit must be >= 1: $historyLimit" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }

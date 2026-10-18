@@ -139,8 +139,11 @@ class StepRunner(
             }
         duplicates.afterProbe(download, probe, Path(plan.folder, plan.fileName))?.let { found ->
             val reason =
-                found.existing?.let { "already in the list as download ${it.value}" }
-                    ?: "already on disk: ${Path(plan.folder, plan.fileName)}"
+                when {
+                    found.existing != null -> "already in the list as download ${found.existing.value}"
+                    found.reason == DuplicateReason.IN_HISTORY -> "already downloaded before (see the history)"
+                    else -> "already on disk: ${Path(plan.folder, plan.fileName)}"
+                }
             return prepareFailed(download, Step.PROBE, StepResult.Failed(null, reason))
         }
         if (plan.folder != folder) {

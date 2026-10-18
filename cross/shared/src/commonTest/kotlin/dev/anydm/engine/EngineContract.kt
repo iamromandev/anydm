@@ -5,6 +5,7 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
+import dev.anydm.engine.core.DuplicateReason
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.protocol.FakeFailure
@@ -554,6 +555,41 @@ abstract class EngineContract : StoreTestBase() {
 
                 h.snapshot(a) shouldNotBe null
                 h.fs.trashed shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aFinishedDownloadGoesToTheHistory() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+
+                h.store.history
+                    .list(10)
+                    .single()
+                    .downloadId shouldBe a
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun addingTheLinkOfADownloadInTheHistoryIsADuplicateEvenAfterItsRemoval() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.engine.remove(a, RemoveFiles.KEEP)
+
+                val again = h.engine.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://example.com/file-1.zip")))
+
+                again.shouldBeInstanceOf<CommandResult.Duplicate>().found.reason shouldBe DuplicateReason.IN_HISTORY
             } finally {
                 h.engine.stop()
             }
