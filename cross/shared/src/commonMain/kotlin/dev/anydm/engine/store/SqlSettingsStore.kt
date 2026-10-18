@@ -45,6 +45,7 @@ internal class SqlSettingsStore(
             maxRetries = read(MAX_RETRIES, DEFAULTS.maxRetries) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
+            globalSpeedLimit = read(GLOBAL_SPEED_LIMIT, DEFAULTS.globalSpeedLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
         )
     }
 
@@ -56,6 +57,7 @@ internal class SqlSettingsStore(
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
+        put(GLOBAL_SPEED_LIMIT, settings.globalSpeedLimit?.toString())
     }
 
     private fun put(
@@ -73,5 +75,6 @@ internal class SqlSettingsStore(
         const val MAX_RETRIES = "retry.max_retries"
         const val DEBUG_LOGGING = "log.debug"
         const val CONNECTIONS = "http.connections"
+        const val GLOBAL_SPEED_LIMIT = "net.global_speed_limit"
     }
 }

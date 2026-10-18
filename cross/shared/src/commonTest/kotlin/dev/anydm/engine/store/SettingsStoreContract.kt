@@ -175,6 +175,22 @@ abstract class SettingsStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun globalSpeedLimitRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().globalSpeedLimit shouldBe null
+
+            settings.update { it.copy(globalSpeedLimit = 512_000) }
+            settings.load().globalSpeedLimit shouldBe 512_000L
+            rows() shouldContain "net.global_speed_limit=512000"
+
+            settings.update { it.copy(globalSpeedLimit = null) }
+            settings.load().globalSpeedLimit shouldBe null
+            rows().none { it?.startsWith("net.global_speed_limit=") == true } shouldBe true
+            shouldThrow<IllegalArgumentException> { Settings(globalSpeedLimit = 0) }
+        }
+
+    @Test
     fun aConnectionCountOutsideTheRangeIsRefused() {
         shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 0) }
         shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 17) }
