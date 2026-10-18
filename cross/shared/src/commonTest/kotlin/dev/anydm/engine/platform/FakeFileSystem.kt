@@ -28,6 +28,7 @@ internal class FakeFileSystem(
         SIZE,
         SYNC,
         SIZE_OF,
+        LIST,
         READ,
     }
 
@@ -160,6 +161,15 @@ internal class FakeFileSystem(
         if (path in folders) return FileResult.AlreadyExists(path, "a folder is in the way")
         durable.remove(path)
         return if (files.remove(path) != null) FileResult.Ok(Unit) else FileResult.NotFound(path)
+    }
+
+    override suspend fun list(path: Path): FileResult<List<Path>> {
+        log("list", path)
+        fault(Op.LIST, path)?.let { return it }
+        if (path in files) return FileResult.AlreadyExists(path, "a file is in the way")
+        if (path !in folders) return FileResult.NotFound(path)
+        val children = (files.keys + folders).filter { it.parent == path }
+        return FileResult.Ok(children.sortedBy { it.toString() })
     }
 
     override suspend fun size(path: Path): FileResult<Long> {

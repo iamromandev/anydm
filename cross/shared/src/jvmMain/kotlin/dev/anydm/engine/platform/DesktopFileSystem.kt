@@ -148,6 +148,30 @@ class DesktopFileSystem internal constructor(
         }
     }
 
+    override suspend fun list(path: Path): FileResult<List<Path>> {
+        requireAbsolute(path)
+        return blocking(cancellable = true) {
+            val folder = path.nio()
+            when {
+                !Files.exists(folder, NOFOLLOW_LINKS) -> {
+                    FileResult.NotFound(path)
+                }
+
+                !Files.isDirectory(folder, NOFOLLOW_LINKS) -> {
+                    FileResult.AlreadyExists(path, "a file is in the way")
+                }
+
+                else -> {
+                    attempt(path) {
+                        Files.list(folder).use { stream ->
+                            stream.map { Path(it.toString()) }.toList().sortedBy { it.toString() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     override suspend fun openWriter(path: Path): FileResult<FileWriter> {
         requireAbsolute(path)
         // withContext throws away the result of a call whose caller was cancelled meanwhile, which would leave the

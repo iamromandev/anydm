@@ -391,6 +391,38 @@ abstract class FileSystemContract {
         }
 
     @Test
+    fun listGivesTheChildrenOfAFolder() =
+        runTest {
+            val folder = Path(root, "tools").also { SystemFileSystem.createDirectories(Path(it, "bin")) }
+            writeText(Path(folder, "a.txt"), "a")
+            writeText(Path(folder, "bin", "inner.txt"), "i")
+
+            fileSystem(trash).list(folder) shouldBe
+                FileResult.Ok(listOf(Path(folder, "a.txt"), Path(folder, "bin")).sortedBy { it.toString() })
+        }
+
+    @Test
+    fun listOfAnEmptyFolderIsEmpty() =
+        runTest {
+            val folder = Path(root, "empty").also { SystemFileSystem.createDirectories(it) }
+            fileSystem(trash).list(folder) shouldBe FileResult.Ok(emptyList<Path>())
+        }
+
+    @Test
+    fun listOfAMissingFolderIsNotFound() =
+        runTest {
+            val folder = Path(root, "nope")
+            fileSystem(trash).list(folder).shouldBeInstanceOf<FileResult.NotFound>().path shouldBe folder
+        }
+
+    @Test
+    fun listOfAFileIsAlreadyExists() =
+        runTest {
+            val file = Path(root, "a.txt").also { writeText(it, "a") }
+            fileSystem(trash).list(file).shouldBeInstanceOf<FileResult.AlreadyExists>().path shouldBe file
+        }
+
+    @Test
     fun deleteRemovesAFile() =
         runTest {
             val file = Path(root, "video.mp4.anydm").also { writeText(it, "stale") }

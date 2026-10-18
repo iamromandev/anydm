@@ -91,4 +91,25 @@ class FakeFileSystemTest {
 
             fs.read(file, 0, 1) shouldBe FileResult.IoError(file, "boom")
         }
+
+    @Test
+    fun listGivesTheDirectChildrenByName() =
+        runTest {
+            val fs = FakeFileSystem()
+            fs.put(Path(folder, "b.txt"), byteArrayOf(1))
+            fs.put(Path(folder, "a.txt"), byteArrayOf(1))
+            fs.put(Path(folder, "sub", "deep.txt"), byteArrayOf(1))
+
+            fs.list(folder) shouldBe FileResult.Ok(listOf(Path(folder, "a.txt"), Path(folder, "b.txt"), Path(folder, "sub")))
+        }
+
+    @Test
+    fun listOfAFileOrAMissingFolderFails() =
+        runTest {
+            val fs = FakeFileSystem()
+            fs.put(file, byteArrayOf(1))
+
+            fs.list(file) shouldBe FileResult.AlreadyExists(file, "a file is in the way")
+            fs.list(Path("/nope")) shouldBe FileResult.NotFound(Path("/nope"))
+        }
 }

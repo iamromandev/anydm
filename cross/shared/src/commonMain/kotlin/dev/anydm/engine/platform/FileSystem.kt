@@ -64,6 +64,12 @@ interface FileSystem {
     suspend fun delete(path: Path): FileResult<Unit>
 
     /**
+     * The direct children of the folder at [path] (files and folders), by name; [FileResult.NotFound] if there is no
+     * such folder, [FileResult.AlreadyExists] for a file. Used to find what an unpacked archive holds.
+     */
+    suspend fun list(path: Path): FileResult<List<Path>>
+
+    /**
      * The length of the file at [path] (#554 finds outputs placed before a stop): [FileResult.NotFound] if there is
      * none, [FileResult.AlreadyExists] for a folder.
      */
