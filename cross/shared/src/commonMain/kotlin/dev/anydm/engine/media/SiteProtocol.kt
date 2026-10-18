@@ -4,11 +4,15 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
+import dev.anydm.engine.core.partialPath
+import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.http.HttpProbe
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.hostOf
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.platform.ProcessOutcome
 import dev.anydm.engine.platform.ProcessRunner
+import dev.anydm.engine.platform.ProcessSpec
 import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.PlanContext
 import dev.anydm.engine.protocol.PlannedFile
@@ -36,7 +40,7 @@ private val YOUTUBE_HOSTS = listOf("youtube.com", "youtu.be", "youtube-nocookie.
  */
 class SiteProtocol(
     private val http: HttpProtocol,
-    runner: ProcessRunner,
+    private val runner: ProcessRunner,
     private val resolve: suspend (Tool) -> ResolvedTool?,
     private val extractions: ExtractionStore,
     private val fileSystem: FileSystem,
@@ -228,7 +232,44 @@ class SiteProtocol(
         return StepResult.Ok(fresh)
     }
 
-    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = StepResult.Failed(null, "not yet")
+    /**
+     * A stream that is already the output needs nothing. Otherwise ffmpeg writes the output's partial from the streams'
+     * partials; the runner then places it and, once the job is complete, drops the consumed streams. A failed merge
+     * keeps the streams, so a retry doesn't download them again.
+     */
+    override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
+        val site = transfer.probe
+        check(site is SiteProbe) { "SiteProtocol can't finalize a ${site::class.simpleName}" }
+        val files = transfer.files.sortedBy { it.file.index }
+        if (!site.selection.needsFfmpeg) return StepResult.Ok(FinalizeResult(files.map { it.file.path }))
+        val ffmpeg = resolve(Tool.FFMPEG) ?: return missing(Tool.FFMPEG)
+        val first = files.first()
+        var folder = first.target
+        repeat(first.file.path.count { it == '/' } + 1) {
+            folder =
+                folder.parent ?: return StepResult.Failed(null, "${first.target} has no save folder")
+        }
+        val outputName = transfer.download.fileName ?: site.name
+        val output = partialPath(targetPath(folder, outputName), transfer.download.id)
+        output.parent?.let { fileSystem.prepareFolder(it) }
+        val args = Ffmpeg.args(ffmpeg.executable(Tool.FFMPEG.id), files.map { it.partial }, output, site.selection)
+        val ran =
+            when (val outcome = runner.run(ProcessSpec(args))) {
+                is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.FFMPEG.id)
+                is ProcessOutcome.Ok -> outcome.value
+            }
+        if (ran.exitCode != 0) {
+            fileSystem.delete(output)
+            val reason =
+                ran.stderr
+                    .lineSequence()
+                    .lastOrNull { it.isNotBlank() }
+                    .orEmpty()
+            return StepResult.Failed(null, "ffmpeg failed (${ran.exitCode}): $reason".trim())
+        }
+        extractions.delete(transfer.download.id)
+        return StepResult.Ok(FinalizeResult(listOf(outputName), consumed = files.map { it.file.path }))
+    }
 
     private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
 
