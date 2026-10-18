@@ -1,5 +1,6 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
@@ -31,6 +32,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
+import java.security.MessageDigest
+import java.util.Base64
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -166,6 +169,36 @@ class HttpDownloadTest {
                     .map { it.removePrefix("bytes=").substringBefore('-').toLong() }
             starts.isEmpty() shouldBe false
             done.none { it.start in starts } shouldBe true
+        }
+
+    // #573: checksums from the server's Digest
+
+    private fun digestOf(bytes: ByteArray) =
+        "SHA-256=" + Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes))
+
+    @Test
+    fun aDigestHeaderVerifiesTheFile() =
+        runBlocking<Unit> {
+            server.serve("/f.bin", bytes, etag = "\"v1\"", digest = digestOf(bytes))
+            val (download, mirror) = added()
+            val ready = prepared(download, mirror)
+            ready.probe.checksum shouldBe Checksum.parse("sha256:" + MessageDigest.getInstance("SHA-256").digest(bytes).toHexString())
+
+            runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            readBytes(Path(root, "f.bin")) shouldBe bytes
+        }
+
+    @Test
+    fun aWrongDigestFailsAsIntegrity() =
+        runBlocking<Unit> {
+            server.serve("/f.bin", bytes, etag = "\"v1\"", digest = digestOf(bytes.copyOf().also { it[0]++ }))
+            val (download, mirror) = added()
+
+            val failed = runner.run(prepared(download, mirror)).shouldBeInstanceOf<RunOutcome.Failed>()
+
+            failed.failure.errorClass shouldBe ErrorClass.INTEGRITY
+            namesIn(root) shouldContain partial(download)
         }
 
     // #572: mirrors and relink

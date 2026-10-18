@@ -1,6 +1,7 @@
 package dev.anydm.engine.store
 
 import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
@@ -66,6 +67,7 @@ internal class SqlDownloadStore(
                 pause_reasons = "",
                 queued_at = queuedAt,
                 source_validator = null,
+                checksum = new.checksum?.toString(),
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -103,6 +105,7 @@ internal class SqlDownloadStore(
                     pause_reasons = encodePauseReasons(download.pauseReasons),
                     queued_at = download.queuedAt,
                     source_validator = download.sourceValidator,
+                    checksum = download.checksum?.toString(),
                     id = download.id,
                 ).value > 0
         }
@@ -251,6 +254,10 @@ internal class SqlDownloadStore(
             pauseReasons = decodePauseReasons(pause_reasons),
             queuedAt = queued_at,
             sourceValidator = source_validator,
+            checksum =
+                checksum?.let {
+                    Checksum.parse(it) ?: throw IncompatibleStoreException("checksum holds '$it', which this version of anydm doesn't know")
+                },
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)

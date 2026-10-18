@@ -1,6 +1,7 @@
 package dev.anydm.engine
 
 import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -288,6 +289,11 @@ class Engine(
         id: DownloadId,
         priority: Int,
     ): CommandResult = command { queue.reprioritize(id, priority) }
+
+    suspend fun setChecksum(
+        id: DownloadId,
+        checksum: Checksum?,
+    ): CommandResult = command { queue.setChecksum(id, checksum) }
 
     suspend fun setLimit(limit: Int): CommandResult = command { queue.setLimit(limit) }
 

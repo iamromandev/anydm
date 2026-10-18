@@ -96,6 +96,8 @@ class StepRunner(
         mirror: Mirror,
         listener: RunListener = RunListener.None,
         others: List<Mirror> = emptyList(),
+        /** The stored bytes failed their checksum (the last attempt ended INTEGRITY): a changed source replaces them. */
+        failedCheck: Boolean = false,
     ): PrepareOutcome {
         require(download.status == PENDING) { "prepare needs a PENDING download, not ${download.status}" }
         require(mirror.downloadId == download.id) { "mirror ${mirror.id.value} isn't download ${download.id.value}'s" }
@@ -120,7 +122,8 @@ class StepRunner(
         var probed = probe.validator
         // Every byte already fetched is one whole copy of the old source (its outputs may be placed): nothing would be
         // appended, so it is kept, still marked with the old validator.
-        if (stored != null && probed != null && probed != stored && allFetched(download.id)) probed = stored
+        // A copy that failed its checksum is no copy worth keeping (HTTP-14).
+        if (stored != null && probed != null && probed != stored && !failedCheck && allFetched(download.id)) probed = stored
         if (stored != null && probed != null && probed != stored) {
             val dropped = dropPartials(download, folder)
             if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)
@@ -216,6 +219,13 @@ class StepRunner(
                 is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, done)
                 is StepResult.Ok -> done.value
             }
+        val expected = job.download.checksum ?: job.probe.checksum
+        // Only one file has one checksum; bad output paths are placeOutputs' to refuse, before anything reads them.
+        if (expected != null && finalized.outputs.size == 1 && pathProblem(finalized.outputs) == null) {
+            val target = targetPath(folder, finalized.outputs.single())
+            val checked = checkFile(partialPath(target, job.download.id), target, expected)
+            if (checked is StepResult.Failed) return runFailed(muxing, Step.POST_PROCESS, checked)
+        }
         val outputs =
             when (val placed = placeOutputs(job.download.id, folder, finalized.outputs)) {
                 is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed)
@@ -460,7 +470,7 @@ class StepRunner(
             } else {
                 segments = store.replaceSegments(file.id, new.segments)
                 writer =
-                    when (val made = startOver(partial, new.size)) {
+                    when (val made = freshPartial(partial, new.size)) {
                         is StepResult.Failed -> return made
                         is StepResult.Ok -> made.value
                     }
@@ -514,7 +524,7 @@ class StepRunner(
     }
 
     /** A fresh partial of [size] bytes (sparse where possible) replacing any stale one, opened for writing (HTTP-16). */
-    private suspend fun startOver(
+    private suspend fun freshPartial(
         partial: Path,
         size: Long?,
     ): StepResult<FileWriter> {
@@ -557,6 +567,53 @@ class StepRunner(
             placed += target
         }
         return StepResult.Ok(placed)
+    }
+
+    /**
+     * Hashes [partial] in [CHECK_CHUNK] reads and compares it with [expected] (HTTP-14): INTEGRITY when it differs. An
+     * output a stopped run already placed (no partial, [target] there) was checked then and isn't read again.
+     */
+    private suspend fun checkFile(
+        partial: Path,
+        target: Path,
+        expected: Checksum,
+    ): StepResult<Unit> {
+        val hasher = hasherFor(expected.algorithm)
+        var offset = 0L
+        while (true) {
+            val bytes =
+                when (val read = fileSystem.read(partial, offset, CHECK_CHUNK)) {
+                    is FileResult.Ok -> {
+                        read.value
+                    }
+
+                    is FileResult.NotFound -> {
+                        if (offset == 0L && fileSystem.size(target) is FileResult.Ok) return StepResult.Ok(Unit)
+                        return read.toStepFailed()
+                    }
+
+                    is FileResult.Failed -> {
+                        return read.toStepFailed()
+                    }
+                }
+            hasher.update(bytes)
+            offset += bytes.size
+            if (bytes.size < CHECK_CHUNK) break
+        }
+        val actual = hasher.hex()
+        if (actual == expected.hex) return StepResult.Ok(Unit)
+        val name = expected.toString().substringBefore(':')
+        return StepResult.Failed(ErrorClass.INTEGRITY, "$name mismatch: expected ${expected.hex}, got $actual")
+    }
+
+    /**
+     * Throws away what earlier runs fetched, so the next run starts from zero: each stored file's partial and the file
+     * rows with their watermarks. The queue's one retry after a checksum mismatch (HTTP-14). Nothing to drop without a
+     * save folder.
+     */
+    suspend fun startOver(download: Download): StepResult<Unit> {
+        val folder = download.saveFolder?.let(::Path) ?: return StepResult.Ok(Unit)
+        return dropPartials(download, folder)
     }
 
     /** Room for [bytes] more plus the reserve (FIL-08); nothing to check for 0 or fewer. */
@@ -603,6 +660,9 @@ class StepRunner(
     ): RunOutcome = RunOutcome.Failed(download, result.toFailure(step))
 
     companion object {
+        /** How much of a finished file each read takes while it is hashed (HTTP-14). */
+        internal const val CHECK_CHUNK = 1 shl 20
+
         /** How often a running transfer saves its checkpoints (FND-09). */
         val DEFAULT_CHECKPOINT_EVERY: Duration = 15.seconds
 

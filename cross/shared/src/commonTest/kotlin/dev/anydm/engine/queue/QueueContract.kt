@@ -1,5 +1,7 @@
 package dev.anydm.engine.queue
 
+import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -19,6 +21,7 @@ import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.hasherFor
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualEpoch
@@ -809,6 +812,109 @@ abstract class QueueContract : QueueTestBase() {
             h.protocol.transfers
                 .single()
                 .mirrors shouldBe listOf(c)
+        }
+
+    // Checksums (#573): one start-over from zero, then INTEGRITY with the file kept.
+
+    private val rightChecksum =
+        Checksum(
+            ChecksumAlgorithm.SHA256,
+            hasherFor(ChecksumAlgorithm.SHA256).also { it.update(fakeContent(0, 0, 64 * 1024)) }.hex(),
+        )
+    private val wrongChecksum = Checksum(ChecksumAlgorithm.SHA256, "0".repeat(64))
+
+    private fun partialOf(id: DownloadId) = Path(stepRoot, "job-1.zip.${id.value}.anydm")
+
+    private suspend fun TestScope.failedTwice(h: QueueHarness): DownloadId {
+        val a = h.addJob(checksum = wrongChecksum)
+        settle()
+        h.status(a) shouldBe FAILED
+        return a
+    }
+
+    @Test
+    fun aMismatchStartsOverOnce() =
+        runTest {
+            val h = started()
+            val a = failedTwice(h)
+
+            h.store.downloads
+                .attempts(a)
+                .map { it.errorClass } shouldBe listOf(ErrorClass.INTEGRITY, ErrorClass.INTEGRITY)
+            h.protocol.fetched.count { it.start == 0L } shouldBe 2 // the second run fetched from zero again
+            h.protocol.fetched.sumOf { it.end - it.start } shouldBe 2 * 64 * 1024L
+            h.fs.exists(partialOf(a)) shouldBe true
+        }
+
+    @Test
+    fun aCorrectedChecksumPassesOnRetry() =
+        runTest {
+            val h = started()
+            val a = failedTwice(h)
+            h.protocol.fetched.clear()
+
+            h.queue.setChecksum(a, rightChecksum).shouldBeInstanceOf<CommandResult.Done>()
+            h.queue.retry(a).shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.protocol.fetched shouldBe emptyList()
+        }
+
+    @Test
+    fun clearingTheChecksumSkipsTheCheck() =
+        runTest {
+            val h = started()
+            val a = failedTwice(h)
+
+            h.queue.setChecksum(a, null).shouldBeInstanceOf<CommandResult.Done>()
+            h.queue.retry(a).shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun setChecksumSurvivesARunningJobsReports() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.status(a) shouldBe DOWNLOADING
+
+            h.queue.setChecksum(a, rightChecksum).shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            h.job(a)!!.checksum shouldBe rightChecksum
+        }
+
+    // Final review: after an INTEGRITY failure every byte is fetched, and the all-fetched rule kept that bad copy even
+    // when the source changed, so a fixed source was never downloaded.
+    @Test
+    fun aChangedSourceIsFetchedAgainAfterAnIntegrityFailure() =
+        runTest {
+            val protocol = FakeProtocol(validator = "etag:\"v1\"", checksum = Checksum(ChecksumAlgorithm.MD5, "0".repeat(32)))
+            val h = started { QueueHarness(it, newStore(), protocol) }
+            val a = h.addJob()
+            settle()
+            h.status(a) shouldBe FAILED
+            protocol.fetched.clear()
+            protocol.validator = "etag:\"v2\"" // the server published a fixed file
+            protocol.checksum = null
+
+            h.queue.retry(a).shouldBeInstanceOf<CommandResult.Done>()
+            settle()
+
+            h.status(a) shouldBe COMPLETED
+            protocol.fetched.sumOf { it.end - it.start } shouldBe 64 * 1024L
+            h.job(a)!!.sourceValidator shouldBe "etag:\"v2\""
+        }
+
+    @Test
+    fun setChecksumOfAnUnknownJobIsNotFound() =
+        runTest {
+            started().queue.setChecksum(DownloadId(999), null) shouldBe CommandResult.NotFound
         }
 
     @Test

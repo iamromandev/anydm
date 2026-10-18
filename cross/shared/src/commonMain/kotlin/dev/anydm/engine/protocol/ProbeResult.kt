@@ -1,5 +1,7 @@
 package dev.anydm.engine.protocol
 
+import dev.anydm.engine.core.Checksum
+
 /**
  * What a probe learned. Each protocol returns its own implementation (#538 HttpProbe...) and gets it back unchanged;
  * the runner reads only these.
@@ -17,4 +19,7 @@ interface ProbeResult {
      * (FND-10): the partial files may no longer belong to the source.
      */
     val validator: String? get() = null
+
+    /** What the whole source hashes to, if the protocol learned it (HTTP's `Digest`); the user's checksum wins (HTTP-14). */
+    val checksum: Checksum? get() = null
 }

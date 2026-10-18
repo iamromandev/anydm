@@ -113,7 +113,27 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.downloads.context(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 4L }
+            rawDriver(file).use { it.userVersion() shouldBe 5L }
+        }
+
+    @Test
+    fun versionFourUpgradesWithNoChecksum() =
+        runTest {
+            val snapshots = requireNotNull(System.getProperty("anydm.schemaDir")) { "anydm.schemaDir is not set" }
+            Files.copy(Path(snapshots, "4.db").toNioPath(), file.toNioPath())
+            rawDriver(file).use { raw ->
+                raw.exec("PRAGMA user_version = 4")
+                raw.exec(
+                    "INSERT INTO download VALUES (1, 'DIRECT', 'QUEUED', NULL, NULL, NULL, NULL, '/media', 'a.mp4', 1000, 0, NULL, 0, " +
+                        "NULL, '', 1700000000000, 'etag:\"v1\"')",
+                )
+            }
+
+            val store = open()
+            store.downloads.get(DownloadId(1))!!.checksum shouldBe null
+            store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
+            store.close()
+            rawDriver(file).use { it.userVersion() shouldBe 5L }
         }
 
     // A made-up version 2 whose migration is [change], run on a version 1 file; create is the real schema.
@@ -152,9 +172,9 @@ class DatabaseFileTest {
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
         // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 4L
+        AnydmDb.Schema.version shouldBe 5L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 4L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 5L }
     }
 
     @Test

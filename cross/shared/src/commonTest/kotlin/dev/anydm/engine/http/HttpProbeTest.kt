@@ -1,5 +1,7 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Mirror
@@ -46,6 +48,25 @@ class HttpProbeTest {
             sent.method shouldBe "GET"
             sent.url shouldBe "https://h/f.zip"
             sent.headers shouldContain ("Range" to "bytes=0-1023")
+        }
+
+    @Test
+    fun theProbeAsksForDigestsAndReadsThem() =
+        runTest {
+            val transport =
+                FakeTransport {
+                    response(
+                        206,
+                        "Content-Range" to "bytes 0-1023/5000",
+                        "Digest" to "SHA-256=ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
+                    )
+                }
+            val probe = (HttpProtocol(transport).probe(request()) as StepResult.Ok).value as HttpProbe
+            probe.checksum shouldBe
+                Checksum(ChecksumAlgorithm.SHA256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+            val sent = transport.requests.single().headers
+            sent shouldContain ("Want-Digest" to "sha-256;q=1, sha;q=0.5, md5;q=0.1")
+            sent shouldContain ("Want-Repr-Digest" to "sha-256=10, sha=5, md5=1")
         }
 
     @Test

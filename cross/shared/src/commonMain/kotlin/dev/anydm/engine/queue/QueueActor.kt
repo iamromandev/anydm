@@ -2,6 +2,7 @@ package dev.anydm.engine.queue
 
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -303,6 +304,16 @@ internal class QueueActor(
                 }
             }
         }
+
+    /** The user's checksum (HTTP-14), kept like the priority: a running job's reports never overwrite it. */
+    suspend fun setChecksum(
+        id: DownloadId,
+        checksum: Checksum?,
+    ): CommandResult {
+        val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(checksum = checksum))) }
+        slot.download = save(slot.download.copy(checksum = checksum))
+        return CommandResult.Done(slot.download)
+    }
 
     suspend fun reprioritize(
         id: DownloadId,
@@ -620,7 +631,8 @@ internal class QueueActor(
         val gone = goneMirrors(mirrors, attempts)
         val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
-        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others)
+        val failedCheck = attempts.lastOrNull()?.errorClass == ErrorClass.INTEGRITY
+        val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)
         var end: SlotEnd = SlotEnd.Cancelled
@@ -675,7 +687,7 @@ internal class QueueActor(
                 override suspend fun checkpointed() = observer.checkpointed(slot.id)
             }
         val ready =
-            when (val prepared = runner.prepare(pending, mirror, listener, slot.others)) {
+            when (val prepared = runner.prepare(pending, mirror, listener, slot.others, slot.failedCheck)) {
                 is PrepareOutcome.Failed -> return SlotEnd.Failed(prepared.download, prepared.failure)
                 is PrepareOutcome.Ready -> prepared
             }
@@ -799,8 +811,11 @@ internal class QueueActor(
         val job = slot.download.takeRun(end.download)
         // Progress is what the stored watermarks gained: bytes a run fetched but never checkpointed are fetched again.
         val madeProgress = writtenBytes(slot.id) > slot.writtenAtStart
-        val next = nextMirror(downloads.mirrors(slot.id), downloads.attempts(slot.id))
-        return when (val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now())) {
+        val attempts = downloads.attempts(slot.id)
+        val next = nextMirror(downloads.mirrors(slot.id), attempts)
+        val integrityBefore = attempts.any { it.id != slot.attempt.id && it.errorClass == ErrorClass.INTEGRITY }
+        val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now(), integrityBefore)
+        return when (action) {
             is FailureAction.Retry -> {
                 later += EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount)
                 holdIfGlobal(
@@ -816,6 +831,20 @@ internal class QueueActor(
             is FailureAction.Pause -> {
                 if (action.reason == PauseReason.LOW_DISK) later += EngineEvent.PausedForDisk(slot.id)
                 (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
+            }
+
+            FailureAction.StartOver -> {
+                when (val dropped = runner.startOver(job)) {
+                    is StepResult.Failed -> {
+                        log.warn("queue") { "job ${slot.id.value} can't start over: ${dropped.message}" }
+                        job.toFailed().copy(nextAttemptAt = null)
+                    }
+
+                    is StepResult.Ok -> {
+                        later += EngineEvent.StartedOver(slot.id, "checksum mismatch: starting from zero")
+                        holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
+                    }
+                }
             }
 
             FailureAction.Fail -> {

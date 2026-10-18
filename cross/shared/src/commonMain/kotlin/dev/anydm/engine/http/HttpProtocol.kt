@@ -1,5 +1,6 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
@@ -31,6 +32,8 @@ data class HttpProbe(
     val contentType: String?,
     /** What the probe sent besides the URL; transfers send the same (HTTP-10). */
     val context: RequestContext? = null,
+    /** From `Digest` or `Repr-Digest` (HTTP-14). */
+    override val checksum: Checksum? = null,
 ) : ProbeResult
 
 /**
@@ -67,7 +70,7 @@ class HttpProtocol(
             requestHeaders(context).let { all ->
                 if (credentials) all else all.filterNot { it.first.lowercase() in credentialHeaders }
             }
-        val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + sent
+        val headers = listOf("Range" to "bytes=0-${PROBE_BYTES - 1}") + sent + wantDigests
         val response =
             try {
                 auth.open(HttpRequest(url, headers = headers))
@@ -237,6 +240,7 @@ class HttpProtocol(
             finalUrl = response.finalUrl,
             contentType = contentType,
             context = context,
+            checksum = checksumOf(response.headers),
         )
     }
 

@@ -3,6 +3,8 @@ package dev.anydm.engine.store
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.AttemptId
 import dev.anydm.engine.core.CategoryId
+import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.CollectionKind
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
@@ -283,6 +285,22 @@ abstract class DownloadStoreContract : StoreTestBase() {
 
             store.context(added.id) shouldBe null
             driver.count("request_context") shouldBe 0L
+        }
+
+    @Test
+    fun aChecksumRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            val checksum = Checksum(ChecksumAlgorithm.SHA256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            store.add(NewDownload(DownloadKind.DIRECT)).checksum shouldBe null
+            val added = store.add(NewDownload(DownloadKind.DIRECT, checksum = checksum))
+            added.checksum shouldBe checksum
+            store.get(added.id)!!.checksum shouldBe checksum
+            store.list().last().checksum shouldBe checksum
+
+            store.update(added.copy(checksum = null)) shouldBe true
+
+            store.get(added.id)!!.checksum shouldBe null
         }
 
     @Test

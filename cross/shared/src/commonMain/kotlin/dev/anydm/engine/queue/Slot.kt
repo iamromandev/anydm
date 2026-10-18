@@ -23,6 +23,8 @@ internal class Slot(
     val writtenAtStart: Long,
     /** The job's other mirrors not gone this round, which the run may fetch from too (HTTP-12). */
     val others: List<Mirror> = emptyList(),
+    /** The job's last attempt ended INTEGRITY: its fetched bytes failed their checksum (HTTP-14). */
+    val failedCheck: Boolean = false,
 ) {
     val id: DownloadId = download.id
     lateinit var job: Job

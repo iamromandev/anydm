@@ -1,5 +1,6 @@
 package dev.anydm.engine.protocol
 
+import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
@@ -46,6 +47,7 @@ internal data class FakeProbe(
     override val name: String,
     override val size: Long?,
     override val validator: String? = null,
+    override val checksum: Checksum? = null,
 ) : ProbeResult
 
 internal data class Fetched(
@@ -72,6 +74,8 @@ internal class FakeProtocol(
     var fresh: Boolean = false,
     /** What the probe says the source is (ProbeResult.validator); null = can't tell. */
     var validator: String? = null,
+    /** What the probe says the source hashes to (ProbeResult.checksum). */
+    var checksum: Checksum? = null,
     /** How long a cancelled transfer takes to stop, so a test can see a slot while it is stopping. */
     var stopDelay: Duration = Duration.ZERO,
     /** What [relink] answers; null keeps the interface's default (not supported). */
@@ -118,7 +122,7 @@ internal class FakeProtocol(
             } else {
                 null
             }
-        return StepResult.Ok(FakeProbe(name ?: files.first().path.substringAfterLast('/'), size, validator))
+        return StepResult.Ok(FakeProbe(name ?: files.first().path.substringAfterLast('/'), size, validator, checksum))
     }
 
     override fun plan(

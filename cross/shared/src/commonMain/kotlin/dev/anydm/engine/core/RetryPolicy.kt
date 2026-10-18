@@ -15,6 +15,7 @@ import kotlin.time.Instant
  * | TRANSIENT, RATE_LIMITED                | [FailureAction.Retry] while the budget lasts  |
  * | GONE                                   | [FailureAction.NextMirror] if one is left     |
  * | DISK_FULL                              | [FailureAction.Pause] for LOW_DISK            |
+ * | INTEGRITY                              | [FailureAction.StartOver] the first time      |
  * | AUTH, FORMAT_WITHHELD, INTEGRITY, none | [FailureAction.Fail]                          |
  *
  * The budget is `maxRetries` automatic retries in a row; an attempt that made progress starts the count again, so a
@@ -36,7 +37,8 @@ class RetryPolicy(
 
     /**
      * The action for [failure] of [job] (as the run left it). [nextMirror] is the mirror a GONE moves to, or null when
-     * none is left; [madeProgress] is whether this attempt wrote bytes.
+     * none is left; [madeProgress] is whether this attempt wrote bytes; [integrityBefore] is whether an earlier attempt
+     * of the job already ended INTEGRITY, so a checksum mismatch starts over from zero only once (HTTP-14).
      */
     fun decide(
         job: Download,
@@ -45,6 +47,7 @@ class RetryPolicy(
         nextMirror: Mirror?,
         maxRetries: Int,
         now: Instant,
+        integrityBefore: Boolean = false,
     ): FailureAction =
         when (failure.errorClass) {
             ErrorClass.TRANSIENT, ErrorClass.RATE_LIMITED -> {
@@ -65,7 +68,11 @@ class RetryPolicy(
                 FailureAction.Pause(PauseReason.LOW_DISK)
             }
 
-            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, ErrorClass.INTEGRITY, null -> {
+            ErrorClass.INTEGRITY -> {
+                if (integrityBefore) FailureAction.Fail else FailureAction.StartOver
+            }
+
+            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, null -> {
                 FailureAction.Fail
             }
         }
@@ -99,6 +106,9 @@ sealed interface FailureAction {
     data class Pause(
         val reason: PauseReason,
     ) : FailureAction
+
+    /** Throw away what was fetched and run again from zero (a checksum mismatch, once). */
+    data object StartOver : FailureAction
 
     data object Fail : FailureAction
 }
