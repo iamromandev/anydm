@@ -175,6 +175,23 @@ class DesktopFileSystemTest : FileSystemContract() {
             Files.setPosixFilePermissions(nio, PosixFilePermissions.fromString("rwxr-xr-x"))
         }
     }
+
+    @Test
+    fun deleteTreeDoesNotFollowASymlinkOutOfTheTree() {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"))
+        val outside =
+            Files
+                .createDirectories(
+                    root.toNioPath().resolve("outside"),
+                ).also { Files.writeString(it.resolve("keep.txt"), "keep") }
+        val tree = Files.createDirectories(root.toNioPath().resolve("tree"))
+        Files.createSymbolicLink(tree.resolve("link"), outside)
+
+        runTest { fileSystem(trash = null).deleteTree(Path(tree.toString())) shouldBe FileResult.Ok(Unit) }
+
+        Files.exists(tree) shouldBe false
+        Files.readString(outside.resolve("keep.txt")) shouldBe "keep"
+    }
 }
 
 /** Holds every task until the test runs it, so a test decides what happens between a call's steps. */

@@ -4,6 +4,7 @@ import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.platform.virtualClock
+import dev.anydm.engine.tools.YtDlpChannel
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
@@ -236,5 +237,21 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.load().historyLimit shouldBe 50
             rows() shouldContain "files.history_limit=50"
             shouldThrow<IllegalArgumentException> { Settings(historyLimit = 0) }
+        }
+
+    @Test
+    fun toolSettingsRoundTrip() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().ytDlpChannel shouldBe YtDlpChannel.STABLE
+            settings.load().systemTools shouldBe true
+            rows().none { it?.startsWith("tools.") == true } shouldBe true
+
+            settings.update { it.copy(ytDlpChannel = YtDlpChannel.NIGHTLY, systemTools = false) }
+
+            settings.load().ytDlpChannel shouldBe YtDlpChannel.NIGHTLY
+            settings.load().systemTools shouldBe false
+            rows() shouldContain "tools.yt_dlp_channel=NIGHTLY"
+            rows() shouldContain "tools.system_tools=false"
         }
 }

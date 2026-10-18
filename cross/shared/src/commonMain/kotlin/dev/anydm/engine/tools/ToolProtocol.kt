@@ -17,7 +17,6 @@ import kotlinx.io.files.Path
 import kotlin.time.Duration.Companion.seconds
 
 private const val CHUNK = 1 shl 20
-private const val MAX_DEPTH = 3
 private val SELF_TEST_LIMIT = 30.seconds
 
 /**
@@ -67,7 +66,7 @@ class ToolProtocol(
                 )
             }
             val names = tool.executables.map { tool.fileName(it, os) }
-            val found = find(folder, names.toSet())
+            val found = findExecutables(fileSystem, folder, names.toSet())
             executables = names.mapNotNull { found[it] }
             if (executables.isEmpty()) return fail("${file.target.name} holds none of: ${tool.executables.joinToString()}")
         }
@@ -114,30 +113,6 @@ class ToolProtocol(
         } else {
             StepResult.Failed(ErrorClass.INTEGRITY, "${file.name} doesn't match its checksum")
         }
-    }
-
-    /** The first file of each wanted name in [folder], looking at most [MAX_DEPTH] folders down. */
-    private suspend fun find(
-        folder: Path,
-        names: Set<String>,
-    ): Map<String, Path> {
-        val found = mutableMapOf<String, Path>()
-
-        suspend fun walk(
-            directory: Path,
-            level: Int,
-        ) {
-            val children = (fileSystem.list(directory) as? FileResult.Ok)?.value ?: return
-            for (child in children) {
-                when (fileSystem.size(child)) {
-                    is FileResult.Ok -> if (child.name in names && child.name !in found) found[child.name] = child
-                    is FileResult.AlreadyExists -> if (level < MAX_DEPTH) walk(child, level + 1)
-                    else -> Unit
-                }
-            }
-        }
-        walk(folder, 1)
-        return found
     }
 
     private suspend fun selfTest(

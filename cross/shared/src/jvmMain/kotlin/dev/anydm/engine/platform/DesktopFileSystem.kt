@@ -148,6 +148,41 @@ class DesktopFileSystem internal constructor(
         }
     }
 
+    override suspend fun deleteTree(path: Path): FileResult<Unit> {
+        requireAbsolute(path)
+        return blocking(cancellable = false) {
+            val root = path.nio()
+            if (!Files.exists(root, NOFOLLOW_LINKS)) {
+                FileResult.NotFound(path)
+            } else {
+                attempt(path) {
+                    Files.walkFileTree(
+                        root,
+                        object : java.nio.file.SimpleFileVisitor<NioPath>() {
+                            override fun visitFile(
+                                file: NioPath,
+                                attrs: java.nio.file.attribute.BasicFileAttributes,
+                            ): java.nio.file.FileVisitResult {
+                                Files.delete(file)
+                                return java.nio.file.FileVisitResult.CONTINUE
+                            }
+
+                            override fun postVisitDirectory(
+                                dir: NioPath,
+                                exc: IOException?,
+                            ): java.nio.file.FileVisitResult {
+                                if (exc != null) throw exc
+                                Files.delete(dir)
+                                return java.nio.file.FileVisitResult.CONTINUE
+                            }
+                        },
+                    )
+                    Unit
+                }
+            }
+        }
+    }
+
     override suspend fun list(path: Path): FileResult<List<Path>> {
         requireAbsolute(path)
         return blocking(cancellable = true) {

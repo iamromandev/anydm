@@ -112,4 +112,24 @@ class FakeFileSystemTest {
             fs.list(file) shouldBe FileResult.AlreadyExists(file, "a file is in the way")
             fs.list(Path("/nope")) shouldBe FileResult.NotFound(Path("/nope"))
         }
+
+    @Test
+    fun deleteTreeRemovesTheFolderAndWhatIsUnderIt() =
+        runTest {
+            val fs = FakeFileSystem()
+            fs.put(Path(folder, "sub", "a.txt"), byteArrayOf(1))
+            fs.put(Path(folder, "sub", "deep", "b.txt"), byteArrayOf(1))
+            fs.put(Path(folder, "keep.txt"), byteArrayOf(1))
+
+            fs.deleteTree(Path(folder, "sub")) shouldBe FileResult.Ok(Unit)
+
+            fs.paths() shouldBe setOf(Path(folder, "keep.txt"))
+            fs.list(Path(folder, "sub")) shouldBe FileResult.NotFound(Path(folder, "sub"))
+        }
+
+    @Test
+    fun deleteTreeOfAMissingPathIsNotFound() =
+        runTest {
+            FakeFileSystem().deleteTree(Path("/nope")) shouldBe FileResult.NotFound(Path("/nope"))
+        }
 }

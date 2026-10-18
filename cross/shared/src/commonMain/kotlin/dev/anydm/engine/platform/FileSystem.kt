@@ -64,6 +64,13 @@ interface FileSystem {
     suspend fun delete(path: Path): FileResult<Unit>
 
     /**
+     * Removes the file or folder at [path] for good, with everything in it: for the engine's own folders (an old tool
+     * version), never for the user's files. [FileResult.NotFound] if there is nothing there. A symbolic link inside is
+     * removed as a link, never followed. Like [delete], it finishes even if the caller is cancelled.
+     */
+    suspend fun deleteTree(path: Path): FileResult<Unit>
+
+    /**
      * The direct children of the folder at [path] (files and folders), by name; [FileResult.NotFound] if there is no
      * such folder, [FileResult.AlreadyExists] for a file. Used to find what an unpacked archive holds.
      */

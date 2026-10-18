@@ -423,6 +423,35 @@ abstract class FileSystemContract {
         }
 
     @Test
+    fun deleteTreeRemovesAFolderWithEverythingInIt() =
+        runTest {
+            val folder = Path(root, "tools").also { SystemFileSystem.createDirectories(Path(it, "v1", "bin")) }
+            writeText(Path(folder, "v1", "bin", "tool"), "x")
+            writeText(Path(folder, "v1", "README"), "y")
+
+            fileSystem(trash).deleteTree(folder) shouldBe FileResult.Ok(Unit)
+
+            exists(folder) shouldBe false
+        }
+
+    @Test
+    fun deleteTreeRemovesAFile() =
+        runTest {
+            val file = Path(root, "a.bin").also { writeText(it, "x") }
+
+            fileSystem(trash).deleteTree(file) shouldBe FileResult.Ok(Unit)
+
+            exists(file) shouldBe false
+        }
+
+    @Test
+    fun deleteTreeOfAMissingPathIsNotFound() =
+        runTest {
+            val missing = Path(root, "nope")
+            fileSystem(trash).deleteTree(missing).shouldBeInstanceOf<FileResult.NotFound>().path shouldBe missing
+        }
+
+    @Test
     fun deleteRemovesAFile() =
         runTest {
             val file = Path(root, "video.mp4.anydm").also { writeText(it, "stale") }

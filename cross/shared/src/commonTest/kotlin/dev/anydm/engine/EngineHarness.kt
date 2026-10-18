@@ -17,6 +17,7 @@ import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
+import dev.anydm.engine.tools.ToolManager
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -40,6 +41,7 @@ internal class EngineHarness(
     log: Log = Log.None,
     network: NetworkIdentity = NetworkIdentity.Unknown,
     traffic: TrafficStore = store.traffic,
+    tools: ToolManager? = null,
 ) {
     val engine =
         Engine(
@@ -55,6 +57,7 @@ internal class EngineHarness(
             log = log,
             network = network,
             traffic = traffic,
+            tools = tools,
         )
 
     private var added = 0
