@@ -5,11 +5,14 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
+import dev.anydm.engine.core.DuplicateReason
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
@@ -17,6 +20,7 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.choice
@@ -35,6 +39,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.files.Path
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -291,7 +296,7 @@ abstract class EngineContract : StoreTestBase() {
             val a = h.addJob()
             runCurrent()
 
-            h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file.zip")
+            h.snapshot(a)!!.mirrors.map { it.url } shouldBe listOf("https://example.com/file-1.zip")
             h.engine.stop()
         }
 
@@ -360,7 +365,7 @@ abstract class EngineContract : StoreTestBase() {
                         it,
                         newStore(),
                         FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.DISK_FULL, "full"))),
-                    )
+                    ).also { it.fs.free = 1_000 } // the disk really is full, so the job isn't released to fail again
                 }
             val seen = mutableListOf<String>()
             backgroundScope.launch(Dispatchers.Unconfined) {
@@ -489,6 +494,160 @@ abstract class EngineContract : StoreTestBase() {
                         snapshot.mirrors shouldBe h.store.downloads.mirrors(snapshot.download.id)
                     }
                 }
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun lowDiskPausesTheJobsThenResumesThem() =
+        runTest {
+            // 120 s of transfer, so the job is still running when the first check comes at 30 s.
+            val h = started { EngineHarness(it, newStore(), FakeProtocol(files = listOf(FakeFile("file.zip", 64L * 1024 * 30)))) }
+            try {
+                val a = h.addJob()
+                advanceTimeBy(1.seconds)
+
+                h.fs.free = 1_000_000 // under the 64 MiB reserve
+                advanceTimeBy(31.seconds)
+                runCurrent()
+
+                h.status(a) shouldBe PAUSED
+                h.snapshot(a)!!.download.pauseReasons shouldBe setOf(PauseReason.LOW_DISK)
+
+                h.fs.free = Long.MAX_VALUE
+                advanceTimeBy(31.seconds)
+                settle()
+
+                h.status(a) shouldBe COMPLETED
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeSendsTheFilesToTheTrashByDefault() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+                h.fs.trashAvailable = true
+
+                h.engine.remove(a) shouldBe CommandResult.Done(null)
+
+                h.fs.trashed.isNotEmpty() shouldBe true
+                h.snapshot(a) shouldBe null
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeKeepsTheFilesAndTheJobWhenThereIsNoTrash() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.fs.trashAvailable = false
+
+                h.engine.remove(a) shouldBe CommandResult.TrashUnavailable
+
+                h.snapshot(a) shouldNotBe null
+                h.fs.trashed shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aFinishedDownloadGoesToTheHistory() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+
+                h.store.history
+                    .list(10)
+                    .single()
+                    .downloadId shouldBe a
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun addingTheLinkOfADownloadInTheHistoryIsADuplicateEvenAfterItsRemoval() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.engine.remove(a, RemoveFiles.KEEP)
+
+                val again = h.engine.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://example.com/file-1.zip")))
+
+                again.shouldBeInstanceOf<CommandResult.Duplicate>().found.reason shouldBe DuplicateReason.IN_HISTORY
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeTrashesTheRenamedFileNotTheOneItWasRenamedAround() =
+        runTest {
+            val h = started()
+            try {
+                val other = Path(dev.anydm.engine.core.stepRoot, "job-1.zip")
+                h.fs.put(other, byteArrayOf(9))
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+                h.fs.trashAvailable = true
+
+                h.engine.remove(a) shouldBe CommandResult.Done(null)
+
+                h.fs.exists(other) shouldBe true
+                h.fs.trashed.map { it.name } shouldBe listOf("job-1 (1).zip")
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aJobPausedByAFullDiskComesBackOnlyWhenThereIsRoomForIt() =
+        runTest {
+            val fourMiB = 4L * 1024 * 1024
+            val h = started { EngineHarness(it, newStore(), FakeProtocol(files = listOf(FakeFile("file.zip", fourMiB)))) }
+            try {
+                h.store.settings.update { it.copy(freeSpaceReserve = 1_000_000) }
+                h.fs.free = 500_000 // not even the reserve
+                val a = h.addJob()
+                advanceTimeBy(1.seconds)
+                h.status(a) shouldBe PAUSED
+                val attempts =
+                    h.store.downloads
+                        .attempts(a)
+                        .size
+
+                h.fs.free = 4_500_000 // above twice the reserve, but the file and the reserve need 5.2 MB
+                advanceTimeBy(100.seconds)
+                runCurrent()
+
+                h.status(a) shouldBe PAUSED
+                h.store.downloads
+                    .attempts(a)
+                    .size shouldBe attempts
+
+                h.fs.free = 6_000_000
+                advanceTimeBy(31.seconds)
+                settle()
+
+                h.status(a) shouldBe COMPLETED
+            } finally {
                 h.engine.stop()
             }
         }

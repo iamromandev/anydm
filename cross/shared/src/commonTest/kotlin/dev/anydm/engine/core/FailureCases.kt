@@ -71,7 +71,7 @@ internal val failureCases =
         ) {
             fs.faults[Op.FREE_SPACE] = { FileResult.IoError(it, "boom") }
         },
-        FailureCase("duplicate", Step.PREFLIGHT, null, toFailed, noCalls) {
+        FailureCase("duplicate", Step.PROBE, null, toFailed, probeOnly) {
             duplicate = DownloadId(7)
         },
         FailureCase("probe", Step.PROBE, ErrorClass.GONE, toFailed, probeOnly) {

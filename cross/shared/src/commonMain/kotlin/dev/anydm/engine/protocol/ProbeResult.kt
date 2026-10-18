@@ -22,4 +22,7 @@ interface ProbeResult {
 
     /** What the whole source hashes to, if the protocol learned it (HTTP's `Digest`); the user's checksum wins (HTTP-14). */
     val checksum: Checksum? get() = null
+
+    /** The content's MIME type, lowercase and without parameters, if the protocol learned one (category rules, FIL-01). */
+    val mime: String? get() = null
 }

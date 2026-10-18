@@ -59,20 +59,32 @@ internal class EngineHarness(
 
     private var added = 0
 
-    /** Adds a job with one mirror and its own file name. */
-    suspend fun addJob(priority: Int = 0): DownloadId =
-        engine
+    /** Adds a job with its own file name and its own link (the same link twice is a duplicate, FIL-05). */
+    suspend fun addJob(priority: Int = 0): DownloadId {
+        // A harness made after a restart carries on from the jobs the engine published at start. It reads the engine,
+        // not the store, so a closed store still fails inside the engine.
+        val stored =
+            engine.downloads.value.mapNotNull {
+                it.download.fileName
+                    ?.removePrefix("job-")
+                    ?.removeSuffix(".zip")
+                    ?.toIntOrNull()
+            }
+        added = maxOf(added, stored.maxOrNull() ?: 0) + 1
+        val number = added
+        return engine
             .add(
                 NewDownload(
                     DownloadKind.DIRECT,
-                    mirrors = listOf("https://example.com/file.zip"),
+                    mirrors = listOf("https://example.com/file-$number.zip"),
                     saveFolder = stepRoot.toString(),
-                    fileName = "job-${++added}.zip",
+                    fileName = "job-$number.zip",
                     priority = priority,
                 ),
             ).shouldBeInstanceOf<CommandResult.Done>()
             .download!!
             .id
+    }
 
     fun snapshot(id: DownloadId): DownloadSnapshot? = engine.downloads.value.find { it.download.id == id }
 

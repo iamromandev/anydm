@@ -16,6 +16,7 @@ import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FailureAction
 import dev.anydm.engine.core.Mirror
@@ -79,6 +80,7 @@ internal class QueueActor(
     private val observer: QueueObserver,
     private val log: Log,
     timeSource: TimeSource.WithComparableMarks,
+    private val duplicates: DuplicateCheck,
 ) {
     /** Every running job's speed limits (NET-01..03), shared by all of them. */
     private val bandwidth = Bandwidth(timeSource)
@@ -266,6 +268,7 @@ internal class QueueActor(
     // Commands
 
     suspend fun add(new: NewDownload): CommandResult {
+        duplicates.atAdd(new)?.let { return CommandResult.Duplicate(it) }
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
         observer.jobChanged(added)
@@ -350,17 +353,24 @@ internal class QueueActor(
         if (stopping.isEmpty()) {
             reply.complete(CommandResult.Done(null))
         } else {
-            // Not a coroutine in slotScope: one cancelled along with a stopping queue would answer with its own
-            // CancellationException instead of why the queue stopped. The handlers run on the queue's coroutine, which
-            // completes every stopped slot's reply, so the count needs no lock.
-            var left = stopping.size
-            for (stopped in stopping) {
-                stopped.invokeOnCompletion { cause ->
-                    if (cause != null) {
-                        reply.completeExceptionally(cause)
-                    } else if (--left == 0) {
-                        reply.complete(CommandResult.Done(null))
-                    }
+            replyWhenStopped(stopping, reply)
+        }
+    }
+
+    // Not a coroutine in slotScope: one cancelled along with a stopping queue would answer with its own
+    // CancellationException instead of why the queue stopped. The handlers run on the queue's coroutine, which
+    // completes every stopped slot's reply, so the count needs no lock.
+    private fun replyWhenStopped(
+        stopping: List<CompletableDeferred<CommandResult>>,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        var left = stopping.size
+        for (stopped in stopping) {
+            stopped.invokeOnCompletion { cause ->
+                if (cause != null) {
+                    reply.completeExceptionally(cause)
+                } else if (--left == 0) {
+                    reply.complete(CommandResult.Done(null))
                 }
             }
         }
@@ -372,6 +382,45 @@ internal class QueueActor(
         settings = store.settings.update { it.copy(globalPause = false) }
         return CommandResult.Done(null)
     }
+
+    /**
+     * Free space ran low in the [low] folders (FIL-08): their running jobs stop and their waiting ones wait, paused for
+     * LOW_DISK; a job paused for it that is named in [release] is released. Idempotent, so the engine can send the whole
+     * state on every check. A job that is also paused for another reason stays paused for that one.
+     */
+    suspend fun applyDiskState(
+        low: Set<Path>,
+        release: Set<DownloadId>,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (job in downloads.list()) {
+            val inLow = job.saveFolder?.let { Path(it) in low } == true
+            val slot = slots[job.id]
+            when {
+                inLow && slot != null -> {
+                    stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterDiskStop, it) }
+                }
+
+                inLow && (job.status in WAITING || job.status == PAUSED) -> {
+                    pauseForDisk(job)
+                }
+
+                !inLow && job.status == PAUSED && PauseReason.LOW_DISK in job.pauseReasons && job.id in release -> {
+                    release(job, PauseReason.LOW_DISK)
+                }
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    private suspend fun pauseForDisk(job: Download) {
+        val paused = (job.pause(PauseReason.LOW_DISK) as TransitionResult.Moved).download
+        if (paused != job) save(paused)
+    }
+
+    // A slot stopped for a low disk: paused for it, unless the next check finds the folder recovered.
+    private suspend fun afterDiskStop(job: Download): CommandResult = change(job.pause(PauseReason.LOW_DISK))
 
     /** The limit every job shares by priority (NET-02, NET-03); applies to running jobs at once. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
@@ -408,8 +457,11 @@ internal class QueueActor(
         return CommandResult.Done(if (waiting.status in WAITING) save(waiting.copy(queuedAt = clock.now())) else waiting)
     }
 
-    private suspend fun release(job: Download) {
-        val released = (job.release(PauseReason.GLOBAL) as TransitionResult.Moved).download
+    private suspend fun release(
+        job: Download,
+        reason: PauseReason = PauseReason.GLOBAL,
+    ) {
+        val released = (job.release(reason) as TransitionResult.Moved).download
         if (released != job) save(if (released.status == QUEUED) released.copy(queuedAt = clock.now()) else released)
     }
 
@@ -566,9 +618,12 @@ internal class QueueActor(
     // Each planned file's output and partial; one that isn't there is fine. The first failure stops it.
     private suspend fun trash(job: Download): FileResult.Failed? {
         val folder = job.saveFolder?.let(::Path) ?: return null
+        val finished = job.status == COMPLETED || job.status == SEEDING
         for (file in downloads.files(job.id)) {
             val target = targetPath(folder, file.path)
-            for (path in listOf(target, partialPath(target, job.id))) {
+            // Only a file this job placed is its own: at its row's path another job's file can be sitting.
+            val output = file.placedPath?.let { targetPath(folder, it) } ?: target.takeIf { finished }
+            for (path in listOfNotNull(output, partialPath(target, job.id))) {
                 when (val trashed = fileSystem.moveToTrash(path)) {
                     is FileResult.Ok, is FileResult.NotFound -> Unit
                     is FileResult.Failed -> return trashed
@@ -905,11 +960,18 @@ internal class QueueActor(
 }
 
 /**
- * The fields a run decides (RunListener): status, and what the probe learned. Everything else, such as a priority
+ * The fields a run decides (RunListener): status, its category and folder, and what the probe learned. Everything else, such as a priority
  * changed while the job ran, stays as the queue has it.
  */
 private fun Download.takeRun(run: Download): Download =
-    copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size, sourceValidator = run.sourceValidator)
+    copy(
+        status = run.status,
+        categoryId = run.categoryId,
+        saveFolder = run.saveFolder,
+        fileName = run.fileName,
+        size = run.size,
+        sourceValidator = run.sourceValidator,
+    )
 
 /** How a bug (a throw that isn't an expected failure) is reported in an Attempt or a command's result. */
 private fun internalError(error: Throwable) = "internal error: ${error.message ?: error::class.simpleName}"

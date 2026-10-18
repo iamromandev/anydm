@@ -1,5 +1,6 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.platform.virtualClock
@@ -195,4 +196,45 @@ abstract class SettingsStoreContract : StoreTestBase() {
         shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 0) }
         shouldThrow<IllegalArgumentException> { Settings(connectionsPerDownload = 17) }
     }
+
+    @Test
+    fun clashPolicyRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().clashPolicy shouldBe ClashPolicy.RENAME
+            rows().none { it?.startsWith("files.clash_policy=") == true } shouldBe true
+
+            settings.update { it.copy(clashPolicy = ClashPolicy.SKIP) }
+
+            settings.load().clashPolicy shouldBe ClashPolicy.SKIP
+            rows() shouldContain "files.clash_policy=SKIP"
+        }
+
+    @Test
+    fun freeSpaceReserveRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().freeSpaceReserve shouldBe 64L * 1024 * 1024
+            rows().none { it?.startsWith("files.free_space_reserve=") == true } shouldBe true
+
+            settings.update { it.copy(freeSpaceReserve = 1_000) }
+
+            settings.load().freeSpaceReserve shouldBe 1_000L
+            rows() shouldContain "files.free_space_reserve=1000"
+            shouldThrow<IllegalArgumentException> { Settings(freeSpaceReserve = -1) }
+        }
+
+    @Test
+    fun historyLimitRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().historyLimit shouldBe 1000
+            rows().none { it?.startsWith("files.history_limit=") == true } shouldBe true
+
+            settings.update { it.copy(historyLimit = 50) }
+
+            settings.load().historyLimit shouldBe 50
+            rows() shouldContain "files.history_limit=50"
+            shouldThrow<IllegalArgumentException> { Settings(historyLimit = 0) }
+        }
 }

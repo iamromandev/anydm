@@ -3,7 +3,8 @@ package dev.anydm.engine.http
 /**
  * The name a download gets (HTTP-02): `filename*` from [contentDisposition] (RFC 5987/6266), else `filename`, else the
  * last path segment of [finalUrl], else `download` with an extension for [contentType]. Path separators become `_`;
- * a name that ends up empty, `.` or `..` falls to the next rule. Full sanitising is FIL-03 (#539).
+ * a name that ends up empty, `.` or `..` falls to the next rule. Full per-OS sanitising (FIL-03) is
+ * [dev.anydm.engine.files.NameCleaner]'s, applied by the placement step after the probe.
  */
 fun fileNameFor(
     contentDisposition: String?,

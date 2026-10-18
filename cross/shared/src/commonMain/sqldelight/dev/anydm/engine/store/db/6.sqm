@@ -1,0 +1,11 @@
+-- Version 6 to 7 (#539): categories with a save folder, a naming template and the rules that claim a download.
+-- download.category_id gets no foreign key: SQLite cannot add one in place, and rebuilding `download` would drag
+-- every table that references it. The store clears it when a category is removed (CategoryStore.remove).
+CREATE TABLE category (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    template TEXT,
+    rules TEXT NOT NULL,
+    priority INTEGER NOT NULL
+);

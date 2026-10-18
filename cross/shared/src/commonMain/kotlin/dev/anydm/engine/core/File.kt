@@ -17,6 +17,11 @@ data class File(
     val size: Long? = null,
     /** False for a torrent file the user chose to skip. */
     val selected: Boolean = true,
+    /**
+     * Where the finished output was placed, relative to the save folder like [path]; null until it is. A name clash
+     * can make it differ from [path], so removing and recovering go by this one.
+     */
+    val placedPath: String? = null,
 ) {
     init {
         require(index >= 0) { "index must be >= 0: $index" }

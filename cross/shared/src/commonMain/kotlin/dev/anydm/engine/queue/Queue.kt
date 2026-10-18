@@ -4,6 +4,8 @@ import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DuplicateCheck
+import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
@@ -16,6 +18,7 @@ import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.TimeSource
 
@@ -41,14 +44,26 @@ class Queue internal constructor(
     log: Log = Log.None,
     /** What speed limits are measured on (NET-01): monotonic, or a test's virtual time. */
     timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    /** Asked on every add (FIL-05). */
+    duplicates: DuplicateCheck = DuplicateCheck.None,
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
+
+    /**
+     * Pauses what runs or waits in the [low] folders and releases the jobs named in [release], which were paused for a
+     * low disk and now have room (FIL-08). Any other job paused for it, say because its file didn't fit at the start,
+     * waits until the engine finds it room.
+     */
+    suspend fun applyDiskState(
+        low: Set<Path>,
+        release: Set<DownloadId> = emptySet(),
+    ): CommandResult = actor.callLater { applyDiskState(low, release, it) }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
     suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }
@@ -165,6 +180,11 @@ sealed interface CommandResult {
     /** An argument the command can't take, and why; nothing changed. */
     data class Invalid(
         val reason: String,
+    ) : CommandResult
+
+    /** [DuplicateCheck.atAdd] found the link already in the list or the file already there; nothing was added (FIL-05). */
+    data class Duplicate(
+        val found: DuplicateFound,
     ) : CommandResult
 
     /** The protocol refused the new link; nothing changed. */

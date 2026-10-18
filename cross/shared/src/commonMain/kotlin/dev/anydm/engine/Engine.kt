@@ -6,10 +6,19 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.DuplicateCheck
+import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.DiskGuard
+import dev.anydm.engine.files.FilesDuplicateCheck
+import dev.anydm.engine.files.FilesPlacement
+import dev.anydm.engine.files.HistoryRecorder
+import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
 import dev.anydm.engine.net.NetworkIdentity
@@ -82,6 +91,12 @@ class Engine(
     private val network: NetworkIdentity = NetworkIdentity.Unknown,
     /** Where traffic is saved; the store's, replaceable in tests. */
     private val traffic: TrafficStore = store.traffic,
+    /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). Windows' are the strictest. */
+    osProfile: OsProfile = OsProfile.WINDOWS,
+    /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
+    duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, store.history, fileSystem),
+    /** Told when a job finishes; the history by default (FIL-10). */
+    finish: FinishHook = HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -127,14 +142,44 @@ class Engine(
     private val published = mutableMapOf<DownloadId, Pair<Long, Long?>>()
     private val totalSamples = ArrayDeque<Long>()
     private var loops: Job? = null
+    private val diskGuard = DiskGuard(fileSystem) { store.settings.load().freeSpaceReserve }
+    private var lowFolders = emptySet<Path>()
 
-    private val runner = StepRunner(fileSystem, store.downloads, protocols, defaultFolder, checkpointEvery = checkpointEvery)
+    private val runner =
+        StepRunner(
+            fileSystem,
+            store.downloads,
+            protocols,
+            defaultFolder,
+            reserve = { store.settings.load().freeSpaceReserve },
+            duplicates = duplicates,
+            finish = finish,
+            placement =
+                FilesPlacement(
+                    NameCleaner(osProfile),
+                    categories = { store.categories.list() },
+                    policy = { store.settings.load().clashPolicy },
+                    fileSystem = fileSystem,
+                ),
+            checkpointEvery = checkpointEvery,
+        )
 
     /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
     internal val observer: QueueObserver = Observer()
 
     private val queue =
-        Queue(CoroutineScope(scope.coroutineContext + queueJob), store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
+        Queue(
+            CoroutineScope(scope.coroutineContext + queueJob),
+            store,
+            runner,
+            protocols,
+            fileSystem,
+            clock,
+            retryPolicy,
+            observer,
+            log,
+            duplicates = duplicates,
+        )
 
     private sealed interface Fact {
         data class Changed(
@@ -246,6 +291,12 @@ class Engine(
                         flushTraffic()
                     }
                 }
+                scope.launch {
+                    while (true) {
+                        delay(DISK_CHECK_EVERY)
+                        checkDisk()
+                    }
+                }
             }
         try {
             startup.await()
@@ -305,9 +356,10 @@ class Engine(
 
     suspend fun cancel(id: DownloadId): CommandResult = command { queue.cancel(id) }
 
+    /** Takes the job off the list; [files] says what happens to its files, which go to the OS trash unless told otherwise. */
     suspend fun remove(
         id: DownloadId,
-        files: RemoveFiles,
+        files: RemoveFiles = RemoveFiles.TRASH,
     ): CommandResult = command { queue.remove(id, files) }
 
     suspend fun retry(id: DownloadId): CommandResult = command { queue.retry(id) }
@@ -510,6 +562,25 @@ class Engine(
             FileSnapshot(it, store.downloads.segments(it.id))
         }
 
+    // Jobs in a folder that has run low on space wait for it (FIL-08); the whole state goes to the queue every time. A
+    // job paused for a low disk comes back once its folder holds what is left of its file plus the reserve, the same
+    // rule the start check applies, so it can't be released only to fail again.
+    private suspend fun checkDisk() {
+        val jobs = snapshots.value.filter { it.download.status in DISK_WATCHED || PauseReason.LOW_DISK in it.download.pauseReasons }
+        val folders = jobs.mapNotNull { job -> job.download.saveFolder?.let { Path(it) } }.toSet()
+        lowFolders = diskGuard.lowFolders(folders, lowFolders)
+        val release =
+            jobs
+                .filter { it.download.status == DownloadStatus.PAUSED && PauseReason.LOW_DISK in it.download.pauseReasons }
+                .filter { job ->
+                    val folder = job.download.saveFolder?.let { Path(it) }
+                    folder != null && folder !in lowFolders &&
+                        diskGuard.hasRoom(folder, maxOf(0L, (job.download.size ?: 0L) - job.downloaded))
+                }.map { it.download.id }
+                .toSet()
+        queue.applyDiskState(lowFolders, release)
+    }
+
     // The queue's coroutine failed (the store): the engine stops with it.
     internal fun failed(error: Throwable) {
         // Only a running (or starting) engine fails; one that is stopping or stopped keeps its course.
@@ -581,5 +652,7 @@ class Engine(
         val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds
+        val DISK_CHECK_EVERY = 30.seconds
+        val DISK_WATCHED = setOf(DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING)
     }
 }

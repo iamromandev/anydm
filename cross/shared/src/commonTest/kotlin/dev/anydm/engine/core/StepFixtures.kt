@@ -4,7 +4,9 @@ import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Limiter
 import dev.anydm.engine.protocol.Meter
+import dev.anydm.engine.protocol.ProbeResult
 import dev.anydm.engine.store.InMemoryPlanStore
+import dev.anydm.engine.store.NewDownload
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemTemporaryDirectory
@@ -105,12 +107,15 @@ internal class StepHarness(
             defaultFolder = stepRoot,
             duplicates =
                 object : DuplicateCheck {
-                    override suspend fun duplicateOf(
+                    override suspend fun atAdd(new: NewDownload): DuplicateFound? = null
+
+                    override suspend fun afterProbe(
                         download: Download,
-                        mirror: Mirror,
-                    ): DownloadId? {
+                        probe: ProbeResult,
+                        target: Path,
+                    ): DuplicateFound? {
                         journal += "duplicateCheck"
-                        return duplicate
+                        return duplicate?.let { DuplicateFound(it, DuplicateReason.SAME_FILE) }
                     }
                 },
             finish = finish,

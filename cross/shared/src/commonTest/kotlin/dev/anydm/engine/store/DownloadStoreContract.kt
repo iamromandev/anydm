@@ -639,4 +639,44 @@ abstract class DownloadStoreContract : StoreTestBase() {
                 store.mirrors(added.id).map { it.url } shouldBe new.mirrors
             }
         }
+
+    @Test
+    fun allowDuplicateRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            store.add(NewDownload(DownloadKind.DIRECT)).allowDuplicate shouldBe false
+            val added = store.add(NewDownload(DownloadKind.DIRECT, allowDuplicate = true))
+            added.allowDuplicate shouldBe true
+            store.get(added.id)!!.allowDuplicate shouldBe true
+
+            store.update(added.copy(allowDuplicate = false)) shouldBe true
+
+            store.get(added.id)!!.allowDuplicate shouldBe false
+        }
+
+    @Test
+    fun allMirrorsListsTheMirrorsOfEveryDownload() =
+        runTest {
+            val store = newStore().downloads
+            val one = store.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://a/1", "https://b/1")))
+            val two = store.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://a/2")))
+            store.add(NewDownload(DownloadKind.DIRECT))
+
+            store.allMirrors().map { Triple(it.downloadId, it.url, it.position) } shouldBe
+                listOf(Triple(one.id, "https://a/1", 0), Triple(one.id, "https://b/1", 1), Triple(two.id, "https://a/2", 0))
+        }
+
+    @Test
+    fun aPlacedPathRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT))
+            val file = store.replaceFiles(added.id, listOf(NewFile(0, "a.mp4", size = 10))).single()
+            file.placedPath shouldBe null
+
+            store.setPlacedPath(file.id, "a (1).mp4")
+
+            store.files(added.id).single().placedPath shouldBe "a (1).mp4"
+            store.replaceFiles(added.id, listOf(NewFile(0, "a.mp4", size = 10))).single().placedPath shouldBe null
+        }
 }

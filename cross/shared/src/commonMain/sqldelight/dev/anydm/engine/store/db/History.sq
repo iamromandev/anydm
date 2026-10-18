@@ -1,0 +1,32 @@
+import dev.anydm.engine.core.DownloadId;
+import kotlin.time.Instant;
+
+-- A finished download (FIL-10), kept after the download itself is removed: dev.anydm.engine.store.HistoryEntry.
+-- `id` only orders entries finished in the same millisecond. source_url is the cleaned link of the first mirror.
+CREATE TABLE history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER AS DownloadId NOT NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER CHECK (size >= 0),
+    finished_at INTEGER AS Instant NOT NULL,
+    source_url TEXT NOT NULL
+);
+
+CREATE INDEX history_url ON history(source_url);
+CREATE INDEX history_file ON history(name COLLATE NOCASE, size);
+
+insert:
+INSERT INTO history(download_id, name, path, size, finished_at, source_url) VALUES (?, ?, ?, ?, ?, ?);
+
+selectNewest:
+SELECT * FROM history ORDER BY finished_at DESC, id DESC LIMIT ?;
+
+prune:
+DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY finished_at DESC, id DESC LIMIT ?);
+
+selectByUrl:
+SELECT * FROM history WHERE source_url = ? ORDER BY finished_at DESC, id DESC LIMIT 1;
+
+selectByFile:
+SELECT * FROM history WHERE name = ? COLLATE NOCASE AND size = ? ORDER BY finished_at DESC, id DESC LIMIT 1;

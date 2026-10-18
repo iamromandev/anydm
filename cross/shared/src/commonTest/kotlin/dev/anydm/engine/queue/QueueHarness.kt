@@ -1,12 +1,16 @@
 package dev.anydm.engine.queue
 
 import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.DirectPlacement
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.FixedRandom
+import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.Placement
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
@@ -47,6 +51,8 @@ internal class QueueHarness(
     val fs: FakeFileSystem = FakeFileSystem(),
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     observer: QueueObserver = QueueObserver.None,
+    duplicates: DuplicateCheck = DuplicateCheck.None,
+    placement: Placement = DirectPlacement(fs),
 ) {
     val finished = mutableListOf<DownloadId>()
     val runner =
@@ -65,9 +71,23 @@ internal class QueueHarness(
                     }
                 },
             freeSpaceReserve = 0,
+            duplicates = duplicates,
+            placement = placement,
             checkpointEvery = checkpointEvery,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy, observer, timeSource = test.testScheduler.timeSource)
+    val queue =
+        Queue(
+            scope,
+            store,
+            runner,
+            protocols,
+            fs,
+            clock,
+            retryPolicy,
+            observer,
+            timeSource = test.testScheduler.timeSource,
+            duplicates = duplicates,
+        )
 
     private var added = 0
 
@@ -78,13 +98,14 @@ internal class QueueHarness(
         mirrors: List<String> = listOf("https://example.com/file.zip"),
         checksum: Checksum? = null,
         speedLimit: Long? = null,
+        folder: Path = stepRoot,
     ): DownloadId {
         val added =
             queue.add(
                 NewDownload(
                     kind,
                     mirrors = mirrors,
-                    saveFolder = stepRoot.toString(),
+                    saveFolder = folder.toString(),
                     fileName = "job-${++added}.zip",
                     priority = priority,
                     checksum = checksum,
@@ -97,6 +118,8 @@ internal class QueueHarness(
     suspend fun job(id: DownloadId): Download? = store.downloads.get(id)
 
     suspend fun status(id: DownloadId): DownloadStatus? = job(id)?.status
+
+    suspend fun reasons(id: DownloadId): Set<PauseReason> = job(id)?.pauseReasons.orEmpty()
 
     suspend fun statusesShouldBe(vararg expected: Pair<DownloadId, DownloadStatus>) {
         expected.map { (id, _) -> id to status(id) } shouldBe expected.toList()
