@@ -10,6 +10,9 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.FilesPlacement
+import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
 import dev.anydm.engine.net.NetworkIdentity
@@ -82,6 +85,8 @@ class Engine(
     private val network: NetworkIdentity = NetworkIdentity.Unknown,
     /** Where traffic is saved; the store's, replaceable in tests. */
     private val traffic: TrafficStore = store.traffic,
+    /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). */
+    osProfile: OsProfile = OsProfile.LINUX,
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -128,7 +133,15 @@ class Engine(
     private val totalSamples = ArrayDeque<Long>()
     private var loops: Job? = null
 
-    private val runner = StepRunner(fileSystem, store.downloads, protocols, defaultFolder, checkpointEvery = checkpointEvery)
+    private val runner =
+        StepRunner(
+            fileSystem,
+            store.downloads,
+            protocols,
+            defaultFolder,
+            placement = FilesPlacement(NameCleaner(osProfile)),
+            checkpointEvery = checkpointEvery,
+        )
 
     /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
     internal val observer: QueueObserver = Observer()

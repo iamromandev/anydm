@@ -77,6 +77,7 @@ class StepRunner(
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
+    private val placement: Placement = Placement.None,
     /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
     private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
 ) {
@@ -129,17 +130,27 @@ class StepRunner(
             if (dropped is StepResult.Failed) return prepareFailed(download, Step.PROBE, dropped)
             listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
         }
+        val plan =
+            when (val planned = placement.plan(download, probe, defaultFolder)) {
+                is StepResult.Failed -> return prepareFailed(download, Step.PROBE, planned)
+                is StepResult.Ok -> planned.value
+            }
+        if (plan.folder != folder) {
+            val prepared = fileSystem.prepareFolder(plan.folder)
+            if (prepared is FileResult.Failed) return prepareFailed(download, Step.PROBE, prepared.toStepFailed())
+        }
         val learned = probe.size
-        if (learned != null && learned != download.size) {
-            val room = checkSpace(folder, learned - writtenBytes(download.id))
+        if (learned != null && (learned != download.size || plan.folder != folder)) {
+            val room = checkSpace(plan.folder, learned - writtenBytes(download.id))
             if (room is StepResult.Failed) return prepareFailed(download, Step.PROBE, room)
         }
         // The user's file name wins; the probe's size is the source's own word.
         val queued =
             download
                 .copy(
-                    saveFolder = folder.toString(),
-                    fileName = download.fileName ?: probe.name,
+                    categoryId = plan.categoryId,
+                    saveFolder = plan.folder.toString(),
+                    fileName = plan.fileName,
                     size = learned ?: download.size,
                     sourceValidator = probed ?: stored,
                 ).moveTo(QUEUED)
