@@ -46,6 +46,27 @@ internal class TrafficMeter(
         speedMinutes.mergeWith(epochMinute(at), SpeedDelta(total, total), ::combined)
     }
 
+    /**
+     * Bytes that arrived after a download's last sampled second (its run just ended): counted toward the day, the
+     * network, the download and the speed totals, but not as a second of their own, so peaks and active time stay true.
+     */
+    fun bytes(
+        at: Instant,
+        network: String,
+        samples: List<Sample>,
+    ) {
+        val total = samples.sumOf { it.bytes }
+        if (total <= 0) return
+        val day = dayOf(at)
+        for (sample in samples) {
+            if (sample.bytes <= 0) continue
+            days.mergeWith(Triple(day, network, sample.kind), sample.bytes, Long::plus)
+            downloads.mergeWith(sample.id, sample.bytes, Long::plus)
+        }
+        speedDays.mergeWith(day, SpeedDelta(total, 0), ::combined)
+        speedMinutes.mergeWith(epochMinute(at), SpeedDelta(total, 0), ::combined)
+    }
+
     /** What was counted since the last drain; the meter starts empty again. */
     fun drain(): TrafficBatch {
         val batch = TrafficBatch(days.toMap(), downloads.toMap(), speedDays.toMap(), speedMinutes.toMap())

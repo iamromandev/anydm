@@ -12,6 +12,9 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.net.NetworkIdentity
+import dev.anydm.engine.net.TrafficMeter
+import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.queue.CommandResult
@@ -20,12 +23,14 @@ import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.TrafficStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -44,10 +49,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * anydm's engine (FND-11, FND-15): one object a UI, or nothing at all, creates with a [Store], starts, commands, observes
@@ -64,12 +72,16 @@ class Engine(
     fileSystem: FileSystem,
     protocols: Map<DownloadKind, Protocol>,
     defaultFolder: Path,
-    clock: Clock = Clock.System,
+    private val clock: Clock = Clock.System,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val stopTimeout: Duration = 10.seconds,
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     retryPolicy: RetryPolicy = RetryPolicy(),
     private val log: Log = Log.None,
+    /** Which network bytes arrive on (NET-04); the desktop passes DefaultRouteNetwork. */
+    private val network: NetworkIdentity = NetworkIdentity.Unknown,
+    /** Where traffic is saved; the store's, replaceable in tests. */
+    private val traffic: TrafficStore = store.traffic,
 ) {
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -99,7 +111,14 @@ class Engine(
     private class Live {
         val progress = MutableStateFlow<Pair<Long, Long?>?>(null)
         val bytes = MutableStateFlow(0L)
+
+        /** Its kind once known, kept so a job removed mid-run still counts under it (NET-04). */
+        @Volatile var kind: DownloadKind? = null
     }
+
+    // Traffic (NET-04): counted once a second on the publisher; bytes a run got after its last second wait in leftovers.
+    private val meter = TrafficMeter()
+    private val leftovers = MutableStateFlow<List<TrafficMeter.Sample>>(emptyList())
 
     private val live = MutableStateFlow<Map<DownloadId, Live>>(emptyMap())
 
@@ -191,6 +210,7 @@ class Engine(
 
         // The holder goes now, not when the fact is applied: a new slot for the job may start before then.
         override fun slotEnded(id: DownloadId) {
+            live.value[id]?.let(::keepLeftover)
             live.update { it - id }
             inSlots.update { it - id }
             send(Fact.SlotEnded(id))
@@ -220,6 +240,12 @@ class Engine(
                     publish()
                 }
                 scope.launch(publisher) { for (fact in facts) apply(fact) }
+                scope.launch(publisher) {
+                    while (true) {
+                        delay(TRAFFIC_SAVE_EVERY)
+                        flushTraffic()
+                    }
+                }
             }
         try {
             startup.await()
@@ -261,6 +287,7 @@ class Engine(
         engineJob.cancel()
         // The publisher may be reading the store: let it finish before the store closes.
         withTimeoutOrNull(stopTimeout) { engineJob.join() }
+        saveLastTraffic()
         runCatching { store.close() }
         stateFlow.value = EngineState.Stopped
         log.info("engine") { "engine stopped" }
@@ -456,11 +483,18 @@ class Engine(
 
     private fun sampleSpeed() {
         var total = 0L
+        val samples = mutableListOf<TrafficMeter.Sample>()
         for (id in running) {
-            val sample = live.value[id]?.bytes?.getAndUpdate { 0L } ?: 0L
+            val holder = live.value[id]
+            val sample = holder?.bytes?.getAndUpdate { 0L } ?: 0L
             cache.speed(id, sample)
             total += sample
+            val kind = holder?.kind ?: cache.kindOf(id)?.also { holder?.kind = it }
+            if (kind != null && sample > 0) samples += TrafficMeter.Sample(id, kind, sample)
         }
+        val now = clock.now()
+        meter.second(now, network.current(), samples)
+        takeLeftovers(now)
         totalSamples.addLast(total)
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
         speedFlow.value = SpeedWindow(total, totalSamples.toList())
@@ -488,7 +522,63 @@ class Engine(
         runCatching { store.close() }
     }
 
+    /** A run that ended: the bytes it got since its last sampled second, to count with the next save. */
+    private fun keepLeftover(holder: Live) {
+        val left = holder.bytes.getAndUpdate { 0L }
+        if (left <= 0) return
+        val id =
+            live.value.entries
+                .firstOrNull { it.value === holder }
+                ?.key ?: return
+        val kind =
+            holder.kind ?: snapshots.value
+                .find { it.download.id == id }
+                ?.download
+                ?.kind ?: return
+        leftovers.update { it + TrafficMeter.Sample(id, kind, left) }
+    }
+
+    private fun takeLeftovers(now: Instant) {
+        val left = leftovers.getAndUpdate { emptyList() }
+        if (left.isNotEmpty()) meter.bytes(now, network.current(), left)
+    }
+
+    /**
+     * Saves what the meter counted (every TRAFFIC_SAVE_EVERY, and at stop). A failed save is put back for the next one.
+     * A save cut short by cancellation isn't: the store finishes a write that was asked for, so it would count twice.
+     */
+    private suspend fun flushTraffic() {
+        takeLeftovers(clock.now())
+        val batch = meter.drain()
+        if (batch.isEmpty) return
+        try {
+            traffic.add(batch, epochMinute(clock.now() - 24.hours))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log.error("engine", e) { "traffic not saved; it is kept for the next save" }
+            meter.restore(batch)
+        }
+    }
+
+    /** At stop, with the queue stopped: whatever runs still hold, and every unsaved byte, saved once more. Never throws. */
+    private suspend fun saveLastTraffic() {
+        try {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(stopTimeout) {
+                    withContext(publisher) {
+                        live.value.values.forEach(::keepLeftover)
+                        flushTraffic()
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            log.error("engine", e) { "traffic not saved at stop" }
+        }
+    }
+
     private companion object {
+        val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds
     }

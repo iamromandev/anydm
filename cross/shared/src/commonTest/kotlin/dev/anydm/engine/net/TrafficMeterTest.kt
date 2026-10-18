@@ -51,6 +51,19 @@ class TrafficMeterTest {
     }
 
     @Test
+    fun leftoverBytesCountWithoutBeingASecond() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100)))
+        meter.bytes(t0 + 1.seconds, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 7)))
+
+        val batch = meter.drain()
+        batch.days shouldBe mapOf(Triple(day, "en0", DIRECT) to 107L)
+        batch.downloads shouldBe mapOf(a to 107L)
+        batch.speedDays shouldBe mapOf(day to SpeedDelta(107, 100, 1))
+        batch.speedMinutes shouldBe mapOf(epochMinute(t0) to SpeedDelta(107, 100, 0))
+    }
+
+    @Test
     fun drainEmptiesTheMeter() {
         val meter = meter()
         meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 5)))

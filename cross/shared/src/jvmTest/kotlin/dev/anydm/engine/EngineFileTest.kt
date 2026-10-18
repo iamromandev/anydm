@@ -5,6 +5,7 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.net.localDayOf
 import dev.anydm.engine.platform.deleteRecursively
 import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.protocol.FakeProtocol
@@ -42,6 +43,28 @@ class EngineFileTest {
     }
 
     private fun TestScope.open(): Store = Store(openDatabaseFile(file), StandardTestDispatcher(testScheduler)).also { stores += it }
+
+    @Test
+    fun trafficSurvivesARestart() =
+        runTest {
+            val first = EngineHarness(this, open())
+            first.engine.start()
+            first.addJob()
+            advanceTimeBy(5.seconds)
+            first.engine.stop()
+            val day = localDayOf(first.clock.now())
+
+            val second = EngineHarness(this, open(), clock = first.clock)
+            second.store.traffic
+                .trafficByDay(day, day)
+                .sumOf { it.bytes } shouldBe 64 * 1024L
+            second.engine.start()
+            second.addJob()
+            advanceTimeBy(5.seconds)
+            second.engine.stop()
+
+            open().traffic.trafficByDay(day, day).sumOf { it.bytes } shouldBe 2 * 64 * 1024L
+        }
 
     @Test
     fun stopMidTransferSavesAndCloses() =
