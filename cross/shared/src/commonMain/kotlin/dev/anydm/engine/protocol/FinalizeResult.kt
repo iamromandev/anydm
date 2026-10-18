@@ -11,4 +11,9 @@ package dev.anydm.engine.protocol
 data class FinalizeResult(
     val outputs: List<String>,
     val seeding: Boolean = false,
+    /**
+     * Planned files (by path) that finalize merged into [outputs] and so are no longer needed. Once the job is complete
+     * the runner deletes them and forgets their rows; an output with no row of its own gets one.
+     */
+    val consumed: List<String> = emptyList(),
 )

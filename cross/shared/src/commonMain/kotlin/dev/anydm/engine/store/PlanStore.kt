@@ -31,6 +31,16 @@ interface PlanStore {
 
     suspend fun files(id: DownloadId): List<File>
 
+    /** Adds a file after the others, selected, with the next free index: an output no plan listed (a merge's result). */
+    suspend fun addFile(
+        id: DownloadId,
+        path: String,
+        size: Long?,
+    ): File
+
+    /** Removes the file with its segments; one that isn't there is left alone. */
+    suspend fun removeFile(id: FileId)
+
     /** Records where the file's output was placed ([File.placedPath]); a file that isn't there is left alone. */
     suspend fun setPlacedPath(
         id: FileId,

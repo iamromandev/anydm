@@ -223,6 +223,26 @@ internal class SqlDownloadStore(
     override suspend fun files(id: DownloadId): List<File> =
         inTransaction { fileQueries.selectByDownload(id).executeAsList().map { it.toFile() } }
 
+    override suspend fun addFile(
+        id: DownloadId,
+        path: String,
+        size: Long?,
+    ): File =
+        writing {
+            check(downloadQueries.selectById(id).executeAsOneOrNull() != null) { "download ${id.value} does not exist" }
+            val index = fileQueries.nextIndex(id).executeAsOne().toInt()
+            fileQueries.insert(download_id = id, file_index = index, path = path, size = size, selected = true)
+            fileQueries
+                .selectByDownload(id)
+                .executeAsList()
+                .first { it.file_index == index }
+                .toFile()
+        }
+
+    override suspend fun removeFile(id: FileId) {
+        writing { fileQueries.deleteById(id) }
+    }
+
     override suspend fun setPlacedPath(
         id: FileId,
         path: String,

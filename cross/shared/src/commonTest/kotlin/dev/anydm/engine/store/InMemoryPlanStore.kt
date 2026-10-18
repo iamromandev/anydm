@@ -55,6 +55,22 @@ internal class InMemoryPlanStore : PlanStore {
 
     override suspend fun files(id: DownloadId): List<File> = fileRows[id].orEmpty()
 
+    override suspend fun addFile(
+        id: DownloadId,
+        path: String,
+        size: Long?,
+    ): File {
+        check(id in downloads) { "download ${id.value} does not exist" }
+        val rows = fileRows[id].orEmpty()
+        val index = (rows.maxOfOrNull { it.index } ?: -1) + 1
+        return File(FileId(++lastId), id, index, path, size, true).also { fileRows[id] = rows + it }
+    }
+
+    override suspend fun removeFile(id: FileId) {
+        for ((download, rows) in fileRows) fileRows[download] = rows.filterNot { it.id == id }
+        segmentRows.remove(id)
+    }
+
     override suspend fun setPlacedPath(
         id: FileId,
         path: String,

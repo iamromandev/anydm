@@ -292,6 +292,47 @@ abstract class DownloadStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun addFileTakesTheNextIndexAndSelectsIt() =
+        runTest {
+            val store = newStore().downloads
+            val id = store.add(NewDownload(DownloadKind.DIRECT)).id
+            store.replaceFiles(id, listOf(NewFile(0, "a.bin", 10), NewFile(3, "b.bin", 20)))
+
+            val added = store.addFile(id, "c.bin", 30)
+
+            added.index shouldBe 4
+            added.path shouldBe "c.bin"
+            added.size shouldBe 30L
+            added.selected shouldBe true
+            store.files(id).map { it.path } shouldBe listOf("a.bin", "b.bin", "c.bin")
+        }
+
+    @Test
+    fun addFileToAMissingDownloadThrows() =
+        runTest {
+            val store = newStore().downloads
+
+            shouldThrow<IllegalStateException> { store.addFile(DownloadId(999), "x.bin", null) }
+        }
+
+    @Test
+    fun removeFileDropsTheFileAndItsSegments() =
+        runTest {
+            val store = newStore().downloads
+            val id = store.add(NewDownload(DownloadKind.DIRECT)).id
+            val (first, second) = store.replaceFiles(id, listOf(NewFile(0, "a.bin", 10), NewFile(1, "b.bin", 10)))
+            store.replaceSegments(first.id, listOf(NewSegment(0, 10)))
+            store.replaceSegments(second.id, listOf(NewSegment(0, 10)))
+
+            store.removeFile(first.id)
+            store.removeFile(FileId(999))
+
+            store.files(id).map { it.path } shouldBe listOf("b.bin")
+            store.segments(first.id) shouldBe emptyList()
+            store.segments(second.id).size shouldBe 1
+        }
+
+    @Test
     fun aFormatSurvivesTheStore() =
         runTest {
             val store = newStore().downloads

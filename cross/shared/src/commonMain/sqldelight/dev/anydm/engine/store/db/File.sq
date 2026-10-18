@@ -20,6 +20,12 @@ INSERT INTO file(download_id, file_index, path, size, selected) VALUES (?, ?, ?,
 setPlacedPath:
 UPDATE file SET placed_path = ? WHERE id = ?;
 
+nextIndex:
+SELECT COALESCE(MAX(file_index), -1) + 1 FROM file WHERE download_id = ?;
+
+deleteById:
+DELETE FROM file WHERE id = ?;
+
 selectById:
 SELECT * FROM file WHERE id = ?;
 
