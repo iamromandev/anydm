@@ -199,7 +199,9 @@ class FaultServer : AutoCloseable {
             }
 
             is Fault.Throttle -> {
-                builder.body(Buffer().write(bytes)).throttleBody(fault.bytesPerSecond, 1, TimeUnit.SECONDS)
+                // A tenth every 100 ms: the same rate, without sending a whole second's worth at once at the start of
+                // every response (#576 measures against this limit).
+                builder.body(Buffer().write(bytes)).throttleBody((fault.bytesPerSecond / 10).coerceAtLeast(1), 100, TimeUnit.MILLISECONDS)
             }
 
             else -> {
