@@ -2,7 +2,6 @@ package dev.anydm.engine.e2e
 
 import dev.anydm.engine.Engine
 import dev.anydm.engine.core.DownloadKind
-import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.http.Fault
 import dev.anydm.engine.http.FaultServer
 import dev.anydm.engine.http.HttpProtocol
@@ -17,7 +16,6 @@ import io.kotest.assertions.withClue
 import io.kotest.matchers.doubles.shouldBeGreaterThanOrEqual
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
@@ -26,6 +24,7 @@ import java.security.MessageDigest
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
 
 /**
@@ -67,12 +66,17 @@ class ThroughputEndToEndTest {
             val watch = launch { engine.totalSpeed.collect { if (it.current > peak) peak = it.current } }
 
             val took =
-                measureTime {
-                    engine.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf(server.url("/big.bin")), saveFolder = folder.toString()))
-                    engine.downloads.first { all -> all.singleOrNull()?.download?.status == DownloadStatus.COMPLETED }
+                try {
+                    measureTime {
+                        engine.add(
+                            NewDownload(DownloadKind.DIRECT, mirrors = listOf(server.url("/big.bin")), saveFolder = folder.toString()),
+                        )
+                        engine.awaitFinished(60.seconds)
+                    }
+                } finally {
+                    watch.cancel()
+                    engine.stop()
                 }
-            watch.cancel()
-            engine.stop()
 
             val average = size / took.inWholeMilliseconds.coerceAtLeast(1) * 1000.0
             println(

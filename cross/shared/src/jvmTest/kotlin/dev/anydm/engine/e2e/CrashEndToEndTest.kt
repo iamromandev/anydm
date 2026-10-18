@@ -7,7 +7,6 @@ import dev.anydm.engine.platform.deleteRecursively
 import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openDatabaseFile
-import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -60,7 +59,7 @@ class CrashEndToEndTest {
         fun start() =
             EngineProcessRunner.start(EngineProcess::class.java.name, listOf(database.path, folder.path, server.url("/f.bin")), stderr)
 
-        withClue(clue) {
+        withCaseClue(clue) {
             for ((at, powerCut) in stops) {
                 start().killAt(at, 60.seconds)
                 if (powerCut) runBlocking { spoilUnsynced(Path(database.path), Path(folder.path), random) }

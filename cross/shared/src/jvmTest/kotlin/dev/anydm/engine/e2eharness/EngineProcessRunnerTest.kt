@@ -1,6 +1,7 @@
 package dev.anydm.engine.e2eharness
 
 import dev.anydm.engine.e2e.EngineProcessRunner
+import dev.anydm.engine.e2e.withCaseClue
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
@@ -50,6 +51,35 @@ class EngineProcessRunnerTest {
         val child = start("hang")
         shouldThrow<AssertionError> { child.awaitDone(1.seconds) }
         child.isAlive shouldBe false
+    }
+
+    // Final review: a stall or a failure while waiting to kill must not pass as a kill.
+    @Test
+    fun killAtThrowsWhenTheChildStalls() {
+        val child = start("hang")
+        shouldThrow<AssertionError> { child.killAt(5, 1.seconds) }
+        child.isAlive shouldBe false
+    }
+
+    @Test
+    fun killAtThrowsWhenTheChildFails() {
+        val child = start("fail-after-progress")
+        shouldThrow<AssertionError> { child.killAt(10, 10.seconds) }.message shouldContain "broken source"
+    }
+
+    // Final review: killAt(0) killed the JVM before it started; it waits for the child's first line.
+    @Test
+    fun killAtWaitsForTheFirstLine() {
+        val child = start("hang-after-count")
+        child.killAt(0, 10.seconds) shouldBe true
+        child.progress shouldBe 10L
+    }
+
+    // Final review: a failed run inside a case must still say which case it was.
+    @Test
+    fun aCaseClueWrapsAssertionErrors() {
+        shouldThrow<AssertionError> { withCaseClue("seed 1 case 2") { throw AssertionError("child timed out") } }.message shouldBe
+            "seed 1 case 2: child timed out"
     }
 
     @Test

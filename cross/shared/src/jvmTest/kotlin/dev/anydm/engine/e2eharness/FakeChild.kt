@@ -22,6 +22,13 @@ object FakeChild {
                 Thread.sleep(Long.MAX_VALUE)
             }
 
+            "fail-after-progress" -> {
+                println("progress 1")
+                println("failed broken source")
+                System.err.println("stack of the failure")
+                exitProcess(1)
+            }
+
             "fail" -> {
                 System.err.println("boom")
                 exitProcess(1)
