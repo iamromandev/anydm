@@ -1,0 +1,19 @@
+-- Version 11 to 12 (#540): what the user wants from a media page, and what yt-dlp said about it.
+CREATE TABLE format (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    preset TEXT NOT NULL,
+    height INTEGER,
+    fps INTEGER,
+    hdr TEXT,
+    video_codec TEXT,
+    audio_codec TEXT,
+    audio_only TEXT,
+    container TEXT
+);
+
+CREATE TABLE extraction (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    json TEXT NOT NULL,
+    extracted_at INTEGER NOT NULL
+);

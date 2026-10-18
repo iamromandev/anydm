@@ -6,6 +6,7 @@ import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.ChecksumAlgorithm
 import dev.anydm.engine.core.CollectionKind
+import dev.anydm.engine.core.Container
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -13,10 +14,13 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
@@ -285,6 +289,47 @@ abstract class DownloadStoreContract : StoreTestBase() {
 
             store.context(added.id) shouldBe null
             driver.count("request_context") shouldBe 0L
+        }
+
+    @Test
+    fun aFormatSurvivesTheStore() =
+        runTest {
+            val store = newStore().downloads
+            val format =
+                Format(
+                    QualityPreset.SMALL,
+                    height = 480,
+                    fps = 30,
+                    hdr = HdrChoice.NO,
+                    videoCodec = "avc1",
+                    audioCodec = "mp4a",
+                    container = Container.MKV,
+                )
+
+            val added = store.add(NewDownload(DownloadKind.SITE, format = format))
+
+            store.format(added.id) shouldBe format
+        }
+
+    @Test
+    fun noFormatReadsAsNull() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.SITE))
+
+            store.format(added.id) shouldBe null
+        }
+
+    @Test
+    fun removingADownloadDropsItsFormat() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.SITE, format = Format()))
+
+            store.remove(added.id)
+
+            store.format(added.id) shouldBe null
+            driver.count("format") shouldBe 0L
         }
 
     @Test

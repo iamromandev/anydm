@@ -3,6 +3,7 @@ package dev.anydm.engine.store
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
@@ -38,6 +39,9 @@ interface PlanStore {
 
     /** What the download's requests carry besides the URL (HTTP-10), or null. */
     suspend fun context(id: DownloadId): RequestContext?
+
+    /** What the user wants from a media page (MED-09), or null. */
+    suspend fun format(id: DownloadId): Format?
 
     /**
      * Replaces the file's segments, each written up to its start. Returns them by start. Throws if the file doesn't

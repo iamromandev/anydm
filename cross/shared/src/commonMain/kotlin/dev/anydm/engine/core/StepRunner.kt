@@ -117,7 +117,7 @@ class StepRunner(
                 is StepResult.Ok -> checked.value
             }
         val probe =
-            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id)))) {
+            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id), store.format(download.id)))) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }

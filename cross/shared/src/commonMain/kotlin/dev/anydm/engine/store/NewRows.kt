@@ -7,6 +7,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.File
+import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
@@ -37,6 +38,8 @@ data class NewDownload(
     val checksum: Checksum? = null,
     /** Skip the duplicate checks for this one (FIL-06). */
     val allowDuplicate: Boolean = false,
+    /** What the user wants from a media page (MED-09); stored with it. */
+    val format: Format? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }
