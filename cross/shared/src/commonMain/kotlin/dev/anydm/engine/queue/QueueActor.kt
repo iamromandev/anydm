@@ -328,6 +328,7 @@ internal class QueueActor(
     ): CommandResult {
         val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(priority = priority))) }
         slot.download = save(slot.download.copy(priority = priority))
+        bandwidth.setPriority(id, priority)
         return CommandResult.Done(slot.download)
     }
 
@@ -370,6 +371,24 @@ internal class QueueActor(
         for (job in downloads.list(PAUSED)) release(job)
         settings = store.settings.update { it.copy(globalPause = false) }
         return CommandResult.Done(null)
+    }
+
+    /** The limit every job shares by priority (NET-02, NET-03); applies to running jobs at once. */
+    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
+        settings = store.settings.update { it.copy(globalSpeedLimit = bytesPerSecond) }
+        bandwidth.setGlobal(bytesPerSecond)
+        return CommandResult.Done(null)
+    }
+
+    /** The job's own limit (NET-02), kept like the priority; a running job slows or speeds up at once. */
+    suspend fun setSpeedLimit(
+        id: DownloadId,
+        bytesPerSecond: Long?,
+    ): CommandResult {
+        val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(speedLimit = bytesPerSecond))) }
+        slot.download = save(slot.download.copy(speedLimit = bytesPerSecond))
+        bandwidth.setLimit(id, bytesPerSecond)
+        return CommandResult.Done(slot.download)
     }
 
     /** The limit applies at once: the next reschedule preempts what is over it. */

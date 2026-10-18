@@ -71,6 +71,21 @@ class Queue internal constructor(
     /** Queues a FAILED job again with a fresh attempt count. */
     suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
 
+    /** Every job's combined speed limit in bytes per second, shared by priority, or null for none; below 1 is Invalid. */
+    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
+        if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
+        return actor.call { setGlobalSpeedLimit(bytesPerSecond) }
+    }
+
+    /** The job's own speed limit in bytes per second, or null for none; below 1 is Invalid. A running job follows it at once. */
+    suspend fun setSpeedLimit(
+        id: DownloadId,
+        bytesPerSecond: Long?,
+    ): CommandResult {
+        if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
+        return actor.call { setSpeedLimit(id, bytesPerSecond) }
+    }
+
     /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
     suspend fun setChecksum(
         id: DownloadId,
