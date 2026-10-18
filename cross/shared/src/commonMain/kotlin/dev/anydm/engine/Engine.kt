@@ -297,6 +297,13 @@ class Engine(
 
     suspend fun setLimit(limit: Int): CommandResult = command { queue.setLimit(limit) }
 
+    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult = command { queue.setGlobalSpeedLimit(bytesPerSecond) }
+
+    suspend fun setSpeedLimit(
+        id: DownloadId,
+        bytesPerSecond: Long?,
+    ): CommandResult = command { queue.setSpeedLimit(id, bytesPerSecond) }
+
     suspend fun relink(
         id: DownloadId,
         mirrorId: MirrorId,

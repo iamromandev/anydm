@@ -67,7 +67,7 @@ internal class QueueHarness(
             freeSpaceReserve = 0,
             checkpointEvery = checkpointEvery,
         )
-    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy, observer)
+    val queue = Queue(scope, store, runner, protocols, fs, clock, retryPolicy, observer, timeSource = test.testScheduler.timeSource)
 
     private var added = 0
 
@@ -77,6 +77,7 @@ internal class QueueHarness(
         kind: DownloadKind = DownloadKind.DIRECT,
         mirrors: List<String> = listOf("https://example.com/file.zip"),
         checksum: Checksum? = null,
+        speedLimit: Long? = null,
     ): DownloadId {
         val added =
             queue.add(
@@ -87,6 +88,7 @@ internal class QueueHarness(
                     fileName = "job-${++added}.zip",
                     priority = priority,
                     checksum = checksum,
+                    speedLimit = speedLimit,
                 ),
             )
         return added.shouldBeInstanceOf<CommandResult.Done>().download!!.id

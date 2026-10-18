@@ -20,11 +20,14 @@ data class Settings(
     val debugLogging: Boolean = false,
     /** The most connections HTTP downloads open to one host, shared by all of them (HTTP-06). */
     val connectionsPerDownload: Int = 4,
+    /** The most bytes per second every download together may take in (NET-02); null means no limit. */
+    val globalSpeedLimit: Long? = null,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }
+        require(globalSpeedLimit == null || globalSpeedLimit > 0) { "globalSpeedLimit must be > 0, or null for none: $globalSpeedLimit" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }

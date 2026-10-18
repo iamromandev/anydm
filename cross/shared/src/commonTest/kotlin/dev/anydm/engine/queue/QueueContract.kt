@@ -917,6 +917,129 @@ abstract class QueueContract : QueueTestBase() {
             started().queue.setChecksum(DownloadId(999), null) shouldBe CommandResult.NotFound
         }
 
+    // Speed limits (#574). FakeProtocol takes 4 KiB every 250 ms through the limiter: unlimited, a job takes 4 s.
+
+    @Test
+    fun aJobsSpeedLimitSlowsItsRun() =
+        runTest {
+            val h = started()
+            val a = h.addJob(speedLimit = 8 * 1024)
+            advanceTimeBy(6.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            advanceTimeBy(4.seconds)
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun theGlobalLimitAppliesFromStart() =
+        runTest {
+            val h = QueueHarness(this, newStore())
+            h.store.settings.update { it.copy(globalSpeedLimit = 8 * 1024) }
+            h.queue.start()
+            val a = h.addJob()
+            advanceTimeBy(6.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            advanceTimeBy(4.seconds)
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun aResumedJobKeepsItsLimit() =
+        runTest {
+            val h = started()
+            val a = h.addJob(speedLimit = 4 * 1024)
+            advanceTimeBy(2.seconds)
+            h.queue.pause(a).shouldBeInstanceOf<CommandResult.Done>()
+            runCurrent()
+            h.status(a) shouldBe PAUSED
+            h.queue.resume(a).shouldBeInstanceOf<CommandResult.Done>()
+            advanceTimeBy(6.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            advanceTimeBy(14.seconds)
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun setSpeedLimitSlowsARunningJob() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            h.queue.setSpeedLimit(a, 4 * 1024).shouldBeInstanceOf<CommandResult.Done>()
+
+            advanceTimeBy(7.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            h.job(a)!!.speedLimit shouldBe 4096L
+        }
+
+    @Test
+    fun clearingALimitSpeedsTheJobUp() =
+        runTest {
+            val h = started()
+            val a = h.addJob(speedLimit = 4 * 1024)
+            advanceTimeBy(2.seconds)
+
+            h.queue.setSpeedLimit(a, null).shouldBeInstanceOf<CommandResult.Done>()
+
+            advanceTimeBy(4.seconds)
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
+    fun setGlobalSpeedLimitSlowsRunningJobs() =
+        runTest {
+            val h = started(limit = 2)
+            val a = h.addJob()
+            val b = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            h.queue.setGlobalSpeedLimit(8 * 1024) shouldBe CommandResult.Done(null)
+
+            advanceTimeBy(7.seconds)
+            h.statusesShouldBe(a to DOWNLOADING, b to DOWNLOADING)
+            h.store.settings
+                .load()
+                .globalSpeedLimit shouldBe 8192L
+        }
+
+    @Test
+    fun reprioritizeChangesTheShares() =
+        runTest {
+            val h = started(limit = 2)
+            // Fast sources: both jobs always want more than the global limit gives, so the limiter alone decides.
+            h.protocol.bytesPerSecond = 1L shl 20
+            h.queue.setGlobalSpeedLimit(24 * 1024)
+            val a = h.addJob()
+            val b = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            h.queue.reprioritize(b, 1).shouldBeInstanceOf<CommandResult.Done>()
+
+            var waited = 0
+            while (h.status(b) != COMPLETED && waited < 80) {
+                advanceTimeBy(250.milliseconds)
+                waited++
+            }
+            h.status(b) shouldBe COMPLETED
+            h.status(a) shouldBe DOWNLOADING
+        }
+
+    @Test
+    fun speedLimitsBelowOneAreInvalid() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            h.queue.setSpeedLimit(a, 0) shouldBe CommandResult.Invalid("speed limit must be >= 1: 0")
+            h.queue.setGlobalSpeedLimit(0) shouldBe CommandResult.Invalid("speed limit must be >= 1: 0")
+        }
+
+    @Test
+    fun setSpeedLimitOfAnUnknownJobIsNotFound() =
+        runTest {
+            started().queue.setSpeedLimit(DownloadId(999), 1024) shouldBe CommandResult.NotFound
+        }
+
     @Test
     fun theDefaultRelinkIsRefused() =
         runTest {

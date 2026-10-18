@@ -6,6 +6,7 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.RunOutcome
 import dev.anydm.engine.core.StepFailure
+import dev.anydm.engine.protocol.Limiter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 
@@ -25,6 +26,8 @@ internal class Slot(
     val others: List<Mirror> = emptyList(),
     /** The job's last attempt ended INTEGRITY: its fetched bytes failed their checksum (HTTP-14). */
     val failedCheck: Boolean = false,
+    /** What this run's incoming bytes go through: the job's own limit and its share of the global one (NET-01..03). */
+    val limiter: Limiter = Limiter.None,
 ) {
     val id: DownloadId = download.id
     lateinit var job: Job

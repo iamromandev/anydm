@@ -17,6 +17,7 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 /**
  * Runs jobs at most `Settings.concurrencyLimit` at a time, highest priority first, then longest waiting (FND-04), and
@@ -38,8 +39,10 @@ class Queue internal constructor(
     retryPolicy: RetryPolicy = RetryPolicy(),
     observer: QueueObserver = QueueObserver.None,
     log: Log = Log.None,
+    /** What speed limits are measured on (NET-01): monotonic, or a test's virtual time. */
+    timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log)
+    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
@@ -67,6 +70,21 @@ class Queue internal constructor(
 
     /** Queues a FAILED job again with a fresh attempt count. */
     suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
+
+    /** Every job's combined speed limit in bytes per second, shared by priority, or null for none; below 1 is Invalid. */
+    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
+        if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
+        return actor.call { setGlobalSpeedLimit(bytesPerSecond) }
+    }
+
+    /** The job's own speed limit in bytes per second, or null for none; below 1 is Invalid. A running job follows it at once. */
+    suspend fun setSpeedLimit(
+        id: DownloadId,
+        bytesPerSecond: Long?,
+    ): CommandResult {
+        if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
+        return actor.call { setSpeedLimit(id, bytesPerSecond) }
+    }
 
     /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
     suspend fun setChecksum(
