@@ -77,6 +77,8 @@ class StepRunner(
     private val duplicates: DuplicateCheck = DuplicateCheck.None,
     private val finish: FinishHook = FinishHook.None,
     private val freeSpaceReserve: Long = DEFAULT_FREE_SPACE_RESERVE,
+    /** The reserve asked for at each check, so a setting changed while the engine runs applies at once; [freeSpaceReserve] by default. */
+    private val reserve: suspend () -> Long = { freeSpaceReserve },
     private val placement: Placement = DirectPlacement(fileSystem),
     /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
     private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
@@ -648,7 +650,7 @@ class StepRunner(
         bytes: Long,
     ): StepResult<Unit> {
         if (bytes <= 0) return StepResult.Ok(Unit)
-        val needed = listOf(bytes, freeSpaceReserve).saturatingSum()
+        val needed = listOf(bytes, reserve()).saturatingSum()
         return when (val free = fileSystem.freeSpace(folder)) {
             is FileResult.Failed -> {
                 free.toStepFailed()

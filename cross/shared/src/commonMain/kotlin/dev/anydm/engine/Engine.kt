@@ -9,8 +9,10 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
 import dev.anydm.engine.files.NameCleaner
@@ -136,6 +138,8 @@ class Engine(
     private val published = mutableMapOf<DownloadId, Pair<Long, Long?>>()
     private val totalSamples = ArrayDeque<Long>()
     private var loops: Job? = null
+    private val diskGuard = DiskGuard(fileSystem) { store.settings.load().freeSpaceReserve }
+    private var lowFolders = emptySet<Path>()
 
     private val runner =
         StepRunner(
@@ -143,6 +147,7 @@ class Engine(
             store.downloads,
             protocols,
             defaultFolder,
+            reserve = { store.settings.load().freeSpaceReserve },
             duplicates = duplicates,
             placement =
                 FilesPlacement(
@@ -279,6 +284,12 @@ class Engine(
                     while (true) {
                         delay(TRAFFIC_SAVE_EVERY)
                         flushTraffic()
+                    }
+                }
+                scope.launch {
+                    while (true) {
+                        delay(DISK_CHECK_EVERY)
+                        checkDisk()
                     }
                 }
             }
@@ -545,6 +556,19 @@ class Engine(
             FileSnapshot(it, store.downloads.segments(it.id))
         }
 
+    // Jobs in a folder that has run low on space wait for it (FIL-08); the whole state goes to the queue every time.
+    private suspend fun checkDisk() {
+        val folders =
+            snapshots.value
+                .map { it.download }
+                .filter { it.status in DISK_WATCHED || PauseReason.LOW_DISK in it.pauseReasons }
+                .mapNotNull { job -> job.saveFolder?.let { Path(it) } }
+                .toSet()
+        val before = lowFolders
+        lowFolders = diskGuard.lowFolders(folders, before)
+        queue.applyDiskState(lowFolders, recovered = before - lowFolders)
+    }
+
     // The queue's coroutine failed (the store): the engine stops with it.
     internal fun failed(error: Throwable) {
         // Only a running (or starting) engine fails; one that is stopping or stopped keeps its course.
@@ -616,5 +640,7 @@ class Engine(
         val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds
+        val DISK_CHECK_EVERY = 30.seconds
+        val DISK_WATCHED = setOf(DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING)
     }
 }

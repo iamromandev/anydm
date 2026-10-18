@@ -353,17 +353,24 @@ internal class QueueActor(
         if (stopping.isEmpty()) {
             reply.complete(CommandResult.Done(null))
         } else {
-            // Not a coroutine in slotScope: one cancelled along with a stopping queue would answer with its own
-            // CancellationException instead of why the queue stopped. The handlers run on the queue's coroutine, which
-            // completes every stopped slot's reply, so the count needs no lock.
-            var left = stopping.size
-            for (stopped in stopping) {
-                stopped.invokeOnCompletion { cause ->
-                    if (cause != null) {
-                        reply.completeExceptionally(cause)
-                    } else if (--left == 0) {
-                        reply.complete(CommandResult.Done(null))
-                    }
+            replyWhenStopped(stopping, reply)
+        }
+    }
+
+    // Not a coroutine in slotScope: one cancelled along with a stopping queue would answer with its own
+    // CancellationException instead of why the queue stopped. The handlers run on the queue's coroutine, which
+    // completes every stopped slot's reply, so the count needs no lock.
+    private fun replyWhenStopped(
+        stopping: List<CompletableDeferred<CommandResult>>,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        var left = stopping.size
+        for (stopped in stopping) {
+            stopped.invokeOnCompletion { cause ->
+                if (cause != null) {
+                    reply.completeExceptionally(cause)
+                } else if (--left == 0) {
+                    reply.complete(CommandResult.Done(null))
                 }
             }
         }
@@ -375,6 +382,49 @@ internal class QueueActor(
         settings = store.settings.update { it.copy(globalPause = false) }
         return CommandResult.Done(null)
     }
+
+    /**
+     * Free space ran low in the [low] folders (FIL-08): their running jobs stop and their waiting ones wait, paused for
+     * LOW_DISK; a job paused for it in a [recovered] folder is released. Idempotent, so the engine can send the whole
+     * state on every check. A job that is also paused for another reason stays paused for that one.
+     */
+    suspend fun applyDiskState(
+        low: Set<Path>,
+        recovered: Set<Path>,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (job in downloads.list()) {
+            val inLow = job.saveFolder?.let { Path(it) in low } == true
+            val slot = slots[job.id]
+            when {
+                inLow && slot != null -> {
+                    stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterDiskStop, it) }
+                }
+
+                inLow && (job.status in WAITING || job.status == PAUSED) -> {
+                    pauseForDisk(job)
+                }
+
+                !inLow && job.status == PAUSED && PauseReason.LOW_DISK in job.pauseReasons && job.saveFolder?.let {
+                    Path(
+                        it,
+                    )
+                } in recovered -> {
+                    release(job, PauseReason.LOW_DISK)
+                }
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    private suspend fun pauseForDisk(job: Download) {
+        val paused = (job.pause(PauseReason.LOW_DISK) as TransitionResult.Moved).download
+        if (paused != job) save(paused)
+    }
+
+    // A slot stopped for a low disk: paused for it, unless the next check finds the folder recovered.
+    private suspend fun afterDiskStop(job: Download): CommandResult = change(job.pause(PauseReason.LOW_DISK))
 
     /** The limit every job shares by priority (NET-02, NET-03); applies to running jobs at once. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
@@ -411,8 +461,11 @@ internal class QueueActor(
         return CommandResult.Done(if (waiting.status in WAITING) save(waiting.copy(queuedAt = clock.now())) else waiting)
     }
 
-    private suspend fun release(job: Download) {
-        val released = (job.release(PauseReason.GLOBAL) as TransitionResult.Moved).download
+    private suspend fun release(
+        job: Download,
+        reason: PauseReason = PauseReason.GLOBAL,
+    ) {
+        val released = (job.release(reason) as TransitionResult.Moved).download
         if (released != job) save(if (released.status == QUEUED) released.copy(queuedAt = clock.now()) else released)
     }
 

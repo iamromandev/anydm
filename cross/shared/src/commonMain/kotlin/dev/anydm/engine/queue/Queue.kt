@@ -18,6 +18,7 @@ import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.TimeSource
 
@@ -53,6 +54,15 @@ class Queue internal constructor(
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
+
+    /**
+     * Pauses what runs or waits in the [low] folders and releases the jobs paused for a low disk in the [recovered]
+     * ones (FIL-08). A job paused for it elsewhere, say because its file didn't fit at the start, is left to the user.
+     */
+    suspend fun applyDiskState(
+        low: Set<Path>,
+        recovered: Set<Path> = emptySet(),
+    ): CommandResult = actor.callLater { applyDiskState(low, recovered, it) }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
     suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }

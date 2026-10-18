@@ -209,4 +209,18 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.load().clashPolicy shouldBe ClashPolicy.SKIP
             rows() shouldContain "files.clash_policy=SKIP"
         }
+
+    @Test
+    fun freeSpaceReserveRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().freeSpaceReserve shouldBe 64L * 1024 * 1024
+            rows().none { it?.startsWith("files.free_space_reserve=") == true } shouldBe true
+
+            settings.update { it.copy(freeSpaceReserve = 1_000) }
+
+            settings.load().freeSpaceReserve shouldBe 1_000L
+            rows() shouldContain "files.free_space_reserve=1000"
+            shouldThrow<IllegalArgumentException> { Settings(freeSpaceReserve = -1) }
+        }
 }

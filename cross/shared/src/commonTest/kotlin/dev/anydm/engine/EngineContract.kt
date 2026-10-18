@@ -6,6 +6,7 @@ import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
@@ -489,6 +490,32 @@ abstract class EngineContract : StoreTestBase() {
                         snapshot.mirrors shouldBe h.store.downloads.mirrors(snapshot.download.id)
                     }
                 }
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun lowDiskPausesTheJobsThenResumesThem() =
+        runTest {
+            // 120 s of transfer, so the job is still running when the first check comes at 30 s.
+            val h = started { EngineHarness(it, newStore(), FakeProtocol(files = listOf(FakeFile("file.zip", 64L * 1024 * 30)))) }
+            try {
+                val a = h.addJob()
+                advanceTimeBy(1.seconds)
+
+                h.fs.free = 1_000_000 // under the 64 MiB reserve
+                advanceTimeBy(31.seconds)
+                runCurrent()
+
+                h.status(a) shouldBe PAUSED
+                h.snapshot(a)!!.download.pauseReasons shouldBe setOf(PauseReason.LOW_DISK)
+
+                h.fs.free = Long.MAX_VALUE
+                advanceTimeBy(31.seconds)
+                settle()
+
+                h.status(a) shouldBe COMPLETED
+            } finally {
                 h.engine.stop()
             }
         }
