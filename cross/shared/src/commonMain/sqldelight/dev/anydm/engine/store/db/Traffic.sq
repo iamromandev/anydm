@@ -1,0 +1,69 @@
+-- Traffic (NET-04, #575): bytes per local day, network and kind; speed per day (kept) and per minute (24 h);
+-- and each download's total, which goes with it.
+CREATE TABLE traffic_day (
+    day TEXT NOT NULL,
+    network TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (day, network, kind)
+);
+
+CREATE TABLE speed_day (
+    day TEXT NOT NULL PRIMARY KEY,
+    bytes INTEGER NOT NULL,
+    peak INTEGER NOT NULL,
+    active_seconds INTEGER NOT NULL
+);
+
+CREATE TABLE speed_minute (
+    minute INTEGER NOT NULL PRIMARY KEY,
+    bytes INTEGER NOT NULL,
+    peak INTEGER NOT NULL
+);
+
+CREATE TABLE download_traffic (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    bytes INTEGER NOT NULL
+);
+
+-- Each add is a row made if missing, then the delta added to it.
+ensureDay:
+INSERT OR IGNORE INTO traffic_day(day, network, kind, bytes) VALUES (?, ?, ?, 0);
+
+addDay:
+UPDATE traffic_day SET bytes = bytes + :bytes WHERE day = :day AND network = :network AND kind = :kind;
+
+ensureSpeedDay:
+INSERT OR IGNORE INTO speed_day(day, bytes, peak, active_seconds) VALUES (?, 0, 0, 0);
+
+addSpeedDay:
+UPDATE speed_day SET bytes = bytes + :bytes, peak = max(peak, :peak), active_seconds = active_seconds + :active
+WHERE day = :day;
+
+ensureSpeedMinute:
+INSERT OR IGNORE INTO speed_minute(minute, bytes, peak) VALUES (?, 0, 0);
+
+addSpeedMinute:
+UPDATE speed_minute SET bytes = bytes + :bytes, peak = max(peak, :peak) WHERE minute = :minute;
+
+-- A download removed since its bytes were counted gets no row: its bytes are dropped.
+ensureDownload:
+INSERT OR IGNORE INTO download_traffic(download_id, bytes) SELECT :id, 0 WHERE EXISTS (SELECT 1 FROM download WHERE id = :id);
+
+addDownload:
+UPDATE download_traffic SET bytes = bytes + :bytes WHERE download_id = :id;
+
+pruneMinutes:
+DELETE FROM speed_minute WHERE minute < ?;
+
+daysBetween:
+SELECT * FROM traffic_day WHERE day BETWEEN ? AND ? ORDER BY day, network, kind;
+
+speedDaysBetween:
+SELECT * FROM speed_day WHERE day BETWEEN ? AND ? ORDER BY day;
+
+minutesSince:
+SELECT * FROM speed_minute WHERE minute >= ? ORDER BY minute;
+
+downloadBytes:
+SELECT bytes FROM download_traffic WHERE download_id = ?;

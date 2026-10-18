@@ -8,6 +8,7 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
@@ -15,6 +16,7 @@ import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.TrafficStore
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -36,6 +38,8 @@ internal class EngineHarness(
     stopTimeout: Duration = 10.seconds,
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     log: Log = Log.None,
+    network: NetworkIdentity = NetworkIdentity.Unknown,
+    traffic: TrafficStore = store.traffic,
 ) {
     val engine =
         Engine(
@@ -49,6 +53,8 @@ internal class EngineHarness(
             checkpointEvery = checkpointEvery,
             retryPolicy = RetryPolicy(random = FixedRandom(0.0)),
             log = log,
+            network = network,
+            traffic = traffic,
         )
 
     private var added = 0

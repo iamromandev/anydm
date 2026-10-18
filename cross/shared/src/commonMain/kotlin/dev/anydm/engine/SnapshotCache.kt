@@ -3,6 +3,7 @@ package dev.anydm.engine
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.Mirror
 
 /**
@@ -95,6 +96,8 @@ internal class SnapshotCache {
     }
 
     fun contains(id: DownloadId): Boolean = id.value in entries
+
+    fun kindOf(id: DownloadId): DownloadKind? = entries[id.value]?.download?.kind
 
     fun list(): List<DownloadSnapshot> =
         entries.keys.sorted().map { key ->
