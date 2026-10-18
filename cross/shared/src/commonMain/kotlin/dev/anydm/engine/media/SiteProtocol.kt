@@ -1,5 +1,6 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
@@ -147,10 +148,85 @@ class SiteProtocol(
         return StepResult.Ok(TransferPlan(files))
     }
 
+    /**
+     * Each stream in turn through the HTTP engine, from its own address. A refusal (403, 410) means the address expired
+     * (MED-06): the page is read again, once for the whole call, and each stream continues from its watermarks at the
+     * new address, if it is the same stream of the same size.
+     */
     override suspend fun transfer(
         transfer: Transfer,
         io: TransferIo,
-    ): StepResult<Unit> = StepResult.Failed(null, "not yet")
+    ): StepResult<Unit> {
+        val site = transfer.probe
+        check(site is SiteProbe) { "SiteProtocol can't transfer a ${site::class.simpleName}" }
+        var probes: Map<String, HttpProbe> = site.probes
+        var refreshed = false
+        for ((index, stream) in site.selection.streams.withIndex()) {
+            val file = transfer.files.single { it.file.index == index }
+            while (true) {
+                val others = bytesOfOthers(transfer, index)
+                val sub = transfer.mirror.copy(url = stream.url)
+                val result = http.transferFile(probes.getValue(stream.formatId), file, sub, emptyList(), ProgressOffsetIo(io, others))
+                val expired = result is StepResult.Failed && (result.errorClass == ErrorClass.AUTH || result.errorClass == ErrorClass.GONE)
+                if (!expired || refreshed) {
+                    if (result is StepResult.Failed) return result
+                    break
+                }
+                refreshed = true
+                probes =
+                    when (val fresh = refresh(transfer.download.id, site)) {
+                        is StepResult.Failed -> return fresh
+                        is StepResult.Ok -> fresh.value
+                    }
+            }
+        }
+        return StepResult.Ok(Unit)
+    }
+
+    /** The bytes of every file but [index]: the earlier ones are whole, the later ones as far as they were stored. */
+    private fun bytesOfOthers(
+        transfer: Transfer,
+        index: Int,
+    ): Long =
+        transfer.files.filter { it.file.index != index }.sumOf { other ->
+            if (other.file.index < index) other.file.size ?: other.segments.sumOf { it.written } else other.segments.sumOf { it.written }
+        }
+
+    /** The page read again: the same streams at their new addresses, probed, or a failure when they are not the same. */
+    private suspend fun refresh(
+        id: DownloadId,
+        site: SiteProbe,
+    ): StepResult<Map<String, HttpProbe>> {
+        val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
+        val deno = if (isYoutube(site.url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
+        val json =
+            when (val extracted = extractFresh(tool, deno, site.url)) {
+                is StepResult.Failed -> return extracted
+                is StepResult.Ok -> extracted.value
+            }
+        val info =
+            when (val parsed = YtDlpJson.parse(json)) {
+                is MediaParse.Rejected -> return StepResult.Failed(null, parsed.reason)
+                is MediaParse.Ok -> parsed.info
+            }
+        val fresh = LinkedHashMap<String, HttpProbe>()
+        for (old in site.selection.streams) {
+            val stream =
+                info.streams.firstOrNull { it.formatId == old.formatId && it.isPlain }
+                    ?: return StepResult.Failed(null, "the video changed while it was downloading: format ${old.formatId} is gone")
+            val probe =
+                when (val probed = http.probeUrl(stream.url, contextFor(site.context, stream), credentials = true)) {
+                    is StepResult.Failed -> return probed
+                    is StepResult.Ok -> probed.value
+                }
+            if (probe.size != site.probes.getValue(old.formatId).size) {
+                return StepResult.Failed(null, "the video changed while it was downloading: format ${old.formatId} has another size")
+            }
+            fresh[old.formatId] = probe
+        }
+        extractions.put(Extraction(id, site.url, json, clock.now()))
+        return StepResult.Ok(fresh)
+    }
 
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> = StepResult.Failed(null, "not yet")
 
