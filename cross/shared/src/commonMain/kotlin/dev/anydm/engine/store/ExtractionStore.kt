@@ -9,6 +9,8 @@ data class Extraction(
     val url: String,
     val json: String,
     val extractedAt: Instant,
+    /** The format ids chosen from this page; a later extraction keeps them while they are still offered. */
+    val chosen: List<String> = emptyList(),
 )
 
 /** At most one [Extraction] per download, gone with it. */

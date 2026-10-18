@@ -178,4 +178,29 @@ class SiteProtocolFinalizeTest {
 
             result.value.outputs shouldBe listOf("mine.mp4")
         }
+
+    @Test
+    fun aMergeWithoutRoomIsDiskFullAndRunsNothing() =
+        runBlocking<Unit> {
+            val runner = ffmpeg()
+            val c = case(MediaFixtures.splitVideoJson(), mp4)
+            fs.free = 150 // the two streams are 100 bytes each: the output needs about as much again
+
+            val failed = site(runner).finalize(c.transfer).shouldBeInstanceOf<StepResult.Failed>()
+
+            failed.errorClass shouldBe ErrorClass.DISK_FULL
+            runner.started shouldBe emptyList()
+            c.inputs.all { fs.exists(it) } shouldBe true
+        }
+
+    @Test
+    fun aSingleStreamAlsoDropsTheExtractionRow() =
+        runBlocking<Unit> {
+            val c = case(MediaFixtures.mixedOnlyJson(), Format())
+            store.extractions.put(Extraction(c.transfer.download.id, pageUrl, "{}", Instant.fromEpochMilliseconds(1)))
+
+            site(ffmpeg()).finalize(c.transfer).shouldBeInstanceOf<StepResult.Ok<*>>()
+
+            store.extractions.get(c.transfer.download.id) shouldBe null
+        }
 }

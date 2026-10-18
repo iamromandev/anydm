@@ -25,7 +25,8 @@ class FormatSelectorTest {
         tbr: Double = 130.0,
         codec: String = "mp4a.40.2",
         ext: String = "m4a",
-    ) = MediaStream(id, "https://cdn.test/v/$id", ext, "https", null, codec, null, null, false, tbr, 100_000L, emptyList(), null)
+        protocol: String = "https",
+    ) = MediaStream(id, "https://cdn.test/v/$id", ext, protocol, null, codec, null, null, false, tbr, 100_000L, emptyList(), null)
 
     private fun muxed(
         id: String,
@@ -248,5 +249,59 @@ class FormatSelectorTest {
         val parsed = (YtDlpJson.parse(MediaFixtures.splitVideoJson()) as MediaParse.Ok).info
 
         chosen(parsed).streams.map { it.formatId } shouldBe listOf("137", "251")
+    }
+
+    @Test
+    fun aVideoIsNeverQuietlyDownloadedWithoutItsSound() {
+        val dashAudio = audio("dash", protocol = "http_dash_segments")
+
+        noMatch(info(video("137"), dashAudio)) shouldContain "audio"
+        noMatch(info(video("137"), audio("140")), Format(audioCodec = "opus")) shouldContain "audio"
+    }
+
+    @Test
+    fun aMuxedStreamStandsInWhenTheSoundIsOnlyOfferedElsewhere() {
+        val selection = chosen(info(video("137"), muxed("22"), audio("dash", protocol = "http_dash_segments")))
+
+        selection.streams.map { it.formatId } shouldBe listOf("22")
+    }
+
+    @Test
+    fun audioOnlyFallsBackToAMuxedStream() {
+        val selection = chosen(info(muxed("22")), Format(audioOnly = AudioFormat.M4A))
+
+        selection.audio!!.formatId shouldBe "22"
+        selection.video shouldBe null
+        selection.transcode shouldBe false
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "m4a"
+    }
+
+    @Test
+    fun theChoiceIsKeptWhileItsStreamsAreStillThere() {
+        val streams =
+            info(
+                video("137"),
+                video("999", height = 2160, tbr = 9000.0),
+                audio("140"),
+                audio("251", tbr = 160.0, codec = "opus", ext = "webm"),
+            )
+
+        (
+            FormatSelector.choose(
+                streams,
+                Format(),
+                pinned = listOf("137", "140"),
+            ) as Choice.Ok
+        ).selection.streams.map { it.formatId } shouldBe
+            listOf("137", "140")
+        (
+            FormatSelector.choose(
+                streams,
+                Format(),
+                pinned = listOf("137", "gone"),
+            ) as Choice.Ok
+        ).selection.streams.map { it.formatId } shouldBe
+            listOf("999", "251")
     }
 }

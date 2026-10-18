@@ -37,15 +37,48 @@ sealed interface Choice {
 
 /** Picks streams from what yt-dlp listed, by the user's [Format]. Pure: the same page and choice give the same streams. */
 object FormatSelector {
+    /**
+     * The streams for [format]. [pinned] are format ids chosen on an earlier extraction of the page: while they are all
+     * still offered, and still make a whole choice, they are kept, so a page whose ranking changed meanwhile doesn't
+     * swap streams under a download that already holds some.
+     */
     fun choose(
         info: MediaInfo,
         format: Format,
+        pinned: List<String> = emptyList(),
     ): Choice {
         val plain = info.streams.filter { it.isPlain }
         if (plain.isEmpty()) {
             return Choice.NoMatch("this page is only offered as HLS or DASH streams, which aren't supported yet")
         }
-        return if (format.audioOnly != null) audioOnly(plain, format, format.audioOnly) else withVideo(plain, format)
+        if (pinned.isNotEmpty()) pinnedChoice(plain, format, pinned)?.let { return it }
+        return if (format.audioOnly != null) audioOnly(plain, format, format.audioOnly) else withVideo(info, plain, format)
+    }
+
+    private fun pinnedChoice(
+        plain: List<MediaStream>,
+        format: Format,
+        pinned: List<String>,
+    ): Choice? {
+        val streams = pinned.map { id -> plain.firstOrNull { it.formatId == id } ?: return null }
+        val target = format.audioOnly
+        return when {
+            target != null -> {
+                streams.singleOrNull()?.takeIf { it.hasAudio && !it.hasVideo }?.let { Choice.Ok(audioSelection(it, target)) }
+            }
+
+            streams.size == 1 && streams[0].hasVideo -> {
+                Choice.Ok(videoSelection(streams[0], null, format))
+            }
+
+            streams.size == 2 && streams[0].hasVideo && !streams[0].hasAudio && streams[1].hasAudio && !streams[1].hasVideo -> {
+                Choice.Ok(videoSelection(streams[0], streams[1], format))
+            }
+
+            else -> {
+                null
+            }
+        }
     }
 
     private fun audioOnly(
@@ -53,7 +86,9 @@ object FormatSelector {
         format: Format,
         target: AudioFormat,
     ): Choice {
-        val sources = plain.filter { it.hasAudio && !it.hasVideo && matches(it.audioCodec, format.audioCodec) }
+        val matching = plain.filter { it.hasAudio && matches(it.audioCodec, format.audioCodec) }
+        // A page that only offers sound inside its videos still has the sound: ffmpeg takes it out.
+        val sources = matching.filter { !it.hasVideo }.ifEmpty { matching }
         if (sources.isEmpty()) return Choice.NoMatch("this page has no audio stream that matches")
         val wanted =
             when (target) {
@@ -62,27 +97,32 @@ object FormatSelector {
                 else -> null
             }
         val preferred = wanted?.let { w -> sources.filter { it.audioCodec.orEmpty().startsWith(w, ignoreCase = true) } }.orEmpty()
-        val stream = (preferred.ifEmpty { sources }).maxBy { it.bitrate ?: 0.0 }
+        return Choice.Ok(audioSelection((preferred.ifEmpty { sources }).maxBy { it.bitrate ?: 0.0 }, target))
+    }
+
+    private fun audioSelection(
+        stream: MediaStream,
+        target: AudioFormat,
+    ): Selection {
         val transcode =
             when (target) {
                 AudioFormat.MP3, AudioFormat.WAV -> true
                 AudioFormat.M4A -> !stream.audioCodec.orEmpty().startsWith("mp4a", ignoreCase = true)
                 AudioFormat.OPUS -> !stream.audioCodec.orEmpty().startsWith("opus", ignoreCase = true)
             }
-        return Choice.Ok(
-            Selection(
-                video = null,
-                audio = stream,
-                container = null,
-                audioFormat = target,
-                outputExtension = target.extension,
-                transcode = transcode,
-                needsFfmpeg = transcode || stream.ext != target.extension,
-            ),
+        return Selection(
+            video = null,
+            audio = stream,
+            container = null,
+            audioFormat = target,
+            outputExtension = target.extension,
+            transcode = transcode,
+            needsFfmpeg = transcode || stream.hasVideo || stream.ext != target.extension,
         )
     }
 
     private fun withVideo(
+        info: MediaInfo,
         plain: List<MediaStream>,
         format: Format,
     ): Choice {
@@ -109,25 +149,36 @@ object FormatSelector {
                     it.height ?: 0
                 }.thenByDescending { it.fps ?: 0.0 }.thenByDescending { it.bitrate ?: 0.0 }
             }
-        val best = candidates.sortedWith(ordered).first()
+        val sorted = candidates.sortedWith(ordered)
+        val best = sorted.first()
+        if (best.hasAudio) return Choice.Ok(videoSelection(best, null, format))
         val audio =
-            if (best.hasAudio) {
-                null
-            } else {
-                plain.filter { it.hasAudio && !it.hasVideo && matches(it.audioCodec, format.audioCodec) }.maxByOrNull { it.bitrate ?: 0.0 }
+            plain.filter { it.hasAudio && !it.hasVideo && matches(it.audioCodec, format.audioCodec) }.maxByOrNull {
+                it.bitrate
+                    ?: 0.0
             }
-        val container = format.container ?: if (audio != null) containerFor(best, audio) else containerOfExtension(best.ext)
-        val outputExtension = container?.extension ?: best.ext
-        return Choice.Ok(
-            Selection(
-                video = best,
-                audio = audio,
-                container = container,
-                audioFormat = null,
-                outputExtension = outputExtension,
-                transcode = false,
-                needsFfmpeg = audio != null || outputExtension != best.ext,
-            ),
+        if (audio != null) return Choice.Ok(videoSelection(best, audio, format))
+        // No usable sound to pair with. A video is never handed over silent when the page has sound somewhere.
+        if (info.streams.none { it.hasAudio }) return Choice.Ok(videoSelection(best, null, format))
+        sorted.firstOrNull { it.hasAudio }?.let { return Choice.Ok(videoSelection(it, null, format)) }
+        return Choice.NoMatch("the audio for this video is only offered as HLS or DASH, or in a codec you excluded")
+    }
+
+    private fun videoSelection(
+        video: MediaStream,
+        audio: MediaStream?,
+        format: Format,
+    ): Selection {
+        val container = format.container ?: if (audio != null) containerFor(video, audio) else containerOfExtension(video.ext)
+        val outputExtension = container?.extension ?: video.ext
+        return Selection(
+            video = video,
+            audio = audio,
+            container = container,
+            audioFormat = null,
+            outputExtension = outputExtension,
+            transcode = false,
+            needsFfmpeg = audio != null || outputExtension != video.ext,
         )
     }
 

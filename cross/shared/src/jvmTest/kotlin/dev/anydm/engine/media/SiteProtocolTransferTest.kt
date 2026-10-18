@@ -262,4 +262,30 @@ class SiteProtocolTransferTest {
             server.requests.drop(before).none { it.url.encodedPath == "/v/137" } shouldBe true
             server.requests.drop(before).any { it.url.encodedPath == "/v/140" } shouldBe true
         }
+
+    @Test
+    fun thePagesCredentialsStayAwayFromAnotherHost() =
+        runBlocking<Unit> {
+            serve()
+            val own =
+                MediaFixtures
+                    .splitVideoJson(
+                        base,
+                    ).replace("\"User-Agent\":\"UA-137\"", "\"User-Agent\":\"UA-137\",\"Cookie\":\"cdn=1\"")
+            val site = site(yt(own))
+            val download = store.downloads.add(NewDownload(DownloadKind.SITE, mirrors = listOf(pageUrl), saveFolder = "/dl"))
+            val mirror = store.downloads.mirrors(download.id).single()
+            val context =
+                dev.anydm.engine.core
+                    .RequestContext(listOf("Authorization" to "Bearer secret"), cookies = "session=1")
+            val probe = (site.probe(ProbeRequest(download, mirror, context, mp4)) as StepResult.Ok).value as SiteProbe
+            val plan = ((site.plan(probe, PlanContext(download)) as StepResult.Ok).value as TransferPlan).files
+            val rig = Rig(site, download, probe, plan)
+
+            site.transfer(rig.transfer(), rig.io()) shouldBe StepResult.Ok(Unit)
+
+            server.requests.none { it.headers["Authorization"] != null } shouldBe true
+            server.requests.none { it.headers["Cookie"]?.contains("session=1") == true } shouldBe true
+            server.requests.filter { it.url.encodedPath == "/v/137" }.all { it.headers["Cookie"] == "cdn=1" } shouldBe true
+        }
 }

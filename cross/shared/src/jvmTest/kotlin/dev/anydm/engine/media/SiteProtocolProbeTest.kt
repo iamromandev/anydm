@@ -67,7 +67,7 @@ class SiteProtocolProbeTest {
         ResolvedTool(tool, ToolVersion.parse("2026.1.1")!!, tool.executables.associateWith { Path("/tools/$it") }, managed = true)
 
     private fun protocol(
-        runner: FakeProcessRunner,
+        runner: dev.anydm.engine.platform.ProcessRunner,
         beforeExtract: suspend () -> Unit = {},
     ) = SiteProtocol(
         HttpProtocol(OkHttpTransport()),
@@ -418,4 +418,68 @@ class SiteProtocolProbeTest {
 
             planned(site, probe).single().segments shouldBe emptyList()
         }
+
+    @Test
+    fun aFreshExtractionKeepsTheStreamsAlreadyChosen() =
+        runBlocking<Unit> {
+            serveStreams()
+            server.serve("/v/999", video)
+            val first = yt(listOf(MediaFixtures.splitVideoJson(base)))
+            val switching = Switching(first)
+            val site = protocol(switching)
+            val req = request()
+            val before = siteProbe(site.probe(req)).selection.streams.map { it.formatId }
+
+            val better =
+                MediaFixtures.splitVideoJson(base).replace(
+                    """"formats":[""",
+                    """"formats":[{"format_id":"999","url":"$base/v/999","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"none","height":2160,"fps":30,"tbr":9000,"filesize":1},""",
+                )
+            switching.current = yt(listOf(better))
+            now += 61.minutes
+
+            siteProbe(site.probe(req)).selection.streams.map { it.formatId } shouldBe before
+        }
+
+    @Test
+    fun aChosenStreamThatIsGoneIsChosenAgain() =
+        runBlocking<Unit> {
+            serveStreams()
+            val switching = Switching(yt(listOf(MediaFixtures.splitVideoJson(base))))
+            val site = protocol(switching)
+            val req = request()
+            siteProbe(site.probe(req)).selection.streams.map { it.formatId } shouldBe listOf("137", "251")
+
+            switching.current = yt(listOf(MediaFixtures.splitVideoJson(base).replace("\"format_id\":\"251\"", "\"format_id\":\"252\"")))
+            server.serve("/v/252", audio)
+            now += 61.minutes
+
+            siteProbe(site.probe(req)).selection.streams.map { it.formatId } shouldBe listOf("137", "252")
+        }
+
+    @Test
+    fun templateFieldsHaveNoPathCharacters() =
+        runBlocking<Unit> {
+            serveStreams()
+            val json =
+                MediaFixtures
+                    .withTitle(
+                        "Interview: Part 1",
+                        base,
+                    ).replace("\"uploader\":\"Some Channel\"", "\"uploader\":\"Ann\\\\Bo\"")
+
+            val probe = siteProbe(protocol(yt(listOf(json))).probe(request()))
+
+            probe.nameFields.values[TemplateField.TITLE] shouldBe "Interview_ Part 1"
+            probe.nameFields.values[TemplateField.UPLOADER] shouldBe "Ann_Bo"
+        }
+
+    /** A runner whose answer can be changed between calls. */
+    private class Switching(
+        var current: FakeProcessRunner,
+    ) : dev.anydm.engine.platform.ProcessRunner {
+        override suspend fun run(spec: dev.anydm.engine.platform.ProcessSpec) = current.run(spec)
+
+        override suspend fun start(spec: dev.anydm.engine.platform.ProcessSpec) = current.start(spec)
+    }
 }

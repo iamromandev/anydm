@@ -298,8 +298,8 @@ class StepRunner(
         for (path in finalized.consumed) {
             val row = rows.firstOrNull { it.path == path } ?: continue
             val target = targetPath(folder, path)
+            // Only the partial is the job's own: a file at the stream's final name is somebody else's.
             fileSystem.delete(partialPath(target, download.id))
-            fileSystem.delete(target)
             store.removeFile(row.id)
         }
     }

@@ -41,9 +41,13 @@ internal fun nameFieldsOf(
 ): NameFields =
     NameFields(
         buildMap {
-            put(TemplateField.TITLE, info.title)
-            info.uploader?.let { put(TemplateField.UPLOADER, it) }
-            put(TemplateField.ID, info.id)
+            // A field goes into a file name, so it is cleaned like a title is: no separators, no control characters.
+            cleanStem(info.title).takeIf { it.isNotBlank() }?.let { put(TemplateField.TITLE, it) }
+            info.uploader
+                ?.let { cleanStem(it) }
+                ?.takeIf { it.isNotBlank() }
+                ?.let { put(TemplateField.UPLOADER, it) }
+            cleanStem(info.id).takeIf { it.isNotBlank() }?.let { put(TemplateField.ID, it) }
             info.date?.takeIf { it.length == 8 && it.all(Char::isDigit) }?.let {
                 put(TemplateField.DATE, "${it.substring(0, 4)}-${it.substring(4, 6)}-${it.substring(6)}")
             }

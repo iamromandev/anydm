@@ -28,6 +28,19 @@ abstract class ExtractionStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun theChosenStreamsRoundTrip() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.SITE)).id
+
+            store.extractions.put(extraction(id).copy(chosen = listOf("137", "251")))
+
+            store.extractions.get(id)!!.chosen shouldBe listOf("137", "251")
+            store.extractions.put(extraction(id))
+            store.extractions.get(id)!!.chosen shouldBe emptyList()
+        }
+
+    @Test
     fun putReplacesTheEarlierOne() =
         runTest {
             val store = newStore()

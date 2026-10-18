@@ -15,5 +15,6 @@ CREATE TABLE extraction (
     download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
     json TEXT NOT NULL,
-    extracted_at INTEGER NOT NULL
+    extracted_at INTEGER NOT NULL,
+    chosen TEXT NOT NULL DEFAULT ''
 );

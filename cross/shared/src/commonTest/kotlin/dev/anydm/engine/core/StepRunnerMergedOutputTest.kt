@@ -47,6 +47,17 @@ class StepRunnerMergedOutputTest {
         }
 
     @Test
+    fun aFileOfTheUserAtAConsumedNameIsLeftAlone() =
+        runTest {
+            val h = merging()
+            h.fs.put(Path(stepRoot, "v.f1.mp4"), byteArrayOf(7))
+
+            h.runAll().failure shouldBe null
+
+            h.fs.exists(Path(stepRoot, "v.f1.mp4")) shouldBe true
+        }
+
+    @Test
     fun aFailedFinalizeKeepsTheStreamRowsAndPartials() =
         runTest {
             val h = merging()

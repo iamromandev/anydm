@@ -6,9 +6,12 @@ import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
+import dev.anydm.engine.core.toStepFailed
 import dev.anydm.engine.http.HttpProbe
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.hostOf
+import dev.anydm.engine.http.originOf
+import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.ProcessOutcome
 import dev.anydm.engine.platform.ProcessRunner
@@ -31,6 +34,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 
 private val EXTRACTION_TTL = 1.hours
+private val CREDENTIAL_HEADERS = setOf("authorization", "proxy-authorization", "cookie")
 private val YOUTUBE_HOSTS = listOf("youtube.com", "youtu.be", "youtube-nocookie.com")
 
 /**
@@ -54,10 +58,12 @@ class SiteProtocol(
         val url = request.mirror.url
         val deno =
             if (isYoutube(url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
-        val stored = extractions.get(request.download.id)?.takeIf { it.url == url && clock.now() - it.extractedAt < EXTRACTION_TTL }
+        val previous = extractions.get(request.download.id)?.takeIf { it.url == url }
+        val pinned = previous?.chosen.orEmpty()
+        val stored = previous?.takeIf { clock.now() - it.extractedAt < EXTRACTION_TTL }
         // Stored addresses can have expired within the hour: one fresh extraction is tried before giving up.
         if (stored != null) {
-            val built = build(request, stored.json)
+            val built = build(request, stored.json, pinned)
             if (built !is StepResult.Failed || (built.errorClass != ErrorClass.AUTH && built.errorClass != ErrorClass.GONE)) return built
         }
         val json =
@@ -65,8 +71,13 @@ class SiteProtocol(
                 is StepResult.Failed -> return extracted
                 is StepResult.Ok -> extracted.value
             }
-        val built = build(request, json)
-        if (built is StepResult.Ok) extractions.put(Extraction(request.download.id, url, json, clock.now()))
+        val built = build(request, json, pinned)
+        if (built is StepResult.Ok) {
+            val chosen =
+                built.value.selection.streams
+                    .map { it.formatId }
+            extractions.put(Extraction(request.download.id, url, json, clock.now(), chosen))
+        }
         return built
     }
 
@@ -88,6 +99,7 @@ class SiteProtocol(
     private suspend fun build(
         request: ProbeRequest,
         json: String,
+        pinned: List<String>,
     ): StepResult<SiteProbe> {
         val info =
             when (val parsed = YtDlpJson.parse(json)) {
@@ -96,14 +108,14 @@ class SiteProtocol(
             }
         val format = request.format ?: Format()
         val selection =
-            when (val choice = FormatSelector.choose(info, format)) {
+            when (val choice = FormatSelector.choose(info, format, pinned)) {
                 is Choice.NoMatch -> return StepResult.Failed(null, choice.reason)
                 is Choice.Ok -> choice.selection
             }
         if (selection.needsFfmpeg && resolve(Tool.FFMPEG) == null) return missing(Tool.FFMPEG)
         val probes = LinkedHashMap<String, HttpProbe>()
         for (stream in selection.streams) {
-            when (val probed = http.probeUrl(stream.url, contextFor(request.context, stream), credentials = true)) {
+            when (val probed = http.probeUrl(stream.url, contextFor(request.context, stream, request.mirror.url), credentials = true)) {
                 is StepResult.Failed -> return probed
                 is StepResult.Ok -> probes[stream.formatId] = probed.value
             }
@@ -125,13 +137,30 @@ class SiteProtocol(
         )
     }
 
-    /** The request's own context plus the headers the site wants for [stream]; one HTTP can't send is left out. */
+    /**
+     * The request's own context plus the headers the site wants for [stream] (one HTTP can't send is left out). The
+     * request's credentials, its Authorization and cookies, belong to the page's own host: a stream on another host
+     * gets none of them, only what the site named for that stream.
+     */
     private fun contextFor(
         base: RequestContext?,
         stream: MediaStream,
+        pageUrl: String,
     ): RequestContext {
-        val extra = stream.headers.filter { header -> runCatching { RequestContext(listOf(header)) }.isSuccess }
-        return RequestContext(base?.headers.orEmpty() + extra, base?.referrer, base?.userAgent, base?.cookies)
+        val own = stream.headers.filter { header -> runCatching { RequestContext(listOf(header)) }.isSuccess }
+        val samePlace = originOf(stream.url) == originOf(pageUrl)
+        val inherited =
+            base?.headers.orEmpty().let { all ->
+                if (samePlace) {
+                    all
+                } else {
+                    all.filterNot {
+                        it.first.lowercase() in
+                            CREDENTIAL_HEADERS
+                    }
+                }
+            }
+        return RequestContext(inherited + own, base?.referrer, base?.userAgent, if (samePlace) base?.cookies else null)
     }
 
     override fun plan(
@@ -219,7 +248,7 @@ class SiteProtocol(
                 info.streams.firstOrNull { it.formatId == old.formatId && it.isPlain }
                     ?: return StepResult.Failed(null, "the video changed while it was downloading: format ${old.formatId} is gone")
             val probe =
-                when (val probed = http.probeUrl(stream.url, contextFor(site.context, stream), credentials = true)) {
+                when (val probed = http.probeUrl(stream.url, contextFor(site.context, stream, site.url), credentials = true)) {
                     is StepResult.Failed -> return probed
                     is StepResult.Ok -> probed.value
                 }
@@ -241,13 +270,31 @@ class SiteProtocol(
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't finalize a ${site::class.simpleName}" }
         val files = transfer.files.sortedBy { it.file.index }
-        if (!site.selection.needsFfmpeg) return StepResult.Ok(FinalizeResult(files.map { it.file.path }))
+        if (!site.selection.needsFfmpeg) {
+            extractions.delete(transfer.download.id)
+            return StepResult.Ok(FinalizeResult(files.map { it.file.path }))
+        }
         val ffmpeg = resolve(Tool.FFMPEG) ?: return missing(Tool.FFMPEG)
         val first = files.first()
         var folder = first.target
         repeat(first.file.path.count { it == '/' } + 1) {
             folder =
                 folder.parent ?: return StepResult.Failed(null, "${first.target} has no save folder")
+        }
+        // The streams stay until the job is complete, so the merge needs room for the output on top of them.
+        val needed = files.sumOf { it.file.size ?: 0L }
+        when (val free = fileSystem.freeSpace(folder)) {
+            is FileResult.Failed -> {
+                return free.toStepFailed()
+            }
+
+            is FileResult.Ok -> {
+                if (free.value <
+                    needed
+                ) {
+                    return StepResult.Failed(ErrorClass.DISK_FULL, "not enough room to merge the streams: $needed bytes needed")
+                }
+            }
         }
         val outputName = transfer.download.fileName ?: site.name
         val output = partialPath(targetPath(folder, outputName), transfer.download.id)

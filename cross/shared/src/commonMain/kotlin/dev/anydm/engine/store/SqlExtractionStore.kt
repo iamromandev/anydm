@@ -17,7 +17,17 @@ internal class SqlExtractionStore(
 
     override suspend fun get(id: DownloadId): Extraction? =
         withContext(io) {
-            queries.selectByDownload(id).executeAsOneOrNull()?.let { Extraction(it.download_id, it.url, it.json, it.extracted_at) }
+            queries.selectByDownload(id).executeAsOneOrNull()?.let {
+                Extraction(
+                    it.download_id,
+                    it.url,
+                    it.json,
+                    it.extracted_at,
+                    it.chosen.split(',').filter { id ->
+                        id.isNotEmpty()
+                    },
+                )
+            }
         }
 
     override suspend fun put(extraction: Extraction): Boolean =
@@ -26,7 +36,13 @@ internal class SqlExtractionStore(
                 if (database.downloadQueries.selectById(extraction.downloadId).executeAsOneOrNull() == null) {
                     false
                 } else {
-                    queries.put(extraction.downloadId, extraction.url, extraction.json, extraction.extractedAt)
+                    queries.put(
+                        extraction.downloadId,
+                        extraction.url,
+                        extraction.json,
+                        extraction.extractedAt,
+                        extraction.chosen.joinToString(","),
+                    )
                     true
                 }
             }
