@@ -29,7 +29,7 @@ class DesktopFileSystem internal constructor(
     // A seam for tests: told of every writer the moment its file is open.
     private val onWriterOpened: (DesktopFileWriter) -> Unit = {},
 ) : FileSystem {
-    constructor() : this(Dispatchers.IO, DesktopTrashBin)
+    constructor() : this(Dispatchers.IO, trashBinForCurrentOs())
 
     override suspend fun prepareFolder(folder: Path): FileResult<Unit> {
         requireAbsolute(folder)

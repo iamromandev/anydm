@@ -11,6 +11,7 @@ import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
@@ -18,6 +19,7 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.choice
@@ -515,6 +517,43 @@ abstract class EngineContract : StoreTestBase() {
                 settle()
 
                 h.status(a) shouldBe COMPLETED
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeSendsTheFilesToTheTrashByDefault() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+                h.fs.trashAvailable = true
+
+                h.engine.remove(a) shouldBe CommandResult.Done(null)
+
+                h.fs.trashed.isNotEmpty() shouldBe true
+                h.snapshot(a) shouldBe null
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeKeepsTheFilesAndTheJobWhenThereIsNoTrash() =
+        runTest {
+            val h = started()
+            try {
+                val a = h.addJob()
+                settle()
+                h.fs.trashAvailable = false
+
+                h.engine.remove(a) shouldBe CommandResult.TrashUnavailable
+
+                h.snapshot(a) shouldNotBe null
+                h.fs.trashed shouldBe emptyList()
             } finally {
                 h.engine.stop()
             }

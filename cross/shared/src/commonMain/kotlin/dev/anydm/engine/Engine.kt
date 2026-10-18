@@ -351,9 +351,10 @@ class Engine(
 
     suspend fun cancel(id: DownloadId): CommandResult = command { queue.cancel(id) }
 
+    /** Takes the job off the list; [files] says what happens to its files, which go to the OS trash unless told otherwise. */
     suspend fun remove(
         id: DownloadId,
-        files: RemoveFiles,
+        files: RemoveFiles = RemoveFiles.TRASH,
     ): CommandResult = command { queue.remove(id, files) }
 
     suspend fun retry(id: DownloadId): CommandResult = command { queue.retry(id) }

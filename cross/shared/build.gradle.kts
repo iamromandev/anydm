@@ -47,6 +47,8 @@ kotlin {
             implementation(libs.ktor.client.cio)
             // SQLite over JDBC for desktop. Not jvmCommon: Android brings its own driver.
             implementation(libs.sqldelight.sqlite.driver)
+            // GetDriveType for the Windows Recycle Bin guard; only loaded on Windows.
+            implementation(libs.jna.platform)
         }
         jvmTest.dependencies {
             // FaultServer: a local server with ranges and injected faults (#567).
