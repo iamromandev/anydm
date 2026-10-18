@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.min
 import kotlin.time.ComparableTimeMark
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
@@ -61,6 +62,22 @@ internal class TokenBucket(
             }
         }
     }
+
+    /**
+     * Takes [bytes] now if the bucket allows it (as [take] would) and returns null; otherwise takes nothing and returns
+     * how long until it would. For a caller that orders takers itself.
+     */
+    suspend fun tryTake(bytes: Int): Duration? =
+        state.withLock {
+            refill()
+            val need = min(bytes.toDouble(), rate)
+            if (tokens >= need) {
+                tokens -= bytes
+                null
+            } else {
+                ((need - tokens) / rate).seconds.coerceAtLeast(1.milliseconds)
+            }
+        }
 
     suspend fun setRate(rate: Long) {
         require(rate > 0) { "rate must be > 0: $rate" }
