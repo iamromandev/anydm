@@ -37,7 +37,13 @@ internal class WindowsGuardedTrashBin(
     override fun moveToTrash(item: NioPath): Boolean {
         if (item.toString().startsWith("\\\\")) return false
         if (!drive.isFixedDrive(item)) return false
-        if (sizeOf(item) > drive.totalSpace(item) / 10) return false
+        val size =
+            try {
+                sizeOf(item)
+            } catch (e: java.io.UncheckedIOException) {
+                return false
+            }
+        if (size > drive.totalSpace(item) / 10) return false
         return inner.moveToTrash(item)
     }
 

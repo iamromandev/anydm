@@ -42,7 +42,8 @@ suspend fun nextFreeName(
 private const val MAX_TRIES = 10_000
 private val tarExtension = Regex("\\.tar\\.[A-Za-z0-9]+$", RegexOption.IGNORE_CASE)
 
-private fun extensionOf(name: String): String {
+/** The extension of [name] with its dot: `.tar.*` is one, otherwise what follows the last dot; none for a leading dot only. */
+internal fun extensionOf(name: String): String {
     tarExtension.find(name)?.let { if (it.range.first > 0) return it.value }
     val dot = name.lastIndexOf('.')
     return if (dot > 0) name.substring(dot) else ""

@@ -14,7 +14,8 @@ data class PlacementPlan(
 )
 
 /**
- * The two decisions about where files end up. [plan] runs in prepare, right after the probe. [place] runs when a
+ * The two decisions about where files end up. [plan] runs in prepare, right after the probe; [firstPrepare] is false
+ * when the job has been prepared before (it has file rows), so a file already placed for it isn't mistaken for a clash. [place] runs when a
  * finished file is moved from its partial into its final path. [DirectPlacement] keeps the plain rules;
  * [dev.anydm.engine.files.FilesPlacement] is the real one.
  */
@@ -24,6 +25,7 @@ interface Placement {
         mirror: Mirror,
         probe: ProbeResult,
         defaultFolder: Path,
+        firstPrepare: Boolean,
     ): StepResult<PlacementPlan>
 
     /**
@@ -46,6 +48,7 @@ class DirectPlacement(
         mirror: Mirror,
         probe: ProbeResult,
         defaultFolder: Path,
+        firstPrepare: Boolean,
     ): StepResult<PlacementPlan> =
         StepResult.Ok(
             PlacementPlan(download.categoryId, download.saveFolder?.let(::Path) ?: defaultFolder, download.fileName ?: probe.name),

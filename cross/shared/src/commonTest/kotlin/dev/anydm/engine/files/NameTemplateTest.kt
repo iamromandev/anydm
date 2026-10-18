@@ -50,4 +50,18 @@ class NameTemplateTest {
     fun literalTextAroundPresentFieldsIsKept() {
         template("(1) {title}").render(fields(TITLE to "Song")) shouldBe "(1) Song"
     }
+
+    @Test
+    fun knowsWhetherItHasPlaceholders() {
+        template("{title} - video").hasFields shouldBe true
+        template("fixed").hasFields shouldBe false
+    }
+
+    @Test
+    fun saysWhetherAnyFieldHasAValue() {
+        val t = template("{title} - {uploader}")
+        t.usesAnyOf(NameFields()) shouldBe false
+        t.usesAnyOf(fields(UPLOADER to "Band")) shouldBe true
+        template("fixed").usesAnyOf(NameFields()) shouldBe false
+    }
 }

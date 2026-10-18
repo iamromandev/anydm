@@ -43,7 +43,7 @@ abstract class QueueDiskContract : QueueTestBase() {
             h.queue.applyDiskState(setOf(low))
             runCurrent()
 
-            h.queue.applyDiskState(emptySet(), recovered = setOf(low))
+            h.queue.applyDiskState(emptySet(), release = setOf(id))
             settle()
 
             h.status(id) shouldBe COMPLETED
@@ -61,7 +61,7 @@ abstract class QueueDiskContract : QueueTestBase() {
             runCurrent()
             h.reasons(id) shouldBe setOf(PauseReason.USER, PauseReason.LOW_DISK)
 
-            h.queue.applyDiskState(emptySet(), recovered = setOf(low))
+            h.queue.applyDiskState(emptySet(), release = setOf(id))
             runCurrent()
 
             h.status(id) shouldBe PAUSED
@@ -99,7 +99,7 @@ abstract class QueueDiskContract : QueueTestBase() {
         }
 
     @Test
-    fun aJobPausedForLowDiskInAFolderThatNeverRanLowIsLeftAlone() =
+    fun aJobNotNamedForReleaseStaysPaused() =
         runTest {
             val h = started()
             val id = h.addJob(folder = low)
@@ -107,7 +107,7 @@ abstract class QueueDiskContract : QueueTestBase() {
             h.queue.applyDiskState(setOf(low))
             runCurrent()
 
-            h.queue.applyDiskState(emptySet(), recovered = setOf(fine))
+            h.queue.applyDiskState(emptySet(), release = emptySet())
             runCurrent()
 
             h.status(id) shouldBe PAUSED

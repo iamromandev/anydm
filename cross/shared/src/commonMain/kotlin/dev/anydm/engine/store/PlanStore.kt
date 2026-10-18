@@ -30,6 +30,12 @@ interface PlanStore {
 
     suspend fun files(id: DownloadId): List<File>
 
+    /** Records where the file's output was placed ([File.placedPath]); a file that isn't there is left alone. */
+    suspend fun setPlacedPath(
+        id: FileId,
+        path: String,
+    )
+
     /** What the download's requests carry besides the URL (HTTP-10), or null. */
     suspend fun context(id: DownloadId): RequestContext?
 

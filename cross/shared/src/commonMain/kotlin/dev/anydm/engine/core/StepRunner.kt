@@ -133,7 +133,7 @@ class StepRunner(
             listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
         }
         val plan =
-            when (val planned = placement.plan(download, mirror, probe, defaultFolder)) {
+            when (val planned = placement.plan(download, mirror, probe, defaultFolder, firstPrepare = store.files(download.id).isEmpty())) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, planned)
                 is StepResult.Ok -> planned.value
             }
@@ -153,7 +153,8 @@ class StepRunner(
         val learned = probe.size
         if (learned != null && (learned != download.size || plan.folder != folder)) {
             val room = checkSpace(plan.folder, learned - writtenBytes(download.id))
-            if (room is StepResult.Failed) return prepareFailed(download, Step.PROBE, room)
+            // The size stays with the job, so whoever waits for room knows how much it needs.
+            if (room is StepResult.Failed) return prepareFailed(download.copy(size = learned), Step.PROBE, room)
         }
         // The user's file name wins; the probe's size is the source's own word.
         val queued =
@@ -486,7 +487,8 @@ class StepRunner(
             val target = targetPath(folder, new.path)
             val partial = partialPath(target, download.id)
             val old = earlier.getOrNull(i)
-            if (old != null && resumes(old, new) && alreadyPlaced(old.segments, partial, target, new.size)) {
+            val placedAt = old?.file?.placedPath?.let { targetPath(folder, it) } ?: target
+            if (old != null && resumes(old, new) && alreadyPlaced(old.segments, partial, placedAt, new.size)) {
                 // Placed by a run that stopped while placing outputs: nothing to write, nothing to open.
                 files += TransferFile(file, old.segments, partial, target)
                 continue
@@ -516,6 +518,11 @@ class StepRunner(
      * A file a stopped run already renamed into place: every segment written, no partial left, and the output there with
      * the planned [size]. Without a known size it can't be told from some other file, so it is fetched again.
      */
+    private fun relativeTo(
+        folder: Path,
+        path: Path,
+    ): String = path.toString().removePrefix(folder.toString()).trimStart('/', '\\')
+
     private suspend fun alreadyPlaced(
         segments: List<Segment>,
         partial: Path,
@@ -585,8 +592,16 @@ class StepRunner(
     ): StepResult<List<Path>> {
         pathProblem(outputs)?.let { return StepResult.Failed(null, "the outputs can't be placed in the save folder: $it") }
         val placed = mutableListOf<Path>()
+        val rows = store.files(download.id).associateBy { it.path }
         for (output in outputs) {
             val target = targetPath(folder, output)
+            val row = rows[output]
+            // Recorded as placed by a run that stopped before COMPLETED: it is where that run left it.
+            val before = row?.placedPath?.let { targetPath(folder, it) }
+            if (before != null && fileSystem.size(before) is FileResult.Ok) {
+                placed += before
+                continue
+            }
             val partial = partialPath(target, download.id)
             val moved = placement.place(download, partial, target)
             // No partial but the output is there: a stopped run placed it already.
@@ -595,7 +610,10 @@ class StepRunner(
                 continue
             }
             if (moved is FileResult.Failed) return moved.toStepFailed()
-            placed += (moved as FileResult.Ok).value
+            val landed = (moved as FileResult.Ok).value
+            placed += landed
+            // Even a pause arriving now must not lose where the file went: the next run finds it by this.
+            if (row != null) withContext(NonCancellable) { store.setPlacedPath(row.id, relativeTo(folder, landed)) }
         }
         return StepResult.Ok(placed)
     }

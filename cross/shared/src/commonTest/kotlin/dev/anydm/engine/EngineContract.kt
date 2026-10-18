@@ -39,6 +39,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.files.Path
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -364,7 +365,7 @@ abstract class EngineContract : StoreTestBase() {
                         it,
                         newStore(),
                         FakeProtocol(failure = FakeFailure.AtProbe(StepResult.Failed(ErrorClass.DISK_FULL, "full"))),
-                    )
+                    ).also { it.fs.free = 1_000 } // the disk really is full, so the job isn't released to fail again
                 }
             val seen = mutableListOf<String>()
             backgroundScope.launch(Dispatchers.Unconfined) {
@@ -590,6 +591,62 @@ abstract class EngineContract : StoreTestBase() {
                 val again = h.engine.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf("https://example.com/file-1.zip")))
 
                 again.shouldBeInstanceOf<CommandResult.Duplicate>().found.reason shouldBe DuplicateReason.IN_HISTORY
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun removeTrashesTheRenamedFileNotTheOneItWasRenamedAround() =
+        runTest {
+            val h = started()
+            try {
+                val other = Path(dev.anydm.engine.core.stepRoot, "job-1.zip")
+                h.fs.put(other, byteArrayOf(9))
+                val a = h.addJob()
+                settle()
+                h.status(a) shouldBe COMPLETED
+                h.fs.trashAvailable = true
+
+                h.engine.remove(a) shouldBe CommandResult.Done(null)
+
+                h.fs.exists(other) shouldBe true
+                h.fs.trashed.map { it.name } shouldBe listOf("job-1 (1).zip")
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aJobPausedByAFullDiskComesBackOnlyWhenThereIsRoomForIt() =
+        runTest {
+            val fourMiB = 4L * 1024 * 1024
+            val h = started { EngineHarness(it, newStore(), FakeProtocol(files = listOf(FakeFile("file.zip", fourMiB)))) }
+            try {
+                h.store.settings.update { it.copy(freeSpaceReserve = 1_000_000) }
+                h.fs.free = 500_000 // not even the reserve
+                val a = h.addJob()
+                advanceTimeBy(1.seconds)
+                h.status(a) shouldBe PAUSED
+                val attempts =
+                    h.store.downloads
+                        .attempts(a)
+                        .size
+
+                h.fs.free = 4_500_000 // above twice the reserve, but the file and the reserve need 5.2 MB
+                advanceTimeBy(100.seconds)
+                runCurrent()
+
+                h.status(a) shouldBe PAUSED
+                h.store.downloads
+                    .attempts(a)
+                    .size shouldBe attempts
+
+                h.fs.free = 6_000_000
+                advanceTimeBy(31.seconds)
+                settle()
+
+                h.status(a) shouldBe COMPLETED
             } finally {
                 h.engine.stop()
             }

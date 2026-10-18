@@ -16,8 +16,8 @@ import kotlinx.io.files.Path
 
 /**
  * The real [DuplicateCheck] (FIL-05, FIL-06). A cancelled download is gone for this purpose; every other one counts,
- * finished or not, and so does everything in the history. The file-on-disk check only runs on a job's first prepare: after that its own placed file would
- * look like a duplicate of itself.
+ * finished or not, and so does everything in the history. Every check runs only on a job's first prepare (it has no file rows yet): after that its own
+ * file, or the job it was added anyway beside, would make it a duplicate.
  */
 class FilesDuplicateCheck(
     private val downloads: DownloadStore,
@@ -41,7 +41,8 @@ class FilesDuplicateCheck(
         probe: ProbeResult,
         target: Path,
     ): DuplicateFound? {
-        if (download.allowDuplicate) return null
+        // A job prepared before has file rows; its own earlier work must not make it a duplicate of itself.
+        if (download.allowDuplicate || downloads.files(download.id).isNotEmpty()) return null
         val sameFile =
             live().firstOrNull { other ->
                 other.id != download.id &&
@@ -51,8 +52,7 @@ class FilesDuplicateCheck(
         if (sameFile != null) return DuplicateFound(sameFile.id, DuplicateReason.SAME_FILE)
         val size = probe.size
         if (size != null && history.findByFile(target.name, size) != null) return DuplicateFound(null, DuplicateReason.IN_HISTORY)
-        val firstPrepare = download.size == null && download.sourceValidator == null
-        if (firstPrepare && probe.size != null) {
+        if (probe.size != null) {
             val onDisk = fileSystem.size(target)
             if (onDisk is FileResult.Ok && onDisk.value == probe.size) return DuplicateFound(null, DuplicateReason.ON_DISK)
         }

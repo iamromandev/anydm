@@ -51,6 +51,13 @@ internal class InMemoryPlanStore : PlanStore {
 
     override suspend fun files(id: DownloadId): List<File> = fileRows[id].orEmpty()
 
+    override suspend fun setPlacedPath(
+        id: FileId,
+        path: String,
+    ) {
+        for ((download, rows) in fileRows) fileRows[download] = rows.map { if (it.id == id) it.copy(placedPath = path) else it }
+    }
+
     override suspend fun replaceSegments(
         fileId: FileId,
         segments: List<NewSegment>,

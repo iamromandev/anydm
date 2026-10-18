@@ -1,6 +1,7 @@
 package dev.anydm.engine.queue
 
 import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.DirectPlacement
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -9,6 +10,7 @@ import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.FinishHook
 import dev.anydm.engine.core.FixedRandom
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.Placement
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
@@ -50,6 +52,7 @@ internal class QueueHarness(
     checkpointEvery: Duration = StepRunner.DEFAULT_CHECKPOINT_EVERY,
     observer: QueueObserver = QueueObserver.None,
     duplicates: DuplicateCheck = DuplicateCheck.None,
+    placement: Placement = DirectPlacement(fs),
 ) {
     val finished = mutableListOf<DownloadId>()
     val runner =
@@ -69,6 +72,7 @@ internal class QueueHarness(
                 },
             freeSpaceReserve = 0,
             duplicates = duplicates,
+            placement = placement,
             checkpointEvery = checkpointEvery,
         )
     val queue =

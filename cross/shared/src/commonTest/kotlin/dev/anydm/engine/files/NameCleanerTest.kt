@@ -81,4 +81,30 @@ class NameCleanerTest {
             cleaned.encodeToByteArray().decodeToString() shouldBe cleaned
         }
     }
+
+    @Test
+    fun aLongNameLeavesRoomForThePartialSuffixAndAClashNumber() {
+        // The partial adds ".<19 digit id>.anydm" and a clash " (10000)": the name must still be creatable.
+        val suffixes = ".1234567890123456789.anydm".length + " (10000)".length
+        for (os in OsProfile.entries) {
+            val cleaned = NameCleaner(os).clean("é".repeat(300) + ".mp4")
+            val size = if (os == WINDOWS) cleaned.length else cleaned.encodeToByteArray().size
+            (size + suffixes) shouldBeLessThanOrEqualTo 255
+        }
+    }
+
+    @Test
+    fun truncationKeepsATarExtensionWhole() {
+        for (os in OsProfile.entries) NameCleaner(os).clean("é".repeat(300) + ".tar.gz") shouldEndWith ".tar.gz"
+    }
+
+    @Test
+    fun windowsReservedNamesAreFoundThroughTrailingSpacesAndSuperscripts() {
+        val cleaner = NameCleaner(WINDOWS)
+        cleaner.clean("CON .txt") shouldBe "_CON .txt"
+        cleaner.clean("COM0") shouldBe "_COM0"
+        cleaner.clean("LPT0.log") shouldBe "_LPT0.log"
+        cleaner.clean("COM\u00B9") shouldBe "_COM\u00B9"
+        cleaner.clean("LPT\u00B2.txt") shouldBe "_LPT\u00B2.txt"
+    }
 }

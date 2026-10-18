@@ -9,11 +9,16 @@ CREATE TABLE file (
     path TEXT NOT NULL,
     size INTEGER CHECK (size >= 0),
     selected INTEGER AS kotlin.Boolean NOT NULL,
+    -- Relative to the save folder like path: where the output was placed (FIL-04 can rename it); NULL until then.
+    placed_path TEXT,
     UNIQUE (download_id, file_index)
 );
 
 insert:
 INSERT INTO file(download_id, file_index, path, size, selected) VALUES (?, ?, ?, ?, ?);
+
+setPlacedPath:
+UPDATE file SET placed_path = ? WHERE id = ?;
 
 selectById:
 SELECT * FROM file WHERE id = ?;

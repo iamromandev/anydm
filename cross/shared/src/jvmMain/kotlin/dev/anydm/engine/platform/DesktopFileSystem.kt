@@ -9,6 +9,7 @@ import kotlinx.io.files.Path
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -111,9 +112,16 @@ class DesktopFileSystem internal constructor(
                     FileResult.AlreadyExists(target, "a folder is in the way")
                 }
 
-                // Best effort: rename(2) replaces silently, so a file that appears after this check is replaced.
                 !replace && Files.exists(to, NOFOLLOW_LINKS) -> {
                     FileResult.AlreadyExists(target, "a file is already there")
+                }
+
+                // The check above is only the quick answer: moveWithoutReplacing is what refuses a file that
+                // appears after it, so two jobs placing the same name never replace each other.
+                !replace -> {
+                    var taken = false
+                    val moved = attempt(source, target) { taken = !moveWithoutReplacing(from, to) }
+                    if (taken) FileResult.AlreadyExists(target, "a file is already there") else moved
                 }
 
                 else -> {
@@ -279,3 +287,39 @@ private fun Path.nio(): NioPath =
     } catch (e: InvalidPathException) {
         throw InvalidNameException(FileResult.InvalidName(this, e.message))
     }
+
+private val onWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+
+/**
+ * Moves [from] to [to] unless something is already at [to], decided by the OS in the same step: false then, and both
+ * files stay. rename(2) can't do that, so on Linux and macOS the file is hard-linked into place (which fails when the
+ * name is taken) and the old name removed; where links aren't possible (a folder, FAT, a network share) it falls back
+ * to the check made by the caller, which a second mover can still beat. Windows' MoveFileEx without
+ * MOVEFILE_REPLACE_EXISTING refuses a taken name itself.
+ */
+private fun moveWithoutReplacing(
+    from: NioPath,
+    to: NioPath,
+): Boolean {
+    try {
+        if (onWindows) {
+            Files.move(from, to)
+        } else {
+            try {
+                Files.createLink(to, from)
+            } catch (e: FileAlreadyExistsException) {
+                throw e
+            } catch (e: IOException) {
+                Files.move(from, to, ATOMIC_MOVE)
+                return true
+            } catch (e: UnsupportedOperationException) {
+                Files.move(from, to, ATOMIC_MOVE)
+                return true
+            }
+            Files.delete(from)
+        }
+    } catch (e: FileAlreadyExistsException) {
+        return false
+    }
+    return true
+}

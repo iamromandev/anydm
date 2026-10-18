@@ -385,12 +385,12 @@ internal class QueueActor(
 
     /**
      * Free space ran low in the [low] folders (FIL-08): their running jobs stop and their waiting ones wait, paused for
-     * LOW_DISK; a job paused for it in a [recovered] folder is released. Idempotent, so the engine can send the whole
+     * LOW_DISK; a job paused for it that is named in [release] is released. Idempotent, so the engine can send the whole
      * state on every check. A job that is also paused for another reason stays paused for that one.
      */
     suspend fun applyDiskState(
         low: Set<Path>,
-        recovered: Set<Path>,
+        release: Set<DownloadId>,
         reply: CompletableDeferred<CommandResult>,
     ) {
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
@@ -406,11 +406,7 @@ internal class QueueActor(
                     pauseForDisk(job)
                 }
 
-                !inLow && job.status == PAUSED && PauseReason.LOW_DISK in job.pauseReasons && job.saveFolder?.let {
-                    Path(
-                        it,
-                    )
-                } in recovered -> {
+                !inLow && job.status == PAUSED && PauseReason.LOW_DISK in job.pauseReasons && job.id in release -> {
                     release(job, PauseReason.LOW_DISK)
                 }
             }
@@ -622,9 +618,12 @@ internal class QueueActor(
     // Each planned file's output and partial; one that isn't there is fine. The first failure stops it.
     private suspend fun trash(job: Download): FileResult.Failed? {
         val folder = job.saveFolder?.let(::Path) ?: return null
+        val finished = job.status == COMPLETED || job.status == SEEDING
         for (file in downloads.files(job.id)) {
             val target = targetPath(folder, file.path)
-            for (path in listOf(target, partialPath(target, job.id))) {
+            // Only a file this job placed is its own: at its row's path another job's file can be sitting.
+            val output = file.placedPath?.let { targetPath(folder, it) } ?: target.takeIf { finished }
+            for (path in listOfNotNull(output, partialPath(target, job.id))) {
                 when (val trashed = fileSystem.moveToTrash(path)) {
                     is FileResult.Ok, is FileResult.NotFound -> Unit
                     is FileResult.Failed -> return trashed
@@ -961,11 +960,18 @@ internal class QueueActor(
 }
 
 /**
- * The fields a run decides (RunListener): status, and what the probe learned. Everything else, such as a priority
+ * The fields a run decides (RunListener): status, its category and folder, and what the probe learned. Everything else, such as a priority
  * changed while the job ran, stays as the queue has it.
  */
 private fun Download.takeRun(run: Download): Download =
-    copy(status = run.status, saveFolder = run.saveFolder, fileName = run.fileName, size = run.size, sourceValidator = run.sourceValidator)
+    copy(
+        status = run.status,
+        categoryId = run.categoryId,
+        saveFolder = run.saveFolder,
+        fileName = run.fileName,
+        size = run.size,
+        sourceValidator = run.sourceValidator,
+    )
 
 /** How a bug (a throw that isn't an expected failure) is reported in an Attempt or a command's result. */
 private fun internalError(error: Throwable) = "internal error: ${error.message ?: error::class.simpleName}"

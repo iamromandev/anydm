@@ -46,6 +46,12 @@ class NameTemplate private constructor(
         ) : Part
     }
 
+    /** Whether the template has any placeholder at all. */
+    val hasFields: Boolean get() = parts.any { it is Part.Field }
+
+    /** Whether at least one placeholder of the template has a value in [fields]. */
+    fun usesAnyOf(fields: NameFields): Boolean = parts.any { it is Part.Field && fields.values[it.field] != null }
+
     fun render(fields: NameFields): String {
         val live = parts.toMutableList<Part?>()
         var dropped = false

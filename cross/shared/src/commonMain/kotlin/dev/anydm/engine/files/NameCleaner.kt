@@ -15,7 +15,7 @@ class NameCleaner(
         val replaced = name.map { if (isForbidden(it)) '_' else it }.joinToString("")
         var text = if (os == WINDOWS) replaced.trimEnd('.', ' ') else replaced
         if (text.isEmpty() || text == "." || text == ".." || text.all { it == '_' }) return DEFAULT_NAME
-        if (os == WINDOWS && text.substringBefore('.').uppercase() in RESERVED) text = "_$text"
+        if (os == WINDOWS && text.substringBefore('.').trimEnd(' ').uppercase() in RESERVED) text = "_$text"
         return fitted(text)
     }
 
@@ -31,8 +31,7 @@ class NameCleaner(
 
     /** Shortens the stem, never the extension, and never splits a surrogate pair. */
     private fun fitted(text: String): String {
-        val dot = text.lastIndexOf('.')
-        val extension = if (dot > 0 && text.length - dot <= MAX_EXTENSION) text.substring(dot) else ""
+        val extension = extensionOf(text).takeIf { it.length <= MAX_EXTENSION } ?: ""
         val stem = text.removeSuffix(extension)
         var room = MAX_NAME - cost(extension)
         val out = StringBuilder()
@@ -55,12 +54,15 @@ class NameCleaner(
     private companion object {
         const val DEFAULT_NAME = "download"
         const val DELETE = '\u007F'
-        const val MAX_NAME = 255
+
+        // 255 less what the engine adds to a name: ".<19 digit id>.anydm" on the partial and " (10000)" on a clash.
+        const val MAX_NAME = 255 - 26 - 8
         const val MAX_EXTENSION = 20
         const val WINDOWS_FORBIDDEN = "<>:\"\\|?*"
         val RESERVED =
             setOf("CON", "PRN", "AUX", "NUL") +
-                (1..9).map { "COM$it" } +
-                (1..9).map { "LPT$it" }
+                (0..9).map { "COM$it" } +
+                (0..9).map { "LPT$it" } +
+                listOf("\u00B9", "\u00B2", "\u00B3").flatMap { listOf("COM$it", "LPT$it") }
     }
 }

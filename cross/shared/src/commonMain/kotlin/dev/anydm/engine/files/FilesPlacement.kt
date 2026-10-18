@@ -27,11 +27,13 @@ class FilesPlacement(
         mirror: Mirror,
         probe: ProbeResult,
         defaultFolder: Path,
+        firstPrepare: Boolean,
     ): StepResult<PlacementPlan> {
-        val category = categoryFor(download, mirror, probe)
+        val all = categories()
+        val category = all.firstOrNull { it.id == download.categoryId } ?: categoryFor(all, download, mirror, probe)
         val folder = download.saveFolder?.let(::Path) ?: category?.folder?.let(::Path) ?: defaultFolder
         val name = cleaner.clean(download.fileName ?: templated(category, probe) ?: probe.name)
-        if (policy() == ClashPolicy.SKIP) {
+        if (firstPrepare && policy() == ClashPolicy.SKIP) {
             when (val found = fileSystem.size(Path(folder, name))) {
                 is FileResult.NotFound -> Unit
                 is FileResult.Ok, is FileResult.AlreadyExists -> return StepResult.Failed(null, "skipped: $name already exists in $folder")
@@ -101,13 +103,14 @@ class FilesPlacement(
         }
     }
 
-    private suspend fun categoryFor(
+    private fun categoryFor(
+        all: List<Category>,
         download: Download,
         mirror: Mirror,
         probe: ProbeResult,
     ): Category? {
         val facts = SourceFacts(cleaner.clean(download.fileName ?: probe.name), probe.mime, hostOf(mirror.url), download.kind)
-        return CategoryMatcher(categories()).match(facts)
+        return CategoryMatcher(all).match(facts)
     }
 
     /** The template's stem plus the probe name's extension; null when there is no template or it renders nothing. */
@@ -116,8 +119,10 @@ class FilesPlacement(
         probe: ProbeResult,
     ): String? {
         val template = category?.template ?: return null
-        val parsed = NameTemplate.parse(template) as? TemplateParse.Ok ?: return null
-        val stem = parsed.template.render(NameFields()).takeIf { it.isNotBlank() } ?: return null
+        val parsed = (NameTemplate.parse(template) as? TemplateParse.Ok)?.template ?: return null
+        // A template with placeholders but nothing to put in them would name every file after its literal text.
+        if (parsed.hasFields && !parsed.usesAnyOf(NameFields())) return null
+        val stem = parsed.render(NameFields()).takeIf { it.isNotBlank() } ?: return null
         val dot = probe.name.lastIndexOf('.')
         return if (dot > 0) stem + probe.name.substring(dot) else stem
     }

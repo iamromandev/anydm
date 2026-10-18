@@ -113,7 +113,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.downloads.context(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     @Test
@@ -133,7 +133,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.checksum shouldBe null
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     @Test
@@ -153,7 +153,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.traffic.trafficByDay("0000-01-01", "9999-12-31") shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     @Test
@@ -173,7 +173,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.categoryId shouldBe CategoryId(5)
             store.categories.list() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     @Test
@@ -192,7 +192,7 @@ class DatabaseFileTest {
             val store = open()
             store.downloads.get(DownloadId(1))!!.allowDuplicate shouldBe false
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     @Test
@@ -212,7 +212,30 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.history.list(10) shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 9L }
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
+        }
+
+    @Test
+    fun versionNineUpgradesWithNothingPlacedYet() =
+        runTest {
+            val snapshots = requireNotNull(System.getProperty("anydm.schemaDir")) { "anydm.schemaDir is not set" }
+            Files.copy(Path(snapshots, "9.db").toNioPath(), file.toNioPath())
+            rawDriver(file).use { raw ->
+                raw.exec("PRAGMA user_version = 9")
+                raw.exec(
+                    "INSERT INTO download VALUES (1, 'DIRECT', 'QUEUED', NULL, NULL, NULL, NULL, '/media', 'a.mp4', 1000, 0, NULL, 0, " +
+                        "NULL, '', 1700000000000, 'etag:\"v1\"', NULL, 0)",
+                )
+                raw.exec("INSERT INTO file VALUES (1, 1, 0, 'a.mp4', 1000, 1)")
+            }
+
+            val store = open()
+            store.downloads
+                .files(DownloadId(1))
+                .single()
+                .placedPath shouldBe null
+            store.close()
+            rawDriver(file).use { it.userVersion() shouldBe 10L }
         }
 
     // A made-up version 2 whose migration is [change], run on a version 1 file; create is the real schema.
@@ -251,9 +274,9 @@ class DatabaseFileTest {
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
         // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 9L
+        AnydmDb.Schema.version shouldBe 10L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 9L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 10L }
     }
 
     @Test

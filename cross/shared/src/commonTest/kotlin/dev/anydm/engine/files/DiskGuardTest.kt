@@ -63,4 +63,20 @@ class DiskGuardTest {
             val fs = FakeFileSystem(free = 1)
             guard(fs).lowFolders(setOf(other), alreadyLow = setOf(folder)) shouldBe setOf(other)
         }
+
+    @Test
+    fun roomMeansTheBytesPlusTheReserve() =
+        runTest {
+            val fs = FakeFileSystem(free = 164)
+            guard(fs).hasRoom(folder, 100) shouldBe true
+            guard(fs).hasRoom(folder, 101) shouldBe false
+        }
+
+    @Test
+    fun noRoomWhenTheSpaceCannotBeRead() =
+        runTest {
+            val fs = FakeFileSystem(free = 1000)
+            fs.faults[FakeFileSystem.Op.FREE_SPACE] = { FileResult.IoError(it, "boom") }
+            guard(fs).hasRoom(folder, 1) shouldBe false
+        }
 }

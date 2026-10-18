@@ -91,8 +91,8 @@ class Engine(
     private val network: NetworkIdentity = NetworkIdentity.Unknown,
     /** Where traffic is saved; the store's, replaceable in tests. */
     private val traffic: TrafficStore = store.traffic,
-    /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). */
-    osProfile: OsProfile = OsProfile.LINUX,
+    /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). Windows' are the strictest. */
+    osProfile: OsProfile = OsProfile.WINDOWS,
     /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
     duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, store.history, fileSystem),
     /** Told when a job finishes; the history by default (FIL-10). */
@@ -562,17 +562,23 @@ class Engine(
             FileSnapshot(it, store.downloads.segments(it.id))
         }
 
-    // Jobs in a folder that has run low on space wait for it (FIL-08); the whole state goes to the queue every time.
+    // Jobs in a folder that has run low on space wait for it (FIL-08); the whole state goes to the queue every time. A
+    // job paused for a low disk comes back once its folder holds what is left of its file plus the reserve, the same
+    // rule the start check applies, so it can't be released only to fail again.
     private suspend fun checkDisk() {
-        val folders =
-            snapshots.value
-                .map { it.download }
-                .filter { it.status in DISK_WATCHED || PauseReason.LOW_DISK in it.pauseReasons }
-                .mapNotNull { job -> job.saveFolder?.let { Path(it) } }
+        val jobs = snapshots.value.filter { it.download.status in DISK_WATCHED || PauseReason.LOW_DISK in it.download.pauseReasons }
+        val folders = jobs.mapNotNull { job -> job.download.saveFolder?.let { Path(it) } }.toSet()
+        lowFolders = diskGuard.lowFolders(folders, lowFolders)
+        val release =
+            jobs
+                .filter { it.download.status == DownloadStatus.PAUSED && PauseReason.LOW_DISK in it.download.pauseReasons }
+                .filter { job ->
+                    val folder = job.download.saveFolder?.let { Path(it) }
+                    folder != null && folder !in lowFolders &&
+                        diskGuard.hasRoom(folder, maxOf(0L, (job.download.size ?: 0L) - job.downloaded))
+                }.map { it.download.id }
                 .toSet()
-        val before = lowFolders
-        lowFolders = diskGuard.lowFolders(folders, before)
-        queue.applyDiskState(lowFolders, recovered = before - lowFolders)
+        queue.applyDiskState(lowFolders, release)
     }
 
     // The queue's coroutine failed (the store): the engine stops with it.

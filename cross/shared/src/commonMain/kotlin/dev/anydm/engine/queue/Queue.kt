@@ -56,13 +56,14 @@ class Queue internal constructor(
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
 
     /**
-     * Pauses what runs or waits in the [low] folders and releases the jobs paused for a low disk in the [recovered]
-     * ones (FIL-08). A job paused for it elsewhere, say because its file didn't fit at the start, is left to the user.
+     * Pauses what runs or waits in the [low] folders and releases the jobs named in [release], which were paused for a
+     * low disk and now have room (FIL-08). Any other job paused for it, say because its file didn't fit at the start,
+     * waits until the engine finds it room.
      */
     suspend fun applyDiskState(
         low: Set<Path>,
-        recovered: Set<Path> = emptySet(),
-    ): CommandResult = actor.callLater { applyDiskState(low, recovered, it) }
+        release: Set<DownloadId> = emptySet(),
+    ): CommandResult = actor.callLater { applyDiskState(low, release, it) }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
     suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }

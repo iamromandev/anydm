@@ -20,10 +20,10 @@ class StepRunnerClashTest {
     private val renamed = Path(stepRoot, "file (1).zip")
     private val whole = fakeContent(0, 0, 64 * 1024)
 
-    private fun runner(policy: ClashPolicy): StepRunner {
-        val store = InMemoryPlanStore().also { it.register(DownloadId(1)) }
-        store.register(DownloadId(2))
-        return StepRunner(
+    private val store = InMemoryPlanStore().also { it.register(DownloadId(1)) }.also { it.register(DownloadId(2)) }
+
+    private fun runner(policy: ClashPolicy): StepRunner =
+        StepRunner(
             fs,
             store,
             mapOf(DownloadKind.DIRECT to FakeProtocol()),
@@ -31,7 +31,6 @@ class StepRunnerClashTest {
             freeSpaceReserve = 0,
             placement = FilesPlacement(NameCleaner(OsProfile.LINUX), { emptyList() }, { policy }, fs),
         )
-    }
 
     private suspend fun StepRunner.ready(id: Long = 1) =
         prepare(aPendingDownload(id = id), aMirror(DownloadId(id))).shouldBeInstanceOf<PrepareOutcome.Ready>()
@@ -87,7 +86,7 @@ class StepRunnerClashTest {
 
             done.outputs shouldBe listOf(target)
             fs.read(target) shouldBe whole
-            fs.paths().none { it.name.endsWith(".anydm") || it.name.endsWith(".copy") } shouldBe true
+            fs.paths().none { it.name.endsWith(".anydm") || it.name.endsWith(".anydm-copy") } shouldBe true
         }
 
     @Test
@@ -102,5 +101,55 @@ class StepRunnerClashTest {
 
             fs.read(target) shouldBe whole
             fs.read(renamed) shouldBe whole
+        }
+
+    @Test
+    fun theRenamedPathIsRecordedOnTheFileRow() =
+        runTest {
+            val runner = runner(ClashPolicy.RENAME)
+            val ready = runner.ready()
+            fs.put(target, byteArrayOf(7))
+
+            runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            store.files(DownloadId(1)).single().placedPath shouldBe "file (1).zip"
+        }
+
+    @Test
+    fun anUnclashedPathIsRecordedToo() =
+        runTest {
+            val runner = runner(ClashPolicy.RENAME)
+
+            runner.run(runner.ready()).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            store.files(DownloadId(1)).single().placedPath shouldBe "file.zip"
+        }
+
+    @Test
+    fun aRestartAfterPlacingKeepsTheRenamedOutput() =
+        runTest {
+            val runner = runner(ClashPolicy.RENAME)
+            val first = runner.ready()
+            fs.put(target, byteArrayOf(7))
+            runner.run(first).shouldBeInstanceOf<RunOutcome.Finished>()
+            // The app stopped before COMPLETED was stored: the job is PENDING again, its rows and files as they were.
+
+            val again = runner.run(runner.ready()).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            again.outputs shouldBe listOf(renamed)
+            fs.read(renamed) shouldBe whole
+            fs.read(target)?.toList() shouldBe listOf<Byte>(7)
+            fs.paths().map { it.name }.sorted() shouldBe listOf("file (1).zip", "file.zip")
+        }
+
+    @Test
+    fun aRestartAfterPlacingUnderSkipIsNotCalledADuplicateOfItself() =
+        runTest {
+            val runner = runner(ClashPolicy.SKIP)
+            runner.run(runner.ready()).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            val again = runner.run(runner.ready()).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            again.outputs shouldBe listOf(target)
         }
 }

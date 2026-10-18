@@ -88,4 +88,27 @@ class WindowsGuardedTrashBinTest {
         WindowsGuardedTrashBin(Recording(available = false), Drive()).isAvailable shouldBe false
         WindowsGuardedTrashBin(Recording(available = true), Drive()).isAvailable shouldBe true
     }
+
+    @Test
+    fun aFolderThatCannotBeReadIsRefusedNotThrown() {
+        val inner = Recording()
+        val folder = Files.createDirectory(root.resolve("locked"))
+        val hidden = Files.createDirectory(folder.resolve("hidden"))
+        Files.write(hidden.resolve("a"), ByteArray(1))
+        Files.setPosixFilePermissions(
+            hidden,
+            java.nio.file.attribute.PosixFilePermissions
+                .fromString("---------"),
+        )
+        try {
+            WindowsGuardedTrashBin(inner, Drive()).moveToTrash(folder) shouldBe false
+        } finally {
+            Files.setPosixFilePermissions(
+                hidden,
+                java.nio.file.attribute.PosixFilePermissions
+                    .fromString("rwx------"),
+            )
+        }
+        inner.trashed shouldBe emptyList()
+    }
 }

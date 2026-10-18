@@ -12,6 +12,16 @@ class DiskGuard(
     private val fileSystem: FileSystem,
     private val reserve: suspend () -> Long,
 ) {
+    /** Whether [folder] can take [bytes] more and still keep the reserve; a folder whose space can't be read has no room. */
+    suspend fun hasRoom(
+        folder: Path,
+        bytes: Long,
+    ): Boolean {
+        val free = fileSystem.freeSpace(folder) as? FileResult.Ok ?: return false
+        val needed = if (bytes > Long.MAX_VALUE - reserve()) Long.MAX_VALUE else bytes + reserve()
+        return free.value >= needed
+    }
+
     /**
      * The low ones among [folders]. [alreadyLow] is what this returned last time; a folder whose space can't be read
      * keeps its last state, and one no longer in [folders] is dropped.

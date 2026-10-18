@@ -665,4 +665,18 @@ abstract class DownloadStoreContract : StoreTestBase() {
             store.allMirrors().map { Triple(it.downloadId, it.url, it.position) } shouldBe
                 listOf(Triple(one.id, "https://a/1", 0), Triple(one.id, "https://b/1", 1), Triple(two.id, "https://a/2", 0))
         }
+
+    @Test
+    fun aPlacedPathRoundTrips() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.DIRECT))
+            val file = store.replaceFiles(added.id, listOf(NewFile(0, "a.mp4", size = 10))).single()
+            file.placedPath shouldBe null
+
+            store.setPlacedPath(file.id, "a (1).mp4")
+
+            store.files(added.id).single().placedPath shouldBe "a (1).mp4"
+            store.replaceFiles(added.id, listOf(NewFile(0, "a.mp4", size = 10))).single().placedPath shouldBe null
+        }
 }

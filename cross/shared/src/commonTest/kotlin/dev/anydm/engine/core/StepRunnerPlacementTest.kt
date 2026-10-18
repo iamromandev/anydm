@@ -115,11 +115,11 @@ class StepRunnerPlacementTest {
         }
 
     @Test
-    fun theTemplateNamesTheFileAndTheExtensionIsKept() =
+    fun aTemplateWhoseFieldsAreAllMissingFallsBackToTheProbeName() =
         runTest {
             val templated = video.copy(template = "Fixed {title}")
             prepared(aPendingDownload(saveFolder = null), "clip.mkv", placement(categories = listOf(templated))).fileName shouldBe
-                "Fixed.mkv"
+                "clip.mkv"
         }
 
     @Test
@@ -155,5 +155,35 @@ class StepRunnerPlacementTest {
             for (policy in listOf(ClashPolicy.RENAME, ClashPolicy.OVERWRITE)) {
                 prepared(aPendingDownload(), "file.zip", placement(policy = policy)).fileName shouldBe "file.zip"
             }
+        }
+
+    @Test
+    fun aTemplateWithOnlyLiteralTextAroundMissingFieldsFallsBackToTheProbeName() =
+        runTest {
+            val templated = video.copy(template = "{title} - video")
+            prepared(aPendingDownload(saveFolder = null), "clip.mkv", placement(categories = listOf(templated))).fileName shouldBe
+                "clip.mkv"
+        }
+
+    @Test
+    fun aTemplateWithoutPlaceholdersNamesTheFile() =
+        runTest {
+            val templated = video.copy(template = "Movie")
+            prepared(aPendingDownload(saveFolder = null), "clip.mkv", placement(categories = listOf(templated))).fileName shouldBe
+                "Movie.mkv"
+        }
+
+    @Test
+    fun theCategoryTheJobWasAddedWithBeatsTheRules() =
+        runTest {
+            val chosen = Category(CategoryId(8), "chosen", "/dl/chosen", null, emptyList(), 5)
+            val done =
+                prepared(
+                    aPendingDownload(saveFolder = null).copy(categoryId = CategoryId(8)),
+                    "clip.mkv",
+                    placement(categories = listOf(video, chosen)),
+                )
+            done.categoryId shouldBe CategoryId(8)
+            done.saveFolder shouldBe "/dl/chosen"
         }
 }

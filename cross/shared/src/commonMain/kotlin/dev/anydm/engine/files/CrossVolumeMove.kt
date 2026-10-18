@@ -11,7 +11,7 @@ import kotlinx.io.files.Path
 private const val CHUNK = 1 shl 20
 
 /**
- * Moves [source] to [target] on another volume (FIL-07): copies it next to the target as `<name>.copy`, checks the
+ * Moves [source] to [target] on another volume (FIL-07): copies it next to the target as `<name>.anydm-copy`, checks the
  * copy's size and SHA-256 against what was read from the source, renames it into place on the target's volume, and
  * only then deletes the source. Any failure before that leaves the source alone and removes the copy; a copy left by
  * a power cut or a cancel is replaced by the next try. Without [replace] a taken [target] is
@@ -24,7 +24,7 @@ suspend fun moveAcrossVolumes(
     replace: Boolean,
 ): FileResult<Unit> {
     val folder = checkNotNull(target.parent) { "target has no folder: $target" }
-    val copy = Path(folder, target.name + ".copy")
+    val copy = Path(folder, target.name + ".anydm-copy")
     val size =
         when (val sized = fileSystem.size(source)) {
             is FileResult.Ok -> sized.value

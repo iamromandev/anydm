@@ -20,7 +20,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 
 class FreedesktopTrashBinTest {
-    private val root: Path = Files.createTempDirectory("anydm-trash-test-")
+    private val root: Path = Files.createTempDirectory("anydm-trash-test-").toRealPath()
     private val homeTrash = root.resolve("home/Trash")
     private val mount = root.resolve("mnt")
     private val deletedAt = LocalDateTime.of(2026, 10, 18, 12, 34, 56)
@@ -148,4 +148,16 @@ class FreedesktopTrashBinTest {
             val c = (b.toInt() and 0xff).toChar()
             if ((c.isLetterOrDigit() && b >= 0) || c in "/-_.~") c.toString() else "%" + "%02X".format(b.toInt() and 0xff)
         }
+
+    @Test
+    fun aSymlinkedSaveFolderIsJudgedByWhereItReallyLives() {
+        val real = file(mount.resolve("data/x.txt")).parent
+        val link = Files.createSymbolicLink(root.resolve("link"), real)
+
+        bin(uid = 1000).moveToTrash(link.resolve("x.txt")) shouldBe true
+
+        val trash = mount.resolve(".Trash-1000")
+        trash.resolve("files/x.txt").exists() shouldBe true
+        trash.resolve("info/x.txt.trashinfo").readLines()[1] shouldBe "Path=data/x.txt"
+    }
 }

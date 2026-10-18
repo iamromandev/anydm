@@ -70,13 +70,15 @@ internal class FreedesktopTrashBin(
     override fun moveToTrash(item: NioPath): Boolean {
         if (!Files.exists(item, NOFOLLOW_LINKS)) throw NoSuchFileException(item.toString())
         val absolute = item.toAbsolutePath()
-        val folder = absolute.parent ?: return false
+        // A symlinked folder lives on the volume its target is on, which is where its trash belongs.
+        val folder = (absolute.parent ?: return false).toRealPath()
         makeTrash(homeTrash)
         val onHomeVolume = volumes.sameVolume(folder, homeTrash)
         val top = if (onHomeVolume) null else volumes.mountRoot(folder)
         val trash = if (top == null) homeTrash else top.resolve(".Trash-$uid")
         if (top != null) makeTrash(trash)
-        val recorded = if (top == null) absolute.toString() else top.relativize(absolute).toString()
+        val real = folder.resolve(absolute.fileName)
+        val recorded = if (top == null) real.toString() else top.relativize(real).toString()
         val info = trash.resolve("info")
         val files = trash.resolve("files")
         var number = 1

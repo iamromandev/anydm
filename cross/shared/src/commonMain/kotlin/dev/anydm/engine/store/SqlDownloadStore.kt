@@ -187,6 +187,13 @@ internal class SqlDownloadStore(
     override suspend fun files(id: DownloadId): List<File> =
         inTransaction { fileQueries.selectByDownload(id).executeAsList().map { it.toFile() } }
 
+    override suspend fun setPlacedPath(
+        id: FileId,
+        path: String,
+    ) {
+        writing { fileQueries.setPlacedPath(path, id) }
+    }
+
     override suspend fun replaceSegments(
         fileId: FileId,
         segments: List<NewSegment>,
@@ -268,7 +275,15 @@ internal class SqlDownloadStore(
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)
 
     private fun FileRow.toFile() =
-        File(id = id, downloadId = download_id, index = file_index, path = path, size = size, selected = selected)
+        File(
+            id = id,
+            downloadId = download_id,
+            index = file_index,
+            path = path,
+            size = size,
+            selected = selected,
+            placedPath = placed_path,
+        )
 
     private fun SegmentRow.toSegment() = Segment(id = id, fileId = file_id, start = start_byte, end = end_byte, watermark = watermark)
 

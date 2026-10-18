@@ -148,6 +148,13 @@ class FilesDuplicateCheckTest {
             val r = rig()
             r.fs.put(target, ByteArray(10))
             val prepared = r.current().let { it.copy(size = 10).also { d -> r.store.downloads.update(d) } }
+            r.store.downloads.replaceFiles(
+                prepared.id,
+                listOf(
+                    dev.anydm.engine.store
+                        .NewFile(0, "a.zip", 10),
+                ),
+            )
 
             r.check.afterProbe(prepared, FakeProbe("a.zip", 10), target) shouldBe null
         }
@@ -195,5 +202,32 @@ class FilesDuplicateCheckTest {
             r.store.history.add(entry(url = "https://h/f.zip"))
 
             r.check.atAdd(link("https://h/f.zip", allowDuplicate = true)) shouldBe null
+        }
+
+    @Test
+    fun aJobThatWasPreparedBeforeIsNotCheckedAgain() =
+        runTest {
+            val r = rig()
+            r.other()
+            val current = r.current()
+            r.store.downloads.replaceFiles(
+                current.id,
+                listOf(
+                    dev.anydm.engine.store
+                        .NewFile(0, "a.zip", 10),
+                ),
+            )
+
+            r.check.afterProbe(current, FakeProbe("a.zip", 10, "etag:\"1\""), target) shouldBe null
+        }
+
+    @Test
+    fun aDownloadAddedWithASizeStillGetsTheOnDiskCheck() =
+        runTest {
+            val r = rig()
+            r.fs.put(target, ByteArray(10))
+            val sized = r.store.downloads.add(NewDownload(DownloadKind.DIRECT, size = 10))
+
+            r.check.afterProbe(sized, FakeProbe("a.zip", 10), target) shouldBe DuplicateFound(null, DuplicateReason.ON_DISK)
         }
 }

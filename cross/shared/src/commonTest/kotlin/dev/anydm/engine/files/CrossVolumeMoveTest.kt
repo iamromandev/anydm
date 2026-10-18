@@ -12,7 +12,7 @@ import kotlin.test.Test
 class CrossVolumeMoveTest {
     private val source = Path("/a/file.zip.1.anydm")
     private val target = Path("/b/file.zip")
-    private val copy = Path("/b/file.zip.copy")
+    private val copy = Path("/b/file.zip.anydm-copy")
     private val content = ByteArray(2_500_000) { (it * 31).toByte() }
 
     private fun fs() =
