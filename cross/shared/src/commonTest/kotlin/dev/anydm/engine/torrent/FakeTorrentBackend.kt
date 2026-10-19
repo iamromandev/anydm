@@ -3,6 +3,7 @@ package dev.anydm.engine.torrent
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.protocol.StepResult
 import kotlinx.coroutines.delay
+import kotlinx.io.files.Path
 import kotlin.time.Duration
 
 /**
@@ -50,9 +51,62 @@ internal class FakeTorrentBackend : TorrentBackend {
         return known[bytes.decodeToString()]?.let { StepResult.Ok(it) } ?: StepResult.Failed(null, "not a valid .torrent: unreadable")
     }
 
-    override suspend fun add(request: AddTorrent): StepResult<RunningTorrent> = StepResult.Failed(null, "the fake adds nothing yet")
+    /** What every torrent added from now on reports from [RunningTorrent.progress], one answer per call, the last one repeating. */
+    var script: List<TorrentProgress> = listOf(TorrentProgress(0, 0, finished = true))
+    var addFailure: StepResult.Failed? = null
+    val added = mutableListOf<FakeRunning>()
+
+    override suspend fun add(request: AddTorrent): StepResult<RunningTorrent> {
+        calls += "add"
+        addFailure?.let { return it }
+        return StepResult.Ok(FakeRunning(request, script).also { added += it })
+    }
 
     override suspend fun close() {
         closed++
+    }
+}
+
+/** A torrent in the fake session: scripted progress, and a record of what was done to it. */
+internal class FakeRunning(
+    val request: AddTorrent,
+    private val script: List<TorrentProgress>,
+) : RunningTorrent {
+    private var at = 0
+    var chosen: List<Int> = request.priorities
+    var inOrder: Boolean = request.sequential
+    var renamed: List<String>? = null
+    var moved: Pair<Path, Boolean>? = null
+    var removed = 0
+    var renameFailure: StepResult.Failed? = null
+    var moveFailure: StepResult.Failed? = null
+
+    override fun progress(): TorrentProgress = script[minOf(at++, script.lastIndex)]
+
+    override fun setPriorities(priorities: List<Int>) {
+        chosen = priorities
+    }
+
+    override fun setSequential(on: Boolean) {
+        inOrder = on
+    }
+
+    override suspend fun renameFiles(names: List<String>): StepResult<Unit> {
+        renameFailure?.let { return it }
+        renamed = names
+        return StepResult.Ok(Unit)
+    }
+
+    override suspend fun moveStorage(
+        to: Path,
+        replaceExisting: Boolean,
+    ): StepResult<Unit> {
+        moveFailure?.let { return it }
+        moved = to to replaceExisting
+        return StepResult.Ok(Unit)
+    }
+
+    override suspend fun remove() {
+        removed++
     }
 }

@@ -13,7 +13,8 @@ class AddTorrent(
     val fileNames: List<String>,
 )
 
-enum class TorrentErrorKind { DISK_FULL, OTHER }
+/** [LOST]: the torrent is no longer in the session (it will be added again on a retry). */
+enum class TorrentErrorKind { DISK_FULL, LOST, OTHER }
 
 class TorrentError(
     val kind: TorrentErrorKind,
