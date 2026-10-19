@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.FinishHook
+import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.store.NewDownload
@@ -14,6 +15,9 @@ import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openInMemoryDatabase
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
 import kotlin.test.AfterTest
@@ -201,4 +205,70 @@ class CollectionFinishHookTest {
 
             text() shouldBe "#EXTM3U\n#EXTINF:5,Elsewhere\n/other/x.mp4\n"
         }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun manyChildrenFinishingAtOnceAllEndUpInTheFile() =
+        runBlocking<Unit> {
+            val real = Store(openInMemoryDatabase(), Dispatchers.IO.limitedParallelism(1))
+            val dir =
+                java.nio.file.Files
+                    .createTempDirectory("anydm-hook-")
+                    .toRealPath()
+                    .toFile()
+            try {
+                // Many rounds: the failure needs two writers to interleave, which one round only sometimes does.
+                repeat(25) { round -> finishAllAtOnce(real, dir, "My List $round") }
+            } finally {
+                real.close()
+                dir.deleteRecursively()
+            }
+        }
+
+    private suspend fun finishAllAtOnce(
+        real: Store,
+        dir: java.io.File,
+        name: String,
+    ) {
+        val where =
+            java.io
+                .File(dir, name)
+                .also { it.mkdirs() }
+                .toString()
+        val count = 16
+        val (collection, children) =
+            real.downloads.addCollection(
+                NewDownload(DownloadKind.SITE, collection = CollectionKind.PLAYLIST, saveFolder = where),
+                (1..count).map {
+                    NewDownload(
+                        DownloadKind.SITE,
+                        mirrors = listOf("https://www.example.com/watch?v=$name$it"),
+                        saveFolder = where,
+                        playlistIndex = it,
+                    )
+                },
+                (1..count).map { NewItem("youtube", "$name$it", it, "Video $it", 60 + it) },
+            )
+        children.forEachIndexed { i, child ->
+            val file = real.downloads.replaceFiles(child.id, listOf(NewFile(0, "v${i + 1}.mp4"))).single()
+            real.downloads.setPlacedPath(file.id, "v${i + 1}.mp4")
+            java.io.File(where, "v${i + 1}.mp4").writeBytes(ByteArray(3))
+        }
+        val concurrent = CollectionFinishHook(real.collectionItems, real.downloads, DesktopFileSystem(), { true }, Recording())
+
+        coroutineScope {
+            children.map { child -> async(Dispatchers.Default) { concurrent.finished(child, emptyList()) } }.awaitAll()
+        }
+
+        java.io
+            .File(where, "$name.m3u8")
+            .readLines()
+            .filter { !it.startsWith("#") } shouldBe (1..count).map { "v$it.mp4" }
+        real.collectionItems.items(collection.id).all { it.done } shouldBe true
+        java.io
+            .File(where)
+            .list()
+            .orEmpty()
+            .filter { it.contains("tmp") } shouldBe emptyList()
+    }
 }

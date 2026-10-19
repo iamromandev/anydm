@@ -199,8 +199,6 @@ class Queue internal constructor(
     internal suspend fun inspect(): QueueState = actor.inspect()
 }
 
-/** What `remove` does with a job's files. */
-
 /** What adding a collection made: the parent, the children that went in, and how many the duplicate check kept out. */
 data class CollectionAdded(
     val collection: Download,
@@ -208,6 +206,7 @@ data class CollectionAdded(
     val skipped: Int,
 )
 
+/** What `remove` does with a job's files. */
 enum class RemoveFiles {
     /** Leave them where they are. */
     KEEP,

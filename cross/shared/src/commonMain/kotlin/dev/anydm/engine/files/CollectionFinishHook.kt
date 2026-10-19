@@ -9,6 +9,8 @@ import dev.anydm.engine.platform.writeWhole
 import dev.anydm.engine.store.CollectionItemStore
 import dev.anydm.engine.store.DownloadStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.io.files.Path
 
 /**
@@ -23,6 +25,10 @@ class CollectionFinishHook(
     private val playlistFile: suspend () -> Boolean,
     private val delegate: FinishHook,
 ) : FinishHook {
+    // Several items often finish together. One at a time marks its item and rewrites the file, so the last of them
+    // writes a list with every item done before it, and no two share the temporary file.
+    private val recording = Mutex()
+
     override suspend fun finished(
         download: Download,
         outputs: List<Path>,
@@ -30,8 +36,10 @@ class CollectionFinishHook(
         delegate.finished(download, outputs)
         val collection = download.parentId ?: return
         try {
-            if (items.markDone(download.id) == null) return
-            if (playlistFile()) writePlaylist(collection)
+            recording.withLock {
+                if (items.markDone(download.id) == null) return
+                if (playlistFile()) writePlaylist(collection)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
