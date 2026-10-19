@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.files.Path
 import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 private const val TRIES = 3
@@ -38,6 +39,7 @@ internal fun fragmentName(index: Int): String = index.toString().padStart(6, '0'
 internal class FragmentFetcher(
     private val http: HttpProtocol,
     private val fileSystem: FileSystem,
+    private val pacer: HostPacer = HostPacer(),
 ) {
     /**
      * Makes sure every fragment of [fragments] is in [folder] and returns the bytes there. [context]'s logins go only to
@@ -50,6 +52,7 @@ internal class FragmentFetcher(
         context: RequestContext?,
         io: TransferIo,
         trustedUrl: String,
+        gap: Duration = Duration.ZERO,
     ): StepResult<Long> {
         val made = fileSystem.prepareFolder(folder)
         if (made is FileResult.Failed) return made.toStepFailed()
@@ -93,7 +96,7 @@ internal class FragmentFetcher(
                     for (index in queue) {
                         val ref = fragments[index]
                         val asked = if (originOf(ref.url) == trusted) context else context?.withoutCredentials()
-                        when (val got = fetchOne(folder, index, ref, asked, io)) {
+                        when (val got = fetchOne(folder, index, ref, asked, io, gap)) {
                             is StepResult.Failed -> {
                                 lock.withLock { if (failure == null) failure = got }
                                 scope.children.forEach { it.cancel() }
@@ -174,11 +177,16 @@ internal class FragmentFetcher(
         ref: FragmentRef,
         context: RequestContext?,
         io: TransferIo,
+        gap: Duration,
     ): StepResult<Long> {
         var last: StepResult.Failed? = null
         for (attempt in 1..TRIES) {
             if (attempt > 1) delay(RETRY_STEP * (attempt - 1))
-            val got = http.withSlot(ref.url) { http.fetchFragment(ref.url, context, ref.rangeStart, ref.rangeEnd, io) }
+            val got =
+                http.withSlot(ref.url) {
+                    pacer.pace(originOf(ref.url), gap)
+                    http.fetchFragment(ref.url, context, ref.rangeStart, ref.rangeEnd, io)
+                }
             when (got) {
                 is StepResult.Ok -> {
                     return save(folder, index, got.value)
