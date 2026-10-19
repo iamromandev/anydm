@@ -23,6 +23,7 @@ import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.media.PlaylistEntry
 import dev.anydm.engine.media.PlaylistParse
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
@@ -63,6 +64,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
@@ -420,26 +423,99 @@ class Engine(
                 sourceUrl = url,
                 selection = selection.takeIf { it != ItemSelection() },
             )
-        val entries = picked.map { listing.entries[it - 1] }
-        val children =
-            entries.mapIndexed { i, entry ->
-                template.copy(
-                    mirrors = listOf(entry.url),
-                    parentId = null,
-                    collection = null,
-                    saveFolder = folder,
-                    fileName = null,
-                    size = null,
-                    checksum = null,
-                    playlistIndex = picked[i],
-                    sourceUrl = null,
-                    selection = null,
-                )
-            }
-        val items = entries.mapIndexed { i, entry -> NewItem(entry.extractor, entry.id, picked[i], entry.title, entry.duration) }
-        val added = command { queue.addCollection(parent, children, items) }
+        val made = picked.map { itemJob(template, folder, listing.entries[it - 1], it) }
+        val added = command { queue.addCollection(parent, made.map { it.first }, made.map { it.second }) }
         return AddPlaylistResult.Added(added.collection, added.children, added.skipped, listing.dropped)
     }
+
+    /** One playlist entry as a job (the [template] with its own address and place in the playlist) and its item row. */
+    private fun itemJob(
+        template: NewDownload,
+        folder: String,
+        entry: PlaylistEntry,
+        index: Int,
+    ): Pair<NewDownload, NewItem> =
+        template.copy(
+            mirrors = listOf(entry.url),
+            parentId = null,
+            collection = null,
+            saveFolder = folder,
+            fileName = null,
+            size = null,
+            checksum = null,
+            playlistIndex = index,
+            sourceUrl = null,
+            selection = null,
+        ) to NewItem(entry.extractor, entry.id, index, entry.title, entry.duration)
+
+    // One sync at a time: two at once would both see an item as new.
+    private val syncLock = Mutex()
+
+    /**
+     * Lists a collection's source again and adds a job for each item that is new (MED-17): one with no item row, or whose
+     * job was removed before it finished. An item that is done, or whose job still exists (running, waiting, failed),
+     * is left alone. The collection's own range and limit apply again; its folder, category, profile and options are the
+     * new jobs'.
+     */
+    suspend fun syncCollection(id: DownloadId): SyncOutcome {
+        val source = playlists ?: return SyncOutcome.Unavailable
+        return syncLock.withLock {
+            val collection = store.downloads.get(id)?.takeIf { it.isCollection && it.sourceUrl != null }
+            if (collection == null) return@withLock SyncOutcome.NotACollection
+            val listing =
+                when (val listed = source.list(collection.sourceUrl!!)) {
+                    is StepResult.Failed -> {
+                        return@withLock SyncOutcome.Failed(listed)
+                    }
+
+                    is StepResult.Ok -> {
+                        when (val parsed = listed.value) {
+                            PlaylistParse.NotAPlaylist -> return@withLock SyncOutcome.Failed(
+                                StepResult.Failed(null, "the address is not a playlist any more"),
+                            )
+
+                            is PlaylistParse.Rejected -> return@withLock SyncOutcome.Failed(StepResult.Failed(null, parsed.reason))
+
+                            is PlaylistParse.Ok -> parsed.listing
+                        }
+                    }
+                }
+            val known = store.collectionItems.items(id).associateBy { it.extractor to it.videoId }
+            val template = templateOf(collection)
+            val folder = collection.saveFolder ?: ""
+            val made =
+                (collection.selection ?: ItemSelection())
+                    .indices(listing.entries.size)
+                    .filter { index ->
+                        val entry = listing.entries[index - 1]
+                        val item = known[entry.extractor to entry.id]
+                        item == null || (!item.done && (item.childId == null || store.downloads.get(item.childId!!) == null))
+                    }.map { itemJob(template, folder, listing.entries[it - 1], it) }
+            val added = if (made.isEmpty()) null else command { queue.addChildren(id, made.map { it.first }, made.map { it.second }) }
+            SyncOutcome.Done(SyncResult(added?.children?.size ?: 0, added?.skipped ?: 0, listing.dropped))
+        }
+    }
+
+    /** What a collection's new items start from: its own options. */
+    private suspend fun templateOf(collection: Download): NewDownload =
+        NewDownload(
+            kind = collection.kind,
+            categoryId = collection.categoryId,
+            profileId = collection.profileId,
+            saveFolder = collection.saveFolder,
+            priority = collection.priority,
+            speedLimit = collection.speedLimit,
+            context = store.downloads.context(collection.id),
+            allowDuplicate = collection.allowDuplicate,
+            format = store.downloads.format(collection.id),
+        )
+
+    /** Forgets that [videoId] was ever an item of the collection, so the next sync fetches it again (MED-17). */
+    suspend fun forgetItem(
+        collection: DownloadId,
+        extractor: String,
+        videoId: String,
+    ): Boolean = command { store.collectionItems.forget(collection, extractor, videoId) }
 
     suspend fun pause(id: DownloadId): CommandResult = command { queue.pause(id) }
 

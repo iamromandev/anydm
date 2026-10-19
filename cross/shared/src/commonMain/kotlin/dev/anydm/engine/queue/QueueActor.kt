@@ -294,15 +294,45 @@ internal class QueueActor(
     ): CollectionAdded {
         val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
         val (collection, added) = downloads.addCollection(parent, kept.map { children[it] }, kept.map { items[it] }, clock.now())
-        for (job in listOf(collection) + added) {
+        announce(listOf(collection) + added)
+        return CollectionAdded(collection, hold(added), children.size - kept.size)
+    }
+
+    /** More items for a collection (a sync, MED-17), the same way; null if the collection is gone. */
+    suspend fun addChildren(
+        collection: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? {
+        val parent = downloads.get(collection) ?: return null
+        val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
+        val added = downloads.addChildren(collection, kept.map { children[it] }, kept.map { items[it] }, clock.now())
+        announce(added)
+        return CollectionAdded(parent, hold(added), children.size - kept.size)
+    }
+
+    private suspend fun announce(jobs: List<Download>) {
+        for (job in jobs) {
             lastStatus[job.id] = job.status
             observer.jobChanged(job)
             observer.mirrorsChanged(job.id, downloads.mirrors(job.id))
             observer.event(EngineEvent.Added(job.id))
         }
-        val held = added.map { job -> holdIfGlobal(job).let { if (it == job) job else save(it) } }
-        return CollectionAdded(collection, held, children.size - kept.size)
     }
+
+    // While global pause is on, jobs that start waiting wait paused instead.
+    private suspend fun hold(jobs: List<Download>): List<Download> =
+        jobs.map { job ->
+            holdIfGlobal(job).let {
+                if (it ==
+                    job
+                ) {
+                    job
+                } else {
+                    save(it)
+                }
+            }
+        }
 
     suspend fun pause(
         id: DownloadId,

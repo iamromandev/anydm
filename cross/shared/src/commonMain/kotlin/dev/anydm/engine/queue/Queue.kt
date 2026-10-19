@@ -63,6 +63,13 @@ class Queue internal constructor(
         items: List<NewItem>,
     ): CollectionAdded = actor.inActor { addCollection(parent, children, items) }
 
+    /** More items for an existing collection (a sync, MED-17); null if the collection is gone. */
+    suspend fun addChildren(
+        collection: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? = actor.inActor { addChildren(collection, children, items) }
+
     /**
      * Pauses what runs or waits in the [low] folders and releases the jobs named in [release], which were paused for a
      * low disk and now have room (FIL-08). Any other job paused for it, say because its file didn't fit at the start,

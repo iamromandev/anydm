@@ -20,6 +20,8 @@ import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -490,6 +492,191 @@ abstract class EngineCollectionContract : StoreTestBase() {
                 lines.first() shouldBe "#EXTM3U"
                 lines.count { it.startsWith("#EXTINF:60,Video") } shouldBe 3
                 lines.count { it.isNotEmpty() && !it.startsWith("#") } shouldBe 3
+            }
+        }
+
+    private suspend fun EngineHarness.sync(id: DownloadId) = engine.syncCollection(id)
+
+    private fun SyncOutcome.done() = shouldBeInstanceOf<SyncOutcome.Done>().result
+
+    @Test
+    fun syncAddsOnlyNewItems() =
+        runTest {
+            val playlist = source(listing(count = 3))
+            withEngine(playlist) { h ->
+                val added = h.added()
+                settle()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 4)))
+
+                val result = h.sync(added.collection.id).done()
+
+                result shouldBe SyncResult(added = 1, skipped = 0, unavailable = 0)
+                h.store.downloads
+                    .children(added.collection.id)
+                    .map { it.playlistIndex } shouldBe listOf(1, 2, 3, 4)
+                playlist.requested shouldBe listOf(playlistUrl, playlistUrl)
+            }
+        }
+
+    @Test
+    fun aDoneItemIsNotFetchedAgain() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+
+                h.sync(added.collection.id).done().added shouldBe 0
+
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 3
+            }
+        }
+
+    @Test
+    fun aChildStillDownloadingIsNotDuplicated() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.sync(added.collection.id).done().added shouldBe 0
+
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 3
+            }
+        }
+
+    @Test
+    fun aRemovedChildThatNeverFinishedIsRecreated() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                h.engine.pause(added.children[1].id)
+                h.engine.remove(added.children[1].id, RemoveFiles.KEEP)
+
+                h.sync(added.collection.id).done().added shouldBe 1
+
+                val children = h.store.downloads.children(added.collection.id)
+                children.map { it.playlistIndex } shouldBe listOf(1, 2, 3)
+                h.store.collectionItems
+                    .items(added.collection.id)
+                    .map { it.childId } shouldBe children.map { it.id }
+            }
+        }
+
+    @Test
+    fun aFailedChildIsNotDuplicated() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(null, "boom"))
+                val added = h.added()
+                settle()
+
+                h.sync(added.collection.id).done().added shouldBe 0
+
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 3
+            }
+        }
+
+    @Test
+    fun twoSyncsAtOnceCreateOneChild() =
+        runTest {
+            val playlist = source(listing(count = 3))
+            withEngine(playlist) { h ->
+                val added = h.added()
+                settle()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 4)))
+
+                val both = listOf(async { h.sync(added.collection.id) }, async { h.sync(added.collection.id) }).awaitAll()
+
+                both.map { it.done().added }.sorted() shouldBe listOf(0, 1)
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 4
+            }
+        }
+
+    @Test
+    fun forgettingAnItemMakesTheNextSyncFetchIt() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+
+                h.engine.forgetItem(added.collection.id, "youtube", "v2") shouldBe true
+                h.engine.forgetItem(added.collection.id, "youtube", "v2") shouldBe false
+                h.sync(added.collection.id).done().added shouldBe 1
+            }
+        }
+
+    @Test
+    fun syncOnAJobThatIsNotACollectionSaysSo() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val loose = h.addJob()
+
+                h.sync(loose) shouldBe SyncOutcome.NotACollection
+                h.sync(DownloadId(9999)) shouldBe SyncOutcome.NotACollection
+            }
+        }
+
+    @Test
+    fun theSelectionIsAppliedAgainAtSync() =
+        runTest {
+            val playlist = source(listing(count = 3))
+            withEngine(playlist) { h ->
+                val added = h.engine.addPlaylist(playlistUrl, ItemSelection("1:3"), runnable).added()
+                settle()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 6)))
+
+                h.sync(added.collection.id).done().added shouldBe 0
+            }
+        }
+
+    @Test
+    fun aListingFailureIsReturnedBySync() =
+        runTest {
+            val playlist = source(listing())
+            withEngine(playlist) { h ->
+                val added = h.added()
+                val failure = StepResult.Failed(null, "yt-dlp took too long")
+                playlist.result = failure
+
+                h.sync(added.collection.id) shouldBe SyncOutcome.Failed(failure)
+            }
+        }
+
+    @Test
+    fun syncWithNoSourceIsUnavailable() =
+        runTest {
+            val store = newStore()
+            val (collection, _) =
+                store.downloads.addCollection(
+                    NewDownload(DownloadKind.SITE, collection = CollectionKind.PLAYLIST, sourceUrl = playlistUrl),
+                    emptyList(),
+                    emptyList(),
+                )
+            val h = EngineHarness(this, store, playlists = null).also { it.engine.start() }
+            try {
+                h.sync(collection.id) shouldBe SyncOutcome.Unavailable
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun entriesWithNoAddressAreCountedUnavailable() =
+        runTest {
+            val playlist = source(listing())
+            withEngine(playlist) { h ->
+                val added = h.added()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(dropped = 2)))
+
+                h.sync(added.collection.id).done().unavailable shouldBe 2
             }
         }
 }
