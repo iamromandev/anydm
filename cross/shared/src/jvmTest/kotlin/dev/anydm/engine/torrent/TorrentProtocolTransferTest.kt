@@ -123,6 +123,24 @@ class TorrentProtocolTransferTest {
         }
 
     @Test
+    fun aTorrentIsDownloadedUnderItsOwnNamesAndRenamedAtTheEnd() =
+        runBlocking<Unit> {
+            // libtorrent finds what it has on disk by the torrent's own names: renamed at the start, a resume would start over
+            val transfer = prepared(name = "Other")
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            backend.added
+                .single()
+                .request.fileNames shouldBe listOf("Pack/a.bin", "Pack/b.bin")
+            backend.added.single().renamed shouldBe null
+            val result = ok(protocol.finalize(transfer))
+            backend.added.single().renamed shouldBe listOf("Other/a.bin", "Other/b.bin")
+            result.outputs shouldBe listOf("Other/b.bin")
+            result.consumed shouldBe emptyList()
+        }
+
+    @Test
     fun progressIsReported() =
         runBlocking<Unit> {
             backend.script = listOf(TorrentProgress(10, 300, false), TorrentProgress(200, 300, false), TorrentProgress(300, 300, true))

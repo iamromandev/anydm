@@ -157,7 +157,7 @@ class StepRunner(
         }
         val learned = probe.size
         if (learned != null && (learned != download.size || plan.folder != folder)) {
-            val room = checkSpace(plan.folder, learned - writtenBytes(download.id))
+            val room = checkSpace(plan.folder, learned - bytesAlreadyHeld(download))
             // The size stays with the job, so whoever waits for room knows how much it needs.
             if (room is StepResult.Failed) return prepareFailed(download.copy(size = learned), Step.PROBE, room)
         }
@@ -325,7 +325,7 @@ class StepRunner(
         val prepared = fileSystem.prepareFolder(folder)
         if (prepared is FileResult.Failed) return prepared.toStepFailed()
         if (download.size != null) {
-            val room = checkSpace(folder, download.size - writtenBytes(download.id))
+            val room = checkSpace(folder, download.size - bytesAlreadyHeld(download))
             if (room is StepResult.Failed) return room
         }
         return StepResult.Ok(folder)
@@ -506,7 +506,13 @@ class StepRunner(
                     resumes(old, new)
                 }.map { (old, _) -> old.segments.sumOf { it.written } }
                 .saturatingSum()
-        val room = checkSpace(folder, planned.filter { it.selected }.map { it.size ?: 0L }.saturatingSum() - kept)
+        // An owning protocol's bytes on disk aren't in any segment: a job that ran before is taken to have what it has.
+        val room =
+            if (owns && stored.isNotEmpty()) {
+                StepResult.Ok(Unit)
+            } else {
+                checkSpace(folder, planned.filter { it.selected }.map { it.size ?: 0L }.saturatingSum() - kept)
+            }
         if (room is StepResult.Failed) return room
         if (!sameFiles && !owns) {
             val targets = planned.map { targetPath(folder, it.path) }.toSet()
@@ -752,6 +758,13 @@ class StepRunner(
 
     // Whether the download's protocol keeps its own files (a torrent's): the runner then makes rows only.
     private fun owns(download: Download): Boolean = protocols[download.kind]?.ownsFiles == true
+
+    /**
+     * What the download has on disk, as far as the runner can tell. An owning protocol keeps no segments, so a job that
+     * ran before counts as holding everything it needs (the protocol reports a full disk itself).
+     */
+    private suspend fun bytesAlreadyHeld(download: Download): Long =
+        if (owns(download) && store.files(download.id).isNotEmpty()) Long.MAX_VALUE else writtenBytes(download.id)
 
     private suspend fun writtenBytes(id: DownloadId): Long =
         store

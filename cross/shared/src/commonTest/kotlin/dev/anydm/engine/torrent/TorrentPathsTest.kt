@@ -33,9 +33,24 @@ class TorrentPathsTest {
 
     @Test
     fun dotDotAndAbsoluteAreRefused() {
-        for (bad in listOf("pack/../x", "../x", "/abs/x", "pack/./x", "pack\\x", "pack/c:x", "pack//x", "pack/")) {
+        for (bad in listOf("pack/../x", "../x", "/abs/x", "pack/./x", "pack\\x", "pack//x", "pack/")) {
             checkTorrent(info(bad)) shouldContain "can't be placed"
         }
+    }
+
+    @Test
+    fun aColonInANameIsCleanedNotRefused() {
+        // "Star Wars: Episode IV" is an ordinary folder name; the runner refuses a colon in a planned path, so it is replaced
+        val colons = info("Star Wars: Episode IV/movie.mkv", "Star Wars: Episode IV/Ep 1: Pilot.txt", name = "Star Wars: Episode IV")
+
+        checkTorrent(colons) shouldBe null
+        plannedPaths(colons, "Star Wars: Episode IV", cleaner) shouldBe
+            listOf("Star Wars_ Episode IV/movie.mkv", "Star Wars_ Episode IV/Ep 1_ Pilot.txt")
+    }
+
+    @Test
+    fun namesThatDifferOnlyByAColonCollide() {
+        checkTorrent(info("pack/a:b.bin", "pack/a_b.bin")) shouldContain "same file"
     }
 
     @Test

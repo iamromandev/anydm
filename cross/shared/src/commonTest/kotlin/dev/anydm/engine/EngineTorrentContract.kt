@@ -274,6 +274,30 @@ abstract class EngineTorrentContract : StoreTestBase() {
         }
 
     @Test
+    fun aChoiceOnAJobAddedWithoutOneIsAChangeOfSelection() =
+        runTest {
+            val h = started()
+            try {
+                // no choice stored means every file is selected
+                val id =
+                    h.engine
+                        .addTorrent(magnet)
+                        .added()
+                        .id
+                service.running += id
+
+                h.engine.setTorrentFiles(id, listOf(7, 7)).shouldBeInstanceOf<CommandResult.Done>()
+                service.appliedPriorities[id] shouldBe listOf(7, 7)
+
+                // skipping a file the running torrent was started with waits for the next run
+                h.engine.setTorrentFiles(id, listOf(4, 0)).shouldBeInstanceOf<CommandResult.Done>()
+                service.appliedPriorities[id] shouldBe listOf(7, 7)
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
     fun aJobNotRunningJustStoresTheChoice() =
         runTest {
             val h = started()

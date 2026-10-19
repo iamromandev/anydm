@@ -22,7 +22,9 @@ fun checkTorrent(info: TorrentInfo): String? {
     if (info.files.size > MAX_TORRENT_FILES) return "the torrent has ${info.files.size} files; the limit is $MAX_TORRENT_FILES"
     if (info.name.isBlank()) return "the torrent has no name"
     if (info.files.any { it.size < 0 }) return "the torrent has a file with a negative size"
-    return pathProblem(info.files.map { it.path })?.let { "the torrent can't be placed in the save folder: $it" }
+    // A colon is cleaned out of a planned name (see plannedPaths), so it is no reason to refuse the torrent.
+    return pathProblem(info.files.map { it.path.replace(':', COLON_REPLACEMENT) })
+        ?.let { "the torrent can't be placed in the save folder: $it" }
 }
 
 /**
@@ -34,14 +36,22 @@ fun plannedPaths(
     placedName: String,
     cleaner: NameCleaner,
 ): List<String> {
-    val root = cleaner.clean(placedName)
+    val root = clean(cleaner, placedName)
     if (info.singleFile) return listOf(root)
     return info.files.map { file ->
         val segments = file.path.split('/')
         val below = segments.drop(1).ifEmpty { segments.takeLast(1) }
-        (listOf(root) + below.map { cleaner.clean(it) }).joinToString("/")
+        (listOf(root) + below.map { clean(cleaner, it) }).joinToString("/")
     }
 }
+
+private const val COLON_REPLACEMENT = '_'
+
+// The runner refuses a colon in any planned path, on every system, though most allow it in a name.
+private fun clean(
+    cleaner: NameCleaner,
+    name: String,
+): String = cleaner.clean(name).replace(':', COLON_REPLACEMENT)
 
 /** A stored choice for a torrent of [files] files: empty means every file at the default; a list of another length is null. */
 fun resolvePriorities(

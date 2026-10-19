@@ -491,9 +491,11 @@ class Engine(
             if (count != null && priorities.size != count) {
                 return@command CommandResult.Invalid("the torrent has $count files, not ${priorities.size}")
             }
-            val before = row.priorities.map { it > 0 }
+            // No stored choice means every file is selected.
+            val sameFiles =
+                if (row.priorities.isEmpty()) priorities.all { it > 0 } else row.priorities.map { it > 0 } == priorities.map { it > 0 }
             store.torrents.setPriorities(id, priorities)
-            if (before.isEmpty() || before == priorities.map { it > 0 }) torrents?.applyPriorities(id, priorities)
+            if (sameFiles) torrents?.applyPriorities(id, priorities)
             CommandResult.Done(store.downloads.get(id))
         }
 

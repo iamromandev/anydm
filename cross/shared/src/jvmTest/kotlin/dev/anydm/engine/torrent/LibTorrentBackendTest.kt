@@ -5,6 +5,8 @@ import dev.anydm.engine.protocol.StepResult
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -265,6 +267,51 @@ class LibTorrentBackendTest {
             running.moveStorage(Path(File(root, "final").toString()), false).shouldBeInstanceOf<StepResult.Failed>()
             running.renameFiles(listOf("x.bin")).shouldBeInstanceOf<StepResult.Failed>()
             seeder.add(addRequest(info, seedDir)).shouldBeInstanceOf<StepResult.Failed>()
+        }
+
+    @Test
+    fun anAddedTorrentIsNotManagedByLibtorrentsOwnQueue() =
+        runBlocking<Unit> {
+            // libtorrent's queue lets only 3 auto-managed torrents download at once, whatever the engine's own limit is
+            file("data.bin", 64 * 1024, 12)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+
+            leecher.sessionTorrents().single().autoManaged shouldBe false
+        }
+
+    @Test
+    fun aCancelledAddLeavesNothingInTheSession() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 13)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            // the session comes up before the timing starts
+            ok(leecher.add(addRequest(info, File(leechDir, "first")))).remove()
+            delay(200)
+
+            for (after in 0..20L) {
+                val adding = async { leecher.add(addRequest(info, File(leechDir, "again-$after"))) }
+                delay(after)
+                adding.cancelAndJoin()
+                // an add that finished before the cancel arrived is the caller's to remove, as the protocol's transfer does
+                if (!adding.isCancelled) ok(adding.await()).remove()
+                delay(100)
+                leecher.sessionTorrents() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun aTorrentWithTwentyThousandFilesCanBeRenamed() =
+        runBlocking<Unit> {
+            // libtorrent says each rename in an alert, and its queue holds 2000 by default
+            val dir = File(seedDir, "many").also { it.mkdirs() }
+            repeat(20_000) { File(dir, "f$it.bin").writeBytes(byteArrayOf(it.toByte())) }
+            val info = infoOf(torrentOf(dir))
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+
+            ok(running.renameFiles(info.files.map { "renamed/" + it.path.substringAfterLast('/') }))
+
+            running.remove()
         }
 
     @Test

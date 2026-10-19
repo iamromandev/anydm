@@ -188,7 +188,8 @@ class TorrentProtocol(
                 saveTo = Path(jobFolder(transfer), stagingName(transfer)),
                 priorities = probe.priorities,
                 sequential = probe.sequential,
-                fileNames = transfer.files.map { it.file.path },
+                // The torrent's own names: libtorrent finds what a paused or restarted download already has by them.
+                fileNames = probe.info.files.map { it.path },
             )
         val handle =
             when (val added = backend.add(request)) {
@@ -269,13 +270,16 @@ class TorrentProtocol(
                                     is StepResult.Ok -> found.value
                                 }
                             names = planned.map { free + it.removePrefix(root) }
-                            when (val renamed = handle.renameFiles(names)) {
-                                is StepResult.Failed -> return renamed
-                                is StepResult.Ok -> Unit
-                            }
                         }
                     }
                 }
+            }
+        }
+        // The files were kept under the torrent's own names; they get the planned ones (or the free ones) now.
+        if (names != (transfer.probe as TorrentProbe).info.files.map { it.path }) {
+            when (val renamed = handle.renameFiles(names)) {
+                is StepResult.Failed -> return renamed
+                is StepResult.Ok -> Unit
             }
         }
         when (val moved = handle.moveStorage(folder, replace)) {

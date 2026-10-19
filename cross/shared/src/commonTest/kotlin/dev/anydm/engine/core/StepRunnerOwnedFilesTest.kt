@@ -110,6 +110,30 @@ class StepRunnerOwnedFilesTest {
             h.store.files(id).map { it.selected } shouldBe listOf(true, true, true)
         }
 
+    @Test
+    fun aResumedOwnedJobIsNotAskedForRoomForWhatItAlreadyHas() =
+        runTest {
+            val h = StepHarness(freeSpaceReserve = 0)
+            h.owned()
+            h.protocol.failure = FakeFailure.AtTransfer(0, StepResult.Failed(null, "stopped"))
+            h.runAll(aPendingDownload(kind = DownloadKind.TORRENT)).failure!!.step shouldBe Step.TRANSFER
+            h.protocol.failure = null
+            // the protocol's own files hold most of the 8,700 bytes already, which the runner can't see
+            h.fs.free = 100
+
+            h.runAll(aPendingDownload(kind = DownloadKind.TORRENT)).failure shouldBe null
+        }
+
+    @Test
+    fun aFirstRunOfAnOwnedJobStillChecksTheRoom() =
+        runTest {
+            val h = StepHarness(freeSpaceReserve = 0)
+            h.owned()
+            h.fs.free = 100
+
+            h.runAll(aPendingDownload(kind = DownloadKind.TORRENT)).failure!!.errorClass shouldBe ErrorClass.DISK_FULL
+        }
+
     private fun sha256(bytes: ByteArray) =
         Checksum(
             ChecksumAlgorithm.SHA256,
