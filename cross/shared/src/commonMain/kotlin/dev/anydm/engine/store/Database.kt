@@ -69,6 +69,8 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 attempt_countAdapter = IntAdapter("download.attempt_count"),
                 next_attempt_atAdapter = InstantAdapter,
                 queued_atAdapter = InstantAdapter,
+                playlist_indexAdapter = IntAdapter("download.playlist_index"),
+                selection_limitAdapter = IntAdapter("download.selection_limit"),
             ),
         historyAdapter =
             HistoryRow.Adapter(

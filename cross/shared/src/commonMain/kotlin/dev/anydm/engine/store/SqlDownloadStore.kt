@@ -10,6 +10,7 @@ import dev.anydm.engine.core.EmbedChoice
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RequestContext
@@ -76,6 +77,10 @@ internal class SqlDownloadStore(
                 source_validator = null,
                 checksum = new.checksum?.toString(),
                 allow_duplicate = new.allowDuplicate,
+                playlist_index = new.playlistIndex,
+                source_url = new.sourceUrl,
+                selection_range = new.selection?.range,
+                selection_limit = new.selection?.limit,
             )
             val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
             new.mirrors.forEachIndexed { position, url ->
@@ -116,9 +121,16 @@ internal class SqlDownloadStore(
                     source_validator = download.sourceValidator,
                     checksum = download.checksum?.toString(),
                     allow_duplicate = download.allowDuplicate,
+                    playlist_index = download.playlistIndex,
+                    source_url = download.sourceUrl,
+                    selection_range = download.selection?.range,
+                    selection_limit = download.selection?.limit,
                     id = download.id,
                 ).value > 0
         }
+
+    override suspend fun children(parent: DownloadId): List<Download> =
+        inTransaction { downloadQueries.selectByParent(parent).executeAsList().map { it.toDownload() } }
 
     override suspend fun remove(id: DownloadId): Boolean = writing { downloadQueries.delete(id).value > 0 }
 
@@ -358,6 +370,9 @@ internal class SqlDownloadStore(
                     Checksum.parse(it) ?: throw IncompatibleStoreException("checksum holds '$it', which this version of anydm doesn't know")
                 },
             allowDuplicate = allow_duplicate,
+            playlistIndex = playlist_index,
+            sourceUrl = source_url,
+            selection = if (selection_range == null && selection_limit == null) null else ItemSelection(selection_range, selection_limit),
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)

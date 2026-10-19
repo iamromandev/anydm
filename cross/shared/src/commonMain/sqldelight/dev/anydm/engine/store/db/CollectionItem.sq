@@ -1,0 +1,18 @@
+import dev.anydm.engine.core.DownloadId;
+
+-- One video of a collection (MED-16, MED-17): written with its child, `done` once the child has finished. It is the only
+-- archive: sync skips what is here, and the playlist file lists what is done. Removing the child keeps the row (child_id
+-- becomes NULL) so a sync can tell "removed" from "never seen".
+CREATE TABLE collection_item (
+    collection_id INTEGER AS DownloadId NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    extractor TEXT NOT NULL,
+    video_id TEXT NOT NULL,
+    child_id INTEGER AS DownloadId REFERENCES download(id) ON DELETE SET NULL,
+    playlist_index INTEGER AS kotlin.Int NOT NULL,
+    title TEXT,
+    duration INTEGER AS kotlin.Int,
+    done INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection_id, extractor, video_id)
+);
+
+CREATE INDEX collection_item_child ON collection_item(child_id);

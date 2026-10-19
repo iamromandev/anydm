@@ -1,0 +1,14 @@
+import dev.anydm.engine.core.CategoryId;
+import dev.anydm.engine.core.ProfileId;
+
+-- A named bundle of download options (SET-02), read live by the jobs that name it. `format` is the Format as JSON.
+-- download.profile_id has no foreign key (SQLite can't add one to an existing column): ProfileStore.delete clears it.
+CREATE TABLE profile (
+    id INTEGER AS ProfileId PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    format TEXT,
+    category_id INTEGER AS CategoryId,
+    save_folder TEXT,
+    name_template TEXT,
+    speed_limit INTEGER CHECK (speed_limit > 0)
+);

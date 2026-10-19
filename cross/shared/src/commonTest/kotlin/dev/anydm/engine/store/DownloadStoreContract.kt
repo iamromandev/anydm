@@ -18,6 +18,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.HdrChoice
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
@@ -811,5 +812,44 @@ abstract class DownloadStoreContract : StoreTestBase() {
 
             store.files(added.id).single().placedPath shouldBe "a (1).mp4"
             store.replaceFiles(added.id, listOf(NewFile(0, "a.mp4", size = 10))).single().placedPath shouldBe null
+        }
+
+    @Test
+    fun collectionColumnsRoundTrip() =
+        runTest {
+            val store = newStore().downloads
+
+            val added =
+                store.add(
+                    NewDownload(
+                        kind = DownloadKind.SITE,
+                        collection = CollectionKind.PLAYLIST,
+                        playlistIndex = 3,
+                        sourceUrl = "https://www.example.com/playlist?list=PL1",
+                        selection = ItemSelection("1:5,8", 10),
+                    ),
+                )
+
+            added.playlistIndex shouldBe 3
+            added.sourceUrl shouldBe "https://www.example.com/playlist?list=PL1"
+            added.selection shouldBe ItemSelection("1:5,8", 10)
+            store.get(added.id) shouldBe added
+            store.update(added.copy(selection = ItemSelection(null, 2))) shouldBe true
+            store.get(added.id)!!.selection shouldBe ItemSelection(null, 2)
+        }
+
+    @Test
+    fun childrenAreListedByPlaylistIndex() =
+        runTest {
+            val store = newStore().downloads
+            val parent = store.add(NewDownload(DownloadKind.SITE, collection = CollectionKind.PLAYLIST))
+            val other = store.add(NewDownload(DownloadKind.SITE, collection = CollectionKind.PLAYLIST))
+            val c3 = store.add(NewDownload(DownloadKind.SITE, parentId = parent.id, playlistIndex = 3))
+            val c1 = store.add(NewDownload(DownloadKind.SITE, parentId = parent.id, playlistIndex = 1))
+            val c2 = store.add(NewDownload(DownloadKind.SITE, parentId = parent.id, playlistIndex = 2))
+            store.add(NewDownload(DownloadKind.SITE, parentId = other.id, playlistIndex = 1))
+
+            store.children(parent.id).map { it.id } shouldBe listOf(c1.id, c2.id, c3.id)
+            store.children(c1.id) shouldBe emptyList()
         }
 }

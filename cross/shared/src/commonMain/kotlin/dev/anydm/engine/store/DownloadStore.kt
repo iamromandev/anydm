@@ -40,6 +40,9 @@ interface DownloadStore : PlanStore {
      */
     suspend fun update(download: Download): Boolean
 
+    /** The direct children of a collection, by their place in the playlist, then id (MED-16). */
+    suspend fun children(parent: DownloadId): List<Download>
+
     /** Deletes the download with its mirrors, files, segments, attempts and child downloads. False if absent. */
     suspend fun remove(id: DownloadId): Boolean
 
