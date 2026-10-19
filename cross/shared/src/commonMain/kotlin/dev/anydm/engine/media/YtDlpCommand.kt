@@ -1,5 +1,8 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.SponsorBlockMode
+import dev.anydm.engine.core.SubtitleMode
 import kotlinx.io.files.Path
 
 /** The command line that has yt-dlp download and merge a whole selection itself (MED-05, MED-07). */
@@ -16,6 +19,8 @@ internal object YtDlpCommand {
         staging: Path,
         url: String,
         limit: Long?,
+        format: Format = Format(),
+        extraArgs: List<String> = emptyList(),
     ): List<String> =
         buildList {
             add(ytDlp.toString())
@@ -32,8 +37,34 @@ internal object YtDlpCommand {
             } else if (selection.streams.singleOrNull()?.ext != selection.outputExtension) {
                 addAll(listOf("--remux-video", selection.outputExtension))
             }
+            addAll(mediaFlags(format))
             if (ffmpeg != null) addAll(listOf("--ffmpeg-location", ffmpeg.toString()))
             if (deno != null) addAll(listOf("--js-runtimes", "deno:$deno"))
+            // Cookies and pacing.
+            addAll(extraArgs)
             addAll(listOf("-o", staging.toString().replace("%", "%%") + "/out.%(ext)s", "--", url))
         }
 }
+
+/**
+ * yt-dlp's flags for the choices of [format] (MED-13 to MED-15): subtitles, SponsorBlock, and embedding. Every list is one
+ * argument, and the values were checked when the choice was made. On this route a subtitle choice of BOTH is EMBED: yt-dlp
+ * removes the subtitle files it embeds.
+ */
+internal fun mediaFlags(format: Format): List<String> =
+    buildList {
+        format.subtitles?.let { subtitles ->
+            add("--write-subs")
+            if (subtitles.includeAuto) add("--write-auto-subs")
+            addAll(listOf("--sub-langs", subtitles.languages.joinToString(",")))
+            subtitles.convertTo?.let { addAll(listOf("--convert-subs", it.extension)) }
+            if (subtitles.mode != SubtitleMode.SEPARATE) add("--embed-subs")
+        }
+        format.sponsorBlock?.let { sponsorBlock ->
+            val flag = if (sponsorBlock.mode == SponsorBlockMode.CUT) "--sponsorblock-remove" else "--sponsorblock-mark"
+            addAll(listOf(flag, sponsorBlock.categories.joinToString(",")))
+        }
+        if (format.embed.metadata) add("--embed-metadata")
+        if (format.embed.thumbnail) add("--embed-thumbnail")
+        if (format.embed.chapters) add("--embed-chapters")
+    }

@@ -91,11 +91,21 @@ class SiteProtocol(
         url: String,
     ): StepResult<String> {
         beforeExtract()
-        val extracted = ytDlp.extract(tool, deno, url)
-        return if (extracted is StepResult.Ok && extracted.value.isEmpty()) {
-            StepResult.Failed(null, "yt-dlp printed no JSON for this page")
-        } else {
-            extracted
+        return when (val extracted = ytDlp.extract(tool, deno, url)) {
+            is StepResult.Failed -> {
+                extracted
+            }
+
+            is StepResult.Ok -> {
+                if (extracted.value.json.isEmpty()) {
+                    StepResult.Failed(
+                        null,
+                        "yt-dlp printed no JSON for this page",
+                    )
+                } else {
+                    StepResult.Ok(extracted.value.json)
+                }
+            }
         }
     }
 
