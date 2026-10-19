@@ -251,7 +251,7 @@ class SiteProtocol(
                 name = fileStem(info.title, info.id) + "." + selection.outputExtension,
                 size = if (route == StreamRoute.PLAIN) totalSize(probes.values.toList()) else null,
                 validator = if (validators.all { it == null }) null else validators.joinToString("|") { it ?: "-" },
-                nameFields = nameFieldsOf(info, selection),
+                nameFields = nameFieldsOf(info, selection, request.download.playlistIndex),
                 fragments = fragments,
                 route = route,
                 extras = extras,

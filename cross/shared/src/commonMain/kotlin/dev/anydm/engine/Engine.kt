@@ -320,7 +320,21 @@ class Engine(
                     cache.load(jobs, attempts, mirrors, files)
                     publish()
                 }
-                scope.launch(publisher) { for (fact in facts) apply(fact) }
+                scope.launch(publisher) {
+                    for (fact in facts) {
+                        // Every fact waiting is applied, then one snapshot list is built: a collection added at once sends
+                        // thousands, and each used to rebuild every snapshot.
+                        val events = mutableListOf<Fact.Event>()
+                        var next: Fact? = fact
+                        var batch = 0
+                        while (next != null) {
+                            apply(next)?.let { events += it }
+                            next = if (++batch < MAX_BATCH) facts.tryReceive().getOrNull() else null
+                        }
+                        publish()
+                        events.forEach { afterPublished(it) }
+                    }
+                }
                 scope.launch(publisher) {
                     while (true) {
                         delay(TRAFFIC_SAVE_EVERY)
@@ -414,15 +428,20 @@ class Engine(
                 Chosen.None -> return AddPlaylistResult.EmptySelection
                 is Chosen.TooMany -> return AddPlaylistResult.Failed(StepResult.Failed(null, chosen.reason))
             }
+        // Where the items go: the template's folder, else its profile's (or the default profile's), else the folder of the
+        // template's or profile's category, else the default. The playlist gets a folder of its own under it.
+        val profile = (template.profileId ?: store.settings.load().defaultProfileId)?.let { store.profiles.get(it) }
+        val categoryId = template.categoryId ?: profile?.categoryId
         val base =
             template.saveFolder?.let(::Path)
+                ?: profile?.saveFolder?.let(::Path)
                 ?: store.categories
                     .list()
-                    .firstOrNull { it.id == template.categoryId }
+                    .firstOrNull { it.id == categoryId }
                     ?.folder
                     ?.let(::Path)
                 ?: defaultFolder
-        val folder = Path(base, nameCleaner.clean(listing.title)).toString()
+        val folder = freshFolder(base, nameCleaner.clean(listing.title))
         val parent =
             template.copy(
                 mirrors = emptyList(),
@@ -437,7 +456,9 @@ class Engine(
                 selection = selection.takeIf { it != ItemSelection() },
             )
         val made = picked.map { itemJob(template, folder, it, it.position) }
-        val added = command { queue.addCollection(parent, made.map { it.first }, made.map { it.second }) }
+        val added =
+            command { queue.addCollection(parent, made.map { it.first }, made.map { it.second }) }
+                ?: return AddPlaylistResult.AllDuplicates(made.size)
         return AddPlaylistResult.Added(added.collection, added.children, added.skipped, listing.dropped)
     }
 
@@ -487,6 +508,23 @@ class Engine(
         }
     }
 
+    // A folder no other collection uses: two playlists with one title would share a folder and one playlist file.
+    private suspend fun freshFolder(
+        base: Path,
+        name: String,
+    ): String {
+        val used =
+            store.downloads
+                .list()
+                .filter { it.isCollection }
+                .mapNotNull { it.saveFolder }
+                .toSet()
+        var folder = Path(base, name).toString()
+        var n = 2
+        while (folder in used) folder = Path(base, "$name (${n++})").toString()
+        return folder
+    }
+
     // One sync at a time: two at once would both see an item as new.
     private val syncLock = Mutex()
 
@@ -529,12 +567,28 @@ class Engine(
             val known = store.collectionItems.items(id).associateBy { it.extractor to it.videoId }
             val template = templateOf(collection)
             val folder = collection.saveFolder ?: ""
+            // An item with a row that has no job is one the user removed or told us to forget: it is wanted again, so the
+            // old job for the same address (still in the list or the history) must not stop it.
+            val again = template.copy(allowDuplicate = true)
             val made =
                 chosen
                     .filter { entry ->
                         val item = known[entry.extractor to entry.id]
                         item == null || (!item.done && (item.childId == null || store.downloads.get(item.childId!!) == null))
-                    }.map { itemJob(template, folder, it, it.position) }
+                    }.map { entry ->
+                        itemJob(
+                            if (known[entry.extractor to entry.id] !=
+                                null
+                            ) {
+                                again
+                            } else {
+                                template
+                            },
+                            folder,
+                            entry,
+                            entry.position,
+                        )
+                    }
             val added = if (made.isEmpty()) null else command { queue.addChildren(id, made.map { it.first }, made.map { it.second }) }
             SyncOutcome.Done(SyncResult(added?.children?.size ?: 0, added?.skipped ?: 0, listing.dropped))
         }
@@ -576,12 +630,25 @@ class Engine(
             }
         }
 
-    /** Forgets that [videoId] was ever an item of the collection, so the next sync fetches it again (MED-17). */
+    /**
+     * Forgets that [videoId] was fetched for the collection (MED-17): its old job leaves the collection and the next sync
+     * fetches it again, whatever the duplicate check thinks of the old one.
+     */
     suspend fun forgetItem(
         collection: DownloadId,
         extractor: String,
         videoId: String,
-    ): Boolean = command { store.collectionItems.forget(collection, extractor, videoId) }
+    ): Boolean =
+        command {
+            val item = store.collectionItems.items(collection).firstOrNull { it.extractor == extractor && it.videoId == videoId }
+            if (item == null) {
+                false
+            } else {
+                // The old job stays as it is, outside the collection: its file and its place in the history are the user's.
+                item.childId?.let { queue.detach(it) }
+                store.collectionItems.forget(collection, extractor, videoId)
+            }
+        }
 
     suspend fun pause(id: DownloadId): CommandResult = command { queue.pause(id) }
 
@@ -635,7 +702,8 @@ class Engine(
         return block()
     }
 
-    private suspend fun apply(fact: Fact) {
+    // Applies one fact to the cache; the event it carries, if any, is returned to be told once the snapshots are out.
+    private suspend fun apply(fact: Fact): Fact.Event? {
         when (fact) {
             is Fact.Changed -> {
                 cache.jobChanged(fact.download)
@@ -669,12 +737,13 @@ class Engine(
                 Unit
             }
         }
-        publish()
-        if (fact is Fact.Event) {
-            logEvent(fact.event)
-            (fact.event as? EngineEvent.PausedForTool)?.let(::fetchTool)
-            eventFlow.tryEmit(fact.event)
-        }
+        return fact as? Fact.Event
+    }
+
+    private fun afterPublished(fact: Fact.Event) {
+        logEvent(fact.event)
+        (fact.event as? EngineEvent.PausedForTool)?.let(::fetchTool)
+        eventFlow.tryEmit(fact.event)
     }
 
     // A finished TOOL job tells the manager, which makes the tool current once it is whole; then the jobs waiting for
@@ -857,7 +926,12 @@ class Engine(
         publish()
     }
 
+    /** How many snapshot lists were built, for tests of the batching. */
+    internal var publishCount = 0
+        private set
+
     private fun publish() {
+        publishCount++
         snapshots.value = cache.list()
     }
 
@@ -953,6 +1027,9 @@ class Engine(
     }
 
     private companion object {
+        /** The most facts one snapshot list covers, so a flood still lets the list update now and then. */
+        const val MAX_BATCH = 500
+
         val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds

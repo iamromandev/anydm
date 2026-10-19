@@ -34,4 +34,4 @@ relink:
 UPDATE collection_item SET child_id = ? WHERE collection_id = ? AND extractor = ? AND video_id = ?;
 
 forget:
-DELETE FROM collection_item WHERE collection_id = ? AND extractor = ? AND video_id = ?;
+UPDATE collection_item SET child_id = NULL, done = 0 WHERE collection_id = ? AND extractor = ? AND video_id = ?;

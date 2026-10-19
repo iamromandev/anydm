@@ -13,6 +13,11 @@ sealed interface AddPlaylistResult {
         val dropped: Int,
     ) : AddPlaylistResult
 
+    /** Every item was kept out by the duplicate check (the playlist was added before): nothing was made. */
+    data class AllDuplicates(
+        val skipped: Int,
+    ) : AddPlaylistResult
+
     /** The address is one video. */
     data object NotAPlaylist : AddPlaylistResult
 

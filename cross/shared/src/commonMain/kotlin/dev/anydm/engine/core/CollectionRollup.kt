@@ -37,10 +37,19 @@ fun itemCounts(statuses: List<DownloadStatus>): ItemCounts =
 fun collectionStatus(children: List<DownloadStatus>): DownloadStatus =
     when {
         children.isEmpty() -> PENDING
-        children.all { it == COMPLETED || it == SEEDING } -> COMPLETED
+
+        // One video the user cancelled does not make a finished playlist cancelled.
+        children.all {
+            it == COMPLETED || it == SEEDING || it == CANCELLED
+        } && children.any { it == COMPLETED || it == SEEDING } -> COMPLETED
+
         children.any { it == DOWNLOADING || it == MUXING } -> DOWNLOADING
+
         children.any { it == PENDING || it == QUEUED } -> QUEUED
+
         children.any { it == FAILED } -> FAILED
+
         children.any { it == PAUSED } -> PAUSED
+
         else -> CANCELLED
     }

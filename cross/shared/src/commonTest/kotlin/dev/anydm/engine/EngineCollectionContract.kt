@@ -7,6 +7,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.files.NewCategory
 import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.media.FakePlaylistSource
@@ -19,6 +20,7 @@ import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
+import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -41,12 +43,16 @@ abstract class EngineCollectionContract : StoreTestBase() {
         title: String = "My List",
         kind: CollectionKind = CollectionKind.PLAYLIST,
         dropped: Int = 0,
+        firstId: Int = 1,
     ) = PlaylistListing(
         kind,
         title,
         "Chan",
         playlistUrl,
-        (1..count).map { PlaylistEntry("youtube", "v$it", "https://www.example.com/watch?v=v$it", "Video $it", 60, it) },
+        (0 until count).map { i ->
+            val n = firstId + i
+            PlaylistEntry("youtube", "v$n", "https://www.example.com/watch?v=v$n", "Video $n", 60, i + 1)
+        },
         dropped,
     )
 
@@ -610,7 +616,7 @@ abstract class EngineCollectionContract : StoreTestBase() {
                 settle()
 
                 h.engine.forgetItem(added.collection.id, "youtube", "v2") shouldBe true
-                h.engine.forgetItem(added.collection.id, "youtube", "v2") shouldBe false
+                h.engine.forgetItem(added.collection.id, "youtube", "nope") shouldBe false
                 h.sync(added.collection.id).done().added shouldBe 1
             }
         }
@@ -774,6 +780,176 @@ abstract class EngineCollectionContract : StoreTestBase() {
                     .addPlaylist(playlistUrl, ItemSelection("1:10"), runnable)
                     .added()
                     .children.size shouldBe 10
+            }
+        }
+
+    @Test
+    fun pausingAParentStartsNoWaitingChild() =
+        runTest {
+            withEngine(source(listing(count = 10))) { h ->
+                val added = h.added()
+                runCurrent()
+                h.protocol.calls.count { it == "probe" } shouldBe 3
+
+                h.engine.pause(added.collection.id)
+
+                h.protocol.calls.count { it == "probe" } shouldBe 3
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.PAUSED }
+            }
+        }
+
+    @Test
+    fun cancellingAParentStartsNoWaitingChild() =
+        runTest {
+            withEngine(source(listing(count = 10))) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.engine.cancel(added.collection.id)
+
+                h.protocol.calls.count { it == "probe" } shouldBe 3
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.CANCELLED }
+            }
+        }
+
+    @Test
+    fun removingAParentStartsNoWaitingChild() =
+        runTest {
+            withEngine(source(listing(count = 10))) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.engine.remove(added.collection.id, RemoveFiles.KEEP) shouldBe CommandResult.Done(null)
+
+                h.protocol.calls.count { it == "probe" } shouldBe 3
+                h.store.downloads.list() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun aForgottenItemIsFetchedAgainDespiteTheDuplicateCheck() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                // The default template keeps the duplicate checks on: the old job for the same address is still there.
+                val added = h.engine.addPlaylist(playlistUrl).added()
+                settle()
+
+                h.engine.forgetItem(added.collection.id, "youtube", "v1") shouldBe true
+                val result = h.sync(added.collection.id).done()
+
+                result shouldBe SyncResult(added = 1, skipped = 0, unavailable = 0)
+                h.store.downloads
+                    .get(added.children[0].id)!!
+                    .parentId shouldBe null
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 3
+            }
+        }
+
+    private suspend fun EngineHarness.profileIn(
+        folder: String? = null,
+        categoryId: dev.anydm.engine.core.CategoryId? = null,
+    ) = store.profiles
+        .add(NewProfile("Music", null, categoryId, folder, null, null))
+        .shouldBeInstanceOf<ProfileResult.Saved>()
+        .profile
+
+    @Test
+    fun aProfilesFolderIsWhereACollectionGoes() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val profile = h.profileIn(folder = "/music")
+
+                val added = h.engine.addPlaylist(playlistUrl, template = NewDownload(DownloadKind.SITE, profileId = profile.id)).added()
+
+                added.collection.saveFolder shouldBe Path("/music", "My List").toString()
+                added.children.map { it.saveFolder }.toSet() shouldBe setOf(added.collection.saveFolder)
+            }
+        }
+
+    @Test
+    fun aProfilesCategoryFolderIsWhereACollectionGoes() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val category = h.store.categories.add(NewCategory("Media", "/media", null, emptyList(), 0))
+                val profile = h.profileIn(categoryId = category.id)
+
+                val added = h.engine.addPlaylist(playlistUrl, template = NewDownload(DownloadKind.SITE, profileId = profile.id)).added()
+
+                added.collection.saveFolder shouldBe Path("/media", "My List").toString()
+            }
+        }
+
+    @Test
+    fun theDefaultProfilesFolderIsWhereACollectionGoes() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val profile = h.profileIn(folder = "/music")
+                h.store.settings.update { it.copy(defaultProfileId = profile.id) }
+
+                h.engine
+                    .addPlaylist(playlistUrl)
+                    .added()
+                    .collection.saveFolder shouldBe Path("/music", "My List").toString()
+            }
+        }
+
+    @Test
+    fun aFolderInTheTemplateBeatsTheProfilesFolder() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val profile = h.profileIn(folder = "/music")
+
+                val added =
+                    h.engine
+                        .addPlaylist(playlistUrl, template = NewDownload(DownloadKind.SITE, profileId = profile.id, saveFolder = "/jobs"))
+                        .added()
+
+                added.collection.saveFolder shouldBe Path("/jobs", "My List").toString()
+            }
+        }
+
+    @Test
+    fun addingTheSamePlaylistAgainCreatesNothing() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                h.engine.addPlaylist(playlistUrl).added()
+
+                h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.AllDuplicates(skipped = 3)
+
+                h.engine.downloads.value.size shouldBe 4
+            }
+        }
+
+    @Test
+    fun twoPlaylistsWithTheSameTitleGetTheirOwnFolders() =
+        runTest {
+            val playlist = source(listing(count = 2))
+            withEngine(playlist) { h ->
+                val first = h.engine.addPlaylist(playlistUrl).added()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 2, firstId = 11)))
+                val second = h.engine.addPlaylist(playlistUrl).added()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 2, firstId = 21)))
+                val third = h.engine.addPlaylist(playlistUrl).added()
+
+                first.collection.saveFolder shouldBe Path(stepRoot, "My List").toString()
+                second.collection.saveFolder shouldBe Path(stepRoot, "My List (2)").toString()
+                third.collection.saveFolder shouldBe Path(stepRoot, "My List (3)").toString()
+            }
+        }
+
+    @Test
+    fun addingManyChildrenPublishesInBatchesNotOncePerFact() =
+        runTest {
+            withEngine(source(listing(count = 200))) { h ->
+                val before = h.engine.publishCount
+
+                h.added()
+                runCurrent()
+
+                withClue("publishes: ${h.engine.publishCount - before}") { (h.engine.publishCount - before < 20) shouldBe true }
+                h.engine.downloads.value.size shouldBe 201
             }
         }
 }

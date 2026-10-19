@@ -156,4 +156,16 @@ abstract class ProfileStoreContract : StoreTestBase() {
             store.settings.update { it.copy(defaultProfileId = null) }
             driver.texts("SELECT name FROM setting WHERE name = 'profile.default'") shouldBe emptyList()
         }
+
+    @Test
+    fun aRowThatBreaksTheRulesIsNoProfile() =
+        runTest {
+            val store = newStore()
+            val bad = store.profiles.add(new("Broken")).saved()
+            val good = store.profiles.add(new("Fine")).saved()
+            driver.exec("UPDATE profile SET name_template = '{bad}' WHERE id = ${bad.id.value}")
+
+            store.profiles.get(bad.id) shouldBe null
+            store.profiles.list() shouldBe listOf(good)
+        }
 }

@@ -278,7 +278,7 @@ internal class QueueActor(
     // Commands
 
     suspend fun add(requested: NewDownload): CommandResult {
-        val new = withDefaultProfile(requested)
+        val new = withProfile(requested)
         duplicates.atAdd(new)?.let { return CommandResult.Duplicate(it) }
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
@@ -297,10 +297,13 @@ internal class QueueActor(
         requestedParent: NewDownload,
         requestedChildren: List<NewDownload>,
         items: List<NewItem>,
-    ): CollectionAdded {
-        val parent = withDefaultProfile(requestedParent)
-        val children = requestedChildren.map { withDefaultProfile(it) }
-        val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
+    ): CollectionAdded? {
+        val parent = withProfile(requestedParent)
+        val children = requestedChildren.map { withProfile(it) }
+        val found = duplicates.atAddAll(children)
+        val kept = children.indices.filter { found[it] == null }
+        // Every item refused: the same playlist added again. No empty collection is made for it.
+        if (children.isNotEmpty() && kept.isEmpty()) return null
         val (collection, added) = downloads.addCollection(parent, kept.map { children[it] }, kept.map { items[it] }, clock.now())
         announce(listOf(collection) + added)
         return CollectionAdded(collection, hold(added), children.size - kept.size)
@@ -313,24 +316,30 @@ internal class QueueActor(
         items: List<NewItem>,
     ): CollectionAdded? {
         val parent = downloads.get(collection) ?: return null
-        val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
+        val found = duplicates.atAddAll(children)
+        val kept = children.indices.filter { found[it] == null }
         val added = downloads.addChildren(collection, kept.map { children[it] }, kept.map { items[it] }, clock.now())
         announce(added)
         return CollectionAdded(parent, hold(added), children.size - kept.size)
     }
 
-    // A download that names no profile takes the default one, if that still exists (SET-02).
-    private suspend fun withDefaultProfile(new: NewDownload): NewDownload {
-        if (new.profileId != null) return new
-        val default = store.settings.load().defaultProfileId ?: return new
-        return if (profiles(default) != null) new.copy(profileId = default) else new
+    // A download that names no profile takes the default one; one that names a profile that doesn't exist, or is the
+    // engine's own tool download, gets none (SET-02): an id nobody holds must not attach to a profile made later.
+    private suspend fun withProfile(new: NewDownload): NewDownload {
+        if (new.kind == DownloadKind.TOOL) return if (new.profileId == null) new else new.copy(profileId = null)
+        val wanted = new.profileId ?: store.settings.load().defaultProfileId
+        val valid = wanted?.takeIf { profiles(it) != null }
+        return if (valid == new.profileId) new else new.copy(profileId = valid)
     }
 
     private suspend fun announce(jobs: List<Download>) {
-        for (job in jobs) {
+        // Read first, then tell everyone without a pause in between: the engine can then take the facts of a whole
+        // collection as one batch and build its snapshots once.
+        val mirrors = jobs.map { downloads.mirrors(it.id) }
+        jobs.forEachIndexed { i, job ->
             lastStatus[job.id] = job.status
             observer.jobChanged(job)
-            observer.mirrorsChanged(job.id, downloads.mirrors(job.id))
+            observer.mirrorsChanged(job.id, mirrors[i])
             observer.event(EngineEvent.Added(job.id))
         }
     }
@@ -348,6 +357,42 @@ internal class QueueActor(
                 }
             }
         }
+
+    /** Takes a collection's child out of its collection, keeping the job (a forgotten item, MED-17). */
+    suspend fun detach(child: DownloadId) {
+        downloads.get(child)?.takeIf { it.parentId != null }?.let { save(it.copy(parentId = null)) }
+    }
+
+    /**
+     * A command on a collection's items (MED-16), in this one step: each waiting item is changed at once, so none starts
+     * before it is, and each running one is stopped and then changed. The reply comes when every stopped item has ended.
+     */
+    private suspend fun forItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+        op: suspend (Download) -> CommandResult,
+    ) {
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (child in downloads.children(collection)) {
+            val slot = slots[child.id]
+            if (slot != null) {
+                stopping += CompletableDeferred<CommandResult>().also { stop(slot, op, it) }
+            } else {
+                op(child)
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    suspend fun pauseItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = forItems(collection, reply) { change(it.pause(PauseReason.USER)) }
+
+    suspend fun cancelItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = forItems(collection, reply) { change(it.transitionTo(CANCELLED)) }
 
     suspend fun pause(
         id: DownloadId,

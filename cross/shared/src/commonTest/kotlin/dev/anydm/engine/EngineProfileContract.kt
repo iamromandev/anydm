@@ -290,4 +290,52 @@ abstract class EngineProfileContract : StoreTestBase() {
                     .defaultProfileId shouldBe null
             }
         }
+
+    @Test
+    fun aToolJobIgnoresTheDefaultProfile() =
+        runTest {
+            withEngine { h ->
+                val profile = h.profile(speedLimit = 1000)
+                h.store.settings.update { it.copy(defaultProfileId = profile.id) }
+
+                val tool =
+                    h.engine
+                        .add(NewDownload(DownloadKind.TOOL, mirrors = listOf("https://example.com/yt-dlp"), fileName = "yt-dlp"))
+                        .shouldBeInstanceOf<dev.anydm.engine.queue.CommandResult.Done>()
+                        .download!!
+
+                h.store.downloads
+                    .get(tool.id)!!
+                    .profileId shouldBe null
+            }
+        }
+
+    @Test
+    fun aProfileThatDoesNotExistIsDroppedWhenAJobIsAdded() =
+        runTest {
+            withEngine { h ->
+                val real = h.profile()
+
+                val ghost =
+                    h.engine
+                        .add(
+                            NewDownload(
+                                DownloadKind.DIRECT,
+                                mirrors = listOf("https://example.com/ghost.zip"),
+                                profileId =
+                                    dev.anydm.engine.core
+                                        .ProfileId(77),
+                            ),
+                        ).shouldBeInstanceOf<dev.anydm.engine.queue.CommandResult.Done>()
+                        .download!!
+                val named = h.job(real)
+
+                h.store.downloads
+                    .get(ghost.id)!!
+                    .profileId shouldBe null
+                h.store.downloads
+                    .get(named)!!
+                    .profileId shouldBe real.id
+            }
+        }
 }

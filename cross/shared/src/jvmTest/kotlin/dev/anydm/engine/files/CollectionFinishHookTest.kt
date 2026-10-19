@@ -271,4 +271,32 @@ class CollectionFinishHookTest {
             .orEmpty()
             .filter { it.contains("tmp") } shouldBe emptyList()
     }
+
+    @Test
+    fun aDelegateThatThrowsDoesNotStopTheItemBeingRecorded() =
+        runBlocking<Unit> {
+            val (collection, children) = collection()
+            place(children[0], "one.mp4")
+            val failing =
+                CollectionFinishHook(
+                    store.collectionItems,
+                    store.downloads,
+                    fs,
+                    { true },
+                    object : FinishHook {
+                        override suspend fun finished(
+                            download: Download,
+                            outputs: List<Path>,
+                        ) = throw IllegalStateException("history is broken")
+                    },
+                )
+
+            runCatching { failing.finished(children[0], emptyList()) }.exceptionOrNull()?.message shouldBe "history is broken"
+
+            store.collectionItems
+                .items(collection.id)
+                .first()
+                .done shouldBe true
+            text() shouldBe "#EXTM3U\n#EXTINF:61,Video 1\none.mp4\n"
+        }
 }

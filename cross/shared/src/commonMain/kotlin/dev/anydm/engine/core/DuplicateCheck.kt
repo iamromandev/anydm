@@ -33,6 +33,9 @@ data class DuplicateFound(
 interface DuplicateCheck {
     suspend fun atAdd(new: NewDownload): DuplicateFound?
 
+    /** [atAdd] for each of [news], in order; an implementation can read what it compares with once for all of them. */
+    suspend fun atAddAll(news: List<NewDownload>): List<DuplicateFound?> = news.map { atAdd(it) }
+
     suspend fun afterProbe(
         download: Download,
         probe: ProbeResult,

@@ -36,7 +36,7 @@ interface CollectionItemStore {
         child: DownloadId,
     ): Boolean
 
-    /** Removes the item, so the next sync fetches the video again. False if there is no such item. */
+    /** Resets the item (no job, not done), so the next sync fetches the video again. False if there is no such item. */
     suspend fun forget(
         collection: DownloadId,
         extractor: String,

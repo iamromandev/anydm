@@ -27,7 +27,7 @@ internal class SqlProfileStore(
     // A write that was asked for is made, even if the caller is cancelled meanwhile (as for the other stores).
     private val writeContext = io + NonCancellable
 
-    override suspend fun list(): List<Profile> = withContext(io) { queries.selectAll().executeAsList().map { it.toProfile() } }
+    override suspend fun list(): List<Profile> = withContext(io) { queries.selectAll().executeAsList().mapNotNull { it.toProfile() } }
 
     override suspend fun get(id: ProfileId): Profile? = withContext(io) { queries.selectById(id).executeAsOneOrNull()?.toProfile() }
 
@@ -38,7 +38,7 @@ internal class SqlProfileStore(
                     ProfileResult.NameTaken
                 } else {
                     queries.insert(new.name, new.format?.let(::encode), new.categoryId, new.saveFolder, new.nameTemplate, new.speedLimit)
-                    ProfileResult.Saved(queries.selectLastInserted().executeAsOne().toProfile())
+                    ProfileResult.Saved(checkNotNull(queries.selectLastInserted().executeAsOne().toProfile()))
                 }
             }
         }
@@ -90,5 +90,7 @@ internal class SqlProfileStore(
     // A format this version can't read is no format: a profile must not stop the engine.
     private fun decode(text: String): Format? = runCatching { FORMAT_JSON.decodeFromString(Format.serializer(), text) }.getOrNull()
 
-    private fun ProfileRow.toProfile() = Profile(id, name, format?.let(::decode), category_id, save_folder, name_template, speed_limit)
+    // A row that breaks today's rules (a template this version rejects) is no profile: it must not stop a job, or the engine.
+    private fun ProfileRow.toProfile(): Profile? =
+        runCatching { Profile(id, name, format?.let(::decode), category_id, save_folder, name_template, speed_limit) }.getOrNull()
 }

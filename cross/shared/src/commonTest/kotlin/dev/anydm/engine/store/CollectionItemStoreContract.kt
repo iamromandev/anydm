@@ -108,14 +108,19 @@ abstract class CollectionItemStoreContract : StoreTestBase() {
         }
 
     @Test
-    fun forgetRemovesTheRow() =
+    fun forgetResetsTheItemSoItCanBeFetchedAgain() =
         runTest {
             val store = newStore()
-            val (collection, _) = store.downloads.addCollection(parent, listOf(child(1)), listOf(item(1)))
+            val (collection, children) = store.downloads.addCollection(parent, listOf(child(1)), listOf(item(1)))
+            store.collectionItems.markDone(children[0].id)
 
             store.collectionItems.forget(collection.id, "youtube", "v1") shouldBe true
-            store.collectionItems.forget(collection.id, "youtube", "v1") shouldBe false
-            store.collectionItems.items(collection.id) shouldBe emptyList()
+
+            val reset = store.collectionItems.items(collection.id).single()
+            reset.done shouldBe false
+            reset.childId shouldBe null
+            reset.title shouldBe "Video 1"
+            store.collectionItems.forget(collection.id, "youtube", "nope") shouldBe false
         }
 
     @Test

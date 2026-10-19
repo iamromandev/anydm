@@ -66,7 +66,10 @@ class Queue internal constructor(
         parent: NewDownload,
         children: List<NewDownload>,
         items: List<NewItem>,
-    ): CollectionAdded = actor.inActor { addCollection(parent, children, items) }
+    ): CollectionAdded? = actor.inActor { addCollection(parent, children, items) }
+
+    /** Takes [child] out of its collection, keeping the job (MED-17). */
+    suspend fun detach(child: DownloadId) = actor.inActor { detach(child) }
 
     /** More items for an existing collection (a sync, MED-17); null if the collection is gone. */
     suspend fun addChildren(
@@ -89,13 +92,17 @@ class Queue internal constructor(
     suspend fun applyToolState(): CommandResult = actor.call { applyToolState() }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
-    suspend fun pause(id: DownloadId): CommandResult = forItems(id, { pause(it) }) { actor.callLater { pause(id, it) } }
+    suspend fun pause(id: DownloadId): CommandResult =
+        if (isCollection(id)) actor.callLater { pauseItems(id, it) } else actor.callLater { pause(id, it) }
 
     /** Queues a paused job again, behind the jobs of its priority that already wait; clears every pause reason. */
     suspend fun resume(id: DownloadId): CommandResult = forItems(id, { resume(it) }) { actor.call { resume(id) } }
 
     /** Stops the job for good. Its partial files stay. */
-    suspend fun cancel(id: DownloadId): CommandResult = forItems(id, { cancel(it) }) { actor.callLater { cancel(id, it) } }
+    suspend fun cancel(id: DownloadId): CommandResult =
+        if (isCollection(id)) actor.callLater { cancelItems(id, it) } else actor.callLater { cancel(id, it) }
+
+    private suspend fun isCollection(id: DownloadId): Boolean = store.downloads.get(id)?.isCollection == true
 
     /**
      * Removes the job and, with [RemoveFiles.TRASH], moves its outputs and partials to the trash first. If that fails
@@ -105,10 +112,14 @@ class Queue internal constructor(
         id: DownloadId,
         files: RemoveFiles,
     ): CommandResult =
-        forItems(id, { remove(it, files) }, alsoCollection = true, failing = {
-            it is CommandResult.TrashUnavailable ||
-                it is CommandResult.TrashFailed
-        }) {
+        forItems(
+            id,
+            { remove(it, files) },
+            alsoCollection = true,
+            // Every item is stopped and held first, in one step, so none starts while the others are removed.
+            before = { actor.callLater { pauseItems(id, it) } },
+            failing = { it is CommandResult.TrashUnavailable || it is CommandResult.TrashFailed },
+        ) {
             actor.callLater { remove(id, files, it) }
         }
 
@@ -156,10 +167,12 @@ class Queue internal constructor(
         id: DownloadId,
         each: suspend (DownloadId) -> CommandResult,
         alsoCollection: Boolean = false,
+        before: suspend () -> Unit = {},
         failing: (CommandResult) -> Boolean = { false },
         single: suspend () -> CommandResult,
     ): CommandResult {
         val collection = store.downloads.get(id)?.takeIf { it.isCollection } ?: return single()
+        before()
         for (child in store.downloads.children(collection.id)) {
             val result = each(child.id)
             if (failing(result)) return result

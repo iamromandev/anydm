@@ -33,7 +33,15 @@ class CollectionFinishHook(
         download: Download,
         outputs: List<Path>,
     ) {
-        delegate.finished(download, outputs)
+        try {
+            delegate.finished(download, outputs)
+        } finally {
+            // The item is recorded whatever the delegate did.
+            record(download)
+        }
+    }
+
+    private suspend fun record(download: Download) {
         val collection = download.parentId ?: return
         try {
             recording.withLock {

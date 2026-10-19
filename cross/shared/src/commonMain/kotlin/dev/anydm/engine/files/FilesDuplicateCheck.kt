@@ -5,6 +5,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.DuplicateReason
+import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.http.cleanUrl
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
@@ -34,6 +35,31 @@ class FilesDuplicateCheck(
         if (match != null) return DuplicateFound(match.downloadId, DuplicateReason.SAME_URL)
         val finished = new.mirrors.firstNotNullOfOrNull { history.findByUrl(cleanUrl(it)) }
         return finished?.let { DuplicateFound(null, DuplicateReason.IN_HISTORY) }
+    }
+
+    override suspend fun atAddAll(news: List<NewDownload>): List<DuplicateFound?> {
+        if (news.none { !it.allowDuplicate && it.mirrors.isNotEmpty() }) return news.map { null }
+        // The live jobs' links by their cleaned form, first one wins, as atAdd's first match does: read once for every link.
+        val live = live().map { it.id }.toSet()
+        val byUrl = HashMap<String, Mirror>()
+        for (mirror in downloads.allMirrors()) if (mirror.downloadId in live) byUrl.putIfAbsent(cleanUrl(mirror.url), mirror)
+        return news.map { new ->
+            if (new.allowDuplicate || new.mirrors.isEmpty()) {
+                null
+            } else {
+                val match = new.mirrors.mapNotNull { byUrl[cleanUrl(it)] }.firstOrNull()
+                if (match != null) {
+                    DuplicateFound(match.downloadId, DuplicateReason.SAME_URL)
+                } else {
+                    new.mirrors
+                        .firstNotNullOfOrNull {
+                            history.findByUrl(
+                                cleanUrl(it),
+                            )
+                        }?.let { DuplicateFound(null, DuplicateReason.IN_HISTORY) }
+                }
+            }
+        }
     }
 
     override suspend fun afterProbe(

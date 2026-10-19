@@ -24,7 +24,8 @@ class CollectionRollupTest {
         collectionStatus(listOf(PENDING, PAUSED)) shouldBe QUEUED
         collectionStatus(listOf(COMPLETED, FAILED, PAUSED)) shouldBe FAILED
         collectionStatus(listOf(COMPLETED, PAUSED, PAUSED)) shouldBe PAUSED
-        collectionStatus(listOf(COMPLETED, CANCELLED)) shouldBe CANCELLED
+        // One video the user cancelled does not make a finished playlist cancelled.
+        collectionStatus(listOf(COMPLETED, CANCELLED)) shouldBe COMPLETED
         collectionStatus(listOf(CANCELLED, CANCELLED)) shouldBe CANCELLED
     }
 
