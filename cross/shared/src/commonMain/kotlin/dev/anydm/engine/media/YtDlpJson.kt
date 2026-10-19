@@ -68,6 +68,8 @@ object YtDlpJson {
             size = (obj.number("filesize") ?: obj.number("filesize_approx"))?.toLong(),
             headers = headersOf(obj["http_headers"]),
             language = obj.text("language"),
+            fragments = fragmentsOf(obj),
+            drm = obj.flag("has_drm"),
         )
     }
 
@@ -81,6 +83,16 @@ object YtDlpJson {
             "none" -> null
             else -> value
         }
+
+    /** DASH's `fragments`: each by `url` or by `path`, both read against `fragment_base_url` when there is one. */
+    private fun fragmentsOf(obj: JsonObject): List<FragmentRef> {
+        val base = obj.text("fragment_base_url")
+        return (obj["fragments"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val fragment = item as? JsonObject ?: return@mapNotNull null
+            val ref = fragment.text("url") ?: fragment.text("path") ?: return@mapNotNull null
+            FragmentRef(if (base != null) resolveUrl(base, ref) else ref, fragment.number("duration"))
+        }
+    }
 
     private fun headersOf(element: JsonElement?): List<Pair<String, String>> =
         (element as? JsonObject).orEmpty().mapNotNull { (name, value) -> (value as? JsonPrimitive)?.contentOrNull?.let { name to it } }

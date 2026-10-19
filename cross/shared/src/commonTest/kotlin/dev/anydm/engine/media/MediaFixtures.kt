@@ -94,4 +94,16 @@ internal object MediaFixtures {
 
     fun hdrStream(base: String = "https://cdn.test"): String =
         page(listOf(format(base, "337", "webm", "vp9.2", "none", 1080, 60, 5000.0, 50_000_000, extra = ""","dynamic_range":"HDR10"""")))
+
+    /** Streams of every route: DASH with and without a fragment list, rtmp, two HLS protocols, and a DRM one. */
+    fun routesJson(base: String = "https://cdn.test"): String =
+        """{"id":"r1","title":"Routes","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"dash-v","url":"$base/m/manifest.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1","acodec":"none","height":720,""" +
+            """"fragment_base_url":"$base/m/","fragments":[{"path":"init.mp4"},{"path":"seg-1.m4s","duration":4.0},{"url":"https://other.test/seg-2.m4s","duration":4.0}]},""" +
+            """{"format_id":"dash-nofrag","url":"$base/m/x.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1","acodec":"none","height":480},""" +
+            """{"format_id":"rtmp","url":"rtmp://x.test/y","ext":"flv","protocol":"rtmp","vcodec":"avc1","acodec":"mp4a"},""" +
+            """{"format_id":"hls","url":"$base/h/index.m3u8","ext":"mp4","protocol":"m3u8","vcodec":"avc1","acodec":"mp4a","height":360},""" +
+            """{"format_id":"hls-native","url":"$base/h/native.m3u8","ext":"mp4","protocol":"m3u8_native","vcodec":"avc1","acodec":"mp4a","height":240},""" +
+            """{"format_id":"plain","url":"$base/v/plain","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"mp4a","height":144},""" +
+            """{"format_id":"drm","url":"$base/d","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"none","height":1080,"has_drm":true}]}"""
 }
