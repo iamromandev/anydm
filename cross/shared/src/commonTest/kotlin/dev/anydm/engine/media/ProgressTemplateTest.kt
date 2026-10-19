@@ -4,7 +4,9 @@ import io.kotest.matchers.shouldBe
 import kotlin.test.Test
 
 class ProgressTemplateTest {
-    private val line = """{"status":"downloading","filename":"out.f137.mp4","downloaded_bytes":1234,"total_bytes":5000,"speed":321.5,"eta":12}"""
+    private val line =
+        """{"status":"downloading","filename":"out.f137.mp4",""" +
+            """"downloaded_bytes":1234,"total_bytes":5000,"speed":321.5,"eta":12}"""
 
     @Test
     fun aValidLineIsRead() {

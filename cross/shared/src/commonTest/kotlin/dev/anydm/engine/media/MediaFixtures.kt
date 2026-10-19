@@ -1,3 +1,5 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package dev.anydm.engine.media
 
 /** Recorded-shape `yt-dlp -J` output for the media tests. Stream URLs are `$base/v/<format id>`. */
