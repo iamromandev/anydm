@@ -24,12 +24,14 @@ import dev.anydm.engine.protocol.ProbeResult
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
+import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.Extraction
 import dev.anydm.engine.store.ExtractionStore
 import dev.anydm.engine.tools.ResolvedTool
 import dev.anydm.engine.tools.Tool
+import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 
@@ -52,6 +54,7 @@ class SiteProtocol(
     private val beforeExtract: suspend () -> Unit = {},
 ) : Protocol {
     private val ytDlp = YtDlpRunner(runner)
+    private val fragments = FragmentFetcher(http, fileSystem)
 
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
@@ -95,7 +98,7 @@ class SiteProtocol(
         }
     }
 
-    /** Reads [json], chooses the streams and probes each one. */
+    /** Reads [json], chooses the streams and probes or lists each one by its route. */
     private suspend fun build(
         request: ProbeRequest,
         json: String,
@@ -114,10 +117,35 @@ class SiteProtocol(
             }
         if (selection.needsFfmpeg && resolve(Tool.FFMPEG) == null) return missing(Tool.FFMPEG)
         val probes = LinkedHashMap<String, HttpProbe>()
-        for (stream in selection.streams) {
-            when (val probed = http.probeUrl(stream.url, contextFor(request.context, stream, request.mirror.url), credentials = true)) {
-                is StepResult.Failed -> return probed
-                is StepResult.Ok -> probes[stream.formatId] = probed.value
+        val fragments = LinkedHashMap<String, List<FragmentRef>>()
+        var route = selection.route
+        if (route != StreamRoute.YTDLP) {
+            for (stream in selection.streams) {
+                val context = contextFor(request.context, stream, request.mirror.url)
+                if (stream.route == StreamRoute.PLAIN) {
+                    when (val probed = http.probeUrl(stream.url, context, credentials = true)) {
+                        is StepResult.Failed -> return probed
+                        is StepResult.Ok -> probes[stream.formatId] = probed.value
+                    }
+                } else {
+                    when (val listed = resolveFragments(stream, context)) {
+                        is StepResult.Failed -> {
+                            return listed
+                        }
+
+                        is StepResult.Ok -> {
+                            val resolved = listed.value
+                            if (resolved == null) {
+                                // An encrypted playlist: yt-dlp's downloader takes the whole job.
+                                route = StreamRoute.YTDLP
+                                probes.clear()
+                                fragments.clear()
+                                break
+                            }
+                            fragments[stream.formatId] = resolved
+                        }
+                    }
+                }
             }
         }
         val validators = probes.values.map { it.validator }
@@ -130,11 +158,37 @@ class SiteProtocol(
                 context = request.context,
                 probes = probes,
                 name = fileStem(info.title, info.id) + "." + selection.outputExtension,
-                size = totalSize(probes.values.toList()),
+                size = if (route == StreamRoute.PLAIN) totalSize(probes.values.toList()) else null,
                 validator = if (validators.all { it == null }) null else validators.joinToString("|") { it ?: "-" },
                 nameFields = nameFieldsOf(info, selection),
+                fragments = fragments,
+                route = route,
             ),
         )
+    }
+
+    /**
+     * The fragments of a FRAGMENTS [stream]: an HLS playlist is fetched and read, a DASH list came with the page. Null
+     * means the stream is encrypted, which only yt-dlp's downloader can take.
+     */
+    private suspend fun resolveFragments(
+        stream: MediaStream,
+        context: RequestContext,
+    ): StepResult<List<FragmentRef>?> {
+        if (!stream.protocol.startsWith("m3u8")) return StepResult.Ok(stream.fragments)
+        val fetched =
+            when (val got = http.fetchText(stream.url, context)) {
+                is StepResult.Failed -> return got
+                is StepResult.Ok -> got.value
+            }
+        val host = hostOf(stream.url)
+        return when (val parsed = HlsPlaylist.parse(fetched.text, fetched.finalUrl)) {
+            is HlsParse.Media -> StepResult.Ok(parsed.fragments)
+            is HlsParse.Encrypted -> StepResult.Ok(null)
+            HlsParse.Live -> StepResult.Failed(null, "the playlist at $host is a live stream, which isn't supported")
+            HlsParse.Master -> StepResult.Failed(null, "the playlist at $host lists other playlists, not media")
+            is HlsParse.Invalid -> StepResult.Failed(null, "can't read the playlist at $host: ${parsed.reason}")
+        }
     }
 
     /**
@@ -168,23 +222,38 @@ class SiteProtocol(
         context: PlanContext,
     ): StepResult<TransferPlan> {
         check(probe is SiteProbe) { "SiteProtocol can't plan a ${probe::class.simpleName}" }
+        if (probe.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
         val selection = probe.selection
         val outputName = context.download.fileName ?: probe.name
         val stem = outputName.substringBeforeLast('.', outputName)
         val files =
             selection.streams.mapIndexed { index, stream ->
                 val path = if (selection.needsFfmpeg) "$stem.f${safeId(stream.formatId)}.${stream.ext}" else outputName
-                val streamProbe = probe.probes.getValue(stream.formatId)
-                val planned = http.planFile(streamProbe, index, path, context.stored.firstOrNull { it.file.index == index })
-                planned
+                if (stream.route == StreamRoute.PLAIN) {
+                    http.planFile(
+                        probe.probes.getValue(stream.formatId),
+                        index,
+                        path,
+                        context.stored.firstOrNull { it.file.index == index },
+                    )
+                } else {
+                    PlannedFile(index = index, path = path)
+                }
             }
         return StepResult.Ok(TransferPlan(files))
     }
 
+    /** The addresses a transfer fetches from: replaced as a whole when the page is read again. */
+    private class Sources(
+        val probes: Map<String, HttpProbe>,
+        val fragments: Map<String, List<FragmentRef>>,
+    )
+
     /**
-     * Each stream in turn through the HTTP engine, from its own address. A refusal (403, 410) means the address expired
-     * (MED-06): the page is read again, once for the whole call, and each stream continues from its watermarks at the
-     * new address, if it is the same stream of the same size.
+     * Each stream in turn: a plain one through the HTTP engine from its own address, a fragmented one fragment by
+     * fragment into a folder and then joined into its planned file. A refusal (403, 410) means the addresses expired
+     * (MED-06): the page is read again, once for the whole call, and each stream carries on from what it has, if it is
+     * the same stream of the same size or fragment count.
      */
     override suspend fun transfer(
         transfer: Transfer,
@@ -192,22 +261,31 @@ class SiteProtocol(
     ): StepResult<Unit> {
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't transfer a ${site::class.simpleName}" }
-        var probes: Map<String, HttpProbe> = site.probes
+        if (site.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
+        var sources = Sources(site.probes, site.fragments)
         var refreshed = false
+        var finished = 0L
         for ((index, stream) in site.selection.streams.withIndex()) {
             val file = transfer.files.single { it.file.index == index }
             while (true) {
-                val others = bytesOfOthers(transfer, index)
-                val sub = transfer.mirror.copy(url = stream.url)
-                val result = http.transferFile(probes.getValue(stream.formatId), file, sub, emptyList(), ProgressOffsetIo(io, others))
+                val later = transfer.files.filter { it.file.index > index }.sumOf { other -> other.segments.sumOf { it.written } }
+                val sub = ProgressOffsetIo(io, finished + later)
+                val result =
+                    if (stream.route == StreamRoute.PLAIN) {
+                        val own = transfer.mirror.copy(url = stream.url)
+                        http.transferFile(sources.probes.getValue(stream.formatId), file, own, emptyList(), sub)
+                    } else {
+                        transferFragments(transfer, site, stream, file, sources, sub)
+                    }
                 val expired = result is StepResult.Failed && (result.errorClass == ErrorClass.AUTH || result.errorClass == ErrorClass.GONE)
                 if (!expired || refreshed) {
                     if (result is StepResult.Failed) return result
+                    finished += sub.last
                     break
                 }
                 refreshed = true
-                probes =
-                    when (val fresh = refresh(transfer.download.id, site)) {
+                sources =
+                    when (val fresh = refresh(transfer.download.id, site, sources)) {
                         is StepResult.Failed -> return fresh
                         is StepResult.Ok -> fresh.value
                     }
@@ -216,20 +294,34 @@ class SiteProtocol(
         return StepResult.Ok(Unit)
     }
 
-    /** The bytes of every file but [index]: the earlier ones are whole, the later ones as far as they were stored. */
-    private fun bytesOfOthers(
+    private suspend fun transferFragments(
         transfer: Transfer,
-        index: Int,
-    ): Long =
-        transfer.files.filter { it.file.index != index }.sumOf { other ->
-            if (other.file.index < index) other.file.size ?: other.segments.sumOf { it.written } else other.segments.sumOf { it.written }
+        site: SiteProbe,
+        stream: MediaStream,
+        file: TransferFile,
+        sources: Sources,
+        io: TransferIo,
+    ): StepResult<Unit> {
+        val list = sources.fragments.getValue(stream.formatId)
+        val folder =
+            fragmentFolder(transfer, site)?.let { Path(it, safeId(stream.formatId)) } ?: return StepResult.Failed(null, "no save folder")
+        val context = contextFor(site.context, stream, site.url)
+        when (val got = fragments.fetch(folder, list, context, io)) {
+            is StepResult.Failed -> return got
+            is StepResult.Ok -> Unit
         }
+        return when (val joined = fragments.join(folder, list.size, file.file.id, io)) {
+            is StepResult.Failed -> joined
+            is StepResult.Ok -> StepResult.Ok(Unit)
+        }
+    }
 
-    /** The page read again: the same streams at their new addresses, probed, or a failure when they are not the same. */
+    /** The page read again: the same streams at their new addresses, or a failure when they are not the same. */
     private suspend fun refresh(
         id: DownloadId,
         site: SiteProbe,
-    ): StepResult<Map<String, HttpProbe>> {
+        old: Sources,
+    ): StepResult<Sources> {
         val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
         val deno = if (isYoutube(site.url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
         val json =
@@ -242,56 +334,71 @@ class SiteProtocol(
                 is MediaParse.Rejected -> return StepResult.Failed(null, parsed.reason)
                 is MediaParse.Ok -> parsed.info
             }
-        val fresh = LinkedHashMap<String, HttpProbe>()
-        for (old in site.selection.streams) {
+        val probes = LinkedHashMap<String, HttpProbe>()
+        val lists = LinkedHashMap<String, List<FragmentRef>>()
+        for (before in site.selection.streams) {
             val stream =
-                info.streams.firstOrNull { it.formatId == old.formatId && it.isPlain }
-                    ?: return StepResult.Failed(null, "the video changed while it was downloading: format ${old.formatId} is gone")
-            val probe =
-                when (val probed = http.probeUrl(stream.url, contextFor(site.context, stream, site.url), credentials = true)) {
-                    is StepResult.Failed -> return probed
-                    is StepResult.Ok -> probed.value
+                info.streams.firstOrNull { it.formatId == before.formatId && it.route == before.route && !it.drm }
+                    ?: return StepResult.Failed(null, "the video changed while it was downloading: format ${before.formatId} is gone")
+            val context = contextFor(site.context, stream, site.url)
+            if (stream.route == StreamRoute.PLAIN) {
+                val probe =
+                    when (val probed = http.probeUrl(stream.url, context, credentials = true)) {
+                        is StepResult.Failed -> return probed
+                        is StepResult.Ok -> probed.value
+                    }
+                if (probe.size != old.probes.getValue(before.formatId).size) {
+                    return StepResult.Failed(null, "the video changed while it was downloading: format ${before.formatId} has another size")
                 }
-            if (probe.size != site.probes.getValue(old.formatId).size) {
-                return StepResult.Failed(null, "the video changed while it was downloading: format ${old.formatId} has another size")
+                probes[before.formatId] = probe
+            } else {
+                val list =
+                    when (val resolved = resolveFragments(stream, context)) {
+                        is StepResult.Failed -> return resolved
+                        is StepResult.Ok -> resolved.value
+                    }
+                        ?: return StepResult.Failed(
+                            null,
+                            "the video changed while it was downloading: format ${before.formatId} is now encrypted",
+                        )
+                if (list.size != old.fragments.getValue(before.formatId).size) {
+                    return StepResult.Failed(
+                        null,
+                        "the video changed while it was downloading: format ${before.formatId} has another number of fragments",
+                    )
+                }
+                lists[before.formatId] = list
             }
-            fresh[old.formatId] = probe
         }
-        extractions.put(Extraction(id, site.url, json, clock.now()))
-        return StepResult.Ok(fresh)
+        extractions.put(Extraction(id, site.url, json, clock.now(), site.selection.streams.map { it.formatId }))
+        return StepResult.Ok(Sources(probes, lists))
     }
 
     /**
      * A stream that is already the output needs nothing. Otherwise ffmpeg writes the output's partial from the streams'
-     * partials; the runner then places it and, once the job is complete, drops the consumed streams. A failed merge
-     * keeps the streams, so a retry doesn't download them again.
+     * partials; the runner then places it and, once the job is complete, drops the consumed streams and the fragment
+     * folder. A failed merge keeps them, so a retry doesn't download anything again.
      */
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't finalize a ${site::class.simpleName}" }
+        if (site.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
         val files = transfer.files.sortedBy { it.file.index }
         if (!site.selection.needsFfmpeg) {
             extractions.delete(transfer.download.id)
             return StepResult.Ok(FinalizeResult(files.map { it.file.path }))
         }
         val ffmpeg = resolve(Tool.FFMPEG) ?: return missing(Tool.FFMPEG)
-        val first = files.first()
-        var folder = first.target
-        repeat(first.file.path.count { it == '/' } + 1) {
-            folder =
-                folder.parent ?: return StepResult.Failed(null, "${first.target} has no save folder")
-        }
+        val folder = saveFolderOf(transfer) ?: return StepResult.Failed(null, "${files.first().target} has no save folder")
         // The streams stay until the job is complete, so the merge needs room for the output on top of them.
-        val needed = files.sumOf { it.file.size ?: 0L }
+        val needed = files.sumOf { it.file.size ?: (fileSystem.size(it.partial) as? FileResult.Ok)?.value ?: 0L }
         when (val free = fileSystem.freeSpace(folder)) {
             is FileResult.Failed -> {
                 return free.toStepFailed()
             }
 
             is FileResult.Ok -> {
-                if (free.value <
-                    needed
-                ) {
+                if (free.value < needed) {
                     return StepResult.Failed(ErrorClass.DISK_FULL, "not enough room to merge the streams: $needed bytes needed")
                 }
             }
@@ -315,7 +422,25 @@ class SiteProtocol(
             return StepResult.Failed(null, "ffmpeg failed (${ran.exitCode}): $reason".trim())
         }
         extractions.delete(transfer.download.id)
-        return StepResult.Ok(FinalizeResult(listOf(outputName), consumed = files.map { it.file.path }))
+        val cleanup = if (site.fragments.isEmpty()) emptyList() else listOf(fragmentFolderName(outputName, transfer.download.id))
+        return StepResult.Ok(FinalizeResult(listOf(outputName), consumed = files.map { it.file.path }, cleanup = cleanup))
+    }
+
+    /** The save folder: the first planned file's target, up as many folders as its relative path is deep. */
+    private fun saveFolderOf(transfer: Transfer): Path? {
+        val first = transfer.files.minByOrNull { it.file.index } ?: return null
+        var folder: Path = first.target
+        repeat(first.file.path.count { it == '/' } + 1) { folder = folder.parent ?: return null }
+        return folder
+    }
+
+    /** The hidden folder one job's fragments are kept in, beside its output. */
+    private fun fragmentFolder(
+        transfer: Transfer,
+        site: SiteProbe,
+    ): Path? {
+        val folder = saveFolderOf(transfer) ?: return null
+        return targetPath(folder, fragmentFolderName(transfer.download.fileName ?: site.name, transfer.download.id))
     }
 
     private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
@@ -326,4 +451,14 @@ class SiteProtocol(
         val host = hostOf(url).substringBefore(':').lowercase()
         return YOUTUBE_HOSTS.any { host == it || host.endsWith(".$it") }
     }
+}
+
+/** `.<name without extension>.<download id>.frag`, beside the output (in its folder when the output name has one). */
+internal fun fragmentFolderName(
+    outputName: String,
+    id: DownloadId,
+): String {
+    val folder = outputName.substringBeforeLast('/', "")
+    val name = ".${outputName.substringAfterLast('/').substringBeforeLast('.')}.${id.value}.frag"
+    return if (folder.isEmpty()) name else "$folder/$name"
 }

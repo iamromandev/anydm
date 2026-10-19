@@ -106,4 +106,23 @@ internal object MediaFixtures {
             """{"format_id":"hls-native","url":"$base/h/native.m3u8","ext":"mp4","protocol":"m3u8_native","vcodec":"avc1","acodec":"mp4a","height":240},""" +
             """{"format_id":"plain","url":"$base/v/plain","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"mp4a","height":144},""" +
             """{"format_id":"drm","url":"$base/d","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"none","height":1080,"has_drm":true}]}"""
+
+    /** One muxed HLS stream whose playlist is at `$base/hls/index.m3u8`. */
+    fun hlsPageJson(base: String = "https://cdn.test"): String =
+        """{"id":"h1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"hls-720","url":"$base/hls/index.m3u8","ext":"mp4","protocol":"m3u8_native","vcodec":"avc1.64001F","acodec":"mp4a.40.2","height":720,"tbr":1500}]}"""
+
+    /** A video-only DASH stream and an audio-only one, each with its own fragment list under `$base/dash/`. */
+    fun dashPageJson(base: String = "https://cdn.test"): String =
+        """{"id":"d1","title":"Dash","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"dash-v","url":"$base/dash/v.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1.64001F","acodec":"none","height":720,"tbr":1500,""" +
+            """"fragment_base_url":"$base/dash/","fragments":[{"path":"v-init.mp4"},{"path":"v-1.m4s","duration":4.0},{"path":"v-2.m4s","duration":4.0}]},""" +
+            """{"format_id":"dash-a","url":"$base/dash/a.mpd","ext":"m4a","protocol":"http_dash_segments","vcodec":"none","acodec":"mp4a.40.2","tbr":128,""" +
+            """"fragment_base_url":"$base/dash/","fragments":[{"path":"a-init.mp4"},{"path":"a-1.m4s","duration":4.0}]}]}"""
+
+    /** A plain video-only stream (`$base/v/137`) and an HLS audio-only one (`$base/hls/index.m3u8`). */
+    fun mixedRoutesJson(base: String = "https://cdn.test"): String =
+        """{"id":"m1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"137","url":"$base/v/137","ext":"mp4","protocol":"https","vcodec":"avc1.640028","acodec":"none","height":1080,"tbr":4000,"filesize":4000},""" +
+            """{"format_id":"hls-a","url":"$base/hls/index.m3u8","ext":"m4a","protocol":"m3u8_native","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
 }
