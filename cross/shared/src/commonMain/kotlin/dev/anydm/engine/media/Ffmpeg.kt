@@ -24,6 +24,17 @@ private val TWO_TO_THREE =
         "hi" to "hin",
     )
 
+/**
+ * Page text as one command-line argument that stays one on every platform: control characters other than a tab or line
+ * break (a NUL stops a process from starting) are dropped, a double quote becomes a single one (Windows ends an argument
+ * at it), and trailing backslashes are cut (Windows reads one before the closing quote as an escape).
+ */
+private fun argumentSafe(value: String): String =
+    value
+        .filter { it >= ' ' || it == '\t' || it == '\n' }
+        .replace('"', '\'')
+        .trimEnd('\\')
+
 /** The ffmpeg command lines that turn downloaded streams into the output (MED-04, MED-11, MED-13, MED-15). */
 internal object Ffmpeg {
     private fun head(ffmpeg: Path) = listOf(ffmpeg.toString(), "-nostdin", "-hide_banner", "-loglevel", "error", "-y")
@@ -83,7 +94,7 @@ internal object Ffmpeg {
                 if (coverIndex != null) addAll(listOf("-c:v", "copy", "-disposition:v:0", "attached_pic"))
                 if (coverIndex != null && audioFormat == AudioFormat.MP3) addAll(listOf("-id3v2_version", "3"))
                 if (!selection.transcode && audioFormat == AudioFormat.M4A && hlsAac(selection)) addAll(listOf("-bsf:a", "aac_adtstoasc"))
-                for ((key, value) in extras.metadata) addAll(listOf("-metadata", "$key=$value"))
+                for ((key, value) in extras.metadata) addAll(listOf("-metadata", "$key=${argumentSafe(value)}"))
                 addAll(listOf("-f", audioMuxer(audioFormat)))
             } else {
                 if (selection.video != null && selection.audio != null) {
@@ -111,7 +122,7 @@ internal object Ffmpeg {
                 subtitles.forEachIndexed { index, subtitle ->
                     languageTag(subtitle.lang)?.let { addAll(listOf("-metadata:s:s:$index", "language=$it")) }
                 }
-                for ((key, value) in extras.metadata) addAll(listOf("-metadata", "$key=$value"))
+                for ((key, value) in extras.metadata) addAll(listOf("-metadata", "$key=${argumentSafe(value)}"))
                 if (container == Container.MP4 && hlsAac(selection)) addAll(listOf("-bsf:a", "aac_adtstoasc"))
                 if (container == Container.MP4) addAll(listOf("-movflags", "+faststart"))
                 addAll(listOf("-f", videoMuxer(container)))

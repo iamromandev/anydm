@@ -59,6 +59,7 @@ class SiteProtocolExtrasFinalizeTest {
         private val json: String,
         private val failWhen: (List<String>) -> Boolean = { false },
         private val onRun: (List<String>) -> Unit = {},
+        private val cannotStartWhen: (List<String>) -> Boolean = { false },
     ) : ProcessRunner {
         val ffmpegCommands = mutableListOf<List<String>>()
 
@@ -66,6 +67,9 @@ class SiteProtocolExtrasFinalizeTest {
             if (spec.command.first().endsWith("yt-dlp")) return ProcessOutcome.Ok(ProcessResult(0, json + "\n", "", false))
             ffmpegCommands += spec.command
             onRun(spec.command)
+            if (cannotStartWhen(spec.command)) {
+                return ProcessOutcome.Failed(ProcessFailure.StartFailed(spec.command.first(), "bad argument"))
+            }
             return if (failWhen(spec.command)) {
                 ProcessOutcome.Ok(ProcessResult(1, "", "boom: bad input", false))
             } else {
@@ -314,6 +318,18 @@ class SiteProtocolExtrasFinalizeTest {
             fs.exists(Path("/dl", "Extras.chapters.${id.value}.tmp")) shouldBe false
             fs.exists(Path("/dl", "Extras.cover.${id.value}.tmp.jpg")) shouldBe false
             fs.exists(partialPath(Path("/dl", "Extras.mp4"), id)) shouldBe false
+        }
+
+    @Test
+    fun aProcessThatCannotStartIsNotReportedAsAMissingTool() =
+        runBlocking<Unit> {
+            val tools = Tools(MediaFixtures.extrasVideoJson(base), cannotStartWhen = { it.contains("-map") })
+            val rig = rig(MediaFixtures.extrasVideoJson(base), embedAll, tools)
+
+            val failed = rig.site.finalize(rig.transfer()).shouldBeInstanceOf<StepResult.Failed>()
+
+            failed.errorClass shouldBe null
+            failed.message shouldContain "couldn't start ffmpeg"
         }
 
     @Test

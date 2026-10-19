@@ -4,8 +4,12 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.MediaSettings
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.Pacing
+import dev.anydm.engine.core.PacingPreset
+import dev.anydm.engine.core.PacingValues
 import dev.anydm.engine.http.Fault
 import dev.anydm.engine.http.FaultServer
 import dev.anydm.engine.http.HttpProtocol
@@ -73,10 +77,17 @@ class SiteProtocolFragmentsTest {
 
     private fun yt(json: String) = FakeProcessRunner(listOf(FakeProcessRunner.Scripted(listOf("/tools/yt-dlp"), 0, listOf(json))))
 
+    private var settings = MediaSettings()
+
     private fun site(runner: ProcessRunner) =
-        SiteProtocol(HttpProtocol(OkHttpTransport()), runner, {
-            tool(it)
-        }, store.extractions, DesktopFileSystem())
+        SiteProtocol(
+            HttpProtocol(OkHttpTransport(), connections = { 1 }),
+            runner,
+            { tool(it) },
+            store.extractions,
+            DesktopFileSystem(),
+            mediaSettings = { settings },
+        )
 
     private fun playlist(
         prefix: String = "",
@@ -163,6 +174,20 @@ class SiteProtocolFragmentsTest {
             probe.probes shouldBe emptyMap()
             probe.size shouldBe null
             probe.name shouldBe "Test Video.mp4"
+        }
+
+    @Test
+    fun thePacingSettingSpacesTheFragmentRequests() =
+        runBlocking<Unit> {
+            serveHls(count = 3)
+            settings = MediaSettings(pacing = Pacing(PacingPreset.CUSTOM, PacingValues(0.4, 0.0, 0.0)))
+            val rig = rig(yt(MediaFixtures.hlsPageJson(base)))
+            val started = System.nanoTime()
+
+            rig.site.transfer(rig.transfer(), CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            // four fetches, three gaps of 0.4 s, each jittered down by up to a quarter
+            ((System.nanoTime() - started) >= 800_000_000L) shouldBe true
         }
 
     @Test

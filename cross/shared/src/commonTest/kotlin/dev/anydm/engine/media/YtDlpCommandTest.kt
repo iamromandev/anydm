@@ -126,6 +126,21 @@ class YtDlpCommandTest {
     }
 
     @Test
+    fun aCoverIsNotAskedForWhereYtDlpCannotEmbedOne() {
+        val format = Format(videoCodec = "vp9", audioCodec = "opus", embed = EmbedChoice(thumbnail = true, metadata = true))
+        val webm = selection(MediaFixtures.splitVideoJson(), format)
+        val mp4 = selection(MediaFixtures.splitVideoJson(), Format(audioCodec = "mp4a", embed = EmbedChoice(thumbnail = true)))
+
+        val noCover = YtDlpCommand.download(ytDlp, ffmpeg, null, webm, staging, url, null, format)
+        val cover = YtDlpCommand.download(ytDlp, ffmpeg, null, mp4, staging, url, null, Format(embed = EmbedChoice(thumbnail = true)))
+
+        webm.outputExtension shouldBe "webm"
+        noCover.contains("--embed-thumbnail") shouldBe false
+        noCover.contains("--embed-metadata") shouldBe true
+        cover.contains("--embed-thumbnail") shouldBe true
+    }
+
+    @Test
     fun cookieAndPacingFlagsSitBeforeTheOutput() {
         val s = selection(MediaFixtures.rtmpMuxedJson(), Format())
         val extra = listOf("--cookies", "/c/cookies.txt", "--sleep-requests", "1.0")

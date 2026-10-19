@@ -167,8 +167,21 @@ class FfmpegExtrasTest {
 
         val args = Ffmpeg.args(ffmpeg, listOf(v, a), out, s, MergeExtras(emptyList(), null, null, listOf(awkward)))
 
-        args.contains("title=Say \"hi\" = a\n-b; \$(rm -rf)") shouldBe true
-        args[args.indexOf("title=Say \"hi\" = a\n-b; \$(rm -rf)") - 1] shouldBe "-metadata"
+        // A double quote becomes a single one: Windows would end the argument at it and read the rest as options.
+        args.contains("title=Say 'hi' = a\n-b; \$(rm -rf)") shouldBe true
+        args[args.indexOf("title=Say 'hi' = a\n-b; \$(rm -rf)") - 1] shouldBe "-metadata"
+    }
+
+    @Test
+    fun metadataValuesLoseWhatCannotSafelyReachAProcess() {
+        val s = selection(MediaFixtures.splitVideoJson(), Format(audioCodec = "mp4a"))
+        val pairs = listOf("title" to "a\u0000b\u0007c", "comment" to "path C:\\dir\\", "artist" to "x\ty")
+
+        val args = Ffmpeg.args(ffmpeg, listOf(v, a), out, s, MergeExtras(emptyList(), null, null, pairs))
+
+        args.contains("title=abc") shouldBe true
+        args.contains("comment=path C:\\dir") shouldBe true
+        args.contains("artist=x\ty") shouldBe true
     }
 
     @Test

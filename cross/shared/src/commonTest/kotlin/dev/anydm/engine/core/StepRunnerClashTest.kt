@@ -22,11 +22,14 @@ class StepRunnerClashTest {
 
     private val store = InMemoryPlanStore().also { it.register(DownloadId(1)) }.also { it.register(DownloadId(2)) }
 
-    private fun runner(policy: ClashPolicy): StepRunner =
+    private fun runner(
+        policy: ClashPolicy,
+        protocol: FakeProtocol = FakeProtocol(),
+    ): StepRunner =
         StepRunner(
             fs,
             store,
-            mapOf(DownloadKind.DIRECT to FakeProtocol()),
+            mapOf(DownloadKind.DIRECT to protocol),
             stepRoot,
             freeSpaceReserve = 0,
             placement = FilesPlacement(NameCleaner(OsProfile.LINUX), { emptyList() }, { policy }, fs),
@@ -48,6 +51,20 @@ class StepRunnerClashTest {
             done.download.fileName shouldBe "file (1).zip"
             fs.read(renamed) shouldBe whole
             fs.read(target)?.toList() shouldBe listOf<Byte>(7)
+        }
+
+    @Test
+    fun theJobsNameFollowsTheMainOutputWhenSeveralWerePlaced() =
+        runTest {
+            val runner = runner(ClashPolicy.RENAME, FakeProtocol(outputs = listOf("file.zip", "file.en.srt")))
+            val ready = runner.ready()
+            fs.put(target, byteArrayOf(7))
+            fs.put(partialPath(Path(stepRoot, "file.en.srt"), DownloadId(1)), byteArrayOf(9))
+
+            val done = runner.run(ready).shouldBeInstanceOf<RunOutcome.Finished>()
+
+            done.outputs.map { it.name } shouldBe listOf("file (1).zip", "file.en.srt")
+            done.download.fileName shouldBe "file (1).zip"
         }
 
     @Test

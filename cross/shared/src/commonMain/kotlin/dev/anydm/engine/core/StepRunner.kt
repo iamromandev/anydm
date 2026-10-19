@@ -256,8 +256,8 @@ class StepRunner(
                 is StepResult.Failed -> return runFailed(muxing, Step.POST_PROCESS, placed)
                 is StepResult.Ok -> placed.value
             }
-        // A name clash can have renamed the one file: the job's name follows it.
-        val renamedTo = outputs.singleOrNull()?.takeIf { it != targetPath(folder, finalized.outputs.single()) }?.name
+        // A name clash can have renamed the main (first) output: the job's name follows it.
+        val renamedTo = outputs.firstOrNull()?.takeIf { it != targetPath(folder, finalized.outputs.first()) }?.name
         val finished =
             (
                 if (renamedTo !=

@@ -40,7 +40,8 @@ internal class YtDlpRunner(
                 add(ytDlp.executable(Tool.YT_DLP.id).toString())
                 // Our command alone: a user's yt-dlp config must not change what we get.
                 add("--ignore-config")
-                addAll(listOf("-J", "--no-playlist", "--no-warnings"))
+                // Warnings stay on: "some formats have been skipped" in stderr is what tells a withheld format (MED-19).
+                addAll(listOf("-J", "--no-playlist"))
                 if (deno != null) addAll(listOf("--js-runtimes", "deno:${deno.executable(Tool.DENO.id)}"))
                 addAll(extraArgs)
                 add("--")

@@ -29,7 +29,7 @@ class YtDlpRunnerTest {
             YtDlpRunner(runner).extract(tool, null, url)
 
             runner.started.single().command shouldBe
-                listOf("/tools/yt-dlp", "--ignore-config", "-J", "--no-playlist", "--no-warnings", "--", url)
+                listOf("/tools/yt-dlp", "--ignore-config", "-J", "--no-playlist", "--", url)
         }
 
     @Test

@@ -5,6 +5,8 @@ import dev.anydm.engine.core.SponsorBlockMode
 import dev.anydm.engine.core.SubtitleMode
 import kotlinx.io.files.Path
 
+private val NO_COVER_EXTENSIONS = setOf("webm", "wav")
+
 /** The command line that has yt-dlp download and merge a whole selection itself (MED-05, MED-07). */
 internal object YtDlpCommand {
     /**
@@ -37,7 +39,7 @@ internal object YtDlpCommand {
             } else if (selection.streams.singleOrNull()?.ext != selection.outputExtension) {
                 addAll(listOf("--remux-video", selection.outputExtension))
             }
-            addAll(mediaFlags(format))
+            addAll(mediaFlags(format, selection.outputExtension))
             if (ffmpeg != null) addAll(listOf("--ffmpeg-location", ffmpeg.toString()))
             if (deno != null) addAll(listOf("--js-runtimes", "deno:$deno"))
             // Cookies and pacing.
@@ -51,7 +53,10 @@ internal object YtDlpCommand {
  * argument, and the values were checked when the choice was made. On this route a subtitle choice of BOTH is EMBED: yt-dlp
  * removes the subtitle files it embeds.
  */
-internal fun mediaFlags(format: Format): List<String> =
+internal fun mediaFlags(
+    format: Format,
+    outputExtension: String? = null,
+): List<String> =
     buildList {
         format.subtitles?.let { subtitles ->
             add("--write-subs")
@@ -65,6 +70,7 @@ internal fun mediaFlags(format: Format): List<String> =
             addAll(listOf(flag, sponsorBlock.categories.joinToString(",")))
         }
         if (format.embed.metadata) add("--embed-metadata")
-        if (format.embed.thumbnail) add("--embed-thumbnail")
+        // yt-dlp stops with an error when asked for a cover in a container that can't hold one.
+        if (format.embed.thumbnail && outputExtension?.lowercase() !in NO_COVER_EXTENSIONS) add("--embed-thumbnail")
         if (format.embed.chapters) add("--embed-chapters")
     }

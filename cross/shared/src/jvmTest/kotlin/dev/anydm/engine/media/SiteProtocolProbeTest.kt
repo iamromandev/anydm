@@ -118,7 +118,7 @@ class SiteProtocolProbeTest {
             val probe = siteProbe(protocol(runner).probe(request(format = mp4)))
 
             runner.started.single().command shouldBe
-                listOf("/tools/yt-dlp", "--ignore-config", "-J", "--no-playlist", "--no-warnings", "--", pageUrl)
+                listOf("/tools/yt-dlp", "--ignore-config", "-J", "--no-playlist", "--", pageUrl)
             probe.selection.streams.map { it.formatId } shouldBe listOf("137", "140")
             probe.name shouldBe "Test Video.mp4"
             probe.size shouldBe 5000L

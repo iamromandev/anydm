@@ -19,6 +19,7 @@ import dev.anydm.engine.http.originOf
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.platform.ProcessFailure
 import dev.anydm.engine.platform.ProcessOutcome
 import dev.anydm.engine.platform.ProcessRunner
 import dev.anydm.engine.platform.ProcessSpec
@@ -68,7 +69,7 @@ class SiteProtocol(
     private val log: Log = Log.None,
 ) : Protocol {
     private val ytDlp = YtDlpRunner(runner)
-    private val fragments = FragmentFetcher(http, fileSystem)
+    private val fragments = FragmentFetcher(http, fileSystem, pacer)
     private val ytDlpDownload = YtDlpDownload(runner)
 
     /** The result of reading a page: a probe, no stream that fits the choice, or another failure. */
@@ -513,7 +514,12 @@ class SiteProtocol(
             fragmentFolder(transfer, site)?.let { Path(it, safeFormatId(stream.formatId)) }
                 ?: return StepResult.Failed(null, "no save folder")
         val context = contextFor(site.context, stream, site.url)
-        when (val got = fragments.fetch(folder, list, context, io, trustedUrl = stream.url)) {
+        val gap =
+            mediaSettings()
+                .pacing
+                .values()
+                .requestSleep.seconds
+        when (val got = fragments.fetch(folder, list, context, io, trustedUrl = stream.url, gap = gap)) {
             is StepResult.Failed -> return got
             is StepResult.Ok -> Unit
         }
@@ -679,7 +685,7 @@ class SiteProtocol(
             val args = Ffmpeg.args(ffmpeg, streamFiles.map { it.partial }, output, site.selection, extras)
             val ran =
                 when (val outcome = runner.run(ProcessSpec(args))) {
-                    is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.FFMPEG.id)
+                    is ProcessOutcome.Failed -> return cannotRun(outcome.failure)
                     is ProcessOutcome.Ok -> outcome.value
                 }
             if (ran.exitCode != 0) {
@@ -725,6 +731,13 @@ class SiteProtocol(
         }
         return made
     }
+
+    /** ffmpeg isn't there only when the system says so; a command that couldn't start is another matter. */
+    private fun cannotRun(failure: ProcessFailure): StepResult.Failed =
+        when (failure) {
+            is ProcessFailure.NotFound -> missing(Tool.FFMPEG)
+            is ProcessFailure.StartFailed -> StepResult.Failed(null, "couldn't start ffmpeg: ${failure.detail ?: "unknown reason"}")
+        }
 
     private suspend fun hasBytes(file: TransferFile): Boolean = ((fileSystem.size(file.partial) as? FileResult.Ok)?.value ?: 0L) > 0L
 
