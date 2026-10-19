@@ -187,8 +187,10 @@ class Engine(
                     categories = { store.categories.list() },
                     policy = { store.settings.load().clashPolicy },
                     fileSystem = fileSystem,
+                    profiles = { store.profiles.get(it) },
                 ),
             checkpointEvery = checkpointEvery,
+            profiles = { store.profiles.get(it) },
         )
 
     /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
@@ -206,6 +208,7 @@ class Engine(
             observer,
             log,
             duplicates = duplicates,
+            profiles = { store.profiles.get(it) },
         )
 
     private sealed interface Fact {

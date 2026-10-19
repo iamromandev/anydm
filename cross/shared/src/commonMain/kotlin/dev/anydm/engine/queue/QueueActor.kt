@@ -23,6 +23,7 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.PrepareOutcome
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.RunListener
 import dev.anydm.engine.core.RunOutcome
@@ -30,12 +31,14 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.effectiveSpeedLimit
 import dev.anydm.engine.core.goneMirrors
 import dev.anydm.engine.core.isSafeRelativePath
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.FileResult
@@ -83,6 +86,8 @@ internal class QueueActor(
     private val log: Log,
     timeSource: TimeSource.WithComparableMarks,
     private val duplicates: DuplicateCheck,
+    /** A job's profile (SET-02), read when it starts and when its limit changes; null if it is gone. */
+    private val profiles: suspend (ProfileId) -> Profile? = { null },
 ) {
     /** Every running job's speed limits (NET-01..03), shared by all of them. */
     private val bandwidth = Bandwidth(timeSource)
@@ -272,7 +277,8 @@ internal class QueueActor(
 
     // Commands
 
-    suspend fun add(new: NewDownload): CommandResult {
+    suspend fun add(requested: NewDownload): CommandResult {
+        val new = withDefaultProfile(requested)
         duplicates.atAdd(new)?.let { return CommandResult.Duplicate(it) }
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
@@ -288,10 +294,12 @@ internal class QueueActor(
      * left out and counted. The parent is only a label for its children and never takes a slot.
      */
     suspend fun addCollection(
-        parent: NewDownload,
-        children: List<NewDownload>,
+        requestedParent: NewDownload,
+        requestedChildren: List<NewDownload>,
         items: List<NewItem>,
     ): CollectionAdded {
+        val parent = withDefaultProfile(requestedParent)
+        val children = requestedChildren.map { withDefaultProfile(it) }
         val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
         val (collection, added) = downloads.addCollection(parent, kept.map { children[it] }, kept.map { items[it] }, clock.now())
         announce(listOf(collection) + added)
@@ -309,6 +317,13 @@ internal class QueueActor(
         val added = downloads.addChildren(collection, kept.map { children[it] }, kept.map { items[it] }, clock.now())
         announce(added)
         return CollectionAdded(parent, hold(added), children.size - kept.size)
+    }
+
+    // A download that names no profile takes the default one, if that still exists (SET-02).
+    private suspend fun withDefaultProfile(new: NewDownload): NewDownload {
+        if (new.profileId != null) return new
+        val default = store.settings.load().defaultProfileId ?: return new
+        return if (profiles(default) != null) new.copy(profileId = default) else new
     }
 
     private suspend fun announce(jobs: List<Download>) {
@@ -502,7 +517,7 @@ internal class QueueActor(
     ): CommandResult {
         val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(speedLimit = bytesPerSecond))) }
         slot.download = save(slot.download.copy(speedLimit = bytesPerSecond))
-        bandwidth.setLimit(id, bytesPerSecond)
+        bandwidth.setLimit(id, effectiveSpeedLimit(slot.download, slot.download.profileId?.let { profiles(it) }))
         return CommandResult.Done(slot.download)
     }
 
@@ -791,7 +806,12 @@ internal class QueueActor(
         val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
         val failedCheck = attempts.lastOrNull()?.errorClass == ErrorClass.INTEGRITY
-        val limiter = bandwidth.register(download.id, download.speedLimit, download.priority)
+        val limiter =
+            bandwidth.register(
+                download.id,
+                effectiveSpeedLimit(download, download.profileId?.let { profiles(it) }),
+                download.priority,
+            )
         val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck, limiter)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)

@@ -7,6 +7,8 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.files.NewProfile
+import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.media.FakePlaylistSource
 import dev.anydm.engine.media.PlaylistEntry
 import dev.anydm.engine.media.PlaylistListing
@@ -677,6 +679,41 @@ abstract class EngineCollectionContract : StoreTestBase() {
                 playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(dropped = 2)))
 
                 h.sync(added.collection.id).done().unavailable shouldBe 2
+            }
+        }
+
+    @Test
+    fun theCollectionAndItsChildrenCarryTheProfile() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val profile =
+                    h.store.profiles
+                        .add(NewProfile("Music"))
+                        .shouldBeInstanceOf<ProfileResult.Saved>()
+                        .profile
+
+                val added = h.engine.addPlaylist(playlistUrl, template = NewDownload(DownloadKind.SITE, profileId = profile.id)).added()
+
+                added.collection.profileId shouldBe profile.id
+                added.children.map { it.profileId }.toSet() shouldBe setOf(profile.id)
+            }
+        }
+
+    @Test
+    fun theDefaultProfileAppliesToACollectionAndItsChildren() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val profile =
+                    h.store.profiles
+                        .add(NewProfile("Music"))
+                        .shouldBeInstanceOf<ProfileResult.Saved>()
+                        .profile
+                h.store.settings.update { it.copy(defaultProfileId = profile.id) }
+
+                val added = h.engine.addPlaylist(playlistUrl).added()
+
+                added.collection.profileId shouldBe profile.id
+                added.children.map { it.profileId }.toSet() shouldBe setOf(profile.id)
             }
         }
 }

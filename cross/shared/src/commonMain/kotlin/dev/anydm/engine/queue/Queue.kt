@@ -7,10 +7,12 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
@@ -47,8 +49,11 @@ class Queue internal constructor(
     timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     /** Asked on every add (FIL-05). */
     duplicates: DuplicateCheck = DuplicateCheck.None,
+    /** A job's profile (SET-02); null if it is gone. */
+    profiles: suspend (ProfileId) -> Profile? = { null },
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates)
+    private val actor =
+        QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates, profiles)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
