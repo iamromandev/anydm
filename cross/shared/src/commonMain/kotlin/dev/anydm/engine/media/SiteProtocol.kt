@@ -15,6 +15,7 @@ import dev.anydm.engine.http.HttpProbe
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.hostOf
 import dev.anydm.engine.http.originOf
+import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.ProcessOutcome
@@ -38,6 +39,7 @@ import dev.anydm.engine.tools.Tool
 import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 
 private val EXTRACTION_TTL = 1.hours
 private val YOUTUBE_HOSTS = listOf("youtube.com", "youtu.be", "youtube-nocookie.com")
@@ -58,6 +60,7 @@ class SiteProtocol(
     /** The global cookie source and pacing, asked at each probe so a change applies to the next job. */
     private val mediaSettings: suspend () -> MediaSettings = { MediaSettings() },
     private val pacer: HostPacer = HostPacer(),
+    private val log: Log = Log.None,
 ) : Protocol {
     private val ytDlp = YtDlpRunner(runner)
     private val fragments = FragmentFetcher(http, fileSystem)
@@ -278,9 +281,24 @@ class SiteProtocol(
         base: RequestContext?,
         stream: MediaStream,
         pageUrl: String,
+    ): RequestContext =
+        contextForUrl(
+            base,
+            stream.url,
+            pageUrl,
+            stream.headers.filter { header ->
+                runCatching { RequestContext(listOf(header)) }.isSuccess
+            },
+        )
+
+    /** The same for any address on the page ([own] are headers named for it): logins only to the page's own host. */
+    private fun contextForUrl(
+        base: RequestContext?,
+        url: String,
+        pageUrl: String,
+        own: List<Pair<String, String>> = emptyList(),
     ): RequestContext {
-        val own = stream.headers.filter { header -> runCatching { RequestContext(listOf(header)) }.isSuccess }
-        val samePlace = originOf(stream.url) == originOf(pageUrl)
+        val samePlace = originOf(url) == originOf(pageUrl)
         val inherited =
             base?.headers.orEmpty().let { all ->
                 if (samePlace) {
@@ -307,7 +325,7 @@ class SiteProtocol(
         if (probe.route == StreamRoute.YTDLP) return StepResult.Ok(TransferPlan(listOf(PlannedFile(index = 0, path = "$stem.ytdlp"))))
         val files =
             selection.streams.mapIndexed { index, stream ->
-                val path = if (selection.needsFfmpeg) "$stem.f${safeFormatId(stream.formatId)}.${stream.ext}" else outputName
+                val path = if (probe.mainNeedsFfmpeg) "$stem.f${safeFormatId(stream.formatId)}.${stream.ext}" else outputName
                 if (stream.route == StreamRoute.PLAIN) {
                     http.planFile(
                         probe.probes.getValue(stream.formatId),
@@ -319,7 +337,24 @@ class SiteProtocol(
                     PlannedFile(index = index, path = path)
                 }
             }
-        return StepResult.Ok(TransferPlan(files))
+        // The subtitle tracks and the cover are small files of their own, fetched after the streams.
+        val extraFiles =
+            probe.extras.subtitles.mapIndexed { i, track ->
+                val auto = if (track.auto) "-auto" else ""
+                PlannedFile(
+                    index = selection.streams.size + i,
+                    path = "$stem.sub$i.${safeFormatId(track.lang)}$auto.${safeFormatId(track.ext)}",
+                )
+            } +
+                listOfNotNull(
+                    probe.extras.thumbnail?.let {
+                        PlannedFile(
+                            index = selection.streams.size + probe.extras.subtitles.size,
+                            path = "$stem.thumb.${safeFormatId(it.thumbnail.ext.ifEmpty { "img" })}",
+                        )
+                    },
+                )
+        return StepResult.Ok(TransferPlan(files + extraFiles))
     }
 
     /** The addresses a transfer fetches from: replaced as a whole when the page is read again. */
@@ -370,7 +405,47 @@ class SiteProtocol(
                     }
             }
         }
+        fetchExtras(transfer, site, io, finished)?.let { return it }
         return StepResult.Ok(Unit)
+    }
+
+    /**
+     * The subtitle tracks and the cover, each into its planned file. They are extras: one that can't be had (missing, a web
+     * page, empty) is logged and left empty, never failing the video. Only a full disk fails the job.
+     */
+    private suspend fun fetchExtras(
+        transfer: Transfer,
+        site: SiteProbe,
+        io: TransferIo,
+        streamBytes: Long,
+    ): StepResult.Failed? {
+        val wanted =
+            site.extras.subtitles.map { "subtitle ${it.lang}" to it.url } +
+                listOfNotNull(site.extras.thumbnail?.let { "cover picture" to it.thumbnail.url })
+        val gap =
+            mediaSettings()
+                .pacing
+                .values()
+                .requestSleep.seconds
+        var done = streamBytes
+        for ((i, item) in wanted.withIndex()) {
+            val (label, url) = item
+            val file = transfer.files.firstOrNull { it.file.index == site.selection.streams.size + i } ?: continue
+            pacer.pace(originOf(url), gap)
+            when (val got = http.fetchFragment(url, contextForUrl(site.context, url, site.url), null, null, io)) {
+                is StepResult.Failed -> {
+                    log.warn("media") { "$label skipped: ${got.message}" }
+                }
+
+                is StepResult.Ok -> {
+                    val written = io.write(file.file.id, 0, got.value)
+                    if (written is StepResult.Failed) return written
+                    done += got.value.size
+                    io.progress(done)
+                }
+            }
+        }
+        return null
     }
 
     /** yt-dlp downloads and merges the whole selection into a staging folder, held to the job's share of the limit. */

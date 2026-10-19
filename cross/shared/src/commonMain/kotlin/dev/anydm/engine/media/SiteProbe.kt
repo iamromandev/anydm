@@ -2,6 +2,7 @@ package dev.anydm.engine.media
 
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.RequestContext
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.files.NameFields
 import dev.anydm.engine.files.TemplateField
 import dev.anydm.engine.http.HttpProbe
@@ -34,7 +35,19 @@ class SiteProbe(
     val extras: MediaExtras = MediaExtras.None,
     /** The page was read with the cookie source (false when there is none, or the site withheld formats from it, MED-19). */
     val withCookies: Boolean = false,
-) : ProbeResult
+) : ProbeResult {
+    /**
+     * Whether the main output has to go through ffmpeg: the selection says so, or something is embedded in it (a subtitle
+     * track, the cover, chapters, metadata). Subtitles written as separate files need ffmpeg too, but not the video.
+     */
+    val mainNeedsFfmpeg: Boolean
+        get() {
+            val mode = format.subtitles?.mode
+            val embedsSubtitles = (mode == SubtitleMode.EMBED || mode == SubtitleMode.BOTH) && extras.subtitles.isNotEmpty()
+            return selection.needsFfmpeg || embedsSubtitles || extras.thumbnail != null || extras.chapters.isNotEmpty() ||
+                extras.metadata.isNotEmpty()
+        }
+}
 
 /** What a media job brings besides its streams: the subtitle tracks chosen, the cover, the chapters, and the metadata pairs to embed. */
 class MediaExtras(

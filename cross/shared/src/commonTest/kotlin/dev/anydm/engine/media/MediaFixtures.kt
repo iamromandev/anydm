@@ -174,4 +174,10 @@ internal object MediaFixtures {
             """"formats":[{"format_id":"v1","url":"$base/v/v1","ext":"mp4","protocol":"https","vcodec":"avc1.64001F","acodec":"none",""" +
                 """"height":720,"fps":30,"tbr":1500,"filesize":1000},""",
         )
+
+    /** [extrasVideoJson] with `v1` carrying sound itself, so the choice is one muxed stream. */
+    fun extrasMuxedJson(base: String = "https://cdn.test"): String =
+        extrasVideoJson(
+            base,
+        ).replace("\"vcodec\":\"avc1.64001F\",\"acodec\":\"none\"", "\"vcodec\":\"avc1.64001F\",\"acodec\":\"mp4a.40.2\"")
 }
