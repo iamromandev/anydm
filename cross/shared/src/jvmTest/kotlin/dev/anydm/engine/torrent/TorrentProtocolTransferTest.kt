@@ -209,7 +209,8 @@ class TorrentProtocolTransferTest {
             backend.added.single().moved shouldBe (folder to false)
             result.outputs shouldBe listOf("Pack/b.bin")
             result.consumed shouldBe emptyList()
-            result.cleanup shouldBe listOf(".Pack.${transfer.download.id.value}.torrent")
+            // libtorrent keeps the pieces of files it was told to skip in a hidden file of its own, and moves it with the rest
+            result.cleanup shouldBe listOf(".Pack.${transfer.download.id.value}.torrent", ".${pack.infoHash}.parts")
             result.seeding shouldBe false
             backend.added.single().removed shouldBe 1
         }

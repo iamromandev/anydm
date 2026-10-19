@@ -259,7 +259,7 @@ class TorrentProtocol(
                 outputs = names.filterIndexed { i, _ -> selected[i] },
                 // Renamed: the rows planned under the old names give way to the ones the files now have.
                 consumed = if (names == planned) emptyList() else planned,
-                cleanup = listOf(stagingName(transfer)),
+                cleanup = listOf(stagingName(transfer), ".${(transfer.probe as TorrentProbe).info.infoHash}.parts"),
             ),
         )
     }
