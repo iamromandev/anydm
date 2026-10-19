@@ -8,6 +8,7 @@ import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.DuplicateReason
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.protocol.FakeProbe
+import dev.anydm.engine.store.DownloadStore
 import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
@@ -229,5 +230,39 @@ class FilesDuplicateCheckTest {
             val sized = r.store.downloads.add(NewDownload(DownloadKind.DIRECT, size = 10))
 
             r.check.afterProbe(sized, FakeProbe("a.zip", 10), target) shouldBe DuplicateFound(null, DuplicateReason.ON_DISK)
+        }
+
+    private class CountingDownloads(
+        private val inner: DownloadStore,
+    ) : DownloadStore by inner {
+        var lists = 0
+
+        override suspend fun list(): List<Download> {
+            lists++
+            return inner.list()
+        }
+    }
+
+    @Test
+    fun atAddAllAnswersLikeAskingOneByOne() =
+        runTest {
+            val r = rig()
+            val existing = r.store.downloads.add(link("https://h/a.zip"))
+            val asked = listOf(link("https://h/a.zip"), link("https://h/b.zip"), link("https://h/c.zip", allowDuplicate = true), link())
+
+            r.check.atAddAll(asked) shouldBe asked.map { r.check.atAdd(it) }
+            r.check.atAddAll(asked) shouldBe listOf(DuplicateFound(existing.id, DuplicateReason.SAME_URL), null, null, null)
+        }
+
+    @Test
+    fun atAddAllReadsTheJobsOnceForAnyNumberOfLinks() =
+        runTest {
+            val r = rig()
+            r.store.downloads.add(link("https://h/a.zip"))
+            val counting = CountingDownloads(r.store.downloads)
+
+            FilesDuplicateCheck(counting, r.store.history, r.fs).atAddAll((1..50).map { link("https://h/new$it.zip") })
+
+            counting.lists shouldBe 1
         }
 }

@@ -98,8 +98,12 @@ class SiteProtocolProbeTest {
     private suspend fun request(
         url: String = pageUrl,
         format: Format? = null,
+        playlistIndex: Int? = null,
     ): ProbeRequest {
-        val download = store.downloads.add(NewDownload(DownloadKind.SITE, mirrors = listOf(url), saveFolder = "/dl"))
+        val download =
+            store.downloads.add(
+                NewDownload(DownloadKind.SITE, mirrors = listOf(url), saveFolder = "/dl", playlistIndex = playlistIndex),
+            )
         return ProbeRequest(download, store.downloads.mirrors(download.id).single(), null, format)
     }
 
@@ -474,4 +478,15 @@ class SiteProtocolProbeTest {
 
         override suspend fun start(spec: dev.anydm.engine.platform.ProcessSpec) = current.start(spec)
     }
+
+    @Test
+    fun aCollectionItemsPlaceInThePlaylistIsANameField() =
+        runBlocking<Unit> {
+            serveStreams()
+            val probe = siteProbe(protocol(yt(listOf(MediaFixtures.splitVideoJson(base)))).probe(request(format = mp4, playlistIndex = 4)))
+            val loose = siteProbe(protocol(yt(listOf(MediaFixtures.splitVideoJson(base)))).probe(request(format = mp4)))
+
+            probe.nameFields.values[TemplateField.PLAYLIST_INDEX] shouldBe "4"
+            loose.nameFields.values[TemplateField.PLAYLIST_INDEX] shouldBe null
+        }
 }

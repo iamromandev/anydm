@@ -40,6 +40,28 @@ interface DownloadStore : PlanStore {
      */
     suspend fun update(download: Download): Boolean
 
+    /**
+     * Adds a collection and its [children] in one transaction (MED-16): each child gets `parentId` and, with [items] (one
+     * per child, same order), an item row. Returns the parent and the children as stored.
+     */
+    suspend fun addCollection(
+        parent: NewDownload,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+        queuedAt: Instant? = null,
+    ): Pair<Download, List<Download>>
+
+    /** More children for an existing collection, the same way (a sync, MED-17). Empty if the collection is gone. */
+    suspend fun addChildren(
+        parent: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+        queuedAt: Instant? = null,
+    ): List<Download>
+
+    /** The direct children of a collection, by their place in the playlist, then id (MED-16). */
+    suspend fun children(parent: DownloadId): List<Download>
+
     /** Deletes the download with its mirrors, files, segments, attempts and child downloads. False if absent. */
     suspend fun remove(id: DownloadId): Boolean
 

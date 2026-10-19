@@ -6,6 +6,7 @@ import dev.anydm.engine.core.DownloadStatus.MUXING
 import dev.anydm.engine.core.DownloadStatus.PENDING
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.FileWriter
@@ -83,6 +84,8 @@ class StepRunner(
     private val placement: Placement = DirectPlacement(fileSystem),
     /** How often a running transfer's checkpoints are saved (FND-09); they are also saved when it ends. */
     private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
+    /** A job's profile, looked up when it is probed so an edit reaches its next probe (SET-02); null if it is gone. */
+    private val profiles: suspend (ProfileId) -> Profile? = { null },
 ) {
     init {
         require(checkpointEvery.isPositive()) { "checkpointEvery must be positive: $checkpointEvery" }
@@ -117,8 +120,9 @@ class StepRunner(
                 is StepResult.Failed -> return prepareFailed(download, Step.PREFLIGHT, checked)
                 is StepResult.Ok -> checked.value
             }
+        val format = effectiveFormat(store.format(download.id), download.profileId?.let { profiles(it) })
         val probe =
-            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id), store.format(download.id)))) {
+            when (val probed = protocol.probe(ProbeRequest(download, mirror, store.context(download.id), format))) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, probed)
                 is StepResult.Ok -> probed.value
             }

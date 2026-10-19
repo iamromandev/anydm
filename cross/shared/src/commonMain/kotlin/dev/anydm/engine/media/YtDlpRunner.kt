@@ -34,6 +34,8 @@ internal class YtDlpRunner(
         deno: ResolvedTool?,
         url: String,
         extraArgs: List<String> = emptyList(),
+        /** A playlist's flat listing (`--flat-playlist`), not one video (`--no-playlist`). */
+        flat: Boolean = false,
     ): StepResult<Extracted> {
         val command =
             buildList {
@@ -41,7 +43,7 @@ internal class YtDlpRunner(
                 // Our command alone: a user's yt-dlp config must not change what we get.
                 add("--ignore-config")
                 // Warnings stay on: "some formats have been skipped" in stderr is what tells a withheld format (MED-19).
-                addAll(listOf("-J", "--no-playlist"))
+                addAll(listOf("-J", if (flat) "--flat-playlist" else "--no-playlist"))
                 if (deno != null) addAll(listOf("--js-runtimes", "deno:${deno.executable(Tool.DENO.id)}"))
                 addAll(extraArgs)
                 add("--")

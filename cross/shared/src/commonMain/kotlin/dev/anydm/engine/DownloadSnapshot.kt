@@ -3,6 +3,7 @@ package dev.anydm.engine
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.File
+import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
 
@@ -26,6 +27,8 @@ data class DownloadSnapshot(
     val attempts: List<Attempt>,
     val mirrors: List<Mirror>,
     val files: List<FileSnapshot>,
+    /** A collection: how many of its items are in each state (MED-16); null for any other job. */
+    val items: ItemCounts? = null,
 )
 
 /** A file of a job with its segments, as of the last checkpoint. */

@@ -48,6 +48,12 @@ data class Download(
     val checksum: Checksum? = null,
     /** Added anyway after a duplicate warning (FIL-06): the duplicate checks leave it alone. */
     val allowDuplicate: Boolean = false,
+    /** A collection's item: its position in the playlist, not in the selection (MED-16). */
+    val playlistIndex: Int? = null,
+    /** A collection: the playlist or channel page its items came from, so a sync can list it again (MED-17). */
+    val sourceUrl: String? = null,
+    /** A collection: the range and limit chosen; a sync applies them again. */
+    val selection: ItemSelection? = null,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }

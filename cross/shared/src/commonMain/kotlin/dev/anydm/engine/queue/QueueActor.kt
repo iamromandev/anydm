@@ -23,6 +23,7 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.PrepareOutcome
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.RunListener
 import dev.anydm.engine.core.RunOutcome
@@ -30,12 +31,14 @@ import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.core.effectiveSpeedLimit
 import dev.anydm.engine.core.goneMirrors
 import dev.anydm.engine.core.isSafeRelativePath
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.FileResult
@@ -46,6 +49,7 @@ import dev.anydm.engine.protocol.RelinkRequest
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewAttempt
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
@@ -82,6 +86,8 @@ internal class QueueActor(
     private val log: Log,
     timeSource: TimeSource.WithComparableMarks,
     private val duplicates: DuplicateCheck,
+    /** A job's profile (SET-02), read when it starts and when its limit changes; null if it is gone. */
+    private val profiles: suspend (ProfileId) -> Profile? = { null },
 ) {
     /** Every running job's speed limits (NET-01..03), shared by all of them. */
     private val bandwidth = Bandwidth(timeSource)
@@ -186,6 +192,9 @@ internal class QueueActor(
 
     suspend fun inspect(): QueueState = ask { state() }
 
+    /** Runs [block] on the queue's coroutine and returns its value, for a command that answers with more than a [CommandResult]. */
+    suspend fun <T> inActor(block: suspend QueueActor.() -> T): T = ask(block)
+
     /** Runs [block] on the queue's coroutine and returns its value. */
     private suspend fun <T> ask(block: suspend QueueActor.() -> T): T {
         val reply = CompletableDeferred<T>()
@@ -268,7 +277,8 @@ internal class QueueActor(
 
     // Commands
 
-    suspend fun add(new: NewDownload): CommandResult {
+    suspend fun add(requested: NewDownload): CommandResult {
+        val new = withProfile(requested)
         duplicates.atAdd(new)?.let { return CommandResult.Duplicate(it) }
         val added = downloads.add(new, queuedAt = clock.now())
         lastStatus[added.id] = added.status
@@ -278,6 +288,111 @@ internal class QueueActor(
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }
+
+    /**
+     * Adds a collection (MED-16): the parent and its children in one transaction. A child the duplicate check refuses is
+     * left out and counted. The parent is only a label for its children and never takes a slot.
+     */
+    suspend fun addCollection(
+        requestedParent: NewDownload,
+        requestedChildren: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? {
+        val parent = withProfile(requestedParent)
+        val children = requestedChildren.map { withProfile(it) }
+        val found = duplicates.atAddAll(children)
+        val kept = children.indices.filter { found[it] == null }
+        // Every item refused: the same playlist added again. No empty collection is made for it.
+        if (children.isNotEmpty() && kept.isEmpty()) return null
+        val (collection, added) = downloads.addCollection(parent, kept.map { children[it] }, kept.map { items[it] }, clock.now())
+        announce(listOf(collection) + added)
+        return CollectionAdded(collection, hold(added), children.size - kept.size)
+    }
+
+    /** More items for a collection (a sync, MED-17), the same way; null if the collection is gone. */
+    suspend fun addChildren(
+        collection: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? {
+        val parent = downloads.get(collection) ?: return null
+        val found = duplicates.atAddAll(children)
+        val kept = children.indices.filter { found[it] == null }
+        val added = downloads.addChildren(collection, kept.map { children[it] }, kept.map { items[it] }, clock.now())
+        announce(added)
+        return CollectionAdded(parent, hold(added), children.size - kept.size)
+    }
+
+    // A download that names no profile takes the default one; one that names a profile that doesn't exist, or is the
+    // engine's own tool download, gets none (SET-02): an id nobody holds must not attach to a profile made later.
+    private suspend fun withProfile(new: NewDownload): NewDownload {
+        if (new.kind == DownloadKind.TOOL) return if (new.profileId == null) new else new.copy(profileId = null)
+        val wanted = new.profileId ?: store.settings.load().defaultProfileId
+        val valid = wanted?.takeIf { profiles(it) != null }
+        return if (valid == new.profileId) new else new.copy(profileId = valid)
+    }
+
+    private suspend fun announce(jobs: List<Download>) {
+        // Read first, then tell everyone without a pause in between: the engine can then take the facts of a whole
+        // collection as one batch and build its snapshots once.
+        val mirrors = jobs.map { downloads.mirrors(it.id) }
+        jobs.forEachIndexed { i, job ->
+            lastStatus[job.id] = job.status
+            observer.jobChanged(job)
+            observer.mirrorsChanged(job.id, mirrors[i])
+            observer.event(EngineEvent.Added(job.id))
+        }
+    }
+
+    // While global pause is on, jobs that start waiting wait paused instead.
+    private suspend fun hold(jobs: List<Download>): List<Download> =
+        jobs.map { job ->
+            holdIfGlobal(job).let {
+                if (it ==
+                    job
+                ) {
+                    job
+                } else {
+                    save(it)
+                }
+            }
+        }
+
+    /** Takes a collection's child out of its collection, keeping the job (a forgotten item, MED-17). */
+    suspend fun detach(child: DownloadId) {
+        downloads.get(child)?.takeIf { it.parentId != null }?.let { save(it.copy(parentId = null)) }
+    }
+
+    /**
+     * A command on a collection's items (MED-16), in this one step: each waiting item is changed at once, so none starts
+     * before it is, and each running one is stopped and then changed. The reply comes when every stopped item has ended.
+     */
+    private suspend fun forItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+        op: suspend (Download) -> CommandResult,
+    ) {
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (child in downloads.children(collection)) {
+            val slot = slots[child.id]
+            if (slot != null) {
+                stopping += CompletableDeferred<CommandResult>().also { stop(slot, op, it) }
+            } else {
+                op(child)
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    suspend fun pauseItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = forItems(collection, reply) { change(it.pause(PauseReason.USER)) }
+
+    suspend fun cancelItems(
+        collection: DownloadId,
+        reply: CompletableDeferred<CommandResult>,
+    ) = forItems(collection, reply) { change(it.transitionTo(CANCELLED)) }
 
     suspend fun pause(
         id: DownloadId,
@@ -343,7 +458,7 @@ internal class QueueActor(
     suspend fun pauseAll(reply: CompletableDeferred<CommandResult>) {
         settings = store.settings.update { it.copy(globalPause = true) }
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             val slot = slots[job.id]
             if (slot != null) {
                 stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterGlobalStop, it) }
@@ -395,7 +510,7 @@ internal class QueueActor(
         reply: CompletableDeferred<CommandResult>,
     ) {
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             val inLow = job.saveFolder?.let { Path(it) in low } == true
             val slot = slots[job.id]
             when {
@@ -447,7 +562,7 @@ internal class QueueActor(
     ): CommandResult {
         val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(speedLimit = bytesPerSecond))) }
         slot.download = save(slot.download.copy(speedLimit = bytesPerSecond))
-        bandwidth.setLimit(id, bytesPerSecond)
+        bandwidth.setLimit(id, effectiveSpeedLimit(slot.download, slot.download.profileId?.let { profiles(it) }))
         return CommandResult.Done(slot.download)
     }
 
@@ -478,7 +593,13 @@ internal class QueueActor(
 
     /** While global pause is on, a job that starts waiting waits paused instead. */
     private fun holdIfGlobal(job: Download): Download =
-        if (settings.globalPause && job.status in WAITING) (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download else job
+        if (settings.globalPause && job.status in WAITING &&
+            !job.isCollection
+        ) {
+            (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
+        } else {
+            job
+        }
 
     /**
      * After a restart nothing runs: every attempt left open ends ("the app stopped", not counted), a job left mid-run
@@ -489,7 +610,7 @@ internal class QueueActor(
     private suspend fun reconcile() {
         val now = clock.now()
         for (open in downloads.openAttempts()) updateAttempt(open.copy(endedAt = now, message = "the app stopped"))
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             var fixed =
                 when (job.status) {
                     DOWNLOADING -> job.moved(PENDING).copy(queuedAt = now)
@@ -693,7 +814,7 @@ internal class QueueActor(
     // A job waiting for a retry (nextAttemptAt in the future) isn't ready yet; the timer wakes the queue when it is.
     private suspend fun reschedule() {
         val now = clock.now()
-        val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots }
+        val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots && !it.isCollection }
         val ready = waiting.filter { job -> job.nextAttemptAt.let { it == null || it <= now } }
         val decision = schedule(ready, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = ready.associateBy { it.id }
@@ -730,7 +851,12 @@ internal class QueueActor(
         val others = mirrors.filter { it.id != mirror?.id && it.id !in gone }
         val attempt = downloads.addAttempt(NewAttempt(download.id, clock.now(), mirror?.id)).also { observer.attemptChanged(it) }
         val failedCheck = attempts.lastOrNull()?.errorClass == ErrorClass.INTEGRITY
-        val limiter = bandwidth.register(download.id, download.speedLimit, download.priority)
+        val limiter =
+            bandwidth.register(
+                download.id,
+                effectiveSpeedLimit(download, download.profileId?.let { profiles(it) }),
+                download.priority,
+            )
         val slot = Slot(download, mirror, attempt, writtenBytes(download.id), others, failedCheck, limiter)
         slots[slot.id] = slot
         observer.slotStarted(slot.id)

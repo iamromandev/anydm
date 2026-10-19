@@ -100,6 +100,8 @@ internal fun totalSize(probes: List<HttpProbe>): Long? {
 internal fun nameFieldsOf(
     info: MediaInfo,
     selection: Selection,
+    /** A collection item's place in its playlist (MED-16). */
+    playlistIndex: Int? = null,
 ): NameFields =
     NameFields(
         buildMap {
@@ -114,6 +116,7 @@ internal fun nameFieldsOf(
                 put(TemplateField.DATE, "${it.substring(0, 4)}-${it.substring(4, 6)}-${it.substring(6)}")
             }
             selection.video?.height?.let { put(TemplateField.RESOLUTION, "${it}p") }
+            playlistIndex?.let { put(TemplateField.PLAYLIST_INDEX, it.toString()) }
         },
     )
 

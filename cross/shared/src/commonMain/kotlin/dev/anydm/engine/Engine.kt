@@ -8,29 +8,42 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.FinishHook
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.CollectionFinishHook
 import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
 import dev.anydm.engine.files.HistoryRecorder
 import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
+import dev.anydm.engine.files.Profile
+import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.media.LISTING_CAP
+import dev.anydm.engine.media.PlaylistEntry
+import dev.anydm.engine.media.PlaylistListing
+import dev.anydm.engine.media.PlaylistParse
+import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.TrafficMeter
 import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.Queue
 import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
@@ -57,6 +70,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
@@ -82,7 +97,7 @@ class Engine(
     private val store: Store,
     fileSystem: FileSystem,
     protocols: Map<DownloadKind, Protocol>,
-    defaultFolder: Path,
+    private val defaultFolder: Path,
     private val clock: Clock = Clock.System,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val stopTimeout: Duration = 10.seconds,
@@ -97,11 +112,15 @@ class Engine(
     osProfile: OsProfile = OsProfile.WINDOWS,
     /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
     duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, store.history, fileSystem),
-    /** Told when a job finishes; the history by default (FIL-10). */
-    finish: FinishHook = HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
+    /** Told when a job finishes; by default the history (FIL-10) and, for a collection's item, its archive and playlist file (MED-17). */
+    finish: FinishHook? = null,
     /** Fetches the runtime tools jobs wait for (BIN-01); without one, a job that needs a missing tool stays paused. */
     private val tools: ToolManager? = null,
+    /** Lists a playlist or channel for [addPlaylist] (MED-16); without one, a playlist can't be added. */
+    private val playlists: PlaylistSource? = null,
 ) {
+    private val nameCleaner = NameCleaner(osProfile)
+
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
     private val speedFlow = MutableStateFlow(SpeedWindow.Empty)
@@ -157,15 +176,27 @@ class Engine(
             defaultFolder,
             reserve = { store.settings.load().freeSpaceReserve },
             duplicates = duplicates,
-            finish = toolAware(finish),
+            finish =
+                toolAware(
+                    finish
+                        ?: CollectionFinishHook(
+                            store.collectionItems,
+                            store.downloads,
+                            fileSystem,
+                            { store.settings.load().playlistFile },
+                            HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
+                        ),
+                ),
             placement =
                 FilesPlacement(
                     NameCleaner(osProfile),
                     categories = { store.categories.list() },
                     policy = { store.settings.load().clashPolicy },
                     fileSystem = fileSystem,
+                    profiles = { store.profiles.get(it) },
                 ),
             checkpointEvery = checkpointEvery,
+            profiles = { store.profiles.get(it) },
         )
 
     /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
@@ -183,6 +214,7 @@ class Engine(
             observer,
             log,
             duplicates = duplicates,
+            profiles = { store.profiles.get(it) },
         )
 
     private sealed interface Fact {
@@ -288,7 +320,21 @@ class Engine(
                     cache.load(jobs, attempts, mirrors, files)
                     publish()
                 }
-                scope.launch(publisher) { for (fact in facts) apply(fact) }
+                scope.launch(publisher) {
+                    for (fact in facts) {
+                        // Every fact waiting is applied, then one snapshot list is built: a collection added at once sends
+                        // thousands, and each used to rebuild every snapshot.
+                        val events = mutableListOf<Fact.Event>()
+                        var next: Fact? = fact
+                        var batch = 0
+                        while (next != null) {
+                            apply(next)?.let { events += it }
+                            next = if (++batch < MAX_BATCH) facts.tryReceive().getOrNull() else null
+                        }
+                        publish()
+                        events.forEach { afterPublished(it) }
+                    }
+                }
                 scope.launch(publisher) {
                     while (true) {
                         delay(TRAFFIC_SAVE_EVERY)
@@ -351,6 +397,259 @@ class Engine(
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
 
+    /**
+     * Adds a playlist or channel as a collection (MED-16): one flat listing of [url], then a parent job and one child job
+     * for each item [selection] picks, all saved in a folder named after the playlist under [template]'s folder, its
+     * category's, or the default. Every child is [template] with its own address, so its options apply to each video.
+     */
+    suspend fun addPlaylist(
+        url: String,
+        selection: ItemSelection = ItemSelection(),
+        template: NewDownload = NewDownload(DownloadKind.SITE),
+    ): AddPlaylistResult {
+        val source = playlists ?: return AddPlaylistResult.Unavailable
+        val listing =
+            when (val listed = source.list(url, selection.listingEnd(LISTING_CAP + 1))) {
+                is StepResult.Failed -> {
+                    return AddPlaylistResult.Failed(listed)
+                }
+
+                is StepResult.Ok -> {
+                    when (val parsed = listed.value) {
+                        PlaylistParse.NotAPlaylist -> return AddPlaylistResult.NotAPlaylist
+                        is PlaylistParse.Rejected -> return AddPlaylistResult.Failed(StepResult.Failed(null, parsed.reason))
+                        is PlaylistParse.Ok -> parsed.listing
+                    }
+                }
+            }
+        val picked =
+            when (val chosen = chosenEntries(listing, selection)) {
+                is Chosen.Some -> chosen.entries
+                Chosen.None -> return AddPlaylistResult.EmptySelection
+                is Chosen.TooMany -> return AddPlaylistResult.Failed(StepResult.Failed(null, chosen.reason))
+            }
+        // Where the items go: the template's folder, else its profile's (or the default profile's), else the folder of the
+        // template's or profile's category, else the default. The playlist gets a folder of its own under it.
+        val profile = (template.profileId ?: store.settings.load().defaultProfileId)?.let { store.profiles.get(it) }
+        val categoryId = template.categoryId ?: profile?.categoryId
+        val base =
+            template.saveFolder?.let(::Path)
+                ?: profile?.saveFolder?.let(::Path)
+                ?: store.categories
+                    .list()
+                    .firstOrNull { it.id == categoryId }
+                    ?.folder
+                    ?.let(::Path)
+                ?: defaultFolder
+        val folder = freshFolder(base, nameCleaner.clean(listing.title))
+        val parent =
+            template.copy(
+                mirrors = emptyList(),
+                parentId = null,
+                collection = listing.kind,
+                saveFolder = folder,
+                fileName = null,
+                size = null,
+                checksum = null,
+                playlistIndex = null,
+                sourceUrl = url,
+                selection = selection.takeIf { it != ItemSelection() },
+            )
+        val made = picked.map { itemJob(template, folder, it, it.position) }
+        val added =
+            command { queue.addCollection(parent, made.map { it.first }, made.map { it.second }) }
+                ?: return AddPlaylistResult.AllDuplicates(made.size)
+        return AddPlaylistResult.Added(added.collection, added.children, added.skipped, listing.dropped)
+    }
+
+    /** One playlist entry as a job (the [template] with its own address and place in the playlist) and its item row. */
+    private fun itemJob(
+        template: NewDownload,
+        folder: String,
+        entry: PlaylistEntry,
+        index: Int,
+    ): Pair<NewDownload, NewItem> =
+        template.copy(
+            mirrors = listOf(entry.url),
+            parentId = null,
+            collection = null,
+            saveFolder = folder,
+            fileName = null,
+            size = null,
+            checksum = null,
+            playlistIndex = index,
+            sourceUrl = null,
+            selection = null,
+        ) to NewItem(entry.extractor, entry.id, index, entry.title, entry.duration)
+
+    private sealed interface Chosen {
+        data class Some(
+            val entries: List<PlaylistEntry>,
+        ) : Chosen
+
+        data object None : Chosen
+
+        data class TooMany(
+            val reason: String,
+        ) : Chosen
+    }
+
+    // The listing's entries that [selection] picks, by their place in the playlist as listed; at most the cap.
+    private fun chosenEntries(
+        listing: PlaylistListing,
+        selection: ItemSelection,
+    ): Chosen {
+        val positions = selection.indices(listing.entries.size + listing.dropped).toSet()
+        val entries = listing.entries.filter { it.position in positions }
+        return when {
+            entries.isEmpty() -> Chosen.None
+            entries.size > LISTING_CAP -> Chosen.TooMany("the selection has ${entries.size} items; the limit is $LISTING_CAP")
+            else -> Chosen.Some(entries)
+        }
+    }
+
+    // A folder no other collection uses: two playlists with one title would share a folder and one playlist file.
+    private suspend fun freshFolder(
+        base: Path,
+        name: String,
+    ): String {
+        val used =
+            store.downloads
+                .list()
+                .filter { it.isCollection }
+                .mapNotNull { it.saveFolder }
+                .toSet()
+        var folder = Path(base, name).toString()
+        var n = 2
+        while (folder in used) folder = Path(base, "$name (${n++})").toString()
+        return folder
+    }
+
+    // One sync at a time: two at once would both see an item as new.
+    private val syncLock = Mutex()
+
+    /**
+     * Lists a collection's source again and adds a job for each item that is new (MED-17): one with no item row, or whose
+     * job was removed before it finished. An item that is done, or whose job still exists (running, waiting, failed),
+     * is left alone. The collection's own range and limit apply again; its folder, category, profile and options are the
+     * new jobs'.
+     */
+    suspend fun syncCollection(id: DownloadId): SyncOutcome {
+        val source = playlists ?: return SyncOutcome.Unavailable
+        return syncLock.withLock {
+            val collection = store.downloads.get(id)?.takeIf { it.isCollection && it.sourceUrl != null }
+            if (collection == null) return@withLock SyncOutcome.NotACollection
+            val selection = collection.selection ?: ItemSelection()
+            val listing =
+                when (val listed = source.list(collection.sourceUrl!!, selection.listingEnd(LISTING_CAP + 1))) {
+                    is StepResult.Failed -> {
+                        return@withLock SyncOutcome.Failed(listed)
+                    }
+
+                    is StepResult.Ok -> {
+                        when (val parsed = listed.value) {
+                            PlaylistParse.NotAPlaylist -> return@withLock SyncOutcome.Failed(
+                                StepResult.Failed(null, "the address is not a playlist any more"),
+                            )
+
+                            is PlaylistParse.Rejected -> return@withLock SyncOutcome.Failed(StepResult.Failed(null, parsed.reason))
+
+                            is PlaylistParse.Ok -> parsed.listing
+                        }
+                    }
+                }
+            val chosen =
+                when (val picked = chosenEntries(listing, selection)) {
+                    is Chosen.Some -> picked.entries
+                    Chosen.None -> emptyList()
+                    is Chosen.TooMany -> return@withLock SyncOutcome.Failed(StepResult.Failed(null, picked.reason))
+                }
+            val known = store.collectionItems.items(id).associateBy { it.extractor to it.videoId }
+            val template = templateOf(collection)
+            val folder = collection.saveFolder ?: ""
+            // An item with a row that has no job is one the user removed or told us to forget: it is wanted again, so the
+            // old job for the same address (still in the list or the history) must not stop it.
+            val again = template.copy(allowDuplicate = true)
+            val made =
+                chosen
+                    .filter { entry ->
+                        val item = known[entry.extractor to entry.id]
+                        item == null || (!item.done && (item.childId == null || store.downloads.get(item.childId!!) == null))
+                    }.map { entry ->
+                        itemJob(
+                            if (known[entry.extractor to entry.id] !=
+                                null
+                            ) {
+                                again
+                            } else {
+                                template
+                            },
+                            folder,
+                            entry,
+                            entry.position,
+                        )
+                    }
+            val added = if (made.isEmpty()) null else command { queue.addChildren(id, made.map { it.first }, made.map { it.second }) }
+            SyncOutcome.Done(SyncResult(added?.children?.size ?: 0, added?.skipped ?: 0, listing.dropped))
+        }
+    }
+
+    /** What a collection's new items start from: its own options. */
+    private suspend fun templateOf(collection: Download): NewDownload =
+        NewDownload(
+            kind = collection.kind,
+            categoryId = collection.categoryId,
+            profileId = collection.profileId,
+            saveFolder = collection.saveFolder,
+            priority = collection.priority,
+            speedLimit = collection.speedLimit,
+            context = store.downloads.context(collection.id),
+            allowDuplicate = collection.allowDuplicate,
+            format = store.downloads.format(collection.id),
+        )
+
+    /** The saved download profiles, by name (SET-02). */
+    suspend fun profiles(): List<Profile> = command { store.profiles.list() }
+
+    suspend fun addProfile(new: NewProfile): ProfileResult = command { store.profiles.add(new) }
+
+    /** Jobs that name the profile read the new values from their next probe, placement or start. */
+    suspend fun updateProfile(profile: Profile): ProfileResult = command { store.profiles.update(profile) }
+
+    /** Removes the profile; its jobs go on with their own values and the defaults. Returns how many jobs named it. */
+    suspend fun deleteProfile(id: ProfileId): Int = command { store.profiles.delete(id) }
+
+    /** The profile a new download takes when it names none; null for none. False if there is no such profile. */
+    suspend fun setDefaultProfile(id: ProfileId?): Boolean =
+        command {
+            if (id != null && store.profiles.get(id) == null) {
+                false
+            } else {
+                store.settings.update { it.copy(defaultProfileId = id) }
+                true
+            }
+        }
+
+    /**
+     * Forgets that [videoId] was fetched for the collection (MED-17): its old job leaves the collection and the next sync
+     * fetches it again, whatever the duplicate check thinks of the old one.
+     */
+    suspend fun forgetItem(
+        collection: DownloadId,
+        extractor: String,
+        videoId: String,
+    ): Boolean =
+        command {
+            val item = store.collectionItems.items(collection).firstOrNull { it.extractor == extractor && it.videoId == videoId }
+            if (item == null) {
+                false
+            } else {
+                // The old job stays as it is, outside the collection: its file and its place in the history are the user's.
+                item.childId?.let { queue.detach(it) }
+                store.collectionItems.forget(collection, extractor, videoId)
+            }
+        }
+
     suspend fun pause(id: DownloadId): CommandResult = command { queue.pause(id) }
 
     suspend fun resume(id: DownloadId): CommandResult = command { queue.resume(id) }
@@ -395,7 +694,7 @@ class Engine(
     ): CommandResult = command { queue.relink(id, mirrorId, url) }
 
     // A stopped or failed engine takes no command; one not started yet lets the queue hold it until start().
-    private suspend fun command(block: suspend () -> CommandResult): CommandResult {
+    private suspend fun <T> command(block: suspend () -> T): T {
         when (stateFlow.value) {
             EngineState.Stopping, EngineState.Stopped, is EngineState.Failed -> throw IllegalStateException("the engine has stopped")
             else -> Unit
@@ -403,7 +702,8 @@ class Engine(
         return block()
     }
 
-    private suspend fun apply(fact: Fact) {
+    // Applies one fact to the cache; the event it carries, if any, is returned to be told once the snapshots are out.
+    private suspend fun apply(fact: Fact): Fact.Event? {
         when (fact) {
             is Fact.Changed -> {
                 cache.jobChanged(fact.download)
@@ -437,12 +737,13 @@ class Engine(
                 Unit
             }
         }
-        publish()
-        if (fact is Fact.Event) {
-            logEvent(fact.event)
-            (fact.event as? EngineEvent.PausedForTool)?.let(::fetchTool)
-            eventFlow.tryEmit(fact.event)
-        }
+        return fact as? Fact.Event
+    }
+
+    private fun afterPublished(fact: Fact.Event) {
+        logEvent(fact.event)
+        (fact.event as? EngineEvent.PausedForTool)?.let(::fetchTool)
+        eventFlow.tryEmit(fact.event)
     }
 
     // A finished TOOL job tells the manager, which makes the tool current once it is whole; then the jobs waiting for
@@ -625,7 +926,12 @@ class Engine(
         publish()
     }
 
+    /** How many snapshot lists were built, for tests of the batching. */
+    internal var publishCount = 0
+        private set
+
     private fun publish() {
+        publishCount++
         snapshots.value = cache.list()
     }
 
@@ -721,6 +1027,9 @@ class Engine(
     }
 
     private companion object {
+        /** The most facts one snapshot list covers, so a flood still lets the list update now and then. */
+        const val MAX_BATCH = 500
+
         val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds

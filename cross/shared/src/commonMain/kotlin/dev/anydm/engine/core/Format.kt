@@ -1,5 +1,7 @@
 package dev.anydm.engine.core
 
+import kotlinx.serialization.Serializable
+
 /** How good a video the user wants when they name no resolution (MED-09). */
 enum class QualityPreset { BEST, BALANCED, SMALL }
 
@@ -50,6 +52,7 @@ private val AUDIO_LANGUAGE = Regex("[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?")
 private val CATEGORY = Regex("[a-z_]{3,24}")
 
 /** The subtitles wanted (MED-13): [languages] in order, [includeAuto] for auto-generated ones, where they [mode] go, and a format to [convertTo]. */
+@Serializable
 data class SubtitleChoice(
     val languages: List<String>,
     val includeAuto: Boolean = false,
@@ -65,6 +68,7 @@ data class SubtitleChoice(
 }
 
 /** What SponsorBlock does (MED-14): [mode] for the [categories] of segment. */
+@Serializable
 data class SponsorBlockChoice(
     val mode: SponsorBlockMode,
     val categories: List<String> = DEFAULT_SPONSORBLOCK_CATEGORIES,
@@ -76,6 +80,7 @@ data class SponsorBlockChoice(
 }
 
 /** What to put inside the finished file (MED-15). */
+@Serializable
 data class EmbedChoice(
     val metadata: Boolean = false,
     val thumbnail: Boolean = false,
@@ -88,6 +93,7 @@ data class EmbedChoice(
  * What the user wants from a media page (MED-09 to MED-15): a [preset], narrowed by an explicit [height] (the tallest
  * not above it), [fps] (not above it), [hdr], codec prefixes and a [container], or audio only. Stored with the download.
  */
+@Serializable
 data class Format(
     val preset: QualityPreset = QualityPreset.BEST,
     val height: Int? = null,

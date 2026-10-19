@@ -2,6 +2,7 @@ package dev.anydm.engine.store
 
 import dev.anydm.engine.core.CookieSource
 import dev.anydm.engine.core.Pacing
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.tools.YtDlpChannel
@@ -41,6 +42,10 @@ data class Settings(
     val cookieSource: CookieSource = CookieSource.None,
     /** How carefully requests to a site are paced (MED-20). */
     val pacing: Pacing = Pacing(),
+    /** Keep an `.m3u8` of each collection's finished items in its folder (MED-17). */
+    val playlistFile: Boolean = true,
+    /** The profile a new download takes when it names none (SET-02). */
+    val defaultProfileId: ProfileId? = null,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

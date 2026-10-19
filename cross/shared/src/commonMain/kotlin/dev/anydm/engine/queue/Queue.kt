@@ -7,15 +7,18 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.io.files.Path
@@ -34,7 +37,7 @@ import kotlin.time.TimeSource
  */
 class Queue internal constructor(
     private val scope: CoroutineScope,
-    store: Store,
+    private val store: Store,
     runner: StepRunner,
     protocols: Map<DownloadKind, Protocol>,
     fileSystem: FileSystem,
@@ -46,14 +49,34 @@ class Queue internal constructor(
     timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     /** Asked on every add (FIL-05). */
     duplicates: DuplicateCheck = DuplicateCheck.None,
+    /** A job's profile (SET-02); null if it is gone. */
+    profiles: suspend (ProfileId) -> Profile? = { null },
 ) {
-    private val actor = QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates)
+    private val actor =
+        QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates, profiles)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = actor.start(scope)
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
+
+    /** A collection and its children, added together (MED-16). */
+    suspend fun addCollection(
+        parent: NewDownload,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? = actor.inActor { addCollection(parent, children, items) }
+
+    /** Takes [child] out of its collection, keeping the job (MED-17). */
+    suspend fun detach(child: DownloadId) = actor.inActor { detach(child) }
+
+    /** More items for an existing collection (a sync, MED-17); null if the collection is gone. */
+    suspend fun addChildren(
+        collection: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded? = actor.inActor { addChildren(collection, children, items) }
 
     /**
      * Pauses what runs or waits in the [low] folders and releases the jobs named in [release], which were paused for a
@@ -69,13 +92,17 @@ class Queue internal constructor(
     suspend fun applyToolState(): CommandResult = actor.call { applyToolState() }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
-    suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }
+    suspend fun pause(id: DownloadId): CommandResult =
+        if (isCollection(id)) actor.callLater { pauseItems(id, it) } else actor.callLater { pause(id, it) }
 
     /** Queues a paused job again, behind the jobs of its priority that already wait; clears every pause reason. */
-    suspend fun resume(id: DownloadId): CommandResult = actor.call { resume(id) }
+    suspend fun resume(id: DownloadId): CommandResult = forItems(id, { resume(it) }) { actor.call { resume(id) } }
 
     /** Stops the job for good. Its partial files stay. */
-    suspend fun cancel(id: DownloadId): CommandResult = actor.callLater { cancel(id, it) }
+    suspend fun cancel(id: DownloadId): CommandResult =
+        if (isCollection(id)) actor.callLater { cancelItems(id, it) } else actor.callLater { cancel(id, it) }
+
+    private suspend fun isCollection(id: DownloadId): Boolean = store.downloads.get(id)?.isCollection == true
 
     /**
      * Removes the job and, with [RemoveFiles.TRASH], moves its outputs and partials to the trash first. If that fails
@@ -84,10 +111,20 @@ class Queue internal constructor(
     suspend fun remove(
         id: DownloadId,
         files: RemoveFiles,
-    ): CommandResult = actor.callLater { remove(id, files, it) }
+    ): CommandResult =
+        forItems(
+            id,
+            { remove(it, files) },
+            alsoCollection = true,
+            // Every item is stopped and held first, in one step, so none starts while the others are removed.
+            before = { actor.callLater { pauseItems(id, it) } },
+            failing = { it is CommandResult.TrashUnavailable || it is CommandResult.TrashFailed },
+        ) {
+            actor.callLater { remove(id, files, it) }
+        }
 
     /** Queues a FAILED job again with a fresh attempt count. */
-    suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
+    suspend fun retry(id: DownloadId): CommandResult = forItems(id, { retry(it) }) { actor.call { retry(id) } }
 
     /** Every job's combined speed limit in bytes per second, shared by priority, or null for none; below 1 is Invalid. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
@@ -101,7 +138,11 @@ class Queue internal constructor(
         bytesPerSecond: Long?,
     ): CommandResult {
         if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
-        return actor.call { setSpeedLimit(id, bytesPerSecond) }
+        return forItems(
+            id,
+            { setSpeedLimit(it, bytesPerSecond) },
+            alsoCollection = true,
+        ) { actor.call { setSpeedLimit(id, bytesPerSecond) } }
     }
 
     /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
@@ -114,7 +155,30 @@ class Queue internal constructor(
     suspend fun reprioritize(
         id: DownloadId,
         priority: Int,
-    ): CommandResult = actor.call { reprioritize(id, priority) }
+    ): CommandResult = forItems(id, { reprioritize(it, priority) }, alsoCollection = true) { actor.call { reprioritize(id, priority) } }
+
+    /**
+     * A command on a collection (MED-16) goes to each of its items in turn, not at once: an item may wait for its slot to
+     * stop. The first result that [failing] calls a failure ends it. [alsoCollection] says the collection's own row takes
+     * the command too (its priority, its limit, its removal). Any other job gets [single]. A command an item can't take
+     * (pausing a finished one) is that item's business: the others still get it.
+     */
+    private suspend fun forItems(
+        id: DownloadId,
+        each: suspend (DownloadId) -> CommandResult,
+        alsoCollection: Boolean = false,
+        before: suspend () -> Unit = {},
+        failing: (CommandResult) -> Boolean = { false },
+        single: suspend () -> CommandResult,
+    ): CommandResult {
+        val collection = store.downloads.get(id)?.takeIf { it.isCollection } ?: return single()
+        before()
+        for (child in store.downloads.children(collection.id)) {
+            val result = each(child.id)
+            if (failing(result)) return result
+        }
+        return if (alsoCollection) single() else CommandResult.Done(store.downloads.get(id))
+    }
 
     /** Pauses everything (GLOBAL), running jobs included, and keeps it paused across restarts (FND-05). */
     suspend fun pauseAll(): CommandResult = actor.callLater { pauseAll(it) }
@@ -147,6 +211,13 @@ class Queue internal constructor(
     /** For tests: what holds a slot right now. */
     internal suspend fun inspect(): QueueState = actor.inspect()
 }
+
+/** What adding a collection made: the parent, the children that went in, and how many the duplicate check kept out. */
+data class CollectionAdded(
+    val collection: Download,
+    val children: List<Download>,
+    val skipped: Int,
+)
 
 /** What `remove` does with a job's files. */
 enum class RemoveFiles {

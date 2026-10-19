@@ -8,12 +8,22 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import kotlin.time.Instant
+
+/** One video of a collection, stored with its child (MED-16): what the listing said about it. */
+data class NewItem(
+    val extractor: String,
+    val videoId: String,
+    val playlistIndex: Int,
+    val title: String?,
+    val duration: Int?,
+)
 
 /**
  * A download to add: the creation fields of [Download]. It starts PENDING with no attempts; the store assigns its id,
@@ -40,6 +50,11 @@ data class NewDownload(
     val allowDuplicate: Boolean = false,
     /** What the user wants from a media page (MED-09); stored with it. */
     val format: Format? = null,
+    /** A collection's item: its position in the playlist (MED-16). */
+    val playlistIndex: Int? = null,
+    /** A collection: where its items came from, and what was chosen of them (MED-16, MED-17). */
+    val sourceUrl: String? = null,
+    val selection: ItemSelection? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

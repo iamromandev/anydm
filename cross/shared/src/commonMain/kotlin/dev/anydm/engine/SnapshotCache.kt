@@ -4,7 +4,10 @@ import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
+import dev.anydm.engine.core.collectionStatus
+import dev.anydm.engine.core.itemCounts
 
 /**
  * The engine's picture of every job, put together from what the queue reports. Not thread-safe: the engine calls it
@@ -99,7 +102,34 @@ internal class SnapshotCache {
 
     fun kindOf(id: DownloadId): DownloadKind? = entries[id.value]?.download?.kind
 
-    fun list(): List<DownloadSnapshot> =
+    /**
+     * Every job's snapshot. A collection's is derived from its items (MED-16): their states give its status and counts,
+     * and their bytes add up; the total is known only when every item's is.
+     */
+    fun list(): List<DownloadSnapshot> {
+        val all = snapshots()
+        val byParent = all.filter { it.download.parentId != null }.groupBy { it.download.parentId }
+        return all.map { snapshot ->
+            if (!snapshot.download.isCollection) {
+                snapshot
+            } else {
+                val children = byParent[snapshot.download.id].orEmpty()
+                val status = collectionStatus(children.map { it.download.status })
+                snapshot.copy(
+                    download =
+                        snapshot.download.copy(
+                            status = status,
+                            pauseReasons = if (status == DownloadStatus.PAUSED) snapshot.download.pauseReasons else emptySet(),
+                        ),
+                    downloaded = children.sumOf { it.downloaded },
+                    total = if (children.isEmpty() || children.any { it.total == null }) null else children.sumOf { it.total!! },
+                    items = itemCounts(children.map { it.download.status }),
+                )
+            }
+        }
+    }
+
+    private fun snapshots(): List<DownloadSnapshot> =
         entries.keys.sorted().map { key ->
             val entry = entries.getValue(key)
             val attempts = entry.attempts.values.sortedBy { it.id.value }

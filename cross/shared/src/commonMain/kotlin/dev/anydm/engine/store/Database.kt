@@ -26,12 +26,14 @@ import kotlin.enums.EnumEntries
 import kotlin.time.Instant
 import dev.anydm.engine.store.db.Attempt as AttemptRow
 import dev.anydm.engine.store.db.Category as CategoryRow
+import dev.anydm.engine.store.db.Collection_item as CollectionItemRow
 import dev.anydm.engine.store.db.Download as DownloadRow
 import dev.anydm.engine.store.db.Extraction as ExtractionRow
 import dev.anydm.engine.store.db.File_ as FileRow
 import dev.anydm.engine.store.db.Format as FormatRow
 import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
+import dev.anydm.engine.store.db.Profile as ProfileRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
 import dev.anydm.engine.store.db.Tool as ToolRow
@@ -69,6 +71,20 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 attempt_countAdapter = IntAdapter("download.attempt_count"),
                 next_attempt_atAdapter = InstantAdapter,
                 queued_atAdapter = InstantAdapter,
+                playlist_indexAdapter = IntAdapter("download.playlist_index"),
+                selection_limitAdapter = IntAdapter("download.selection_limit"),
+            ),
+        collection_itemAdapter =
+            CollectionItemRow.Adapter(
+                collection_idAdapter = downloadId,
+                child_idAdapter = downloadId,
+                playlist_indexAdapter = IntAdapter("collection_item.playlist_index"),
+                durationAdapter = IntAdapter("collection_item.duration"),
+            ),
+        profileAdapter =
+            ProfileRow.Adapter(
+                idAdapter = IdAdapter(::ProfileId, ProfileId::value),
+                category_idAdapter = IdAdapter(::CategoryId, CategoryId::value),
             ),
         historyAdapter =
             HistoryRow.Adapter(

@@ -6,6 +6,10 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Placement
 import dev.anydm.engine.core.PlacementPlan
+import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.effectiveCategory
+import dev.anydm.engine.core.effectiveSaveFolder
+import dev.anydm.engine.core.effectiveTemplate
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.ProbeResult
@@ -23,6 +27,8 @@ class FilesPlacement(
     private val categories: suspend () -> List<Category>,
     private val policy: suspend () -> ClashPolicy,
     private val fileSystem: FileSystem,
+    /** A job's profile, looked up for each plan so an edit reaches the next one (SET-02); null if it is gone. */
+    private val profiles: suspend (ProfileId) -> Profile? = { null },
 ) : Placement {
     // The engine's own tool files go where their job says and replace an older copy: no category, no clash policy.
     private val tools = DirectPlacement(fileSystem, replace = true)
@@ -36,9 +42,11 @@ class FilesPlacement(
     ): StepResult<PlacementPlan> {
         if (download.kind == DownloadKind.TOOL) return tools.plan(download, mirror, probe, defaultFolder, firstPrepare)
         val all = categories()
-        val category = all.firstOrNull { it.id == download.categoryId } ?: categoryFor(all, download, mirror, probe)
-        val folder = download.saveFolder?.let(::Path) ?: category?.folder?.let(::Path) ?: defaultFolder
-        val name = cleaner.clean(download.fileName ?: templated(category, probe) ?: probe.name)
+        val profile = download.profileId?.let { profiles(it) }
+        val categoryId = effectiveCategory(download, profile)
+        val category = all.firstOrNull { it.id == categoryId } ?: categoryFor(all, download, mirror, probe)
+        val folder = effectiveSaveFolder(download, profile)?.let(::Path) ?: category?.folder?.let(::Path) ?: defaultFolder
+        val name = cleaner.clean(download.fileName ?: templated(category, profile, probe) ?: probe.name)
         if (firstPrepare && policy() == ClashPolicy.SKIP) {
             when (val found = fileSystem.size(Path(folder, name))) {
                 is FileResult.NotFound -> Unit
@@ -132,9 +140,10 @@ class FilesPlacement(
     /** The template's stem plus the probe name's extension; null when there is no template or it renders nothing. */
     private fun templated(
         category: Category?,
+        profile: Profile?,
         probe: ProbeResult,
     ): String? {
-        val template = category?.template ?: return null
+        val template = effectiveTemplate(profile, category?.template) ?: return null
         val parsed = (NameTemplate.parse(template) as? TemplateParse.Ok)?.template ?: return null
         // A template with placeholders but nothing to put in them would name every file after its literal text.
         if (parsed.hasFields && !parsed.usesAnyOf(probe.nameFields)) return null
