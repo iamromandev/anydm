@@ -21,9 +21,9 @@ class YtDlpPlaylistJsonTest {
         listing.sourceUrl shouldBe source
         listing.entries shouldBe
             listOf(
-                PlaylistEntry("youtube", "a1", "https://www.youtube.com/watch?v=a1", "One", 61),
-                PlaylistEntry("youtube", "a2", "https://www.youtube.com/watch?v=a2", "Two", null),
-                PlaylistEntry("youtubetab", "a4", "https://www.youtube.com/watch?v=a4", "Four", 125),
+                PlaylistEntry("youtube", "a1", "https://www.youtube.com/watch?v=a1", "One", 61, 1),
+                PlaylistEntry("youtube", "a2", "https://www.youtube.com/watch?v=a2", "Two", null, 2),
+                PlaylistEntry("youtubetab", "a4", "https://www.youtube.com/watch?v=a4", "Four", 125, 7),
             )
     }
 
@@ -57,12 +57,42 @@ class YtDlpPlaylistJsonTest {
     }
 
     @Test
-    fun aHugeListingIsRefused() {
-        val rejected = YtDlpJson.parsePlaylist(MediaFixtures.hugePlaylistJson(5001), source).shouldBeInstanceOf<PlaylistParse.Rejected>()
+    fun aListingBoundedByTheCapIsRead() {
+        ok(MediaFixtures.hugePlaylistJson(5001)).entries.size shouldBe 5001
+    }
 
-        rejected.reason shouldContain "5001"
-        rejected.reason shouldContain "5000"
-        ok(MediaFixtures.hugePlaylistJson(5000)).entries.size shouldBe 5000
+    @Test
+    fun aListingFarOverTheCapIsRefused() {
+        val rejected = YtDlpJson.parsePlaylist(MediaFixtures.hugePlaylistJson(5002), source).shouldBeInstanceOf<PlaylistParse.Rejected>()
+
+        rejected.reason shouldContain "5002"
+    }
+
+    @Test
+    fun positionsCountEveryListedEntry() {
+        ok(MediaFixtures.flatPlaylistJson()).entries.map { it.position } shouldBe listOf(1, 2, 7)
+    }
+
+    @Test
+    fun aChannelsTabsAreNotVideos() {
+        val rejected = YtDlpJson.parsePlaylist(MediaFixtures.channelTabsJson(), source).shouldBeInstanceOf<PlaylistParse.Rejected>()
+
+        rejected.reason shouldContain "other playlists"
+        rejected.reason shouldContain "/videos"
+    }
+
+    @Test
+    fun tabsBesideARealVideoAreDropped() {
+        val listing = ok(MediaFixtures.channelTabsJson(withVideo = true))
+
+        listing.entries.map { it.id } shouldBe listOf("v9")
+        listing.dropped shouldBe 2
+        listing.entries.single().position shouldBe 3
+    }
+
+    @Test
+    fun aBareIdInUrlFallsBackToTheWebpageAddress() {
+        ok(MediaFixtures.bareUrlPlaylistJson()).entries.single().url shouldBe "https://soundcloud.com/a/s1"
     }
 
     @Test

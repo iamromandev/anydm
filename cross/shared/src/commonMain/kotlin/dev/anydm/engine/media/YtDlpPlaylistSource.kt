@@ -20,7 +20,10 @@ class YtDlpPlaylistSource(
 ) : PlaylistSource {
     private val ytDlp = YtDlpRunner(runner)
 
-    override suspend fun list(url: String): StepResult<PlaylistParse> {
+    override suspend fun list(
+        url: String,
+        end: Int,
+    ): StepResult<PlaylistParse> {
         val tool = resolve(Tool.YT_DLP) ?: return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.YT_DLP.id)
         // A flat listing needs no JavaScript runtime: Deno is used when it is there, never waited for.
         val deno = if (isYoutube(url)) resolve(Tool.DENO) else null
@@ -28,7 +31,16 @@ class YtDlpPlaylistSource(
         val args = settings.cookieSource.ytDlpFlags() + settings.pacing.values().ytDlpFlags()
         beforeExtract()
         val extracted =
-            when (val got = ytDlp.extract(tool, deno, url, args, flat = true)) {
+            when (
+                val got =
+                    ytDlp.extract(
+                        tool,
+                        deno,
+                        url,
+                        args + listOf("--playlist-end", end.coerceIn(1, LISTING_CAP + 1).toString()),
+                        flat = true,
+                    )
+            ) {
                 is StepResult.Failed -> return got
                 is StepResult.Ok -> got.value
             }

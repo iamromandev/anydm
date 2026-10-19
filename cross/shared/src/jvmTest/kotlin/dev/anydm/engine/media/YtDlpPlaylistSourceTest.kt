@@ -50,6 +50,24 @@ class YtDlpPlaylistSourceTest {
         }
 
     @Test
+    fun theListingIsBoundedByDefaultAndBySelection() =
+        runBlocking<Unit> {
+            val bounded = yt(MediaFixtures.flatPlaylistJson())
+            source(bounded).list(url)
+            bounded.started
+                .single()
+                .command
+                .shouldContainInOrder("--playlist-end", "5001")
+
+            val narrow = yt(MediaFixtures.flatPlaylistJson())
+            source(narrow).list(url, end = 10)
+            narrow.started
+                .single()
+                .command
+                .shouldContainInOrder("--playlist-end", "10")
+        }
+
+    @Test
     fun cookiesAndPacingFlagsAreAdded() =
         runBlocking<Unit> {
             settings = MediaSettings(CookieSource.File("/home/u/cookies.txt"), Pacing(PacingPreset.BALANCED))

@@ -12,6 +12,8 @@ data class PlaylistEntry(
     val url: String,
     val title: String?,
     val duration: Int?,
+    /** Its place in the playlist as listed, counting entries that could not be used: 1 is the first. */
+    val position: Int,
 )
 
 /** A playlist or channel (MED-16). [dropped] counts the entries that could not be used (private, repeated, no address). */

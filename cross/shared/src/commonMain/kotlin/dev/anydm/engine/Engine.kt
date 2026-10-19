@@ -27,7 +27,9 @@ import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.media.LISTING_CAP
 import dev.anydm.engine.media.PlaylistEntry
+import dev.anydm.engine.media.PlaylistListing
 import dev.anydm.engine.media.PlaylistParse
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
@@ -393,7 +395,7 @@ class Engine(
     ): AddPlaylistResult {
         val source = playlists ?: return AddPlaylistResult.Unavailable
         val listing =
-            when (val listed = source.list(url)) {
+            when (val listed = source.list(url, selection.listingEnd(LISTING_CAP + 1))) {
                 is StepResult.Failed -> {
                     return AddPlaylistResult.Failed(listed)
                 }
@@ -406,8 +408,12 @@ class Engine(
                     }
                 }
             }
-        val picked = selection.indices(listing.entries.size)
-        if (picked.isEmpty()) return AddPlaylistResult.EmptySelection
+        val picked =
+            when (val chosen = chosenEntries(listing, selection)) {
+                is Chosen.Some -> chosen.entries
+                Chosen.None -> return AddPlaylistResult.EmptySelection
+                is Chosen.TooMany -> return AddPlaylistResult.Failed(StepResult.Failed(null, chosen.reason))
+            }
         val base =
             template.saveFolder?.let(::Path)
                 ?: store.categories
@@ -430,7 +436,7 @@ class Engine(
                 sourceUrl = url,
                 selection = selection.takeIf { it != ItemSelection() },
             )
-        val made = picked.map { itemJob(template, folder, listing.entries[it - 1], it) }
+        val made = picked.map { itemJob(template, folder, it, it.position) }
         val added = command { queue.addCollection(parent, made.map { it.first }, made.map { it.second }) }
         return AddPlaylistResult.Added(added.collection, added.children, added.skipped, listing.dropped)
     }
@@ -455,6 +461,32 @@ class Engine(
             selection = null,
         ) to NewItem(entry.extractor, entry.id, index, entry.title, entry.duration)
 
+    private sealed interface Chosen {
+        data class Some(
+            val entries: List<PlaylistEntry>,
+        ) : Chosen
+
+        data object None : Chosen
+
+        data class TooMany(
+            val reason: String,
+        ) : Chosen
+    }
+
+    // The listing's entries that [selection] picks, by their place in the playlist as listed; at most the cap.
+    private fun chosenEntries(
+        listing: PlaylistListing,
+        selection: ItemSelection,
+    ): Chosen {
+        val positions = selection.indices(listing.entries.size + listing.dropped).toSet()
+        val entries = listing.entries.filter { it.position in positions }
+        return when {
+            entries.isEmpty() -> Chosen.None
+            entries.size > LISTING_CAP -> Chosen.TooMany("the selection has ${entries.size} items; the limit is $LISTING_CAP")
+            else -> Chosen.Some(entries)
+        }
+    }
+
     // One sync at a time: two at once would both see an item as new.
     private val syncLock = Mutex()
 
@@ -469,8 +501,9 @@ class Engine(
         return syncLock.withLock {
             val collection = store.downloads.get(id)?.takeIf { it.isCollection && it.sourceUrl != null }
             if (collection == null) return@withLock SyncOutcome.NotACollection
+            val selection = collection.selection ?: ItemSelection()
             val listing =
-                when (val listed = source.list(collection.sourceUrl!!)) {
+                when (val listed = source.list(collection.sourceUrl!!, selection.listingEnd(LISTING_CAP + 1))) {
                     is StepResult.Failed -> {
                         return@withLock SyncOutcome.Failed(listed)
                     }
@@ -487,17 +520,21 @@ class Engine(
                         }
                     }
                 }
+            val chosen =
+                when (val picked = chosenEntries(listing, selection)) {
+                    is Chosen.Some -> picked.entries
+                    Chosen.None -> emptyList()
+                    is Chosen.TooMany -> return@withLock SyncOutcome.Failed(StepResult.Failed(null, picked.reason))
+                }
             val known = store.collectionItems.items(id).associateBy { it.extractor to it.videoId }
             val template = templateOf(collection)
             val folder = collection.saveFolder ?: ""
             val made =
-                (collection.selection ?: ItemSelection())
-                    .indices(listing.entries.size)
-                    .filter { index ->
-                        val entry = listing.entries[index - 1]
+                chosen
+                    .filter { entry ->
                         val item = known[entry.extractor to entry.id]
                         item == null || (!item.done && (item.childId == null || store.downloads.get(item.childId!!) == null))
-                    }.map { itemJob(template, folder, listing.entries[it - 1], it) }
+                    }.map { itemJob(template, folder, it, it.position) }
             val added = if (made.isEmpty()) null else command { queue.addChildren(id, made.map { it.first }, made.map { it.second }) }
             SyncOutcome.Done(SyncResult(added?.children?.size ?: 0, added?.skipped ?: 0, listing.dropped))
         }

@@ -197,4 +197,16 @@ internal object MediaFixtures {
     fun hugePlaylistJson(count: Int): String =
         """{"_type":"playlist","title":"Big","extractor_key":"YoutubeTab","webpage_url":"https://www.youtube.com/playlist?list=PL9","entries":[""" +
             (1..count).joinToString(",") { """{"ie_key":"Youtube","id":"v$it","url":"https://www.youtube.com/watch?v=v$it"}""" } + "]}"
+
+    /** A channel's root page: it lists its tabs (playlists), not videos; [withVideo] adds one real video. */
+    fun channelTabsJson(withVideo: Boolean = false): String =
+        """{"_type":"playlist","id":"UC1","title":"Chan","extractor_key":"YoutubeTab","webpage_url":"https://www.youtube.com/@chan","entries":[""" +
+            """{"_type":"playlist","ie_key":"YoutubeTab","id":"UC1","url":"https://www.youtube.com/@chan/videos","title":"Chan - Videos"},""" +
+            """{"ie_key":"YoutubeTab","id":"UC1s","url":"https://www.youtube.com/@chan/shorts","title":"Chan - Shorts"}""" +
+            (if (withVideo) """,{"ie_key":"Youtube","id":"v9","url":"https://www.youtube.com/watch?v=v9","title":"Nine"}""" else "") + "]}"
+
+    /** A playlist whose only entry has a bare id in `url` and its address in `webpage_url`. */
+    fun bareUrlPlaylistJson(): String =
+        """{"_type":"playlist","title":"Bare","extractor_key":"Soundcloud","entries":[""" +
+            """{"ie_key":"Soundcloud","id":"s1","url":"s1","webpage_url":"https://soundcloud.com/a/s1","title":"One"}]}"""
 }

@@ -56,8 +56,10 @@ object YtDlpJson {
     }
 
     /**
-     * A flat playlist listing (`--flat-playlist -J`). An entry needs an id and an http(s) address; others (private
-     * videos, repeats, nulls, addresses of another kind) are counted in `dropped`. A channel is told by its address.
+     * A flat playlist listing (`--flat-playlist -J`). An entry needs an id and an http(s) address (`url`, else
+     * `webpage_url`); others (private videos, repeats, nulls, addresses of another kind, and nested playlists such as a
+     * channel's tabs) are counted in `dropped`. Each entry keeps its [PlaylistEntry.position] in the listing as given. A
+     * page that lists only other playlists is refused. A channel is told by its address.
      */
     fun parsePlaylist(
         json: String,
@@ -73,15 +75,27 @@ object YtDlpJson {
         if (type != "playlist" && type != "multi_video") return PlaylistParse.NotAPlaylist
         val title = root.text("title") ?: return PlaylistParse.Rejected("yt-dlp gave no title for this playlist")
         val raw = (root["entries"] as? JsonArray).orEmpty()
-        if (raw.size > LISTING_CAP) {
+        // The listing is bounded when asked for (--playlist-end); far more than that is something else.
+        if (raw.size > LISTING_CAP + 1) {
             return PlaylistParse.Rejected("the playlist has ${raw.size} items; the limit is $LISTING_CAP")
         }
         val fallback = root.text("extractor_key")
         val seen = HashSet<Pair<String, String>>()
         val entries = ArrayList<PlaylistEntry>()
-        for (element in raw) {
-            val entry = (element as? JsonObject)?.let { entryOf(it, fallback) }
+        var nested = 0
+        raw.forEachIndexed { index, element ->
+            val obj = element as? JsonObject
+            if (obj != null && isNestedPlaylist(obj, fallback)) {
+                nested++
+                return@forEachIndexed
+            }
+            val entry = obj?.let { entryOf(it, fallback, index + 1) }
             if (entry != null && seen.add(entry.extractor to entry.id)) entries += entry
+        }
+        if (entries.isEmpty() && nested > 0) {
+            return PlaylistParse.Rejected(
+                "this page lists other playlists (a channel's tabs), not videos; add one of them, for a channel its /videos page",
+            )
         }
         val page = root.text("webpage_url") ?: sourceUrl
         return PlaylistParse.Ok(
@@ -96,15 +110,27 @@ object YtDlpJson {
         )
     }
 
+    // An entry that is itself a playlist: marked so, or a tab of the page that lists it (YouTube's tab extractor makes both).
+    private fun isNestedPlaylist(
+        obj: JsonObject,
+        listingExtractor: String?,
+    ): Boolean {
+        if (obj.text("_type") == "playlist") return true
+        val key = obj.text("ie_key") ?: return false
+        return listingExtractor != null && key.endsWith("Tab") && key.equals(listingExtractor, ignoreCase = true)
+    }
+
     private fun entryOf(
         obj: JsonObject,
         fallbackExtractor: String?,
+        position: Int,
     ): PlaylistEntry? {
         val id = obj.text("id")?.takeIf { it.isNotBlank() } ?: return null
         val url =
-            (obj.text("url") ?: obj.text("webpage_url"))?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return null
+            listOfNotNull(obj.text("url"), obj.text("webpage_url")).firstOrNull { it.startsWith("https://") || it.startsWith("http://") }
+                ?: return null
         val extractor = (obj.text("ie_key") ?: fallbackExtractor ?: "unknown").lowercase()
-        return PlaylistEntry(extractor, id, url, obj.text("title"), obj.number("duration")?.toInt())
+        return PlaylistEntry(extractor, id, url, obj.text("title"), obj.number("duration")?.toInt(), position)
     }
 
     private fun isChannelPage(url: String): Boolean {

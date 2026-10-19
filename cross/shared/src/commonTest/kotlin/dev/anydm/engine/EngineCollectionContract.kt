@@ -46,7 +46,7 @@ abstract class EngineCollectionContract : StoreTestBase() {
         title,
         "Chan",
         playlistUrl,
-        (1..count).map { PlaylistEntry("youtube", "v$it", "https://www.example.com/watch?v=v$it", "Video $it", 60) },
+        (1..count).map { PlaylistEntry("youtube", "v$it", "https://www.example.com/watch?v=v$it", "Video $it", 60, it) },
         dropped,
     )
 
@@ -714,6 +714,66 @@ abstract class EngineCollectionContract : StoreTestBase() {
 
                 added.collection.profileId shouldBe profile.id
                 added.children.map { it.profileId }.toSet() shouldBe setOf(profile.id)
+            }
+        }
+
+    private fun entry(
+        n: Int,
+        position: Int,
+    ) = PlaylistEntry("youtube", "v$n", "https://www.example.com/watch?v=v$n", "Video $n", 60, position)
+
+    @Test
+    fun aRangeCountsThePlaylistPositionsNotTheUsableEntries() =
+        runTest {
+            // The second video is private: the listing has it, but with no address.
+            val listing =
+                PlaylistListing(
+                    CollectionKind.PLAYLIST,
+                    "My List",
+                    "Chan",
+                    playlistUrl,
+                    listOf(entry(1, 1), entry(3, 3), entry(4, 4)),
+                    dropped = 1,
+                )
+            withEngine(source(listing)) { h ->
+                val added = h.engine.addPlaylist(playlistUrl, ItemSelection("3"), runnable).added()
+
+                added.children.map { it.playlistIndex } shouldBe listOf(3)
+                h.store.collectionItems
+                    .items(added.collection.id)
+                    .single()
+                    .videoId shouldBe "v3"
+            }
+        }
+
+    @Test
+    fun theListingIsAskedForNoMoreThanTheSelectionNeeds() =
+        runTest {
+            val playlist = source(listing(count = 3))
+            withEngine(playlist) { h ->
+                h.engine.addPlaylist(playlistUrl, ItemSelection(limit = 2), runnable)
+                h.engine.addPlaylist(playlistUrl, ItemSelection("1:3"), runnable)
+                h.engine.addPlaylist(playlistUrl, ItemSelection(), runnable)
+
+                playlist.ends shouldBe listOf(2, 3, 5001)
+            }
+        }
+
+    @Test
+    fun aSelectionOverTheCapIsRefusedButARangeOfAHugeListingWorks() =
+        runTest {
+            val huge = source(listing(count = 5001))
+            withEngine(huge) { h ->
+                h.engine
+                    .addPlaylist(playlistUrl)
+                    .shouldBeInstanceOf<AddPlaylistResult.Failed>()
+                    .failure.message shouldBe "the selection has 5001 items; the limit is 5000"
+                h.engine.downloads.value shouldBe emptyList()
+
+                h.engine
+                    .addPlaylist(playlistUrl, ItemSelection("1:10"), runnable)
+                    .added()
+                    .children.size shouldBe 10
             }
         }
 }

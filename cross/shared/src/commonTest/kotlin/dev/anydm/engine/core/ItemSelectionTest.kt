@@ -68,4 +68,15 @@ class ItemSelectionTest {
         pick("1:5", 0) shouldBe emptyList()
         pick(null, 0) shouldBe emptyList()
     }
+
+    @Test
+    fun theListingNeedsOnlyAsFarAsTheSelectionReaches() {
+        ItemSelection().listingEnd(5001) shouldBe 5001
+        ItemSelection(limit = 10).listingEnd(5001) shouldBe 10
+        ItemSelection("1:10").listingEnd(5001) shouldBe 10
+        ItemSelection("2,40,7:9").listingEnd(5001) shouldBe 40
+        ItemSelection("5:").listingEnd(5001) shouldBe 5001
+        ItemSelection("5:", limit = 3).listingEnd(5001) shouldBe 5001
+        ItemSelection("1:9000").listingEnd(5001) shouldBe 5001
+    }
 }

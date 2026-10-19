@@ -31,6 +31,17 @@ data class ItemSelection(
         return limit?.let { picked.take(it) } ?: picked.toList()
     }
 
+    /**
+     * How many entries of the listing this selection can need: the highest item a range names, or the limit when there
+     * is no range; [cap] when either is open ended. Passed to yt-dlp so it stops listing there.
+     */
+    fun listingEnd(cap: Int): Int {
+        val parts = range?.let { parts(it) }
+        val byRange = parts?.maxOf { it.last }?.takeIf { it != Int.MAX_VALUE }
+        val byLimit = if (range == null) limit else null
+        return minOf(byRange ?: byLimit ?: cap, cap)
+    }
+
     companion object {
         /** The selection, or null when [range] or [limit] are not valid. */
         fun parse(

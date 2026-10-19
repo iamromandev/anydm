@@ -7,9 +7,14 @@ internal class FakePlaylistSource(
     var result: StepResult<PlaylistParse>,
 ) : PlaylistSource {
     val requested = mutableListOf<String>()
+    val ends = mutableListOf<Int>()
 
-    override suspend fun list(url: String): StepResult<PlaylistParse> {
+    override suspend fun list(
+        url: String,
+        end: Int,
+    ): StepResult<PlaylistParse> {
         requested += url
+        ends += end
         return result
     }
 }
