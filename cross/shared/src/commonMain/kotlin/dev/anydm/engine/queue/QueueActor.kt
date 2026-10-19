@@ -368,7 +368,7 @@ internal class QueueActor(
     suspend fun pauseAll(reply: CompletableDeferred<CommandResult>) {
         settings = store.settings.update { it.copy(globalPause = true) }
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             val slot = slots[job.id]
             if (slot != null) {
                 stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterGlobalStop, it) }
@@ -420,7 +420,7 @@ internal class QueueActor(
         reply: CompletableDeferred<CommandResult>,
     ) {
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             val inLow = job.saveFolder?.let { Path(it) in low } == true
             val slot = slots[job.id]
             when {
@@ -503,7 +503,13 @@ internal class QueueActor(
 
     /** While global pause is on, a job that starts waiting waits paused instead. */
     private fun holdIfGlobal(job: Download): Download =
-        if (settings.globalPause && job.status in WAITING) (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download else job
+        if (settings.globalPause && job.status in WAITING &&
+            !job.isCollection
+        ) {
+            (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
+        } else {
+            job
+        }
 
     /**
      * After a restart nothing runs: every attempt left open ends ("the app stopped", not counted), a job left mid-run
@@ -514,7 +520,7 @@ internal class QueueActor(
     private suspend fun reconcile() {
         val now = clock.now()
         for (open in downloads.openAttempts()) updateAttempt(open.copy(endedAt = now, message = "the app stopped"))
-        for (job in downloads.list()) {
+        for (job in downloads.list().filterNot { it.isCollection }) {
             var fixed =
                 when (job.status) {
                     DOWNLOADING -> job.moved(PENDING).copy(queuedAt = now)

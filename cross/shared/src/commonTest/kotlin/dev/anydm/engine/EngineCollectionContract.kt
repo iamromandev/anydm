@@ -3,6 +3,7 @@ package dev.anydm.engine
 import dev.anydm.engine.core.CollectionKind
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.media.FakePlaylistSource
@@ -50,84 +51,104 @@ abstract class EngineCollectionContract : StoreTestBase() {
     private suspend fun TestScope.started(playlists: FakePlaylistSource?): EngineHarness =
         EngineHarness(this, newStore(), playlists = playlists).also { it.engine.start() }
 
+    // The fake serves one file name for every job: children that are not checked for duplicates can all finish.
+    private val runnable = NewDownload(DownloadKind.SITE, allowDuplicate = true)
+
     private fun AddPlaylistResult.added() = shouldBeInstanceOf<AddPlaylistResult.Added>()
 
     @Test
     fun addPlaylistCreatesParentAndChildren() =
         runTest {
             val h = started(source(listing()))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl).added()
 
-            val added = h.engine.addPlaylist(playlistUrl).added()
-
-            added.collection.collection shouldBe CollectionKind.PLAYLIST
-            added.collection.sourceUrl shouldBe playlistUrl
-            added.collection.saveFolder shouldBe Path(stepRoot, "My List").toString()
-            added.children.size shouldBe 3
-            added.children.map { it.parentId } shouldBe List(3) { added.collection.id }
-            added.children.map { it.playlistIndex } shouldBe listOf(1, 2, 3)
-            added.children.map { it.saveFolder }.toSet() shouldBe setOf(added.collection.saveFolder)
-            added.children.forEachIndexed { i, child ->
-                h.store.downloads
-                    .mirrors(child.id)
-                    .single()
-                    .url shouldBe "https://www.example.com/watch?v=v${i + 1}"
+                added.collection.collection shouldBe CollectionKind.PLAYLIST
+                added.collection.sourceUrl shouldBe playlistUrl
+                added.collection.saveFolder shouldBe Path(stepRoot, "My List").toString()
+                added.children.size shouldBe 3
+                added.children.map { it.parentId } shouldBe List(3) { added.collection.id }
+                added.children.map { it.playlistIndex } shouldBe listOf(1, 2, 3)
+                added.children.map { it.saveFolder }.toSet() shouldBe setOf(added.collection.saveFolder)
+                added.children.forEachIndexed { i, child ->
+                    h.store.downloads
+                        .mirrors(child.id)
+                        .single()
+                        .url shouldBe "https://www.example.com/watch?v=v${i + 1}"
+                }
+                h.engine.downloads.value.size shouldBe 4
+            } finally {
+                h.engine.stop()
             }
-            h.engine.downloads.value.size shouldBe 4
-            h.engine.stop()
         }
 
     @Test
     fun rangeAndLimitSelectItems() =
         runTest {
             val h = started(source(listing(count = 6)))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl, ItemSelection("2:5", 2)).added()
 
-            val added = h.engine.addPlaylist(playlistUrl, ItemSelection("2:5", 2)).added()
-
-            added.children.map { it.playlistIndex } shouldBe listOf(2, 3)
-            added.collection.selection shouldBe ItemSelection("2:5", 2)
-            h.engine.stop()
+                added.children.map { it.playlistIndex } shouldBe listOf(2, 3)
+                added.collection.selection shouldBe ItemSelection("2:5", 2)
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun aTitleWithDotsStaysInsideTheBaseFolder() =
         runTest {
             val h = started(source(listing(title = "../x")))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl).added()
 
-            val added = h.engine.addPlaylist(playlistUrl).added()
-
-            Path(added.collection.saveFolder!!).parent shouldBe stepRoot
-            h.engine.stop()
+                Path(added.collection.saveFolder!!).parent shouldBe stepRoot
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun theTemplateSaveFolderIsTheBase() =
         runTest {
             val h = started(source(listing()))
+            try {
+                val added =
+                    h.engine
+                        .addPlaylist(
+                            playlistUrl,
+                            template = NewDownload(DownloadKind.SITE, saveFolder = "/media/music"),
+                        ).added()
 
-            val added = h.engine.addPlaylist(playlistUrl, template = NewDownload(DownloadKind.SITE, saveFolder = "/media/music")).added()
-
-            added.collection.saveFolder shouldBe Path("/media/music", "My List").toString()
-            h.engine.stop()
+                added.collection.saveFolder shouldBe Path("/media/music", "My List").toString()
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun anEmptySelectionCreatesNothing() =
         runTest {
             val h = started(source(listing()))
+            try {
+                h.engine.addPlaylist(playlistUrl, ItemSelection("50:60")) shouldBe AddPlaylistResult.EmptySelection
 
-            h.engine.addPlaylist(playlistUrl, ItemSelection("50:60")) shouldBe AddPlaylistResult.EmptySelection
-
-            h.engine.downloads.value shouldBe emptyList()
-            h.engine.stop()
+                h.engine.downloads.value shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun aSingleVideoIsNotAPlaylist() =
         runTest {
             val h = started(FakePlaylistSource(StepResult.Ok(PlaylistParse.NotAPlaylist)))
-
-            h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.NotAPlaylist
-            h.engine.stop()
+            try {
+                h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.NotAPlaylist
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
@@ -135,67 +156,147 @@ abstract class EngineCollectionContract : StoreTestBase() {
         runTest {
             val failure = StepResult.Failed(null, "yt-dlp took too long")
             val h = started(FakePlaylistSource(failure))
-
-            h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.Failed(failure)
-            h.engine.stop()
+            try {
+                h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.Failed(failure)
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun aRejectedListingIsAFailure() =
         runTest {
             val h = started(FakePlaylistSource(StepResult.Ok(PlaylistParse.Rejected("the playlist has 6000 items; the limit is 5000"))))
-
-            h.engine
-                .addPlaylist(playlistUrl)
-                .shouldBeInstanceOf<AddPlaylistResult.Failed>()
-                .failure.message shouldBe "the playlist has 6000 items; the limit is 5000"
-            h.engine.stop()
+            try {
+                h.engine
+                    .addPlaylist(playlistUrl)
+                    .shouldBeInstanceOf<AddPlaylistResult.Failed>()
+                    .failure.message shouldBe "the playlist has 6000 items; the limit is 5000"
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun droppedEntriesArePassedOn() =
         runTest {
             val h = started(source(listing(dropped = 2)))
-
-            h.engine
-                .addPlaylist(playlistUrl)
-                .added()
-                .dropped shouldBe 2
-            h.engine.stop()
+            try {
+                h.engine
+                    .addPlaylist(playlistUrl)
+                    .added()
+                    .dropped shouldBe 2
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun duplicateChildrenAreSkippedNotFatal() =
         runTest {
             val h = started(source(listing()))
-            h.engine.add(NewDownload(DownloadKind.SITE, mirrors = listOf("https://www.example.com/watch?v=v2")))
+            try {
+                h.engine.add(NewDownload(DownloadKind.SITE, mirrors = listOf("https://www.example.com/watch?v=v2")))
 
-            val added = h.engine.addPlaylist(playlistUrl).added()
+                val added = h.engine.addPlaylist(playlistUrl).added()
 
-            added.skipped shouldBe 1
-            added.children.map { it.playlistIndex } shouldBe listOf(1, 3)
-            h.engine.stop()
+                added.skipped shouldBe 1
+                added.children.map { it.playlistIndex } shouldBe listOf(1, 3)
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun noSourceIsUnavailable() =
         runTest {
             val h = started(null)
-
-            h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.Unavailable
-            h.engine.stop()
+            try {
+                h.engine.addPlaylist(playlistUrl) shouldBe AddPlaylistResult.Unavailable
+            } finally {
+                h.engine.stop()
+            }
         }
 
     @Test
     fun theParentNeverRuns() =
         runTest {
             val h = started(source(listing()))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl).added()
+                settle()
 
-            val added = h.engine.addPlaylist(playlistUrl).added()
-            settle()
+                h.protocol.calls.count { it == "probe" } shouldBe 3
+                h.store.downloads
+                    .get(added.collection.id)!!
+                    .status shouldBe DownloadStatus.PENDING
+            } finally {
+                h.engine.stop()
+            }
+        }
 
-            h.protocol.calls.count { it == "probe" } shouldBe 3
-            h.status(added.collection.id) shouldBe DownloadStatus.PENDING
-            h.engine.stop()
+    @Test
+    fun theSnapshotSumsTheChildren() =
+        runTest {
+            val h = started(source(listing()))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl, template = runnable).added()
+                settle()
+
+                val snapshot = h.snapshot(added.collection.id)!!
+                snapshot.download.status shouldBe DownloadStatus.COMPLETED
+                snapshot.downloaded shouldBe 3 * 64L * 1024
+                snapshot.total shouldBe 3 * 64L * 1024
+                snapshot.items shouldBe ItemCounts(total = 3, pending = 0, active = 0, paused = 0, completed = 3, failed = 0)
+                h.snapshot(added.children.first().id)!!.items shouldBe null
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aPausedChildMakesTheCollectionPaused() =
+        runTest {
+            val h = started(source(listing()))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl, template = runnable).added()
+                h.engine.pause(added.children.last().id)
+
+                settle()
+
+                val snapshot = h.snapshot(added.collection.id)!!
+                snapshot.download.status shouldBe DownloadStatus.PAUSED
+                snapshot.items shouldBe ItemCounts(total = 3, pending = 0, active = 0, paused = 1, completed = 2, failed = 0)
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun pauseAllAndResumeAllLeaveTheParentAlone() =
+        runTest {
+            val h = started(source(listing()))
+            try {
+                val added = h.engine.addPlaylist(playlistUrl, template = runnable).added()
+
+                h.engine.pauseAll()
+                h.store.downloads
+                    .get(added.collection.id)!!
+                    .status shouldBe DownloadStatus.PENDING
+                added.children.forEach {
+                    h.store.downloads
+                        .get(it.id)!!
+                        .status shouldBe DownloadStatus.PAUSED
+                }
+                h.engine.resumeAll()
+                settle()
+
+                h.store.downloads
+                    .get(added.collection.id)!!
+                    .status shouldBe DownloadStatus.PENDING
+                h.snapshot(added.collection.id)!!.download.status shouldBe DownloadStatus.COMPLETED
+            } finally {
+                h.engine.stop()
+            }
         }
 }
