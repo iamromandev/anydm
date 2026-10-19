@@ -79,6 +79,9 @@ internal class TokenBucket(
             }
         }
 
+    /** The rate now, in bytes per second (Long.MAX_VALUE after a limit was lifted). */
+    suspend fun rateNow(): Long = state.withLock { rate.toLong() }
+
     suspend fun setRate(rate: Long) {
         require(rate > 0) { "rate must be > 0: $rate" }
         state.withLock {

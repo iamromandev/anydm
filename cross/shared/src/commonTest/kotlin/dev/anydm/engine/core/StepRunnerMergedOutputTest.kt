@@ -83,4 +83,43 @@ class StepRunnerMergedOutputTest {
                 .single()
                 .placedPath shouldBe "file.zip"
         }
+
+    @Test
+    fun cleanupFoldersAreDeletedAfterCompletion() =
+        runTest {
+            val h = merging()
+            h.protocol.cleanup = listOf(".m.frag")
+            h.fs.put(Path(stepRoot, ".m.frag", "137", "000000"), byteArrayOf(1))
+
+            h.runAll().failure shouldBe null
+
+            h.fs.exists(Path(stepRoot, ".m.frag", "137", "000000")) shouldBe false
+            h.fs.exists(Path(stepRoot, ".m.frag")) shouldBe false
+        }
+
+    @Test
+    fun anUnsafeCleanupPathIsIgnored() =
+        runTest {
+            val h = merging()
+            val outside = Path(requireNotNull(stepRoot.parent), "outside-of-the-save-folder", "keep.bin")
+            h.fs.put(outside, byteArrayOf(1))
+            h.protocol.cleanup = listOf("../outside-of-the-save-folder")
+
+            h.runAll().failure shouldBe null
+
+            h.fs.exists(outside) shouldBe true
+        }
+
+    @Test
+    fun aFailedFinalizeKeepsTheCleanupFolder() =
+        runTest {
+            val h = merging()
+            h.protocol.cleanup = listOf(".m.frag")
+            h.fs.put(Path(stepRoot, ".m.frag", "137", "000000"), byteArrayOf(1))
+            h.protocol.failure = FakeFailure.AtFinalize(StepResult.Failed(null, "merge failed"))
+
+            h.runAll().failure!!.message shouldBe "merge failed"
+
+            h.fs.exists(Path(stepRoot, ".m.frag", "137", "000000")) shouldBe true
+        }
 }

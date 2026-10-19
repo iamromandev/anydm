@@ -31,6 +31,7 @@ import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.core.goneMirrors
+import dev.anydm.engine.core.isSafeRelativePath
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
@@ -618,6 +619,12 @@ internal class QueueActor(
                 else -> return CommandResult.TrashFailed(trashed)
             }
         }
+        // The protocol's own work folders are the engine's, never the user's: they go whatever happens to the files.
+        job.saveFolder?.let(::Path)?.let { folder ->
+            for (name in protocols[job.kind]?.workFolders(job).orEmpty()) {
+                if (isSafeRelativePath(name)) fileSystem.deleteTree(targetPath(folder, name))
+            }
+        }
         downloads.remove(job.id)
         lastStatus.remove(job.id)
         observer.jobRemoved(job.id)
@@ -787,7 +794,7 @@ internal class QueueActor(
             object : Meter {
                 override fun record(bytes: Long) = observer.received(slot.id, bytes)
             }
-        return when (val ran = runner.run(ready, listener, slot.limiter, meter)) {
+        return when (val ran = runner.run(ready, listener, slot.limiter, meter) { bandwidth.shareOf(slot.id) }) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }

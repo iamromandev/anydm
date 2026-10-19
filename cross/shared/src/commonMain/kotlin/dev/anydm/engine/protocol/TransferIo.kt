@@ -36,4 +36,11 @@ interface TransferIo {
 
     /** All bytes in this job's partials so far, resumed ones included. */
     fun progress(downloaded: Long)
+
+    /**
+     * What this job may take now, in bytes per second, or null for no limit (MED-05). For a protocol that hands the
+     * transfer to a program of its own, which the [limiter] can't pace: it sets the program's limit from this, and asks
+     * again from time to time because the share changes with the other jobs and the settings.
+     */
+    suspend fun speedShare(): Long? = null
 }

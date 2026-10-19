@@ -18,7 +18,25 @@ class FormatSelectorTest {
         codec: String = "avc1.640028",
         ext: String = "mp4",
         hdr: Boolean = false,
-    ) = MediaStream(id, "https://cdn.test/v/$id", ext, "https", codec, null, height, fps, hdr, tbr, 1_000_000L, emptyList(), null)
+        protocol: String = "https",
+        drm: Boolean = false,
+    ) = MediaStream(
+        id,
+        "https://cdn.test/v/$id",
+        ext,
+        protocol,
+        codec,
+        null,
+        height,
+        fps,
+        hdr,
+        tbr,
+        1_000_000L,
+        emptyList(),
+        null,
+        emptyList(),
+        drm,
+    )
 
     private fun audio(
         id: String,
@@ -32,11 +50,12 @@ class FormatSelectorTest {
         id: String,
         height: Int = 720,
         tbr: Double = 1500.0,
+        protocol: String = "https",
     ) = MediaStream(
         id,
         "https://cdn.test/v/$id",
         "mp4",
-        "https",
+        protocol,
         "avc1.64001F",
         "mp4a.40.2",
         height,
@@ -238,10 +257,10 @@ class FormatSelectorTest {
     }
 
     @Test
-    fun onlyHlsIsRefusedWithAReason() {
+    fun anHlsOnlyPageSelectsTheFragmentsRoute() {
         val parsed = (YtDlpJson.parse(MediaFixtures.hlsOnlyJson()) as MediaParse.Ok).info
 
-        noMatch(parsed) shouldContain "HLS"
+        chosen(parsed).route shouldBe StreamRoute.FRAGMENTS
     }
 
     @Test
@@ -253,17 +272,15 @@ class FormatSelectorTest {
 
     @Test
     fun aVideoIsNeverQuietlyDownloadedWithoutItsSound() {
-        val dashAudio = audio("dash", protocol = "http_dash_segments")
-
-        noMatch(info(video("137"), dashAudio)) shouldContain "audio"
         noMatch(info(video("137"), audio("140")), Format(audioCodec = "opus")) shouldContain "audio"
     }
 
     @Test
-    fun aMuxedStreamStandsInWhenTheSoundIsOnlyOfferedElsewhere() {
+    fun aDashOnlyAudioPairsThroughTheFallbackRoute() {
         val selection = chosen(info(video("137"), muxed("22"), audio("dash", protocol = "http_dash_segments")))
 
-        selection.streams.map { it.formatId } shouldBe listOf("22")
+        selection.streams.map { it.formatId } shouldBe listOf("137", "dash")
+        selection.route shouldBe StreamRoute.YTDLP
     }
 
     @Test
@@ -303,5 +320,44 @@ class FormatSelectorTest {
             ) as Choice.Ok
         ).selection.streams.map { it.formatId } shouldBe
             listOf("999", "251")
+    }
+
+    @Test
+    fun routeTieBreakPrefersPlainOverFragments() {
+        val selection =
+            chosen(
+                info(
+                    video("plain", height = 720, tbr = 1000.0),
+                    video("hls", height = 720, tbr = 3000.0, protocol = "m3u8_native"),
+                    audio("140"),
+                ),
+            )
+
+        selection.video!!.formatId shouldBe "plain"
+        selection.route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun theJobRouteIsTheMostDemandingStreamsRoute() {
+        chosen(info(video("a"), audio("140"))).route shouldBe StreamRoute.PLAIN
+        chosen(info(video("a", protocol = "m3u8_native"), audio("140"))).route shouldBe StreamRoute.FRAGMENTS
+        chosen(info(video("a", protocol = "m3u8_native"), audio("dash", protocol = "rtmp"))).route shouldBe StreamRoute.YTDLP
+    }
+
+    @Test
+    fun drmStreamsAreNeverSelected() {
+        val selection = chosen(info(video("drm", height = 2160, drm = true), video("ok", height = 720), audio("140")))
+
+        selection.video!!.formatId shouldBe "ok"
+        noMatch(info(video("drm", drm = true))) shouldContain "no stream"
+    }
+
+    @Test
+    fun anHlsMuxedStreamNeedsFfmpegToRewrap() {
+        val selection = chosen(info(muxed("hls", protocol = "m3u8_native")))
+
+        selection.route shouldBe StreamRoute.FRAGMENTS
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "mp4"
     }
 }

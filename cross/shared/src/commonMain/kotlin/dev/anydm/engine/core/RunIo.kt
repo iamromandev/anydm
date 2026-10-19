@@ -17,6 +17,7 @@ internal class RunIo(
     override val meter: Meter,
     private val listener: RunListener,
     private val total: Long?,
+    private val share: suspend () -> Long? = { null },
 ) : TransferIo {
     private val known = transfer.files.flatMap { f -> f.segments.map { it.id } }.toSet()
 
@@ -46,4 +47,6 @@ internal class RunIo(
     }
 
     override fun progress(downloaded: Long) = listener.progress(downloaded, total)
+
+    override suspend fun speedShare(): Long? = share()
 }

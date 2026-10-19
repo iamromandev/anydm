@@ -10,5 +10,12 @@ internal class ProgressOffsetIo(
     private val io: TransferIo,
     private val others: Long,
 ) : TransferIo by io {
-    override fun progress(downloaded: Long) = io.progress(downloaded + others)
+    /** The most this stream has reported, without the offset: the bytes it holds when it is done. */
+    var last: Long = 0L
+        private set
+
+    override fun progress(downloaded: Long) {
+        last = maxOf(last, downloaded)
+        io.progress(downloaded + others)
+    }
 }

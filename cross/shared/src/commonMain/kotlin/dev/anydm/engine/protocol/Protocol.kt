@@ -1,5 +1,7 @@
 package dev.anydm.engine.protocol
 
+import dev.anydm.engine.core.Download
+
 /**
  * One kind of source (DIRECT, SITE, TORRENT, FTP), driven by StepRunner (FND-03): [probe] while the job is PENDING,
  * then [plan], [transfer] and [finalize] once the queue gives it a slot. Expected failures are StepResult.Failed (with
@@ -34,4 +36,11 @@ interface Protocol {
      */
     suspend fun relink(request: RelinkRequest): StepResult<Relinked> =
         StepResult.Failed(errorClass = null, message = "relink not supported")
+
+    /**
+     * Folders (relative to the job's save folder) that this kind keeps its own work in, such as fetched fragments or a
+     * downloader's staging area. Removing the job deletes them with everything in them; the finished output never
+     * lives there.
+     */
+    fun workFolders(download: Download): List<String> = emptyList()
 }

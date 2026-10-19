@@ -26,6 +26,10 @@ class SiteProbe(
     override val size: Long?,
     override val validator: String?,
     override val nameFields: NameFields,
+    /** Each fragmented stream's fragments by format id, the init segment first; empty for a plain-only job. */
+    val fragments: Map<String, List<FragmentRef>> = emptyMap(),
+    /** Who downloads the job: the selection's route, or YTDLP when a playlist turned out to be encrypted. */
+    val route: StreamRoute = selection.route,
 ) : ProbeResult
 
 /** The streams' sizes added up, or null when any is unknown. */

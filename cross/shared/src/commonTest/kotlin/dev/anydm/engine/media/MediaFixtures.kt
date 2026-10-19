@@ -1,3 +1,5 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package dev.anydm.engine.media
 
 /** Recorded-shape `yt-dlp -J` output for the media tests. Stream URLs are `$base/v/<format id>`. */
@@ -94,4 +96,46 @@ internal object MediaFixtures {
 
     fun hdrStream(base: String = "https://cdn.test"): String =
         page(listOf(format(base, "337", "webm", "vp9.2", "none", 1080, 60, 5000.0, 50_000_000, extra = ""","dynamic_range":"HDR10"""")))
+
+    /** Streams of every route: DASH with and without a fragment list, rtmp, two HLS protocols, and a DRM one. */
+    fun routesJson(base: String = "https://cdn.test"): String =
+        """{"id":"r1","title":"Routes","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"dash-v","url":"$base/m/manifest.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1","acodec":"none","height":720,""" +
+            """"fragment_base_url":"$base/m/","fragments":[{"path":"init.mp4"},{"path":"seg-1.m4s","duration":4.0},{"url":"https://other.test/seg-2.m4s","duration":4.0}]},""" +
+            """{"format_id":"dash-nofrag","url":"$base/m/x.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1","acodec":"none","height":480},""" +
+            """{"format_id":"rtmp","url":"rtmp://x.test/y","ext":"flv","protocol":"rtmp","vcodec":"avc1","acodec":"mp4a"},""" +
+            """{"format_id":"hls","url":"$base/h/index.m3u8","ext":"mp4","protocol":"m3u8","vcodec":"avc1","acodec":"mp4a","height":360},""" +
+            """{"format_id":"hls-native","url":"$base/h/native.m3u8","ext":"mp4","protocol":"m3u8_native","vcodec":"avc1","acodec":"mp4a","height":240},""" +
+            """{"format_id":"plain","url":"$base/v/plain","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"mp4a","height":144},""" +
+            """{"format_id":"drm","url":"$base/d","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"none","height":1080,"has_drm":true}]}"""
+
+    /** One muxed HLS stream whose playlist is at `$base/hls/index.m3u8`. */
+    fun hlsPageJson(base: String = "https://cdn.test"): String =
+        """{"id":"h1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"hls-720","url":"$base/hls/index.m3u8","ext":"mp4","protocol":"m3u8_native","vcodec":"avc1.64001F","acodec":"mp4a.40.2","height":720,"tbr":1500}]}"""
+
+    /** A video-only DASH stream and an audio-only one, each with its own fragment list under `$base/dash/`. */
+    fun dashPageJson(base: String = "https://cdn.test"): String =
+        """{"id":"d1","title":"Dash","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"dash-v","url":"$base/dash/v.mpd","ext":"mp4","protocol":"http_dash_segments","vcodec":"avc1.64001F","acodec":"none","height":720,"tbr":1500,""" +
+            """"fragment_base_url":"$base/dash/","fragments":[{"path":"v-init.mp4"},{"path":"v-1.m4s","duration":4.0},{"path":"v-2.m4s","duration":4.0}]},""" +
+            """{"format_id":"dash-a","url":"$base/dash/a.mpd","ext":"m4a","protocol":"http_dash_segments","vcodec":"none","acodec":"mp4a.40.2","tbr":128,""" +
+            """"fragment_base_url":"$base/dash/","fragments":[{"path":"a-init.mp4"},{"path":"a-1.m4s","duration":4.0}]}]}"""
+
+    /** A plain video-only stream (`$base/v/137`) and an HLS audio-only one (`$base/hls/index.m3u8`). */
+    fun mixedRoutesJson(base: String = "https://cdn.test"): String =
+        """{"id":"m1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"137","url":"$base/v/137","ext":"mp4","protocol":"https","vcodec":"avc1.640028","acodec":"none","height":1080,"tbr":4000,"filesize":4000},""" +
+            """{"format_id":"hls-a","url":"$base/hls/index.m3u8","ext":"m4a","protocol":"m3u8_native","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
+
+    /** One muxed stream only yt-dlp's downloader can fetch (rtmp). */
+    fun rtmpMuxedJson(): String =
+        """{"id":"r1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"rtmp-1","url":"rtmp://x.test/live/a","ext":"flv","protocol":"rtmp","vcodec":"avc1","acodec":"mp4a","height":480}]}"""
+
+    /** A video-only and an audio-only rtmp stream: a merge through yt-dlp. */
+    fun rtmpPairJson(): String =
+        """{"id":"r2","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"rv","url":"rtmp://x.test/live/v","ext":"mp4","protocol":"rtmp","vcodec":"avc1.64001F","acodec":"none","height":720,"tbr":1500},""" +
+            """{"format_id":"ra","url":"rtmp://x.test/live/a","ext":"m4a","protocol":"rtmp","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
 }

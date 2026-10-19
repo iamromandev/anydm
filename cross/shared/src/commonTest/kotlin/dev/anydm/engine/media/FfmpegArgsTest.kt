@@ -128,4 +128,35 @@ class FfmpegArgsTest {
         Ffmpeg.args(ffmpeg, listOf(a), out, s) shouldBe
             head + listOf("-i", "/dl/a.part", "-vn", "-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "wav", "/dl/out.part")
     }
+
+    @Test
+    fun hlsAacIntoMp4GetsTheAdtsFilter() {
+        val s = selection(MediaFixtures.hlsOnlyJson(), Format())
+
+        Ffmpeg.args(ffmpeg, listOf(a), out, s) shouldBe
+            head +
+            listOf(
+                "-i",
+                "/dl/a.part",
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-bsf:a",
+                "aac_adtstoasc",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
+                "/dl/out.part",
+            )
+    }
+
+    @Test
+    fun plainAacIntoMp4DoesNot() {
+        val s = selection(MediaFixtures.mixedOnlyJson(), Format(container = Container.MP4))
+
+        Ffmpeg.args(ffmpeg, listOf(a), out, s) shouldBe
+            head + listOf("-i", "/dl/a.part", "-map", "0", "-c", "copy", "-movflags", "+faststart", "-f", "mp4", "/dl/out.part")
+    }
 }

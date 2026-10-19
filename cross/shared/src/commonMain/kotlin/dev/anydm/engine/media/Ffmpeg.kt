@@ -24,6 +24,7 @@ internal object Ffmpeg {
             if (audioFormat != null) {
                 addAll(listOf("-vn", "-map", "0:a:0"))
                 addAll(audioCodec(audioFormat, selection.transcode))
+                if (!selection.transcode && audioFormat == AudioFormat.M4A && hlsAac(selection)) addAll(listOf("-bsf:a", "aac_adtstoasc"))
                 addAll(listOf("-f", audioMuxer(audioFormat)))
             } else {
                 if (selection.video != null && selection.audio != null) {
@@ -32,11 +33,16 @@ internal object Ffmpeg {
                     addAll(listOf("-map", "0", "-c", "copy"))
                 }
                 val container = selection.container
+                if (container == Container.MP4 && hlsAac(selection)) addAll(listOf("-bsf:a", "aac_adtstoasc"))
                 if (container == Container.MP4) addAll(listOf("-movflags", "+faststart"))
                 addAll(listOf("-f", container?.let(::videoMuxer) ?: "matroska"))
             }
             add(output.toString())
         }
+
+    /** HLS carries AAC as ADTS frames, which MP4 wants without their headers. */
+    private fun hlsAac(selection: Selection): Boolean =
+        selection.streams.any { it.protocol.startsWith("m3u8") && it.audioCodec.orEmpty().startsWith("mp4a", ignoreCase = true) }
 
     private fun audioCodec(
         format: AudioFormat,

@@ -203,4 +203,71 @@ class BandwidthTest {
             (r1 + r2) near 20.0 * kib
             jobs.forEach { it.cancel() }
         }
+
+    @Test
+    fun shareIsTheOwnLimitWhenOnlyThatIsSet() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.register(a, 500, 0)
+
+            bandwidth.shareOf(a) shouldBe 500L
+        }
+
+    @Test
+    fun shareIsTheWeightedSliceOfTheGlobalLimit() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.setGlobal(3000)
+            bandwidth.register(a, null, 0)
+            bandwidth.register(b, null, 1)
+
+            bandwidth.shareOf(a) shouldBe 1000L
+            bandwidth.shareOf(b) shouldBe 2000L
+        }
+
+    @Test
+    fun shareIsTheSmallerOfTheTwo() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.setGlobal(3000)
+            bandwidth.register(a, 500, 0)
+            bandwidth.shareOf(a) shouldBe 500L
+
+            bandwidth.register(a, 5000, 0)
+            bandwidth.shareOf(a) shouldBe 3000L
+        }
+
+    @Test
+    fun noLimitsMeansNoShare() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.register(a, null, 0)
+
+            bandwidth.shareOf(a) shouldBe null
+        }
+
+    @Test
+    fun aLimitRemovedAgainMeansNoShare() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.register(a, 500, 0)
+            bandwidth.setLimit(a, null)
+            bandwidth.shareOf(a) shouldBe null
+
+            bandwidth.setGlobal(2000)
+            bandwidth.shareOf(a) shouldBe 2000L
+            bandwidth.setGlobal(null)
+            bandwidth.shareOf(a) shouldBe null
+        }
+
+    @Test
+    fun anUnregisteredJobHasNoShare() =
+        runTest {
+            val bandwidth = Bandwidth(testScheduler.timeSource)
+            bandwidth.shareOf(a) shouldBe null
+
+            bandwidth.register(a, 500, 0)
+            bandwidth.unregister(a)
+            bandwidth.shareOf(a) shouldBe null
+        }
 }

@@ -97,4 +97,36 @@ class YtDlpJsonTest {
     fun aFormatWithoutAUrlIsSkipped() {
         ok(MediaFixtures.withoutUrl()).streams.map { it.formatId } shouldBe listOf("22")
     }
+
+    private fun stream(id: String) = ok(MediaFixtures.routesJson()).streams.single { it.formatId == id }
+
+    @Test
+    fun dashFragmentsAreResolvedAgainstTheBaseUrl() {
+        val fragments = stream("dash-v").fragments
+
+        fragments.map { it.url } shouldBe
+            listOf("https://cdn.test/m/init.mp4", "https://cdn.test/m/seg-1.m4s", "https://other.test/seg-2.m4s")
+        fragments.map { it.duration } shouldBe listOf(null, 4.0, 4.0)
+    }
+
+    @Test
+    fun aDashStreamWithoutFragmentsIsRoutedToYtDlp() {
+        stream("dash-nofrag").fragments shouldBe emptyList()
+        stream("dash-nofrag").route shouldBe StreamRoute.YTDLP
+    }
+
+    @Test
+    fun routesFollowTheProtocol() {
+        stream("plain").route shouldBe StreamRoute.PLAIN
+        stream("hls").route shouldBe StreamRoute.FRAGMENTS
+        stream("hls-native").route shouldBe StreamRoute.FRAGMENTS
+        stream("dash-v").route shouldBe StreamRoute.FRAGMENTS
+        stream("rtmp").route shouldBe StreamRoute.YTDLP
+    }
+
+    @Test
+    fun drmIsFlagged() {
+        stream("drm").drm shouldBe true
+        stream("plain").drm shouldBe false
+    }
 }

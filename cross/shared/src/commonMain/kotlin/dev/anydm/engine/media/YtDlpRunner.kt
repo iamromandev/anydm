@@ -64,40 +64,32 @@ internal class YtDlpRunner(
             process.stop()
             return StepResult.Failed(ErrorClass.TRANSIENT, "yt-dlp took longer than $EXTRACT_LIMIT to read the page")
         }
-        if (exit != 0) return failureOf(exit, errors)
+        if (exit != 0) return ytDlpFailure(exit, errors)
         if (truncated) return StepResult.Failed(null, "yt-dlp's answer for this page is too big to read")
         val json = out.lineSequence().lastOrNull { it.startsWith("{") }
         return if (json == null) StepResult.Ok("") else StepResult.Ok(json)
     }
-
-    private fun failureOf(
-        exit: Int,
-        errors: List<String>,
-    ): StepResult.Failed {
-        val line = errors.lastOrNull { it.startsWith("ERROR:") } ?: errors.lastOrNull { it.isNotBlank() }
-        val message = line?.removePrefix("ERROR:")?.trim().takeUnless { it.isNullOrBlank() } ?: "yt-dlp exited with code $exit"
-        val lower = message.lowercase()
-        val errorClass =
-            when {
-                GONE_HINTS.any { it in lower } -> ErrorClass.GONE
-                RATE_HINTS.any { it in lower } -> ErrorClass.RATE_LIMITED
-                TRANSIENT_HINTS.any { it in lower } -> ErrorClass.TRANSIENT
-                else -> null
-            }
-        return StepResult.Failed(errorClass, message)
-    }
-
-    private companion object {
-        val GONE_HINTS =
-            listOf(
-                "private video",
-                "video unavailable",
-                "this video is not available",
-                "has been removed",
-                "does not exist",
-                "no longer available",
-            )
-        val RATE_HINTS = listOf("429", "too many requests")
-        val TRANSIENT_HINTS = listOf("unable to download", "timed out", "connection", "temporary failure")
-    }
 }
+
+/** What yt-dlp's last words say about why it failed: gone, rate limited, transient, or a plain failure with its message. */
+internal fun ytDlpFailure(
+    exit: Int,
+    errors: List<String>,
+): StepResult.Failed {
+    val line = errors.lastOrNull { it.startsWith("ERROR:") } ?: errors.lastOrNull { it.isNotBlank() }
+    val message = line?.removePrefix("ERROR:")?.trim().takeUnless { it.isNullOrBlank() } ?: "yt-dlp exited with code $exit"
+    val lower = message.lowercase()
+    val errorClass =
+        when {
+            GONE_HINTS.any { it in lower } -> ErrorClass.GONE
+            RATE_HINTS.any { it in lower } -> ErrorClass.RATE_LIMITED
+            TRANSIENT_HINTS.any { it in lower } -> ErrorClass.TRANSIENT
+            else -> null
+        }
+    return StepResult.Failed(errorClass, message)
+}
+
+private val GONE_HINTS =
+    listOf("private video", "video unavailable", "this video is not available", "has been removed", "does not exist", "no longer available")
+private val RATE_HINTS = listOf("429", "too many requests")
+private val TRANSIENT_HINTS = listOf("unable to download", "timed out", "connection", "temporary failure")
