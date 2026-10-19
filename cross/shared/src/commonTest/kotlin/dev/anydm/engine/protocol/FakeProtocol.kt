@@ -96,8 +96,24 @@ internal class FakeProtocol(
     var gone: Set<String> = emptySet(),
     /** What the probe says the content type is (ProbeResult.mime). */
     var mime: String? = null,
+    /** The protocol keeps its own files (the runner makes rows only); [onOwnedFile] writes each selected one. */
+    override var ownsFiles: Boolean = false,
+    /** Indexes planned with `selected = false`. */
+    var unselected: Set<Int> = emptySet(),
+    /** Called in an owning transfer for each selected file, to put its bytes where the protocol would. */
+    var onOwnedFile: (suspend (TransferFile) -> Unit)? = null,
+    /** What [close] throws, if anything. */
+    var closeFailure: Throwable? = null,
     private val journal: MutableList<String>? = null,
 ) : Protocol {
+    /** How many times [close] was called. */
+    var closed = 0
+
+    override suspend fun close() {
+        closed++
+        closeFailure?.let { throw it }
+    }
+
     val calls = mutableListOf<String>()
     val fetched = mutableListOf<Fetched>()
 
@@ -120,9 +136,10 @@ internal class FakeProtocol(
             is FakeFailure.ThrowAtProbe -> throw scripted.error
             else -> Unit
         }
+        val counted = if (ownsFiles) files.filterIndexed { i, _ -> i !in unselected } else files
         val size =
-            if (files.all { it.sizeKnown }) {
-                files.fold(0L) { sum, file ->
+            if (counted.all { it.sizeKnown }) {
+                counted.fold(0L) { sum, file ->
                     if (sum >
                         Long.MAX_VALUE - file.length
                     ) {
@@ -152,8 +169,9 @@ internal class FakeProtocol(
                         index,
                         if (single) context.download.fileName ?: file.path else file.path,
                         size,
-                        if (size != null) splitEvenly(size, segments) else emptyList(),
+                        if (size != null && !ownsFiles) splitEvenly(size, segments) else emptyList(),
                         fresh,
+                        selected = index !in unselected,
                     )
                 },
             ),
@@ -179,6 +197,13 @@ internal class FakeProtocol(
         onTransfer?.invoke(io)
         transfers += transfer
         val stop = failure as? FakeFailure.AtTransfer
+        if (ownsFiles) {
+            stop?.let { return it.failure }
+            val selected = transfer.files.filter { it.file.selected }
+            for (part in selected) onOwnedFile?.invoke(part)
+            io.progress(selected.sumOf { it.file.size ?: 0L })
+            return StepResult.Ok(Unit)
+        }
         var sent = 0L
         var downloaded = transfer.files.sumOf { part -> part.segments.sumOf { it.written } }
         for (part in transfer.files) {
@@ -224,7 +249,8 @@ internal class FakeProtocol(
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
         log("finalize")
         (failure as? FakeFailure.AtFinalize)?.let { return it.failure }
-        return StepResult.Ok(FinalizeResult(outputs ?: transfer.files.map { it.file.path }, seeding, consumed, cleanup))
+        val reported = transfer.files.filter { !ownsFiles || it.file.selected }.map { it.file.path }
+        return StepResult.Ok(FinalizeResult(outputs ?: reported, seeding, consumed, cleanup))
     }
 
     override fun workFolders(download: Download): List<String> = workFolderNames

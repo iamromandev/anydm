@@ -121,6 +121,9 @@ class Engine(
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
+    // Each protocol once, however many kinds share it.
+    private val protocolList = protocols.values.distinct()
+
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
     private val speedFlow = MutableStateFlow(SpeedWindow.Empty)
@@ -384,6 +387,16 @@ class Engine(
                     log.error("engine") { "stop timed out, still saving: ${still.joinToString { it.value.toString() }}" }
                     eventFlow.tryEmit(EngineEvent.StopTimedOut(still))
                 }
+            }
+        }
+        // The queue has stopped: what the protocols hold (a torrent session) can go. One that fails to close does not stop this.
+        for (protocol in protocolList) {
+            try {
+                protocol.close()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("engine") { "a protocol didn't close: ${e.message}" }
             }
         }
         engineJob.cancel()
