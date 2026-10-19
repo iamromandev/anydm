@@ -74,6 +74,8 @@ internal class FakeProtocol(
     var consumed: List<String> = emptyList(),
     /** What finalize reports as folders to remove once the job is complete ([FinalizeResult.cleanup]). */
     var cleanup: List<String> = emptyList(),
+    /** Called with the transfer's io before anything is fetched: lets a test look at what the runner handed over. */
+    var onTransfer: (suspend (TransferIo) -> Unit)? = null,
     var seeding: Boolean = false,
     /** Plans every file as [PlannedFile.fresh], as a protocol that saw its source change would. */
     var fresh: Boolean = false,
@@ -171,6 +173,7 @@ internal class FakeProtocol(
         io: TransferIo,
     ): StepResult<Unit> {
         log("transfer")
+        onTransfer?.invoke(io)
         transfers += transfer
         val stop = failure as? FakeFailure.AtTransfer
         var sent = 0L

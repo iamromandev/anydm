@@ -38,4 +38,6 @@ internal class CollectingIo(
     override fun progress(downloaded: Long) {
         progress += downloaded
     }
+
+    override suspend fun speedShare(): Long? = share()
 }

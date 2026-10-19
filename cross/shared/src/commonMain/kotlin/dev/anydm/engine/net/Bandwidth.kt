@@ -69,6 +69,22 @@ internal class Bandwidth(
         }
     }
 
+    /**
+     * What [id] may take now, in bytes per second, or null for no limit (or no such job): the smaller of its own limit and
+     * its weighted slice of the global one (`global * weight / the registered weights`). A job on its own at the global
+     * limit gets all of it. Fair queuing is work-conserving, so this is the share it is owed, not what it will use.
+     */
+    suspend fun shareOf(id: DownloadId): Long? {
+        val (bucket, globalBucket, fraction) =
+            lock.withLock {
+                val flow = flows[id] ?: return null
+                Triple(flow.bucket, global, flow.weight / flows.values.sumOf { it.weight })
+            }
+        val own = bucket?.rateNow()?.takeIf { it < Long.MAX_VALUE }
+        val slice = globalBucket?.rateNow()?.takeIf { it < Long.MAX_VALUE }?.let { (it * fraction).toLong().coerceAtLeast(1) }
+        return listOfNotNull(own, slice).minOrNull()
+    }
+
     suspend fun unregister(id: DownloadId) {
         lock.withLock { flows.remove(id) }
     }

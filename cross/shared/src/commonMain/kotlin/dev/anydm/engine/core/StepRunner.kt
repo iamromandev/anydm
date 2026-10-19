@@ -224,6 +224,7 @@ class StepRunner(
         listener: RunListener = RunListener.None,
         limiter: Limiter = Limiter.None,
         meter: Meter = Meter.None,
+        share: suspend () -> Long? = { null },
     ): RunOutcome {
         require(job.download.status == QUEUED) { "run needs a QUEUED download, not ${job.download.status}" }
         val folder = Path(requireNotNull(job.download.saveFolder) { "a prepared download has a save folder" })
@@ -232,7 +233,7 @@ class StepRunner(
         val downloading = job.download.moveTo(DOWNLOADING)
         listener.moved(downloading)
         val transfer =
-            when (val done = transferStep(downloading, job, protocol, folder, listener, limiter, meter)) {
+            when (val done = transferStep(downloading, job, protocol, folder, listener, limiter, meter, share)) {
                 is StepResult.Failed -> return runFailed(downloading, Step.TRANSFER, done)
                 is StepResult.Ok -> done.value
             }
@@ -336,6 +337,7 @@ class StepRunner(
         listener: RunListener,
         limiter: Limiter,
         meter: Meter,
+        share: suspend () -> Long?,
     ): StepResult<Transfer> {
         val stored =
             store.files(download.id).map { file ->
@@ -352,7 +354,7 @@ class StepRunner(
         val checkpointer = Checkpointer(writers, store, owners) { listener.checkpointed() }
         val result =
             try {
-                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, writers, owners, checkpointer)
+                fetch(download, job, protocol, plan, stored, folder, listener, limiter, meter, share, writers, owners, checkpointer)
             } catch (e: Throwable) {
                 // A pause, cancel or quit (or a bug) still keeps what was written: everything is durable up to here.
                 try {
@@ -386,6 +388,7 @@ class StepRunner(
         listener: RunListener,
         limiter: Limiter,
         meter: Meter,
+        share: suspend () -> Long?,
         writers: MutableMap<FileId, FileWriter>,
         owners: MutableMap<SegmentId, FileId>,
         checkpointer: Checkpointer,
@@ -397,7 +400,7 @@ class StepRunner(
             }
         for (part in transfer.files) part.segments.forEach { owners[it.id] = part.file.id }
         val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
-        val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total)
+        val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total, share)
         val moved = transferWithCheckpoints(protocol, transfer, io, checkpointer)
         if (moved is StepResult.Failed) return moved
         return StepResult.Ok(transfer)

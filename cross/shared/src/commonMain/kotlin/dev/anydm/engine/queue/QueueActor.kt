@@ -787,7 +787,7 @@ internal class QueueActor(
             object : Meter {
                 override fun record(bytes: Long) = observer.received(slot.id, bytes)
             }
-        return when (val ran = runner.run(ready, listener, slot.limiter, meter)) {
+        return when (val ran = runner.run(ready, listener, slot.limiter, meter) { bandwidth.shareOf(slot.id) }) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
             is RunOutcome.Finished -> SlotEnd.Finished(ran)
         }
