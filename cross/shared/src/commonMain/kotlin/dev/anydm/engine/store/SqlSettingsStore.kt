@@ -49,6 +49,7 @@ internal class SqlSettingsStore(
                     data.takeIf { it.isNotEmpty() }?.let(::Path)?.takeIf { it.isAbsolute }
                 },
             globalPause = read(GLOBAL_PAUSE, DEFAULTS.globalPause) { it.toBooleanStrictOrNull() },
+            torrentPort = read(TORRENT_PORT, DEFAULTS.torrentPort) { it.toIntOrNull()?.takeIf { n -> n in 0..65535 } },
             playlistFile = read(PLAYLIST_FILE, DEFAULTS.playlistFile) { it.toBooleanStrictOrNull() },
             defaultProfileId =
                 read(DEFAULT_PROFILE, DEFAULTS.defaultProfileId) { data -> data.toLongOrNull()?.takeIf { it > 0 }?.let(::ProfileId) },
@@ -95,6 +96,7 @@ internal class SqlSettingsStore(
         put(CONCURRENCY_LIMIT, settings.concurrencyLimit.takeIf { it != DEFAULTS.concurrencyLimit }?.toString())
         put(DEFAULT_SAVE_FOLDER, settings.defaultSaveFolder.takeIf { it != DEFAULTS.defaultSaveFolder }?.toString())
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
+        put(TORRENT_PORT, settings.torrentPort.takeIf { it != DEFAULTS.torrentPort }?.toString())
         put(PLAYLIST_FILE, settings.playlistFile.takeIf { it != DEFAULTS.playlistFile }?.toString())
         put(DEFAULT_PROFILE, settings.defaultProfileId?.value?.toString())
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
@@ -131,6 +133,7 @@ internal class SqlSettingsStore(
         const val CONCURRENCY_LIMIT = "queue.concurrency_limit"
         const val GLOBAL_PAUSE = "queue.global_pause"
         const val PLAYLIST_FILE = "collection.playlist_file"
+        const val TORRENT_PORT = "torrent.port"
         const val DEFAULT_SAVE_FOLDER = "files.default_save_folder"
         const val MAX_RETRIES = "retry.max_retries"
         const val DEBUG_LOGGING = "log.debug"
