@@ -158,4 +158,20 @@ internal object MediaFixtures {
     fun rootThumbnailJson(base: String = "https://cdn.test"): String =
         """{"id":"t1","title":"Thumb","thumbnail":"$base/t/root.png","formats":[""" +
             """{"format_id":"22","url":"$base/v/22","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"mp4a"}]}"""
+
+    /** [splitVideoJson] plus a 720p AV1 video-only stream `av1`. */
+    fun av1Json(base: String = "https://cdn.test"): String =
+        splitVideoJson(base).replace(
+            "\"formats\":[",
+            """"formats":[{"format_id":"av1","url":"$base/v/av1","ext":"mp4","protocol":"https","vcodec":"av01.0.08M.08","acodec":"none",""" +
+                """"height":720,"fps":30,"tbr":1000,"filesize":1000},""",
+        )
+
+    /** [extrasJson] plus a 720p video-only stream `v1`, so a video can be chosen. */
+    fun extrasVideoJson(base: String = "https://cdn.test"): String =
+        extrasJson(base).replace(
+            "\"formats\":[",
+            """"formats":[{"format_id":"v1","url":"$base/v/v1","ext":"mp4","protocol":"https","vcodec":"avc1.64001F","acodec":"none",""" +
+                """"height":720,"fps":30,"tbr":1500,"filesize":1000},""",
+        )
 }

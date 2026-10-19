@@ -1,13 +1,16 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.CookieSource
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.MediaSettings
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.core.toStepFailed
+import dev.anydm.engine.core.ytDlpFlags
 import dev.anydm.engine.http.HttpProbe
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.hostOf
@@ -52,46 +55,104 @@ class SiteProtocol(
     private val fileSystem: FileSystem,
     private val clock: Clock = Clock.System,
     private val beforeExtract: suspend () -> Unit = {},
+    /** The global cookie source and pacing, asked at each probe so a change applies to the next job. */
+    private val mediaSettings: suspend () -> MediaSettings = { MediaSettings() },
+    private val pacer: HostPacer = HostPacer(),
 ) : Protocol {
     private val ytDlp = YtDlpRunner(runner)
     private val fragments = FragmentFetcher(http, fileSystem)
     private val ytDlpDownload = YtDlpDownload(runner)
+
+    /** The result of reading a page: a probe, no stream that fits the choice, or another failure. */
+    private sealed interface Built {
+        data class Ok(
+            val probe: SiteProbe,
+        ) : Built
+
+        data class NoMatch(
+            val failure: StepResult.Failed,
+        ) : Built
+
+        data class Failed(
+            val failure: StepResult.Failed,
+        ) : Built
+    }
+
+    private fun Built.result(): StepResult<SiteProbe> =
+        when (this) {
+            is Built.Ok -> StepResult.Ok(probe)
+            is Built.NoMatch -> failure
+            is Built.Failed -> failure
+        }
 
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
         val url = request.mirror.url
         val deno =
             if (isYoutube(url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
+        val settings = mediaSettings()
+        val cookiesWanted = settings.cookieSource != CookieSource.None
         val previous = extractions.get(request.download.id)?.takeIf { it.url == url }
         val pinned = previous?.chosen.orEmpty()
         val stored = previous?.takeIf { clock.now() - it.extractedAt < EXTRACTION_TTL }
         // Stored addresses can have expired within the hour: one fresh extraction is tried before giving up.
         if (stored != null) {
-            val built = build(request, stored.json, pinned)
-            if (built !is StepResult.Failed || (built.errorClass != ErrorClass.AUTH && built.errorClass != ErrorClass.GONE)) return built
-        }
-        val json =
-            when (val extracted = extractFresh(tool, deno, url)) {
-                is StepResult.Failed -> return extracted
-                is StepResult.Ok -> extracted.value
+            val built = build(request, stored.json, pinned, withCookies = cookiesWanted && !stored.withoutCookies)
+            if (built is Built.Ok ||
+                (built is Built.Failed && built.failure.errorClass != ErrorClass.AUTH && built.failure.errorClass != ErrorClass.GONE)
+            ) {
+                return built.result()
             }
-        val built = build(request, json, pinned)
-        if (built is StepResult.Ok) {
-            val chosen =
-                built.value.selection.streams
-                    .map { it.formatId }
-            extractions.put(Extraction(request.download.id, url, json, clock.now(), chosen))
         }
-        return built
+        var extracted =
+            when (val got = extractFresh(tool, deno, url, extractionArgs(settings, withCookies = cookiesWanted))) {
+                is StepResult.Failed -> return got
+                is StepResult.Ok -> got.value
+            }
+        var built = build(request, extracted.json, pinned, withCookies = cookiesWanted)
+        var anonymous = false
+        // The site may hold formats back from a logged-in session (MED-19): look once without the cookies.
+        if (cookiesWanted && (built is Built.NoMatch || (built is Built.Ok && extracted.hinted))) {
+            val retry = extractFresh(tool, deno, url, extractionArgs(settings, withCookies = false))
+            val rebuilt = (retry as? StepResult.Ok)?.let { build(request, it.value.json, pinned, withCookies = false) }
+            if (rebuilt is Built.Ok && (built !is Built.Ok || heightOf(rebuilt) > heightOf(built))) {
+                built = rebuilt
+                extracted = (retry as StepResult.Ok).value
+                anonymous = true
+            } else if (built is Built.NoMatch) {
+                return StepResult.Failed(
+                    ErrorClass.FORMAT_WITHHELD,
+                    "the site withheld the formats this choice needs; the account may lack access",
+                )
+            }
+        }
+        if (built is Built.Ok) {
+            val chosen =
+                built.probe.selection.streams
+                    .map { it.formatId }
+            extractions.put(Extraction(request.download.id, url, extracted.json, clock.now(), chosen, anonymous))
+        }
+        return built.result()
     }
+
+    private fun heightOf(built: Built.Ok): Int =
+        built.probe.selection.video
+            ?.height ?: 0
+
+    /** The cookie and pacing arguments for yt-dlp. */
+    private fun extractionArgs(
+        settings: MediaSettings,
+        withCookies: Boolean,
+    ): List<String> = (if (withCookies) settings.cookieSource.ytDlpFlags() else emptyList()) + settings.pacing.values().ytDlpFlags()
 
     private suspend fun extractFresh(
         tool: ResolvedTool,
         deno: ResolvedTool?,
         url: String,
-    ): StepResult<String> {
+        extraArgs: List<String>,
+    ): StepResult<Extracted> {
         beforeExtract()
-        return when (val extracted = ytDlp.extract(tool, deno, url)) {
+        return when (val extracted = ytDlp.extract(tool, deno, url, extraArgs)) {
             is StepResult.Failed -> {
                 extracted
             }
@@ -103,7 +164,7 @@ class SiteProtocol(
                         "yt-dlp printed no JSON for this page",
                     )
                 } else {
-                    StepResult.Ok(extracted.value.json)
+                    extracted
                 }
             }
         }
@@ -114,19 +175,23 @@ class SiteProtocol(
         request: ProbeRequest,
         json: String,
         pinned: List<String>,
-    ): StepResult<SiteProbe> {
+        withCookies: Boolean,
+    ): Built {
         val info =
             when (val parsed = YtDlpJson.parse(json)) {
-                is MediaParse.Rejected -> return StepResult.Failed(null, parsed.reason)
+                is MediaParse.Rejected -> return Built.Failed(StepResult.Failed(null, parsed.reason))
                 is MediaParse.Ok -> parsed.info
             }
         val format = request.format ?: Format()
         val selection =
             when (val choice = FormatSelector.choose(info, format, pinned)) {
-                is Choice.NoMatch -> return StepResult.Failed(null, choice.reason)
+                is Choice.NoMatch -> return Built.NoMatch(StepResult.Failed(null, choice.reason))
                 is Choice.Ok -> choice.selection
             }
-        if ((selection.needsFfmpeg || selection.audioFormat != null) && resolve(Tool.FFMPEG) == null) return missing(Tool.FFMPEG)
+        val extras = extrasOf(info, format)
+        if ((selection.needsFfmpeg || selection.audioFormat != null || extras.any) && resolve(Tool.FFMPEG) == null) {
+            return Built.Failed(missing(Tool.FFMPEG))
+        }
         val probes = LinkedHashMap<String, HttpProbe>()
         val fragments = LinkedHashMap<String, List<FragmentRef>>()
         var route = selection.route
@@ -135,13 +200,13 @@ class SiteProtocol(
                 val context = contextFor(request.context, stream, request.mirror.url)
                 if (stream.route == StreamRoute.PLAIN) {
                     when (val probed = http.probeUrl(stream.url, context, credentials = true)) {
-                        is StepResult.Failed -> return probed
+                        is StepResult.Failed -> return Built.Failed(probed)
                         is StepResult.Ok -> probes[stream.formatId] = probed.value
                     }
                 } else {
                     when (val listed = resolveFragments(stream, context)) {
                         is StepResult.Failed -> {
-                            return listed
+                            return Built.Failed(listed)
                         }
 
                         is StepResult.Ok -> {
@@ -160,7 +225,7 @@ class SiteProtocol(
             }
         }
         val validators = probes.values.map { it.validator }
-        return StepResult.Ok(
+        return Built.Ok(
             SiteProbe(
                 info = info,
                 selection = selection,
@@ -174,6 +239,8 @@ class SiteProtocol(
                 nameFields = nameFieldsOf(info, selection),
                 fragments = fragments,
                 route = route,
+                extras = extras,
+                withCookies = withCookies,
             ),
         )
     }
@@ -377,10 +444,12 @@ class SiteProtocol(
     ): StepResult<Sources> {
         val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
         val deno = if (isYoutube(site.url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
+        val settings = mediaSettings()
+        val cookies = settings.cookieSource != CookieSource.None
         val json =
-            when (val extracted = extractFresh(tool, deno, site.url)) {
+            when (val extracted = extractFresh(tool, deno, site.url, extractionArgs(settings, withCookies = site.withCookies))) {
                 is StepResult.Failed -> return extracted
-                is StepResult.Ok -> extracted.value
+                is StepResult.Ok -> extracted.value.json
             }
         val info =
             when (val parsed = YtDlpJson.parse(json)) {
@@ -423,7 +492,9 @@ class SiteProtocol(
                 lists[before.formatId] = list
             }
         }
-        extractions.put(Extraction(id, site.url, json, clock.now(), site.selection.streams.map { it.formatId }))
+        extractions.put(
+            Extraction(id, site.url, json, clock.now(), site.selection.streams.map { it.formatId }, cookies && !site.withCookies),
+        )
         return StepResult.Ok(Sources(probes, lists))
     }
 

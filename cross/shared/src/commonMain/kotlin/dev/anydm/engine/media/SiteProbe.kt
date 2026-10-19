@@ -30,7 +30,52 @@ class SiteProbe(
     val fragments: Map<String, List<FragmentRef>> = emptyMap(),
     /** Who downloads the job: the selection's route, or YTDLP when a playlist turned out to be encrypted. */
     val route: StreamRoute = selection.route,
+    /** The subtitle files, cover, chapters and metadata this job brings along (MED-13, MED-15). */
+    val extras: MediaExtras = MediaExtras.None,
+    /** The page was read with the cookie source (false when there is none, or the site withheld formats from it, MED-19). */
+    val withCookies: Boolean = false,
 ) : ProbeResult
+
+/** What a media job brings besides its streams: the subtitle tracks chosen, the cover, the chapters, and the metadata pairs to embed. */
+class MediaExtras(
+    val subtitles: List<SubtitleTrack>,
+    val thumbnail: ChosenThumbnail?,
+    val chapters: List<Chapter>,
+    val metadata: List<Pair<String, String>>,
+) {
+    /** Anything for ffmpeg to do beyond the streams. */
+    val any: Boolean get() = subtitles.isNotEmpty() || thumbnail != null || chapters.isNotEmpty() || metadata.isNotEmpty()
+
+    companion object {
+        val None = MediaExtras(emptyList(), null, emptyList(), emptyList())
+    }
+}
+
+/** What [Format.embed] and [Format.subtitles] ask for, taken from what the page lists. */
+internal fun extrasOf(
+    info: MediaInfo,
+    format: Format,
+): MediaExtras =
+    MediaExtras(
+        subtitles = format.subtitles?.let { SubtitleSelector.choose(info.subtitles, it) }.orEmpty(),
+        thumbnail = if (format.embed.thumbnail) ThumbnailSelector.choose(info.thumbnails) else null,
+        chapters = if (format.embed.chapters) info.chapters else emptyList(),
+        metadata = if (format.embed.metadata) metadataOf(info) else emptyList(),
+    )
+
+private fun metadataOf(info: MediaInfo): List<Pair<String, String>> =
+    listOfNotNull(
+        "title" to info.title,
+        info.uploader?.let { "artist" to it },
+        info.date?.takeIf { it.length == 8 && it.all(Char::isDigit) }?.let {
+            "date" to
+                "${it.substring(0, 4)}-${it.substring(4, 6)}-${it.substring(6)}"
+        },
+        info.webpageUrl?.let { "comment" to it },
+        info.description?.let { "description" to it.take(MAX_DESCRIPTION) },
+    ).filter { it.second.isNotBlank() }
+
+private const val MAX_DESCRIPTION = 5000
 
 /** The streams' sizes added up, or null when any is unknown. */
 internal fun totalSize(probes: List<HttpProbe>): Long? {

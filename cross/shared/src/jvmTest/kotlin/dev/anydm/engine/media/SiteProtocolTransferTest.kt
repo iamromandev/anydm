@@ -195,6 +195,7 @@ class SiteProtocolTransferTest {
             rig.site.transfer(rig.transfer(), io) shouldBe StepResult.Ok(Unit)
 
             second.started.size shouldBe 1
+            store.extractions.get(rig.download.id)!!.withoutCookies shouldBe false
             io.data.getValue(FileId(1)).contentEquals(video) shouldBe true
             io.data.getValue(FileId(2)).contentEquals(audio) shouldBe true
         }

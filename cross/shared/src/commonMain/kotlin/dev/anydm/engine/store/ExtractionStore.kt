@@ -11,6 +11,8 @@ data class Extraction(
     val extractedAt: Instant,
     /** The format ids chosen from this page; a later extraction keeps them while they are still offered. */
     val chosen: List<String> = emptyList(),
+    /** The page was read without cookies, because the site withheld formats from the session that had them (MED-19). */
+    val withoutCookies: Boolean = false,
 )
 
 /** At most one [Extraction] per download, gone with it. */

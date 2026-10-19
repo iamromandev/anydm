@@ -26,6 +26,7 @@ internal class SqlExtractionStore(
                     it.chosen.split(',').filter { id ->
                         id.isNotEmpty()
                     },
+                    it.without_cookies,
                 )
             }
         }
@@ -42,6 +43,7 @@ internal class SqlExtractionStore(
                         extraction.json,
                         extraction.extractedAt,
                         extraction.chosen.joinToString(","),
+                        extraction.withoutCookies,
                     )
                     true
                 }
