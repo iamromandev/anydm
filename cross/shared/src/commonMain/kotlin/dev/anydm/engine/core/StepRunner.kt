@@ -302,6 +302,9 @@ class StepRunner(
             fileSystem.delete(partialPath(target, download.id))
             store.removeFile(row.id)
         }
+        for (path in finalized.cleanup) {
+            if (isSafeRelativePath(path)) fileSystem.deleteTree(targetPath(folder, path))
+        }
     }
 
     /** The save folder is checked and made before the probe, so a read-only disk fails early. */

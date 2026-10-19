@@ -72,6 +72,8 @@ internal class FakeProtocol(
     var outputs: List<String>? = null,
     /** What finalize reports as merged away ([FinalizeResult.consumed]). */
     var consumed: List<String> = emptyList(),
+    /** What finalize reports as folders to remove once the job is complete ([FinalizeResult.cleanup]). */
+    var cleanup: List<String> = emptyList(),
     var seeding: Boolean = false,
     /** Plans every file as [PlannedFile.fresh], as a protocol that saw its source change would. */
     var fresh: Boolean = false,
@@ -216,7 +218,7 @@ internal class FakeProtocol(
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
         log("finalize")
         (failure as? FakeFailure.AtFinalize)?.let { return it.failure }
-        return StepResult.Ok(FinalizeResult(outputs ?: transfer.files.map { it.file.path }, seeding, consumed))
+        return StepResult.Ok(FinalizeResult(outputs ?: transfer.files.map { it.file.path }, seeding, consumed, cleanup))
     }
 
     private fun log(call: String) {

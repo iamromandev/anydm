@@ -16,4 +16,9 @@ data class FinalizeResult(
      * the runner deletes them and forgets their rows; an output with no row of its own gets one.
      */
     val consumed: List<String> = emptyList(),
+    /**
+     * Folders (paths relative to the save folder) that finalize made for its own use: fragments, a staging folder. Once
+     * the job is complete the runner removes them with everything in them; a path that leaves the save folder is ignored.
+     */
+    val cleanup: List<String> = emptyList(),
 )
