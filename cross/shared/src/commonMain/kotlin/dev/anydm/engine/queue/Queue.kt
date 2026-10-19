@@ -35,7 +35,7 @@ import kotlin.time.TimeSource
  */
 class Queue internal constructor(
     private val scope: CoroutineScope,
-    store: Store,
+    private val store: Store,
     runner: StepRunner,
     protocols: Map<DownloadKind, Protocol>,
     fileSystem: FileSystem,
@@ -77,13 +77,13 @@ class Queue internal constructor(
     suspend fun applyToolState(): CommandResult = actor.call { applyToolState() }
 
     /** Pauses the job for the user (USER); a running job is stopped first and its slot freed. */
-    suspend fun pause(id: DownloadId): CommandResult = actor.callLater { pause(id, it) }
+    suspend fun pause(id: DownloadId): CommandResult = forItems(id, { pause(it) }) { actor.callLater { pause(id, it) } }
 
     /** Queues a paused job again, behind the jobs of its priority that already wait; clears every pause reason. */
-    suspend fun resume(id: DownloadId): CommandResult = actor.call { resume(id) }
+    suspend fun resume(id: DownloadId): CommandResult = forItems(id, { resume(it) }) { actor.call { resume(id) } }
 
     /** Stops the job for good. Its partial files stay. */
-    suspend fun cancel(id: DownloadId): CommandResult = actor.callLater { cancel(id, it) }
+    suspend fun cancel(id: DownloadId): CommandResult = forItems(id, { cancel(it) }) { actor.callLater { cancel(id, it) } }
 
     /**
      * Removes the job and, with [RemoveFiles.TRASH], moves its outputs and partials to the trash first. If that fails
@@ -92,10 +92,16 @@ class Queue internal constructor(
     suspend fun remove(
         id: DownloadId,
         files: RemoveFiles,
-    ): CommandResult = actor.callLater { remove(id, files, it) }
+    ): CommandResult =
+        forItems(id, { remove(it, files) }, alsoCollection = true, failing = {
+            it is CommandResult.TrashUnavailable ||
+                it is CommandResult.TrashFailed
+        }) {
+            actor.callLater { remove(id, files, it) }
+        }
 
     /** Queues a FAILED job again with a fresh attempt count. */
-    suspend fun retry(id: DownloadId): CommandResult = actor.call { retry(id) }
+    suspend fun retry(id: DownloadId): CommandResult = forItems(id, { retry(it) }) { actor.call { retry(id) } }
 
     /** Every job's combined speed limit in bytes per second, shared by priority, or null for none; below 1 is Invalid. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
@@ -109,7 +115,11 @@ class Queue internal constructor(
         bytesPerSecond: Long?,
     ): CommandResult {
         if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("speed limit must be >= 1: $bytesPerSecond")
-        return actor.call { setSpeedLimit(id, bytesPerSecond) }
+        return forItems(
+            id,
+            { setSpeedLimit(it, bytesPerSecond) },
+            alsoCollection = true,
+        ) { actor.call { setSpeedLimit(id, bytesPerSecond) } }
     }
 
     /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
@@ -122,7 +132,28 @@ class Queue internal constructor(
     suspend fun reprioritize(
         id: DownloadId,
         priority: Int,
-    ): CommandResult = actor.call { reprioritize(id, priority) }
+    ): CommandResult = forItems(id, { reprioritize(it, priority) }, alsoCollection = true) { actor.call { reprioritize(id, priority) } }
+
+    /**
+     * A command on a collection (MED-16) goes to each of its items in turn, not at once: an item may wait for its slot to
+     * stop. The first result that [failing] calls a failure ends it. [alsoCollection] says the collection's own row takes
+     * the command too (its priority, its limit, its removal). Any other job gets [single]. A command an item can't take
+     * (pausing a finished one) is that item's business: the others still get it.
+     */
+    private suspend fun forItems(
+        id: DownloadId,
+        each: suspend (DownloadId) -> CommandResult,
+        alsoCollection: Boolean = false,
+        failing: (CommandResult) -> Boolean = { false },
+        single: suspend () -> CommandResult,
+    ): CommandResult {
+        val collection = store.downloads.get(id)?.takeIf { it.isCollection } ?: return single()
+        for (child in store.downloads.children(collection.id)) {
+            val result = each(child.id)
+            if (failing(result)) return result
+        }
+        return if (alsoCollection) single() else CommandResult.Done(store.downloads.get(id))
+    }
 
     /** Pauses everything (GLOBAL), running jobs included, and keeps it paused across restarts (FND-05). */
     suspend fun pauseAll(): CommandResult = actor.callLater { pauseAll(it) }

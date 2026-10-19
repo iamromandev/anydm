@@ -1,6 +1,7 @@
 package dev.anydm.engine
 
 import dev.anydm.engine.core.CollectionKind
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ItemCounts
@@ -10,10 +11,14 @@ import dev.anydm.engine.media.FakePlaylistSource
 import dev.anydm.engine.media.PlaylistEntry
 import dev.anydm.engine.media.PlaylistListing
 import dev.anydm.engine.media.PlaylistParse
+import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -297,6 +302,172 @@ abstract class EngineCollectionContract : StoreTestBase() {
                 h.snapshot(added.collection.id)!!.download.status shouldBe DownloadStatus.COMPLETED
             } finally {
                 h.engine.stop()
+            }
+        }
+
+    private suspend fun TestScope.withEngine(
+        playlists: FakePlaylistSource?,
+        block: suspend (EngineHarness) -> Unit,
+    ) {
+        val h = started(playlists)
+        try {
+            block(h)
+        } finally {
+            h.engine.stop()
+        }
+    }
+
+    private suspend fun EngineHarness.stored(id: DownloadId) = store.downloads.get(id)!!.status
+
+    private suspend fun EngineHarness.added(url: String = playlistUrl) = engine.addPlaylist(url, template = runnable).added()
+
+    @Test
+    fun pausingTheParentPausesTheChildren() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.engine.pause(added.collection.id).shouldBeInstanceOf<CommandResult.Done>()
+
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.PAUSED }
+                h.stored(added.collection.id) shouldBe DownloadStatus.PENDING
+                runCurrent()
+                h.snapshot(added.collection.id)!!.download.status shouldBe DownloadStatus.PAUSED
+            }
+        }
+
+    @Test
+    fun resumingTheParentQueuesPausedChildrenAgain() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                h.engine.pause(added.collection.id)
+
+                h.engine.resume(added.collection.id).shouldBeInstanceOf<CommandResult.Done>()
+                settle()
+
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.COMPLETED }
+            }
+        }
+
+    @Test
+    fun cancellingTheParentCancelsRunningAndQueuedChildren() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.engine.cancel(added.collection.id).shouldBeInstanceOf<CommandResult.Done>()
+
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.CANCELLED }
+                h.stored(added.collection.id) shouldBe DownloadStatus.PENDING
+            }
+        }
+
+    @Test
+    fun retryingTheParentRequeuesItsFailedChildren() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                h.protocol.failure = FakeFailure.AtProbe(StepResult.Failed(null, "boom"))
+                val added = h.added()
+                settle()
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.FAILED }
+                h.protocol.failure = null
+
+                h.engine.retry(added.collection.id).shouldBeInstanceOf<CommandResult.Done>()
+                settle()
+
+                added.children.forEach { h.stored(it.id) shouldBe DownloadStatus.COMPLETED }
+            }
+        }
+
+    @Test
+    fun priorityAndSpeedLimitReachEveryChildAndTheParent() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                runCurrent()
+
+                h.engine.reprioritize(added.collection.id, 5)
+                h.engine.setSpeedLimit(added.collection.id, 1000)
+
+                for (id in added.children.map { it.id } + added.collection.id) {
+                    h.store.downloads
+                        .get(id)!!
+                        .priority shouldBe 5
+                    h.store.downloads
+                        .get(id)!!
+                        .speedLimit shouldBe 1000
+                }
+            }
+        }
+
+    @Test
+    fun removeTrashesEveryChildsFiles() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+                h.fs.trashAvailable = true
+
+                h.engine.remove(added.collection.id, RemoveFiles.TRASH) shouldBe CommandResult.Done(null)
+
+                h.fs.trashed.size shouldBe 3
+                h.store.downloads.list() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun removeWithAChildFileAlreadyGoneSucceeds() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+                h.fs.trashAvailable = true
+                val gone =
+                    h.store.downloads
+                        .files(added.children.first().id)
+                        .single()
+                        .placedPath!!
+                h.fs.remove(Path(added.collection.saveFolder!!, gone))
+
+                h.engine.remove(added.collection.id, RemoveFiles.TRASH) shouldBe CommandResult.Done(null)
+
+                h.fs.trashed.size shouldBe 2
+                h.store.downloads.list() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun removeKeepLeavesTheFiles() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+                val before = h.fs.paths()
+
+                h.engine.remove(added.collection.id, RemoveFiles.KEEP) shouldBe CommandResult.Done(null)
+
+                h.fs.paths() shouldBe before
+                h.store.downloads.list() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun aTrashFailureStopsTheRemove() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+                h.fs.trashAvailable = false
+
+                h.engine.remove(added.collection.id, RemoveFiles.TRASH) shouldBe CommandResult.TrashUnavailable
+
+                h.store.downloads.get(added.collection.id) shouldNotBe null
+                h.store.downloads
+                    .children(added.collection.id)
+                    .size shouldBe 3
             }
         }
 }
