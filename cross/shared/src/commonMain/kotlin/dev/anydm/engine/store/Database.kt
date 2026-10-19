@@ -37,6 +37,7 @@ import dev.anydm.engine.store.db.Profile as ProfileRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
 import dev.anydm.engine.store.db.Tool as ToolRow
+import dev.anydm.engine.store.db.Torrent as TorrentRow
 
 internal fun createDatabase(driver: SqlDriver): AnydmDb {
     val downloadId = IdAdapter(::DownloadId, DownloadId::value)
@@ -81,6 +82,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 playlist_indexAdapter = IntAdapter("collection_item.playlist_index"),
                 durationAdapter = IntAdapter("collection_item.duration"),
             ),
+        torrentAdapter = TorrentRow.Adapter(download_idAdapter = downloadId),
         profileAdapter =
             ProfileRow.Adapter(
                 idAdapter = IdAdapter(::ProfileId, ProfileId::value),

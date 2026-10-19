@@ -50,6 +50,8 @@ data class NewDownload(
     val allowDuplicate: Boolean = false,
     /** What the user wants from a media page (MED-09); stored with it. */
     val format: Format? = null,
+    /** What a torrent job starts with (TOR-02); stored with it. */
+    val torrent: NewTorrent? = null,
     /** A collection's item: its position in the playlist (MED-16). */
     val playlistIndex: Int? = null,
     /** A collection: where its items came from, and what was chosen of them (MED-16, MED-17). */
