@@ -896,11 +896,11 @@ class SiteProtocol(
     }
 
     private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
+}
 
-    private fun isYoutube(url: String): Boolean {
-        val host = hostOf(url).substringBefore(':').lowercase()
-        return YOUTUBE_HOSTS.any { host == it || host.endsWith(".$it") }
-    }
+internal fun isYoutube(url: String): Boolean {
+    val host = hostOf(url).substringBefore(':').lowercase()
+    return YOUTUBE_HOSTS.any { host == it || host.endsWith(".$it") }
 }
 
 /** `.<name without extension>.<download id>.<suffix>`, beside the output (in its folder when the output name has one). */

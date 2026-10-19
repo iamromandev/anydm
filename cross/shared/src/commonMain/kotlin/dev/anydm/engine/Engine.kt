@@ -8,6 +8,7 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateCheck
 import dev.anydm.engine.core.FinishHook
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
@@ -21,16 +22,20 @@ import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.media.PlaylistParse
+import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.TrafficMeter
 import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.Queue
 import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
@@ -82,7 +87,7 @@ class Engine(
     private val store: Store,
     fileSystem: FileSystem,
     protocols: Map<DownloadKind, Protocol>,
-    defaultFolder: Path,
+    private val defaultFolder: Path,
     private val clock: Clock = Clock.System,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val stopTimeout: Duration = 10.seconds,
@@ -101,7 +106,11 @@ class Engine(
     finish: FinishHook = HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
     /** Fetches the runtime tools jobs wait for (BIN-01); without one, a job that needs a missing tool stays paused. */
     private val tools: ToolManager? = null,
+    /** Lists a playlist or channel for [addPlaylist] (MED-16); without one, a playlist can't be added. */
+    private val playlists: PlaylistSource? = null,
 ) {
+    private val nameCleaner = NameCleaner(osProfile)
+
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
     private val speedFlow = MutableStateFlow(SpeedWindow.Empty)
@@ -351,6 +360,76 @@ class Engine(
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
 
+    /**
+     * Adds a playlist or channel as a collection (MED-16): one flat listing of [url], then a parent job and one child job
+     * for each item [selection] picks, all saved in a folder named after the playlist under [template]'s folder, its
+     * category's, or the default. Every child is [template] with its own address, so its options apply to each video.
+     */
+    suspend fun addPlaylist(
+        url: String,
+        selection: ItemSelection = ItemSelection(),
+        template: NewDownload = NewDownload(DownloadKind.SITE),
+    ): AddPlaylistResult {
+        val source = playlists ?: return AddPlaylistResult.Unavailable
+        val listing =
+            when (val listed = source.list(url)) {
+                is StepResult.Failed -> {
+                    return AddPlaylistResult.Failed(listed)
+                }
+
+                is StepResult.Ok -> {
+                    when (val parsed = listed.value) {
+                        PlaylistParse.NotAPlaylist -> return AddPlaylistResult.NotAPlaylist
+                        is PlaylistParse.Rejected -> return AddPlaylistResult.Failed(StepResult.Failed(null, parsed.reason))
+                        is PlaylistParse.Ok -> parsed.listing
+                    }
+                }
+            }
+        val picked = selection.indices(listing.entries.size)
+        if (picked.isEmpty()) return AddPlaylistResult.EmptySelection
+        val base =
+            template.saveFolder?.let(::Path)
+                ?: store.categories
+                    .list()
+                    .firstOrNull { it.id == template.categoryId }
+                    ?.folder
+                    ?.let(::Path)
+                ?: defaultFolder
+        val folder = Path(base, nameCleaner.clean(listing.title)).toString()
+        val parent =
+            template.copy(
+                mirrors = emptyList(),
+                parentId = null,
+                collection = listing.kind,
+                saveFolder = folder,
+                fileName = null,
+                size = null,
+                checksum = null,
+                playlistIndex = null,
+                sourceUrl = url,
+                selection = selection.takeIf { it != ItemSelection() },
+            )
+        val entries = picked.map { listing.entries[it - 1] }
+        val children =
+            entries.mapIndexed { i, entry ->
+                template.copy(
+                    mirrors = listOf(entry.url),
+                    parentId = null,
+                    collection = null,
+                    saveFolder = folder,
+                    fileName = null,
+                    size = null,
+                    checksum = null,
+                    playlistIndex = picked[i],
+                    sourceUrl = null,
+                    selection = null,
+                )
+            }
+        val items = entries.mapIndexed { i, entry -> NewItem(entry.extractor, entry.id, picked[i], entry.title, entry.duration) }
+        val added = command { queue.addCollection(parent, children, items) }
+        return AddPlaylistResult.Added(added.collection, added.children, added.skipped, listing.dropped)
+    }
+
     suspend fun pause(id: DownloadId): CommandResult = command { queue.pause(id) }
 
     suspend fun resume(id: DownloadId): CommandResult = command { queue.resume(id) }
@@ -395,7 +474,7 @@ class Engine(
     ): CommandResult = command { queue.relink(id, mirrorId, url) }
 
     // A stopped or failed engine takes no command; one not started yet lets the queue hold it until start().
-    private suspend fun command(block: suspend () -> CommandResult): CommandResult {
+    private suspend fun <T> command(block: suspend () -> T): T {
         when (stateFlow.value) {
             EngineState.Stopping, EngineState.Stopped, is EngineState.Failed -> throw IllegalStateException("the engine has stopped")
             else -> Unit

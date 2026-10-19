@@ -16,6 +16,7 @@ import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.io.files.Path
@@ -54,6 +55,13 @@ class Queue internal constructor(
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }
+
+    /** A collection and its children, added together (MED-16). */
+    suspend fun addCollection(
+        parent: NewDownload,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded = actor.inActor { addCollection(parent, children, items) }
 
     /**
      * Pauses what runs or waits in the [low] folders and releases the jobs named in [release], which were paused for a
@@ -149,6 +157,14 @@ class Queue internal constructor(
 }
 
 /** What `remove` does with a job's files. */
+
+/** What adding a collection made: the parent, the children that went in, and how many the duplicate check kept out. */
+data class CollectionAdded(
+    val collection: Download,
+    val children: List<Download>,
+    val skipped: Int,
+)
+
 enum class RemoveFiles {
     /** Leave them where they are. */
     KEEP,

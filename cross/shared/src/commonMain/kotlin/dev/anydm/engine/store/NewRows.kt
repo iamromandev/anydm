@@ -16,6 +16,15 @@ import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import kotlin.time.Instant
 
+/** One video of a collection, stored with its child (MED-16): what the listing said about it. */
+data class NewItem(
+    val extractor: String,
+    val videoId: String,
+    val playlistIndex: Int,
+    val title: String?,
+    val duration: Int?,
+)
+
 /**
  * A download to add: the creation fields of [Download]. It starts PENDING with no attempts; the store assigns its id,
  * and the queue its queued time (DownloadStore.add).

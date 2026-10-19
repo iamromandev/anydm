@@ -46,6 +46,7 @@ import dev.anydm.engine.protocol.RelinkRequest
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewAttempt
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CancellationException
@@ -186,6 +187,9 @@ internal class QueueActor(
 
     suspend fun inspect(): QueueState = ask { state() }
 
+    /** Runs [block] on the queue's coroutine and returns its value, for a command that answers with more than a [CommandResult]. */
+    suspend fun <T> inActor(block: suspend QueueActor.() -> T): T = ask(block)
+
     /** Runs [block] on the queue's coroutine and returns its value. */
     private suspend fun <T> ask(block: suspend QueueActor.() -> T): T {
         val reply = CompletableDeferred<T>()
@@ -277,6 +281,27 @@ internal class QueueActor(
         observer.event(EngineEvent.Added(added.id))
         val held = holdIfGlobal(added)
         return CommandResult.Done(if (held == added) added else save(held))
+    }
+
+    /**
+     * Adds a collection (MED-16): the parent and its children in one transaction. A child the duplicate check refuses is
+     * left out and counted. The parent is only a label for its children and never takes a slot.
+     */
+    suspend fun addCollection(
+        parent: NewDownload,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+    ): CollectionAdded {
+        val kept = children.indices.filter { duplicates.atAdd(children[it]) == null }
+        val (collection, added) = downloads.addCollection(parent, kept.map { children[it] }, kept.map { items[it] }, clock.now())
+        for (job in listOf(collection) + added) {
+            lastStatus[job.id] = job.status
+            observer.jobChanged(job)
+            observer.mirrorsChanged(job.id, downloads.mirrors(job.id))
+            observer.event(EngineEvent.Added(job.id))
+        }
+        val held = added.map { job -> holdIfGlobal(job).let { if (it == job) job else save(it) } }
+        return CollectionAdded(collection, held, children.size - kept.size)
     }
 
     suspend fun pause(
@@ -693,7 +718,7 @@ internal class QueueActor(
     // A job waiting for a retry (nextAttemptAt in the future) isn't ready yet; the timer wakes the queue when it is.
     private suspend fun reschedule() {
         val now = clock.now()
-        val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots }
+        val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots && !it.isCollection }
         val ready = waiting.filter { job -> job.nextAttemptAt.let { it == null || it <= now } }
         val decision = schedule(ready, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = ready.associateBy { it.id }

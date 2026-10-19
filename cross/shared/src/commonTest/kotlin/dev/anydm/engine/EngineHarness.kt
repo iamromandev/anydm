@@ -8,6 +8,7 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualClock
@@ -42,6 +43,7 @@ internal class EngineHarness(
     network: NetworkIdentity = NetworkIdentity.Unknown,
     traffic: TrafficStore = store.traffic,
     tools: ToolManager? = null,
+    playlists: PlaylistSource? = null,
 ) {
     val engine =
         Engine(
@@ -58,6 +60,7 @@ internal class EngineHarness(
             network = network,
             traffic = traffic,
             tools = tools,
+            playlists = playlists,
         )
 
     private var added = 0

@@ -26,6 +26,7 @@ import kotlin.enums.EnumEntries
 import kotlin.time.Instant
 import dev.anydm.engine.store.db.Attempt as AttemptRow
 import dev.anydm.engine.store.db.Category as CategoryRow
+import dev.anydm.engine.store.db.Collection_item as CollectionItemRow
 import dev.anydm.engine.store.db.Download as DownloadRow
 import dev.anydm.engine.store.db.Extraction as ExtractionRow
 import dev.anydm.engine.store.db.File_ as FileRow
@@ -71,6 +72,13 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 queued_atAdapter = InstantAdapter,
                 playlist_indexAdapter = IntAdapter("download.playlist_index"),
                 selection_limitAdapter = IntAdapter("download.selection_limit"),
+            ),
+        collection_itemAdapter =
+            CollectionItemRow.Adapter(
+                collection_idAdapter = downloadId,
+                child_idAdapter = downloadId,
+                playlist_indexAdapter = IntAdapter("collection_item.playlist_index"),
+                durationAdapter = IntAdapter("collection_item.duration"),
             ),
         historyAdapter =
             HistoryRow.Adapter(

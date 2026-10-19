@@ -41,6 +41,7 @@ internal class SqlDownloadStore(
     private val fileQueries = database.fileQueries
     private val segmentQueries = database.segmentQueries
     private val attemptQueries = database.attemptQueries
+    private val collectionItemQueries = database.collectionItemQueries
 
     // One transaction per call: the JDBC driver opens a connection per statement outside one, and
     // last_insert_rowid() only means something on the connection that inserted. The block never suspends.
@@ -56,40 +57,90 @@ internal class SqlDownloadStore(
     override suspend fun add(
         new: NewDownload,
         queuedAt: Instant?,
-    ): Download =
-        writing {
-            downloadQueries.insert(
-                kind = new.kind,
-                status = DownloadStatus.PENDING,
-                parent_id = new.parentId,
-                collection = new.collection,
-                category_id = new.categoryId,
-                profile_id = new.profileId,
-                save_folder = new.saveFolder,
-                file_name = new.fileName,
-                size = new.size,
-                priority = new.priority,
-                speed_limit = new.speedLimit,
-                attempt_count = 0,
-                next_attempt_at = null,
-                pause_reasons = "",
-                queued_at = queuedAt,
-                source_validator = null,
-                checksum = new.checksum?.toString(),
-                allow_duplicate = new.allowDuplicate,
-                playlist_index = new.playlistIndex,
-                source_url = new.sourceUrl,
-                selection_range = new.selection?.range,
-                selection_limit = new.selection?.limit,
-            )
-            val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
-            new.mirrors.forEachIndexed { position, url ->
-                mirrorQueries.insert(download_id = download.id, url = url, position = position)
-            }
-            new.context?.let { putContext(download.id, it) }
-            new.format?.let { putFormat(download.id, it) }
-            download
+    ): Download = writing { insertDownload(new, queuedAt) }
+
+    override suspend fun addCollection(
+        parent: NewDownload,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+        queuedAt: Instant?,
+    ): Pair<Download, List<Download>> {
+        require(children.size == items.size) { "every child needs its item: ${children.size} children, ${items.size} items" }
+        return writing {
+            val collection = insertDownload(parent, queuedAt)
+            collection to insertChildren(collection.id, children, items, queuedAt)
         }
+    }
+
+    override suspend fun addChildren(
+        parent: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+        queuedAt: Instant?,
+    ): List<Download> {
+        require(children.size == items.size) { "every child needs its item: ${children.size} children, ${items.size} items" }
+        return writing {
+            if (downloadQueries.selectById(parent).executeAsOneOrNull() ==
+                null
+            ) {
+                emptyList()
+            } else {
+                insertChildren(parent, children, items, queuedAt)
+            }
+        }
+    }
+
+    // Inside a transaction.
+    private fun insertChildren(
+        parent: DownloadId,
+        children: List<NewDownload>,
+        items: List<NewItem>,
+        queuedAt: Instant?,
+    ): List<Download> =
+        children.mapIndexed { i, child ->
+            val added = insertDownload(child.copy(parentId = parent), queuedAt)
+            val item = items[i]
+            collectionItemQueries.insert(parent, item.extractor, item.videoId, added.id, item.playlistIndex, item.title, item.duration)
+            added
+        }
+
+    // Inside a transaction.
+    private fun insertDownload(
+        new: NewDownload,
+        queuedAt: Instant?,
+    ): Download {
+        downloadQueries.insert(
+            kind = new.kind,
+            status = DownloadStatus.PENDING,
+            parent_id = new.parentId,
+            collection = new.collection,
+            category_id = new.categoryId,
+            profile_id = new.profileId,
+            save_folder = new.saveFolder,
+            file_name = new.fileName,
+            size = new.size,
+            priority = new.priority,
+            speed_limit = new.speedLimit,
+            attempt_count = 0,
+            next_attempt_at = null,
+            pause_reasons = "",
+            queued_at = queuedAt,
+            source_validator = null,
+            checksum = new.checksum?.toString(),
+            allow_duplicate = new.allowDuplicate,
+            playlist_index = new.playlistIndex,
+            source_url = new.sourceUrl,
+            selection_range = new.selection?.range,
+            selection_limit = new.selection?.limit,
+        )
+        val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
+        new.mirrors.forEachIndexed { position, url ->
+            mirrorQueries.insert(download_id = download.id, url = url, position = position)
+        }
+        new.context?.let { putContext(download.id, it) }
+        new.format?.let { putFormat(download.id, it) }
+        return download
+    }
 
     override suspend fun get(id: DownloadId): Download? =
         inTransaction { downloadQueries.selectById(id).executeAsOneOrNull()?.toDownload() }

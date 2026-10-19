@@ -16,3 +16,7 @@ CREATE TABLE collection_item (
 );
 
 CREATE INDEX collection_item_child ON collection_item(child_id);
+
+insert:
+INSERT OR REPLACE INTO collection_item(collection_id, extractor, video_id, child_id, playlist_index, title, duration)
+VALUES (?, ?, ?, ?, ?, ?, ?);
