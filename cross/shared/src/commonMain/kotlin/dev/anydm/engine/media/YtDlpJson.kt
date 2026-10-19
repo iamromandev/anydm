@@ -1,5 +1,6 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.CollectionKind
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -52,6 +53,63 @@ object YtDlpJson {
                 webpageUrl = root.text("webpage_url") ?: root.text("original_url"),
             ),
         )
+    }
+
+    /**
+     * A flat playlist listing (`--flat-playlist -J`). An entry needs an id and an http(s) address; others (private
+     * videos, repeats, nulls, addresses of another kind) are counted in `dropped`. A channel is told by its address.
+     */
+    fun parsePlaylist(
+        json: String,
+        sourceUrl: String,
+    ): PlaylistParse {
+        val root =
+            try {
+                Json.parseToJsonElement(json) as? JsonObject
+            } catch (_: IllegalArgumentException) {
+                null
+            } ?: return PlaylistParse.Rejected("yt-dlp printed something that isn't JSON")
+        val type = root.text("_type")
+        if (type != "playlist" && type != "multi_video") return PlaylistParse.NotAPlaylist
+        val title = root.text("title") ?: return PlaylistParse.Rejected("yt-dlp gave no title for this playlist")
+        val raw = (root["entries"] as? JsonArray).orEmpty()
+        if (raw.size > LISTING_CAP) {
+            return PlaylistParse.Rejected("the playlist has ${raw.size} items; the limit is $LISTING_CAP")
+        }
+        val fallback = root.text("extractor_key")
+        val seen = HashSet<Pair<String, String>>()
+        val entries = ArrayList<PlaylistEntry>()
+        for (element in raw) {
+            val entry = (element as? JsonObject)?.let { entryOf(it, fallback) }
+            if (entry != null && seen.add(entry.extractor to entry.id)) entries += entry
+        }
+        val page = root.text("webpage_url") ?: sourceUrl
+        return PlaylistParse.Ok(
+            PlaylistListing(
+                kind = if (isChannelPage(page)) CollectionKind.CHANNEL else CollectionKind.PLAYLIST,
+                title = title,
+                uploader = root.text("uploader") ?: root.text("channel"),
+                sourceUrl = sourceUrl,
+                entries = entries,
+                dropped = raw.size - entries.size,
+            ),
+        )
+    }
+
+    private fun entryOf(
+        obj: JsonObject,
+        fallbackExtractor: String?,
+    ): PlaylistEntry? {
+        val id = obj.text("id")?.takeIf { it.isNotBlank() } ?: return null
+        val url =
+            (obj.text("url") ?: obj.text("webpage_url"))?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return null
+        val extractor = (obj.text("ie_key") ?: fallbackExtractor ?: "unknown").lowercase()
+        return PlaylistEntry(extractor, id, url, obj.text("title"), obj.number("duration")?.toInt())
+    }
+
+    private fun isChannelPage(url: String): Boolean {
+        val path = url.substringAfter("://").substringAfter('/', "")
+        return path.startsWith("@") || path.startsWith("channel/") || path.startsWith("c/") || path.startsWith("user/")
     }
 
     private fun streamOf(
