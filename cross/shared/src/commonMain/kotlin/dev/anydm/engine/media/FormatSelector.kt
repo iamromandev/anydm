@@ -19,6 +19,8 @@ data class Selection(
     val outputExtension: String,
     val transcode: Boolean,
     val needsFfmpeg: Boolean,
+    /** Who downloads it: the most demanding route among [streams] (yt-dlp's own over our fragments over one HTTP file). */
+    val route: StreamRoute = StreamRoute.PLAIN,
 ) {
     /** Video first, then audio. */
     val streams: List<MediaStream> get() = listOfNotNull(video, audio)
@@ -47,12 +49,11 @@ object FormatSelector {
         format: Format,
         pinned: List<String> = emptyList(),
     ): Choice {
-        val plain = info.streams.filter { it.isPlain }
-        if (plain.isEmpty()) {
-            return Choice.NoMatch("this page is only offered as HLS or DASH streams, which aren't supported yet")
-        }
-        if (pinned.isNotEmpty()) pinnedChoice(plain, format, pinned)?.let { return it }
-        return if (format.audioOnly != null) audioOnly(plain, format, format.audioOnly) else withVideo(info, plain, format)
+        // A DRM stream can't be played back or downloaded by us or by yt-dlp; everything else has a route.
+        val usable = info.streams.filter { !it.drm }
+        if (usable.isEmpty()) return Choice.NoMatch("this page offers no stream we can download")
+        if (pinned.isNotEmpty()) pinnedChoice(usable, format, pinned)?.let { return it }
+        return if (format.audioOnly != null) audioOnly(usable, format, format.audioOnly) else withVideo(info, usable, format)
     }
 
     private fun pinnedChoice(
@@ -117,7 +118,8 @@ object FormatSelector {
             audioFormat = target,
             outputExtension = target.extension,
             transcode = transcode,
-            needsFfmpeg = transcode || stream.hasVideo || stream.ext != target.extension,
+            needsFfmpeg = transcode || stream.hasVideo || stream.ext != target.extension || stream.route == StreamRoute.FRAGMENTS,
+            route = stream.route,
         )
     }
 
@@ -143,11 +145,12 @@ object FormatSelector {
         }
         val ordered =
             if (format.preset == QualityPreset.SMALL) {
-                compareByDescending<MediaStream> { it.height ?: 0 }.thenBy { it.bitrate ?: 0.0 }
+                compareByDescending<MediaStream> { it.height ?: 0 }.thenBy { it.route.ordinal }.thenBy { it.bitrate ?: 0.0 }
             } else {
-                compareByDescending<MediaStream> {
-                    it.height ?: 0
-                }.thenByDescending { it.fps ?: 0.0 }.thenByDescending { it.bitrate ?: 0.0 }
+                compareByDescending<MediaStream> { it.height ?: 0 }
+                    .thenByDescending { it.fps ?: 0.0 }
+                    .thenBy { it.route.ordinal }
+                    .thenByDescending { it.bitrate ?: 0.0 }
             }
         val sorted = candidates.sortedWith(ordered)
         val best = sorted.first()
@@ -161,7 +164,7 @@ object FormatSelector {
         // No usable sound to pair with. A video is never handed over silent when the page has sound somewhere.
         if (info.streams.none { it.hasAudio }) return Choice.Ok(videoSelection(best, null, format))
         sorted.firstOrNull { it.hasAudio }?.let { return Choice.Ok(videoSelection(it, null, format)) }
-        return Choice.NoMatch("the audio for this video is only offered as HLS or DASH, or in a codec you excluded")
+        return Choice.NoMatch("no audio stream of this video fits the choice")
     }
 
     private fun videoSelection(
@@ -178,9 +181,16 @@ object FormatSelector {
             audioFormat = null,
             outputExtension = outputExtension,
             transcode = false,
-            needsFfmpeg = audio != null || outputExtension != video.ext,
+            // Fragments are joined as they came (TS or fMP4 pieces): ffmpeg rewraps them into the container.
+            needsFfmpeg = audio != null || outputExtension != video.ext || routeOf(video, audio) == StreamRoute.FRAGMENTS,
+            route = routeOf(video, audio),
         )
     }
+
+    private fun routeOf(
+        video: MediaStream,
+        audio: MediaStream?,
+    ): StreamRoute = listOfNotNull(video, audio).maxOf { it.route }
 
     private fun capOf(preset: QualityPreset): Int? =
         when (preset) {

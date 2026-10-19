@@ -269,15 +269,6 @@ class SiteProtocolProbeTest {
         }
 
     @Test
-    fun hlsOnlyIsRefusedWithAReason() =
-        runBlocking<Unit> {
-            val result = failed(protocol(yt(listOf(MediaFixtures.hlsOnlyJson(base)))).probe(request()))
-
-            result.message shouldContain "HLS"
-            result.errorClass shouldBe null
-        }
-
-    @Test
     fun aJunkReplyIsNotCached() =
         runBlocking<Unit> {
             val runner = yt(listOf("{not json"))
