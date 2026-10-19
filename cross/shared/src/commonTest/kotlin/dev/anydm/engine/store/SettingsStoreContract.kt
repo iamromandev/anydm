@@ -1,5 +1,9 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.core.CookieSource
+import dev.anydm.engine.core.Pacing
+import dev.anydm.engine.core.PacingPreset
+import dev.anydm.engine.core.PacingValues
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
@@ -253,5 +257,48 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.load().systemTools shouldBe false
             rows() shouldContain "tools.yt_dlp_channel=NIGHTLY"
             rows() shouldContain "tools.system_tools=false"
+        }
+
+    @Test
+    fun mediaSettingsRoundTrip() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().cookieSource shouldBe CookieSource.None
+            settings.load().pacing shouldBe Pacing()
+            rows().none { it?.startsWith("media.") == true } shouldBe true
+
+            settings.update {
+                it.copy(
+                    cookieSource = CookieSource.Browser("firefox", "default"),
+                    pacing = Pacing(PacingPreset.CUSTOM, PacingValues(2.0, 4.0, 6.0)),
+                )
+            }
+
+            settings.load().cookieSource shouldBe CookieSource.Browser("firefox", "default")
+            settings.load().pacing shouldBe Pacing(PacingPreset.CUSTOM, PacingValues(2.0, 4.0, 6.0))
+            rows() shouldContain "media.cookie_source=browser:firefox:default"
+            rows() shouldContain "media.pacing=CUSTOM"
+            rows() shouldContain "media.pacing_request_sleep=2.0"
+            rows() shouldContain "media.pacing_interval_min=4.0"
+            rows() shouldContain "media.pacing_interval_max=6.0"
+
+            settings.update { it.copy(pacing = Pacing(PacingPreset.BALANCED)) }
+            rows() shouldContain "media.pacing=BALANCED"
+            rows().none { it?.startsWith("media.pacing_") == true } shouldBe true
+
+            settings.update { it.copy(cookieSource = CookieSource.None, pacing = Pacing()) }
+            rows().none { it?.startsWith("media.") == true } shouldBe true
+        }
+
+    @Test
+    fun anUnreadableMediaSettingFallsBack() =
+        runTest {
+            val settings = newStore().settings
+            driver.exec("INSERT INTO setting(name, data) VALUES ('media.cookie_source', 'browser:netscape')")
+            driver.exec("INSERT INTO setting(name, data) VALUES ('media.pacing', 'CUSTOM')")
+            driver.exec("INSERT INTO setting(name, data) VALUES ('media.pacing_request_sleep', 'abc')")
+
+            settings.load().cookieSource shouldBe CookieSource.None
+            settings.load().pacing shouldBe Pacing()
         }
 }
