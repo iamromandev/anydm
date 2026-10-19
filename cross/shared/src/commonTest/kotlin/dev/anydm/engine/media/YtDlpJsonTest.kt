@@ -129,4 +129,56 @@ class YtDlpJsonTest {
         stream("drm").drm shouldBe true
         stream("plain").drm shouldBe false
     }
+
+    private val extras get() = ok(MediaFixtures.extrasJson())
+
+    @Test
+    fun subtitleTracksCarryTheirKindAndFormat() {
+        val manualEn = extras.subtitles.filter { it.lang == "en" && !it.auto }
+        manualEn.map { it.ext } shouldBe listOf("vtt", "srt")
+        manualEn.first().name shouldBe "English"
+        manualEn.first().url shouldBe "https://cdn.test/s/en.vtt"
+
+        val auto = extras.subtitles.filter { it.auto }
+        auto.map { it.lang to it.ext } shouldBe listOf("en-orig" to "vtt", "en" to "vtt", "en" to "json3", "de" to "vtt")
+    }
+
+    @Test
+    fun aTrackWithoutAUrlIsSkipped() {
+        extras.subtitles.filter { it.lang == "fr" }.size shouldBe 1
+    }
+
+    @Test
+    fun chaptersAreReadAndAnInvertedOneIsSkipped() {
+        extras.chapters shouldBe listOf(Chapter(0.0, 60.0, "Intro"), Chapter(60.0, 125.5, "Main"))
+    }
+
+    @Test
+    fun thumbnailsKeepSizeAndExtension() {
+        extras.thumbnails.map { it.ext } shouldBe listOf("webp", "jpg", "jpg")
+        extras.thumbnails.map { it.width } shouldBe listOf(1280, 1280, 320)
+        extras.thumbnails.map { it.preference } shouldBe listOf(-1, 0, null)
+        extras.thumbnails[1].url shouldBe "https://cdn.test/t/b.jpg?x=1"
+    }
+
+    @Test
+    fun theRootThumbnailIsUsedWhenThereIsNoList() {
+        val thumbnails = ok(MediaFixtures.rootThumbnailJson()).thumbnails
+
+        thumbnails.map { it.url to it.ext } shouldBe listOf("https://cdn.test/t/root.png" to "png")
+    }
+
+    @Test
+    fun channelsAreRead() {
+        extras.streams.single().channels shouldBe 6
+        ok(MediaFixtures.splitVideoJson()).streams.all { it.channels == null } shouldBe true
+    }
+
+    @Test
+    fun pageFactsAreRead() {
+        extras.duration shouldBe 125.5
+        extras.description shouldBe "About it"
+        extras.webpageUrl shouldBe "https://www.example.com/watch?v=e1"
+        ok(MediaFixtures.splitVideoJson()).webpageUrl shouldBe null
+    }
 }

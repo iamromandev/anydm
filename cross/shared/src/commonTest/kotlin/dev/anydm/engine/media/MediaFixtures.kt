@@ -138,4 +138,24 @@ internal object MediaFixtures {
         """{"id":"r2","title":"Test Video","extractor_key":"Generic","formats":[""" +
             """{"format_id":"rv","url":"rtmp://x.test/live/v","ext":"mp4","protocol":"rtmp","vcodec":"avc1.64001F","acodec":"none","height":720,"tbr":1500},""" +
             """{"format_id":"ra","url":"rtmp://x.test/live/a","ext":"m4a","protocol":"rtmp","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
+
+    /** A page with subtitles (manual and automatic), chapters, thumbnails, a duration, and a six-channel audio stream. */
+    fun extrasJson(base: String = "https://cdn.test"): String =
+        """{"id":"e1","title":"Extras","uploader":"Chan","upload_date":"20260131","extractor_key":"Youtube","duration":125.5,""" +
+            """"description":"About it","webpage_url":"https://www.example.com/watch?v=e1",""" +
+            """"subtitles":{"en":[{"ext":"vtt","url":"$base/s/en.vtt","name":"English"},{"ext":"srt","url":"$base/s/en.srt"}],""" +
+            """"fr":[{"ext":"vtt","url":"$base/s/fr.vtt"},{"ext":"vtt"}]},""" +
+            """"automatic_captions":{"en-orig":[{"ext":"vtt","url":"$base/a/en-orig.vtt"}],""" +
+            """"en":[{"ext":"vtt","url":"$base/a/en.vtt"},{"ext":"json3","url":"$base/a/en.json3"}],"de":[{"ext":"vtt","url":"$base/a/de.vtt"}]},""" +
+            """"chapters":[{"start_time":0,"end_time":60,"title":"Intro"},{"start_time":60,"end_time":125.5,"title":"Main"},""" +
+            """{"start_time":90,"end_time":80,"title":"Bad"}],""" +
+            """"thumbnails":[{"url":"$base/t/a.webp","width":1280,"height":720,"preference":-1},""" +
+            """{"url":"$base/t/b.jpg?x=1","width":1280,"height":720,"preference":0},{"url":"$base/t/c.jpg","width":320,"height":180}],""" +
+            """"formats":[{"format_id":"140","url":"$base/v/140","ext":"m4a","protocol":"https","vcodec":"none","acodec":"mp4a.40.2",""" +
+            """"audio_channels":6,"language":"en"}]}"""
+
+    /** A page with only a root thumbnail. */
+    fun rootThumbnailJson(base: String = "https://cdn.test"): String =
+        """{"id":"t1","title":"Thumb","thumbnail":"$base/t/root.png","formats":[""" +
+            """{"format_id":"22","url":"$base/v/22","ext":"mp4","protocol":"https","vcodec":"avc1","acodec":"mp4a"}]}"""
 }

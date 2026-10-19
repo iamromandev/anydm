@@ -23,6 +23,8 @@ data class MediaStream(
     val fragments: List<FragmentRef> = emptyList(),
     /** The site protects this stream with DRM, which we can't play back or download. */
     val drm: Boolean = false,
+    /** Sound channels (`audio_channels`): 2 is stereo, 6 is 5.1. */
+    val channels: Int? = null,
 ) {
     val hasVideo: Boolean get() = videoCodec != null
     val hasAudio: Boolean get() = audioCodec != null
@@ -60,4 +62,37 @@ data class MediaInfo(
     val date: String?,
     val extractor: String,
     val streams: List<MediaStream>,
+    val subtitles: List<SubtitleTrack> = emptyList(),
+    val chapters: List<Chapter> = emptyList(),
+    val thumbnails: List<Thumbnail> = emptyList(),
+    /** Seconds. */
+    val duration: Double? = null,
+    val description: String? = null,
+    /** The page's own address as the site gives it. */
+    val webpageUrl: String? = null,
+)
+
+/** One subtitle file the page offers (MED-13): [auto] for machine-made captions. */
+data class SubtitleTrack(
+    val lang: String,
+    val name: String?,
+    val auto: Boolean,
+    val ext: String,
+    val url: String,
+)
+
+/** A chapter of the video (MED-15), in seconds. */
+data class Chapter(
+    val start: Double,
+    val end: Double,
+    val title: String,
+)
+
+/** A picture of the video the page offers; [ext] is from the address and is empty when it has none. */
+data class Thumbnail(
+    val url: String,
+    val ext: String,
+    val width: Int?,
+    val height: Int?,
+    val preference: Int?,
 )
