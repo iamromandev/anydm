@@ -12,6 +12,7 @@ import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.CollectionFinishHook
@@ -20,7 +21,10 @@ import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
 import dev.anydm.engine.files.HistoryRecorder
 import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
+import dev.anydm.engine.files.Profile
+import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
 import dev.anydm.engine.media.PlaylistEntry
@@ -512,6 +516,28 @@ class Engine(
             allowDuplicate = collection.allowDuplicate,
             format = store.downloads.format(collection.id),
         )
+
+    /** The saved download profiles, by name (SET-02). */
+    suspend fun profiles(): List<Profile> = command { store.profiles.list() }
+
+    suspend fun addProfile(new: NewProfile): ProfileResult = command { store.profiles.add(new) }
+
+    /** Jobs that name the profile read the new values from their next probe, placement or start. */
+    suspend fun updateProfile(profile: Profile): ProfileResult = command { store.profiles.update(profile) }
+
+    /** Removes the profile; its jobs go on with their own values and the defaults. Returns how many jobs named it. */
+    suspend fun deleteProfile(id: ProfileId): Int = command { store.profiles.delete(id) }
+
+    /** The profile a new download takes when it names none; null for none. False if there is no such profile. */
+    suspend fun setDefaultProfile(id: ProfileId?): Boolean =
+        command {
+            if (id != null && store.profiles.get(id) == null) {
+                false
+            } else {
+                store.settings.update { it.copy(defaultProfileId = id) }
+                true
+            }
+        }
 
     /** Forgets that [videoId] was ever an item of the collection, so the next sync fetches it again (MED-17). */
     suspend fun forgetItem(

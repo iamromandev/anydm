@@ -223,4 +223,71 @@ abstract class EngineProfileContract : StoreTestBase() {
                     .profileId shouldBe null
             }
         }
+
+    @Test
+    fun profilesAreManagedThroughTheEngine() =
+        runTest {
+            withEngine { h ->
+                val saved =
+                    h.engine
+                        .addProfile(NewProfile("Music", Format(height = 480)))
+                        .shouldBeInstanceOf<ProfileResult.Saved>()
+                        .profile
+
+                h.engine.profiles() shouldBe listOf(saved)
+                h.engine.addProfile(NewProfile("Music")) shouldBe ProfileResult.NameTaken
+                h.engine.updateProfile(saved.copy(speedLimit = 5)).shouldBeInstanceOf<ProfileResult.Saved>()
+                h.engine
+                    .profiles()
+                    .single()
+                    .speedLimit shouldBe 5
+                h.engine.deleteProfile(saved.id) shouldBe 0
+                h.engine.profiles() shouldBe emptyList()
+            }
+        }
+
+    @Test
+    fun deletingReportsHowManyJobsUsedTheProfile() =
+        runTest {
+            withEngine { h ->
+                val profile = h.profile()
+                h.engine.pauseAll()
+                h.job(profile)
+                h.job(profile)
+                h.job()
+
+                h.engine.deleteProfile(profile.id) shouldBe 2
+            }
+        }
+
+    @Test
+    fun theDefaultProfileCanBeSetAndCleared() =
+        runTest {
+            withEngine { h ->
+                val profile = h.profile()
+
+                h.engine.setDefaultProfile(profile.id) shouldBe true
+                h.store.settings
+                    .load()
+                    .defaultProfileId shouldBe profile.id
+                h.engine.setDefaultProfile(null) shouldBe true
+                h.store.settings
+                    .load()
+                    .defaultProfileId shouldBe null
+            }
+        }
+
+    @Test
+    fun aDefaultThatDoesNotExistIsRefused() =
+        runTest {
+            withEngine { h ->
+                h.engine.setDefaultProfile(
+                    dev.anydm.engine.core
+                        .ProfileId(404),
+                ) shouldBe false
+                h.store.settings
+                    .load()
+                    .defaultProfileId shouldBe null
+            }
+        }
 }
