@@ -259,6 +259,24 @@ class SiteProtocolYtDlpTest {
         }
 
     @Test
+    fun theCookiesOfTheSessionAreNotKeptInTheExtractionCache() =
+        runBlocking<Unit> {
+            val withCookies =
+                MediaFixtures.rtmpMuxedJson().replace(
+                    "\"formats\":[{",
+                    "\"formats\":[{\"cookies\":\"SID=secret; Domain=.example.com\",",
+                )
+            val request = request()
+            val settings = MediaSettings(CookieSource.File("/home/u/cookies.txt"))
+
+            siteProbe(site(yt(withCookies), settings).probe(request)).route shouldBe StreamRoute.YTDLP
+
+            val cached = store.extractions.get(request.download.id)!!.json
+            cached.contains("secret") shouldBe false
+            cached.contains("rtmp-1") shouldBe true
+        }
+
+    @Test
     fun transferPassesTheChoicesTheCookiesAndThePacing() {
         val format =
             Format(
@@ -347,7 +365,7 @@ class SiteProtocolYtDlpTest {
             val id = rig.download.id.value
 
             rig.site.workFolders(rig.download.copy(fileName = "Test Video.flv")) shouldBe
-                listOf(".Test Video.$id.frag", ".Test Video.$id.ytdlp")
+                listOf(".Test Video.$id.frag", ".Test Video.$id.ytdlp", ".Test Video.$id.extras")
             rig.site.workFolders(rig.download) shouldBe emptyList()
         }
 }

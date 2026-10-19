@@ -159,3 +159,22 @@ object YtDlpJson {
 
     private fun JsonObject.flag(key: String): Boolean = (this[key] as? JsonPrimitive)?.booleanOrNull ?: false
 }
+
+/**
+ * [json] without the `cookies` yt-dlp puts on the page and on each format when it read a cookie jar: they are the user's
+ * session, and the extraction is kept in the database until the job ends. Text that isn't JSON comes back as it was.
+ */
+internal fun withoutSessionCookies(json: String): String {
+    val root = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return json
+
+    fun scrub(obj: JsonObject) = JsonObject(obj.filterKeys { it != "cookies" })
+    val cleaned =
+        root.mapValues { (key, value) ->
+            if ((key == "formats" || key == "requested_formats") && value is JsonArray) {
+                JsonArray(value.map { if (it is JsonObject) scrub(it) else it })
+            } else {
+                value
+            }
+        }
+    return Json.encodeToString(JsonObject.serializer(), scrub(JsonObject(cleaned)))
+}

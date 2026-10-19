@@ -108,6 +108,12 @@ class SiteProtocolExtrasFinalizeTest {
     ) {
         val download get() = request.download
 
+        fun extrasFolder() = Path("/dl", ".Extras.${download.id.value}.extras")
+
+        fun subtitlePath(index: Int) = Path(extrasFolder(), subtitleFileName(index, probe.extras.subtitles[index]))
+
+        fun coverPath() = Path(extrasFolder(), coverFileName(probe.extras.thumbnail!!))
+
         fun transfer(fileName: String? = null): Transfer {
             val files =
                 plan.mapIndexed { i, planned ->
@@ -145,7 +151,10 @@ class SiteProtocolExtrasFinalizeTest {
         val probe = (site.probe(request) as StepResult.Ok).value as SiteProbe
         val plan = ((site.plan(probe, PlanContext(download)) as StepResult.Ok).value as TransferPlan).files
         for (planned in plan) fs.put(partialPath(Path("/dl", planned.path), download.id), ByteArray(10) { 7 })
-        return Rig(site, probe, plan, request)
+        val rig = Rig(site, probe, plan, request)
+        for (i in probe.extras.subtitles.indices) fs.put(rig.subtitlePath(i), ByteArray(10) { 7 })
+        if (probe.extras.thumbnail != null) fs.put(rig.coverPath(), ByteArray(10) { 7 })
+        return rig
     }
 
     private fun mergeCommand(tools: Tools) =
@@ -186,7 +195,7 @@ class SiteProtocolExtrasFinalizeTest {
                     partialPath(Path("/dl", "Extras.mp4"), rig.download.id),
                     rig.probe.selection,
                     MergeExtras(
-                        listOf(EmbeddedSubtitle(files[2].partial, "en", "srt")),
+                        listOf(EmbeddedSubtitle(rig.subtitlePath(0), "en", "srt")),
                         Path("/dl", "Extras.chapters.$id.tmp"),
                         Path("/dl", "Extras.cover.$id.tmp.jpg"),
                         rig.probe.extras.metadata,
@@ -210,7 +219,7 @@ class SiteProtocolExtrasFinalizeTest {
             ok(rig.site.finalize(transfer))
 
             val cover = Path("/dl", "Extras.cover.${rig.download.id.value}.tmp.jpg")
-            tools.ffmpegCommands.first() shouldBe Ffmpeg.thumbnailArgs(ffmpeg, transfer.files[2].partial, cover)
+            tools.ffmpegCommands.first() shouldBe Ffmpeg.thumbnailArgs(ffmpeg, rig.coverPath(), cover)
         }
 
     @Test
@@ -236,13 +245,14 @@ class SiteProtocolExtrasFinalizeTest {
             val result = ok(rig.site.finalize(transfer))
 
             result.outputs shouldBe listOf("Extras.mp4", "Extras.en.srt", "Extras.fr.vtt")
-            result.consumed shouldBe listOf("Extras.sub0.en.srt", "Extras.sub1.fr.vtt")
+            result.consumed shouldBe emptyList()
+            result.cleanup shouldBe listOf(".Extras.${rig.download.id.value}.extras")
             tools.ffmpegCommands.size shouldBe 2
             tools.ffmpegCommands.none { it.contains("-map") } shouldBe true
             tools.ffmpegCommands[0] shouldBe
                 Ffmpeg.subtitleArgs(
                     ffmpeg,
-                    transfer.files[1].partial,
+                    rig.subtitlePath(0),
                     partialPath(Path("/dl", "Extras.en.srt"), rig.download.id),
                     null,
                     "srt",
@@ -269,7 +279,7 @@ class SiteProtocolExtrasFinalizeTest {
             val tools = Tools(MediaFixtures.extrasMuxedJson(base))
             val rig = rig(MediaFixtures.extrasMuxedJson(base), Format(subtitles = SubtitleChoice(listOf("en", "fr"))), tools)
             val transfer = rig.transfer()
-            fs.put(transfer.files[2].partial, ByteArray(0))
+            fs.put(rig.subtitlePath(1), ByteArray(0))
 
             val result = ok(rig.site.finalize(transfer))
 
@@ -318,6 +328,22 @@ class SiteProtocolExtrasFinalizeTest {
             fs.exists(Path("/dl", "Extras.chapters.${id.value}.tmp")) shouldBe false
             fs.exists(Path("/dl", "Extras.cover.${id.value}.tmp.jpg")) shouldBe false
             fs.exists(partialPath(Path("/dl", "Extras.mp4"), id)) shouldBe false
+        }
+
+    @Test
+    fun aSubtitleFfmpegCannotReadCostsNoVideo() =
+        runBlocking<Unit> {
+            val tools = Tools(MediaFixtures.extrasVideoJson(base), failWhen = { it.contains("mov_text") })
+            val rig = rig(MediaFixtures.extrasVideoJson(base), embedAll, tools)
+
+            val result = ok(rig.site.finalize(rig.transfer()))
+
+            result.outputs shouldBe listOf("Extras.mp4")
+            val merges = tools.ffmpegCommands.filter { it.contains("-map") }
+            merges.size shouldBe 2
+            merges[1].contains("mov_text") shouldBe false
+            merges[1].contains("-map_chapters") shouldBe false
+            merges[1].contains("title=Extras") shouldBe true
         }
 
     @Test
