@@ -12,3 +12,30 @@ CREATE TABLE profile (
     name_template TEXT,
     speed_limit INTEGER CHECK (speed_limit > 0)
 );
+
+selectAll:
+SELECT * FROM profile ORDER BY name;
+
+selectById:
+SELECT * FROM profile WHERE id = ?;
+
+selectByName:
+SELECT * FROM profile WHERE name = ?;
+
+selectLastInserted:
+SELECT * FROM profile WHERE id = last_insert_rowid();
+
+insert:
+INSERT INTO profile(name, format, category_id, save_folder, name_template, speed_limit) VALUES (?, ?, ?, ?, ?, ?);
+
+update:
+UPDATE profile SET name = ?, format = ?, category_id = ?, save_folder = ?, name_template = ?, speed_limit = ? WHERE id = ?;
+
+delete:
+DELETE FROM profile WHERE id = ?;
+
+countJobs:
+SELECT count(*) FROM download WHERE profile_id = ?;
+
+clearJobs:
+UPDATE download SET profile_id = NULL WHERE profile_id = ?;

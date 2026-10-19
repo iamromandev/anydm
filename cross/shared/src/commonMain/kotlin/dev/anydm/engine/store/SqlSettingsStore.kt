@@ -4,6 +4,7 @@ import dev.anydm.engine.core.CookieSource
 import dev.anydm.engine.core.Pacing
 import dev.anydm.engine.core.PacingPreset
 import dev.anydm.engine.core.PacingValues
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.store.db.AnydmDb
@@ -49,6 +50,8 @@ internal class SqlSettingsStore(
                 },
             globalPause = read(GLOBAL_PAUSE, DEFAULTS.globalPause) { it.toBooleanStrictOrNull() },
             playlistFile = read(PLAYLIST_FILE, DEFAULTS.playlistFile) { it.toBooleanStrictOrNull() },
+            defaultProfileId =
+                read(DEFAULT_PROFILE, DEFAULTS.defaultProfileId) { data -> data.toLongOrNull()?.takeIf { it > 0 }?.let(::ProfileId) },
             maxRetries = read(MAX_RETRIES, DEFAULTS.maxRetries) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
@@ -93,6 +96,7 @@ internal class SqlSettingsStore(
         put(DEFAULT_SAVE_FOLDER, settings.defaultSaveFolder.takeIf { it != DEFAULTS.defaultSaveFolder }?.toString())
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
         put(PLAYLIST_FILE, settings.playlistFile.takeIf { it != DEFAULTS.playlistFile }?.toString())
+        put(DEFAULT_PROFILE, settings.defaultProfileId?.value?.toString())
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
@@ -144,3 +148,6 @@ internal class SqlSettingsStore(
         const val PACING_MAX = "media.pacing_interval_max"
     }
 }
+
+/** The setting that names the default profile; [SqlProfileStore] clears it when that profile goes. */
+internal const val DEFAULT_PROFILE = "profile.default"

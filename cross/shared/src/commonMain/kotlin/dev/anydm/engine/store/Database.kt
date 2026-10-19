@@ -33,6 +33,7 @@ import dev.anydm.engine.store.db.File_ as FileRow
 import dev.anydm.engine.store.db.Format as FormatRow
 import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
+import dev.anydm.engine.store.db.Profile as ProfileRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
 import dev.anydm.engine.store.db.Tool as ToolRow
@@ -79,6 +80,11 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 child_idAdapter = downloadId,
                 playlist_indexAdapter = IntAdapter("collection_item.playlist_index"),
                 durationAdapter = IntAdapter("collection_item.duration"),
+            ),
+        profileAdapter =
+            ProfileRow.Adapter(
+                idAdapter = IdAdapter(::ProfileId, ProfileId::value),
+                category_idAdapter = IdAdapter(::CategoryId, CategoryId::value),
             ),
         historyAdapter =
             HistoryRow.Adapter(
