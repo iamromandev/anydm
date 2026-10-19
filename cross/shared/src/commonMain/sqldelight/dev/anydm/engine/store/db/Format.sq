@@ -1,12 +1,16 @@
+import dev.anydm.engine.core.AudioChannels;
 import dev.anydm.engine.core.AudioFormat;
 import dev.anydm.engine.core.Container;
 import dev.anydm.engine.core.DownloadId;
 import dev.anydm.engine.core.HdrChoice;
 import dev.anydm.engine.core.QualityPreset;
+import dev.anydm.engine.core.SponsorBlockMode;
+import dev.anydm.engine.core.SubtitleFormat;
+import dev.anydm.engine.core.SubtitleMode;
 import kotlin.Int;
 
--- What the user wants from a media page (MED-09 to MED-11): dev.anydm.engine.core.Format. At most one row per download,
--- gone with it.
+-- What the user wants from a media page (MED-09 to MED-15): dev.anydm.engine.core.Format. At most one row per download,
+-- gone with it. Lists (subtitle languages, SponsorBlock categories) are comma-joined.
 CREATE TABLE format (
     download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
     preset TEXT AS QualityPreset NOT NULL,
@@ -16,12 +20,27 @@ CREATE TABLE format (
     video_codec TEXT,
     audio_codec TEXT,
     audio_only TEXT AS AudioFormat,
-    container TEXT AS Container
+    container TEXT AS Container,
+    audio_language TEXT,
+    audio_channels TEXT AS AudioChannels NOT NULL DEFAULT 'ANY',
+    sub_languages TEXT,
+    sub_include_auto INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    sub_mode TEXT AS SubtitleMode,
+    sub_convert TEXT AS SubtitleFormat,
+    sb_mode TEXT AS SponsorBlockMode,
+    sb_categories TEXT,
+    embed_metadata INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    embed_thumbnail INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    embed_chapters INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0
 );
 
 put:
-INSERT OR REPLACE INTO format(download_id, preset, height, fps, hdr, video_codec, audio_codec, audio_only, container)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO format(
+    download_id, preset, height, fps, hdr, video_codec, audio_codec, audio_only, container,
+    audio_language, audio_channels, sub_languages, sub_include_auto, sub_mode, sub_convert, sb_mode, sb_categories,
+    embed_metadata, embed_thumbnail, embed_chapters
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectByDownload:
 SELECT * FROM format WHERE download_id = ?;

@@ -3,6 +3,7 @@ package dev.anydm.engine.store
 import app.cash.sqldelight.ColumnAdapter
 import app.cash.sqldelight.db.SqlDriver
 import dev.anydm.engine.core.AttemptId
+import dev.anydm.engine.core.AudioChannels
 import dev.anydm.engine.core.AudioFormat
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.CollectionKind
@@ -17,6 +18,9 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.core.SponsorBlockMode
+import dev.anydm.engine.core.SubtitleFormat
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.store.db.AnydmDb
 import kotlin.enums.EnumEntries
 import kotlin.time.Instant
@@ -81,6 +85,10 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 hdrAdapter = EnumNameAdapter("format.hdr", HdrChoice.entries),
                 audio_onlyAdapter = EnumNameAdapter("format.audio_only", AudioFormat.entries),
                 containerAdapter = EnumNameAdapter("format.container", Container.entries),
+                audio_channelsAdapter = EnumNameAdapter("format.audio_channels", AudioChannels.entries),
+                sub_modeAdapter = EnumNameAdapter("format.sub_mode", SubtitleMode.entries),
+                sub_convertAdapter = EnumNameAdapter("format.sub_convert", SubtitleFormat.entries),
+                sb_modeAdapter = EnumNameAdapter("format.sb_mode", SponsorBlockMode.entries),
             ),
         toolAdapter = ToolRow.Adapter(checked_atAdapter = InstantAdapter),
         file_Adapter =

@@ -2,6 +2,7 @@ package dev.anydm.engine.store
 
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.AttemptId
+import dev.anydm.engine.core.AudioChannels
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.ChecksumAlgorithm
@@ -11,6 +12,7 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.EmbedChoice
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
@@ -24,6 +26,11 @@ import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.core.SponsorBlockChoice
+import dev.anydm.engine.core.SponsorBlockMode
+import dev.anydm.engine.core.SubtitleChoice
+import dev.anydm.engine.core.SubtitleFormat
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.store.db.AnydmDb
 import io.kotest.assertions.throwables.shouldThrow
@@ -350,6 +357,46 @@ abstract class DownloadStoreContract : StoreTestBase() {
             val added = store.add(NewDownload(DownloadKind.SITE, format = format))
 
             store.format(added.id) shouldBe format
+        }
+
+    @Test
+    fun aFullFormatSurvivesTheStore() =
+        runTest {
+            val store = newStore().downloads
+            val format =
+                Format(
+                    QualityPreset.BALANCED,
+                    height = 720,
+                    audioLanguage = "en-US",
+                    audioChannels = AudioChannels.SURROUND,
+                    subtitles =
+                        SubtitleChoice(
+                            listOf("en", "fr"),
+                            includeAuto = true,
+                            mode = SubtitleMode.BOTH,
+                            convertTo = SubtitleFormat.SRT,
+                        ),
+                    sponsorBlock = SponsorBlockChoice(SponsorBlockMode.CUT, listOf("sponsor", "intro")),
+                    embed = EmbedChoice(metadata = true, thumbnail = true, chapters = true),
+                )
+
+            val added = store.add(NewDownload(DownloadKind.SITE, format = format))
+
+            store.format(added.id) shouldBe format
+        }
+
+    @Test
+    fun aDefaultFormatReadsBackWithItsDefaults() =
+        runTest {
+            val store = newStore().downloads
+            val added = store.add(NewDownload(DownloadKind.SITE, format = Format()))
+
+            val read = store.format(added.id)!!
+
+            read shouldBe Format()
+            read.audioChannels shouldBe AudioChannels.ANY
+            read.embed shouldBe EmbedChoice()
+            read.subtitles shouldBe null
         }
 
     @Test

@@ -1,0 +1,12 @@
+-- Version 12 to 13 (#540): what a media download brings along (audio language, subtitles, SponsorBlock, embedding).
+ALTER TABLE format ADD COLUMN audio_language TEXT;
+ALTER TABLE format ADD COLUMN audio_channels TEXT NOT NULL DEFAULT 'ANY';
+ALTER TABLE format ADD COLUMN sub_languages TEXT;
+ALTER TABLE format ADD COLUMN sub_include_auto INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE format ADD COLUMN sub_mode TEXT;
+ALTER TABLE format ADD COLUMN sub_convert TEXT;
+ALTER TABLE format ADD COLUMN sb_mode TEXT;
+ALTER TABLE format ADD COLUMN sb_categories TEXT;
+ALTER TABLE format ADD COLUMN embed_metadata INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE format ADD COLUMN embed_thumbnail INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE format ADD COLUMN embed_chapters INTEGER NOT NULL DEFAULT 0;
