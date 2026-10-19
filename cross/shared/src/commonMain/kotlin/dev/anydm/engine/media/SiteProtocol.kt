@@ -55,6 +55,7 @@ class SiteProtocol(
 ) : Protocol {
     private val ytDlp = YtDlpRunner(runner)
     private val fragments = FragmentFetcher(http, fileSystem)
+    private val ytDlpDownload = YtDlpDownload(runner)
 
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
         val tool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
@@ -115,7 +116,7 @@ class SiteProtocol(
                 is Choice.NoMatch -> return StepResult.Failed(null, choice.reason)
                 is Choice.Ok -> choice.selection
             }
-        if (selection.needsFfmpeg && resolve(Tool.FFMPEG) == null) return missing(Tool.FFMPEG)
+        if ((selection.needsFfmpeg || selection.audioFormat != null) && resolve(Tool.FFMPEG) == null) return missing(Tool.FFMPEG)
         val probes = LinkedHashMap<String, HttpProbe>()
         val fragments = LinkedHashMap<String, List<FragmentRef>>()
         var route = selection.route
@@ -222,10 +223,11 @@ class SiteProtocol(
         context: PlanContext,
     ): StepResult<TransferPlan> {
         check(probe is SiteProbe) { "SiteProtocol can't plan a ${probe::class.simpleName}" }
-        if (probe.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
         val selection = probe.selection
         val outputName = context.download.fileName ?: probe.name
         val stem = outputName.substringBeforeLast('.', outputName)
+        // yt-dlp's downloader makes the output itself: one planned file stands for it, and finalize replaces its partial.
+        if (probe.route == StreamRoute.YTDLP) return StepResult.Ok(TransferPlan(listOf(PlannedFile(index = 0, path = "$stem.ytdlp"))))
         val files =
             selection.streams.mapIndexed { index, stream ->
                 val path = if (selection.needsFfmpeg) "$stem.f${safeId(stream.formatId)}.${stream.ext}" else outputName
@@ -261,7 +263,7 @@ class SiteProtocol(
     ): StepResult<Unit> {
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't transfer a ${site::class.simpleName}" }
-        if (site.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
+        if (site.route == StreamRoute.YTDLP) return transferWithYtDlp(transfer, site, io)
         var sources = Sources(site.probes, site.fragments)
         var refreshed = false
         var finished = 0L
@@ -292,6 +294,36 @@ class SiteProtocol(
             }
         }
         return StepResult.Ok(Unit)
+    }
+
+    /** yt-dlp downloads and merges the whole selection into a staging folder, held to the job's share of the limit. */
+    private suspend fun transferWithYtDlp(
+        transfer: Transfer,
+        site: SiteProbe,
+        io: TransferIo,
+    ): StepResult<Unit> {
+        val ytDlpTool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
+        val deno = if (isYoutube(site.url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
+        val ffmpeg = resolve(Tool.FFMPEG)
+        if ((site.selection.needsFfmpeg || site.selection.audioFormat != null) && ffmpeg == null) return missing(Tool.FFMPEG)
+        val staging = stagingFolder(transfer, site) ?: return StepResult.Failed(null, "no save folder")
+        val made = fileSystem.prepareFolder(staging)
+        if (made is FileResult.Failed) return made.toStepFailed()
+        val output = Path(staging, "out.%(ext)s")
+        return ytDlpDownload.download(
+            { limit ->
+                YtDlpCommand.download(
+                    ytDlpTool.executable(Tool.YT_DLP.id),
+                    ffmpeg?.executable(Tool.FFMPEG.id),
+                    deno?.executable(Tool.DENO.id),
+                    site.selection,
+                    output,
+                    site.url,
+                    limit,
+                )
+            },
+            io,
+        )
     }
 
     private suspend fun transferFragments(
@@ -382,7 +414,7 @@ class SiteProtocol(
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't finalize a ${site::class.simpleName}" }
-        if (site.route == StreamRoute.YTDLP) return StepResult.Failed(null, "yt-dlp's own downloader isn't wired in yet")
+        if (site.route == StreamRoute.YTDLP) return finalizeYtDlp(transfer, site)
         val files = transfer.files.sortedBy { it.file.index }
         if (!site.selection.needsFfmpeg) {
             extractions.delete(transfer.download.id)
@@ -422,8 +454,32 @@ class SiteProtocol(
             return StepResult.Failed(null, "ffmpeg failed (${ran.exitCode}): $reason".trim())
         }
         extractions.delete(transfer.download.id)
-        val cleanup = if (site.fragments.isEmpty()) emptyList() else listOf(fragmentFolderName(outputName, transfer.download.id))
+        val cleanup = if (site.fragments.isEmpty()) emptyList() else listOf(hiddenFolderName(outputName, transfer.download.id, "frag"))
         return StepResult.Ok(FinalizeResult(listOf(outputName), consumed = files.map { it.file.path }, cleanup = cleanup))
+    }
+
+    /** The file yt-dlp left in its staging folder becomes the output's partial; the runner places it and removes the folder. */
+    private suspend fun finalizeYtDlp(
+        transfer: Transfer,
+        site: SiteProbe,
+    ): StepResult<FinalizeResult> {
+        val folder = saveFolderOf(transfer) ?: return StepResult.Failed(null, "no save folder")
+        val outputName = transfer.download.fileName ?: site.name
+        val stagingName = hiddenFolderName(outputName, transfer.download.id, "ytdlp")
+        val listed = fileSystem.list(targetPath(folder, stagingName))
+        val produced =
+            (listed as? FileResult.Ok)
+                ?.value
+                ?.firstOrNull { it.name.startsWith("out.") && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
+                ?: return StepResult.Failed(null, "yt-dlp finished but left no file")
+        val output = partialPath(targetPath(folder, outputName), transfer.download.id)
+        output.parent?.let { fileSystem.prepareFolder(it) }
+        val moved = fileSystem.atomicMove(produced, output, replace = true)
+        if (moved is FileResult.Failed) return moved.toStepFailed()
+        extractions.delete(transfer.download.id)
+        return StepResult.Ok(
+            FinalizeResult(listOf(outputName), consumed = transfer.files.map { it.file.path }, cleanup = listOf(stagingName)),
+        )
     }
 
     /** The save folder: the first planned file's target, up as many folders as its relative path is deep. */
@@ -440,7 +496,16 @@ class SiteProtocol(
         site: SiteProbe,
     ): Path? {
         val folder = saveFolderOf(transfer) ?: return null
-        return targetPath(folder, fragmentFolderName(transfer.download.fileName ?: site.name, transfer.download.id))
+        return targetPath(folder, hiddenFolderName(transfer.download.fileName ?: site.name, transfer.download.id, "frag"))
+    }
+
+    /** The staging folder yt-dlp downloads into, beside the output. */
+    private fun stagingFolder(
+        transfer: Transfer,
+        site: SiteProbe,
+    ): Path? {
+        val folder = saveFolderOf(transfer) ?: return null
+        return targetPath(folder, hiddenFolderName(transfer.download.fileName ?: site.name, transfer.download.id, "ytdlp"))
     }
 
     private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
@@ -453,12 +518,13 @@ class SiteProtocol(
     }
 }
 
-/** `.<name without extension>.<download id>.frag`, beside the output (in its folder when the output name has one). */
-internal fun fragmentFolderName(
+/** `.<name without extension>.<download id>.<suffix>`, beside the output (in its folder when the output name has one). */
+internal fun hiddenFolderName(
     outputName: String,
     id: DownloadId,
+    suffix: String,
 ): String {
     val folder = outputName.substringBeforeLast('/', "")
-    val name = ".${outputName.substringAfterLast('/').substringBeforeLast('.')}.${id.value}.frag"
+    val name = ".${outputName.substringAfterLast('/').substringBeforeLast('.')}.${id.value}.$suffix"
     return if (folder.isEmpty()) name else "$folder/$name"
 }

@@ -125,4 +125,15 @@ internal object MediaFixtures {
         """{"id":"m1","title":"Test Video","extractor_key":"Generic","formats":[""" +
             """{"format_id":"137","url":"$base/v/137","ext":"mp4","protocol":"https","vcodec":"avc1.640028","acodec":"none","height":1080,"tbr":4000,"filesize":4000},""" +
             """{"format_id":"hls-a","url":"$base/hls/index.m3u8","ext":"m4a","protocol":"m3u8_native","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
+
+    /** One muxed stream only yt-dlp's downloader can fetch (rtmp). */
+    fun rtmpMuxedJson(): String =
+        """{"id":"r1","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"rtmp-1","url":"rtmp://x.test/live/a","ext":"flv","protocol":"rtmp","vcodec":"avc1","acodec":"mp4a","height":480}]}"""
+
+    /** A video-only and an audio-only rtmp stream: a merge through yt-dlp. */
+    fun rtmpPairJson(): String =
+        """{"id":"r2","title":"Test Video","extractor_key":"Generic","formats":[""" +
+            """{"format_id":"rv","url":"rtmp://x.test/live/v","ext":"mp4","protocol":"rtmp","vcodec":"avc1.64001F","acodec":"none","height":720,"tbr":1500},""" +
+            """{"format_id":"ra","url":"rtmp://x.test/live/a","ext":"m4a","protocol":"rtmp","vcodec":"none","acodec":"mp4a.40.2","tbr":128}]}"""
 }
