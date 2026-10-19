@@ -9,6 +9,9 @@ const val MAX_TORRENT_FILES = 20_000
 /** The default priority of a selected file; 0 skips a file, 7 is the highest. */
 const val DEFAULT_PRIORITY = 4
 
+/** The highest priority of a file. */
+const val MAX_FILE_PRIORITY = 7
+
 /**
  * Why [info] can't be downloaded here, or null if it can: no files, too many, no name, a file of negative size, or a path
  * that can't be made in a save folder (outside it, a `.anydm` name, two names that are one file on some disks, a file

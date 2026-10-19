@@ -19,6 +19,7 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.ToolManager
+import dev.anydm.engine.torrent.TorrentService
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -44,6 +45,7 @@ internal class EngineHarness(
     traffic: TrafficStore = store.traffic,
     tools: ToolManager? = null,
     playlists: PlaylistSource? = null,
+    torrents: TorrentService? = null,
 ) {
     val engine =
         Engine(
@@ -61,6 +63,7 @@ internal class EngineHarness(
             traffic = traffic,
             tools = tools,
             playlists = playlists,
+            torrents = torrents,
         )
 
     private var added = 0

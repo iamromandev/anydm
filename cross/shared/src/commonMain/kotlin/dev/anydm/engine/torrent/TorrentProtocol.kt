@@ -66,7 +66,8 @@ class TorrentProtocol(
     private val torrentLimit: Int = 10 shl 20,
     /** How often a running torrent is asked how far it is. */
     private val pollEvery: Duration = 500.milliseconds,
-) : Protocol {
+) : Protocol,
+    TorrentService {
     /** The torrents in the session, by download: put there by a transfer, taken by its finalize or its end. */
     internal val handles = RunningTorrents()
 
@@ -87,6 +88,34 @@ class TorrentProtocol(
                 ?: return StepResult.Failed(null, "the saved file choice doesn't fit this torrent")
         if (priorities.all { it == 0 }) return StepResult.Failed(null, "no file is selected")
         return StepResult.Ok(TorrentProbe(info, priorities, stored?.sequential ?: false))
+    }
+
+    override suspend fun inspect(source: String): StepResult<TorrentInfo> {
+        val info =
+            when (val resolved = resolveInfo(source, null)) {
+                is StepResult.Failed -> return resolved
+                is StepResult.Ok -> resolved.value
+            }
+        checkTorrent(info)?.let { return StepResult.Failed(null, it) }
+        return StepResult.Ok(info)
+    }
+
+    override suspend fun applyPriorities(
+        id: DownloadId,
+        priorities: List<Int>,
+    ): Boolean {
+        val handle = handles.get(id) ?: return false
+        handle.setPriorities(priorities)
+        return true
+    }
+
+    override suspend fun applySequential(
+        id: DownloadId,
+        on: Boolean,
+    ): Boolean {
+        val handle = handles.get(id) ?: return false
+        handle.setSequential(on)
+        return true
     }
 
     /** The torrent's metadata from what is stored, else from [source]: a magnet link, an address or a file. */
