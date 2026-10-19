@@ -29,6 +29,19 @@ abstract class SettingsStoreContract : StoreTestBase() {
     private fun rows(): List<String?> = driver.texts("SELECT name || '=' || data FROM setting ORDER BY name")
 
     @Test
+    fun playlistFileRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+
+            settings.load().playlistFile shouldBe true
+            settings.update { it.copy(playlistFile = false) }.playlistFile shouldBe false
+            settings.load().playlistFile shouldBe false
+            settings.update { it.copy(playlistFile = true) }
+            settings.load() shouldBe Settings()
+            rows() shouldBe emptyList()
+        }
+
+    @Test
     fun defaultsWhenNothingIsStored() =
         runTest {
             val settings = newStore().settings.load()

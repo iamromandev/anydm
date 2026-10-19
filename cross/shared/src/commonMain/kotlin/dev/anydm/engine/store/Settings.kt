@@ -41,6 +41,8 @@ data class Settings(
     val cookieSource: CookieSource = CookieSource.None,
     /** How carefully requests to a site are paced (MED-20). */
     val pacing: Pacing = Pacing(),
+    /** Keep an `.m3u8` of each collection's finished items in its folder (MED-17). */
+    val playlistFile: Boolean = true,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

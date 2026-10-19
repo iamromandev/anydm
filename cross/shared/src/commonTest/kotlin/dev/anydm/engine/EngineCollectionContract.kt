@@ -470,4 +470,26 @@ abstract class EngineCollectionContract : StoreTestBase() {
                     .size shouldBe 3
             }
         }
+
+    @Test
+    fun finishedChildrenAreMarkedDoneAndListedInThePlaylistFile() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val added = h.added()
+                settle()
+
+                h.store.collectionItems
+                    .items(added.collection.id)
+                    .map { it.done } shouldBe listOf(true, true, true)
+                val file = Path(added.collection.saveFolder!!, "My List.m3u8")
+                val lines =
+                    h.fs
+                        .read(file)!!
+                        .decodeToString()
+                        .lines()
+                lines.first() shouldBe "#EXTM3U"
+                lines.count { it.startsWith("#EXTINF:60,Video") } shouldBe 3
+                lines.count { it.isNotEmpty() && !it.startsWith("#") } shouldBe 3
+            }
+        }
 }

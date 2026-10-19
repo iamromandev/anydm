@@ -24,6 +24,7 @@ class Store internal constructor(
     val history: HistoryStore = SqlHistoryStore(database, io)
     val tools: ToolStore = SqlToolStore(database, io)
     val extractions: ExtractionStore = SqlExtractionStore(database, io)
+    val collectionItems: CollectionItemStore = SqlCollectionItemStore(database, io)
 
     /**
      * Closes the driver. With the JDBC driver on a file there is nothing held open between calls, so this changes

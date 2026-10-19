@@ -48,6 +48,7 @@ internal class SqlSettingsStore(
                     data.takeIf { it.isNotEmpty() }?.let(::Path)?.takeIf { it.isAbsolute }
                 },
             globalPause = read(GLOBAL_PAUSE, DEFAULTS.globalPause) { it.toBooleanStrictOrNull() },
+            playlistFile = read(PLAYLIST_FILE, DEFAULTS.playlistFile) { it.toBooleanStrictOrNull() },
             maxRetries = read(MAX_RETRIES, DEFAULTS.maxRetries) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
@@ -91,6 +92,7 @@ internal class SqlSettingsStore(
         put(CONCURRENCY_LIMIT, settings.concurrencyLimit.takeIf { it != DEFAULTS.concurrencyLimit }?.toString())
         put(DEFAULT_SAVE_FOLDER, settings.defaultSaveFolder.takeIf { it != DEFAULTS.defaultSaveFolder }?.toString())
         put(GLOBAL_PAUSE, settings.globalPause.takeIf { it != DEFAULTS.globalPause }?.toString())
+        put(PLAYLIST_FILE, settings.playlistFile.takeIf { it != DEFAULTS.playlistFile }?.toString())
         put(MAX_RETRIES, settings.maxRetries.takeIf { it != DEFAULTS.maxRetries }?.toString())
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
@@ -124,6 +126,7 @@ internal class SqlSettingsStore(
         val DEFAULTS = Settings()
         const val CONCURRENCY_LIMIT = "queue.concurrency_limit"
         const val GLOBAL_PAUSE = "queue.global_pause"
+        const val PLAYLIST_FILE = "collection.playlist_file"
         const val DEFAULT_SAVE_FOLDER = "files.default_save_folder"
         const val MAX_RETRIES = "retry.max_retries"
         const val DEBUG_LOGGING = "log.debug"

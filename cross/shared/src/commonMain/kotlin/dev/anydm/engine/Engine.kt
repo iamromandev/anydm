@@ -14,6 +14,7 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.files.CollectionFinishHook
 import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
@@ -102,8 +103,8 @@ class Engine(
     osProfile: OsProfile = OsProfile.WINDOWS,
     /** Asked on every add and after every probe (FIL-05); replaceable in tests. */
     duplicates: DuplicateCheck = FilesDuplicateCheck(store.downloads, store.history, fileSystem),
-    /** Told when a job finishes; the history by default (FIL-10). */
-    finish: FinishHook = HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
+    /** Told when a job finishes; by default the history (FIL-10) and, for a collection's item, its archive and playlist file (MED-17). */
+    finish: FinishHook? = null,
     /** Fetches the runtime tools jobs wait for (BIN-01); without one, a job that needs a missing tool stays paused. */
     private val tools: ToolManager? = null,
     /** Lists a playlist or channel for [addPlaylist] (MED-16); without one, a playlist can't be added. */
@@ -166,7 +167,17 @@ class Engine(
             defaultFolder,
             reserve = { store.settings.load().freeSpaceReserve },
             duplicates = duplicates,
-            finish = toolAware(finish),
+            finish =
+                toolAware(
+                    finish
+                        ?: CollectionFinishHook(
+                            store.collectionItems,
+                            store.downloads,
+                            fileSystem,
+                            { store.settings.load().playlistFile },
+                            HistoryRecorder(store.history, store.downloads, clock) { store.settings.load().historyLimit },
+                        ),
+                ),
             placement =
                 FilesPlacement(
                     NameCleaner(osProfile),
