@@ -1,6 +1,7 @@
 package dev.anydm.engine.http
 
 import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
@@ -17,8 +18,12 @@ import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
 import dev.anydm.engine.store.NewSegment
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
 import kotlin.time.Clock
 import kotlin.time.TimeSource
 
@@ -184,6 +189,123 @@ class HttpProtocol(
                     }
                 }
             run.run(file).also { probes.forEach { it.cancel() } }
+        }
+    }
+
+    /** How many connections one download may use, as the setting says (1 to 16). */
+    internal fun connectionCount(): Int = connections().coerceIn(1, 16)
+
+    /** Holds one of [url]'s origin's connection slots while [block] runs, so a fetch by hand counts as a connection (HTTP-06). */
+    internal suspend fun <T> withSlot(
+        url: String,
+        block: suspend () -> T,
+    ): T {
+        val origin = originOf(url)
+        val owner = Any()
+        slots.acquire(origin, owner)
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) { slots.release(origin, owner) }
+        }
+    }
+
+    /** A small text file, such as a playlist: read whole, at most [limit] bytes, and [FetchedText.finalUrl] is where it came from after redirects. */
+    internal suspend fun fetchText(
+        url: String,
+        context: RequestContext?,
+        limit: Int = 4 shl 20,
+    ): StepResult<FetchedText> {
+        val response =
+            try {
+                auth.open(HttpRequest(url, headers = requestHeaders(context)))
+            } catch (e: HttpIoException) {
+                return failedOf(e)
+            }
+        try {
+            if (response.status != 200) return failedOf(response, clock.now())
+            val buffer = Buffer()
+            val chunk = ByteArray(8192)
+            while (true) {
+                val n =
+                    try {
+                        response.body.read(chunk)
+                    } catch (e: HttpIoException) {
+                        return failedOf(e)
+                    }
+                if (n < 0) break
+                if (buffer.size + n > limit) return StepResult.Failed(null, "the file at ${hostOf(url)} is bigger than $limit bytes")
+                buffer.write(chunk, 0, n)
+            }
+            return StepResult.Ok(FetchedText(buffer.readByteArray().decodeToString(), response.finalUrl))
+        } finally {
+            response.body.close()
+        }
+    }
+
+    /**
+     * One fragment, whole, in memory: the bytes [start] until [endExclusive] of [url] when both are given (a server that
+     * ignores the range is sliced here), else the entire body. Every chunk goes through the limiter and the meter. A body
+     * that ends short of its Content-Length, or a `text/` one (an error page), is a failed try, not a fragment.
+     */
+    internal suspend fun fetchFragment(
+        url: String,
+        context: RequestContext?,
+        start: Long?,
+        endExclusive: Long?,
+        io: TransferIo,
+    ): StepResult<ByteArray> {
+        val ranged = start != null && endExclusive != null
+        val headers = requestHeaders(context) + if (ranged) listOf("Range" to "bytes=$start-${endExclusive!! - 1}") else emptyList()
+        val response =
+            try {
+                auth.open(HttpRequest(url, headers = headers))
+            } catch (e: HttpIoException) {
+                return failedOf(e)
+            }
+        try {
+            if (response.status != 200 && response.status != 206) return failedOf(response, clock.now())
+            val type =
+                response.headers["Content-Type"]
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.lowercase()
+            if (type != null && type.startsWith("text/")) {
+                return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent $type, not media")
+            }
+            val expected = response.headers["Content-Length"]?.trim()?.toLongOrNull()
+            val encoding = response.headers["Content-Encoding"]
+            val encoded = !encoding.isNullOrEmpty() && !encoding.equals("identity", ignoreCase = true)
+            val buffer = Buffer()
+            val chunk = ByteArray(CHUNK)
+            while (true) {
+                val n =
+                    try {
+                        response.body.read(chunk)
+                    } catch (e: HttpIoException) {
+                        return failedOf(e)
+                    }
+                if (n < 0) break
+                if (n == 0) continue
+                io.limiter.acquire(n)
+                io.meter.record(n.toLong())
+                buffer.write(chunk, 0, n)
+            }
+            if (expected != null && !encoded && buffer.size != expected) {
+                return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent ${buffer.size} bytes, not $expected")
+            }
+            val all = buffer.readByteArray()
+            if (ranged && response.status == 200) {
+                if (all.size <
+                    endExclusive!!
+                ) {
+                    return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent fewer bytes than the range")
+                }
+                return StepResult.Ok(all.copyOfRange(start!!.toInt(), endExclusive.toInt()))
+            }
+            return StepResult.Ok(all)
+        } finally {
+            response.body.close()
         }
     }
 
@@ -357,3 +479,9 @@ internal fun originOf(url: String): String {
         }
     return "$scheme://$authority$port"
 }
+
+/** A text file fetched whole, and the address it was finally served from. */
+internal class FetchedText(
+    val text: String,
+    val finalUrl: String,
+)
