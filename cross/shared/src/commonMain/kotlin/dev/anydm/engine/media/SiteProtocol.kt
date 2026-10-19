@@ -7,6 +7,7 @@ import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.MediaSettings
 import dev.anydm.engine.core.RequestContext
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.core.toStepFailed
@@ -43,6 +44,10 @@ import kotlin.time.Duration.Companion.seconds
 
 private val EXTRACTION_TTL = 1.hours
 private val YOUTUBE_HOSTS = listOf("youtube.com", "youtu.be", "youtube-nocookie.com")
+private val SUBTITLE_EXTENSIONS = setOf("srt", "vtt", "ass", "ssa")
+
+/** Choices only yt-dlp's downloader carries out, or that make it need ffmpeg (subtitles, SponsorBlock, embedding). */
+private fun Format.hasYtDlpExtras(): Boolean = subtitles != null || sponsorBlock != null || embed.any
 
 /**
  * The protocol of a SITE job (MED-01 to MED-11): yt-dlp extracts, the HTTP engine downloads the chosen plain streams,
@@ -192,7 +197,9 @@ class SiteProtocol(
                 is Choice.Ok -> choice.selection
             }
         val extras = extrasOf(info, format)
-        if ((selection.needsFfmpeg || selection.audioFormat != null || extras.any) && resolve(Tool.FFMPEG) == null) {
+        if ((selection.needsFfmpeg || selection.audioFormat != null || extras.any || format.hasYtDlpExtras()) &&
+            resolve(Tool.FFMPEG) == null
+        ) {
             return Built.Failed(missing(Tool.FFMPEG))
         }
         val probes = LinkedHashMap<String, HttpProbe>()
@@ -457,7 +464,10 @@ class SiteProtocol(
         val ytDlpTool = resolve(Tool.YT_DLP) ?: return missing(Tool.YT_DLP)
         val deno = if (isYoutube(site.url)) resolve(Tool.DENO) ?: return missing(Tool.DENO) else null
         val ffmpeg = resolve(Tool.FFMPEG)
-        if ((site.selection.needsFfmpeg || site.selection.audioFormat != null) && ffmpeg == null) return missing(Tool.FFMPEG)
+        if ((site.selection.needsFfmpeg || site.selection.audioFormat != null || site.format.hasYtDlpExtras()) && ffmpeg == null) {
+            return missing(Tool.FFMPEG)
+        }
+        val accessArgs = extractionArgs(mediaSettings(), withCookies = site.withCookies)
         val staging = stagingFolder(transfer, site) ?: return StepResult.Failed(null, "no save folder")
         val made = fileSystem.prepareFolder(staging)
         if (made is FileResult.Failed) return made.toStepFailed()
@@ -481,6 +491,8 @@ class SiteProtocol(
                     staging,
                     site.url,
                     limit,
+                    site.format,
+                    accessArgs,
                 )
             },
             io,
@@ -574,55 +586,169 @@ class SiteProtocol(
     }
 
     /**
-     * A stream that is already the output needs nothing. Otherwise ffmpeg writes the output's partial from the streams'
-     * partials; the runner then places it and, once the job is complete, drops the consumed streams and the fragment
-     * folder. A failed merge keeps them, so a retry doesn't download anything again.
+     * A stream that is already the output needs nothing. When [SiteProbe.mainNeedsFfmpeg], ffmpeg writes the output's
+     * partial from the streams' partials, with the subtitle tracks, chapters, cover and metadata the choice asks for; the
+     * runner then places it and, once the job is complete, drops the raw files and the fragment folder. A failed merge
+     * keeps them, so a retry doesn't download anything again. Subtitles asked for as files are converted from their raw
+     * files into outputs of their own; a track that can't be converted is skipped, never failing the video.
      */
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> {
         val site = transfer.probe
         check(site is SiteProbe) { "SiteProtocol can't finalize a ${site::class.simpleName}" }
         if (site.route == StreamRoute.YTDLP) return finalizeYtDlp(transfer, site)
         val files = transfer.files.sortedBy { it.file.index }
-        if (!site.selection.needsFfmpeg) {
-            extractions.delete(transfer.download.id)
-            return StepResult.Ok(FinalizeResult(files.map { it.file.path }))
-        }
-        val ffmpeg = resolve(Tool.FFMPEG) ?: return missing(Tool.FFMPEG)
-        val folder = saveFolderOf(transfer) ?: return StepResult.Failed(null, "${files.first().target} has no save folder")
-        // The streams stay until the job is complete, so the merge needs room for the output on top of them.
-        val needed = files.sumOf { it.file.size ?: (fileSystem.size(it.partial) as? FileResult.Ok)?.value ?: 0L }
-        when (val free = fileSystem.freeSpace(folder)) {
-            is FileResult.Failed -> {
-                return free.toStepFailed()
+        val streamCount = site.selection.streams.size
+        val streamFiles = files.filter { it.file.index < streamCount }
+        // An extra that came back empty (its fetch failed) is left out.
+        val tracks =
+            site.extras.subtitles.mapIndexedNotNull { i, track ->
+                files.firstOrNull { it.file.index == streamCount + i }?.takeIf { hasBytes(it) }?.let { track to it }
             }
+        val coverRaw =
+            if (site.extras.thumbnail == null) {
+                null
+            } else {
+                files.firstOrNull { it.file.index == streamCount + site.extras.subtitles.size }?.takeIf { hasBytes(it) }
+            }
+        val mode = site.format.subtitles?.mode
+        val embedded = if (mode == SubtitleMode.EMBED || mode == SubtitleMode.BOTH) tracks else emptyList()
+        val separate = if (mode == SubtitleMode.SEPARATE || mode == SubtitleMode.BOTH) tracks else emptyList()
+        val ffmpeg =
+            if (site.mainNeedsFfmpeg || separate.isNotEmpty()) resolve(Tool.FFMPEG) ?: return missing(Tool.FFMPEG) else null
+        val folder = saveFolderOf(transfer) ?: return StepResult.Failed(null, "${files.first().target} has no save folder")
+        val outputName = transfer.download.fileName ?: site.name
+        val stem = outputName.substringBeforeLast('.', outputName)
+        val outputs = mutableListOf<String>()
+        if (ffmpeg == null || !site.mainNeedsFfmpeg) {
+            outputs += streamFiles.map { it.file.path }
+        } else {
+            val inputs = streamFiles + embedded.map { it.second } + listOfNotNull(coverRaw)
+            // The raw files stay until the job is complete, so the merge needs room for the output on top of them.
+            val needed = inputs.sumOf { it.file.size ?: (fileSystem.size(it.partial) as? FileResult.Ok)?.value ?: 0L }
+            when (val free = fileSystem.freeSpace(folder)) {
+                is FileResult.Failed -> {
+                    return free.toStepFailed()
+                }
 
-            is FileResult.Ok -> {
-                if (free.value < needed) {
-                    return StepResult.Failed(ErrorClass.DISK_FULL, "not enough room to merge the streams: $needed bytes needed")
+                is FileResult.Ok -> {
+                    if (free.value < needed) {
+                        return StepResult.Failed(ErrorClass.DISK_FULL, "not enough room to merge the streams: $needed bytes needed")
+                    }
                 }
             }
-        }
-        val outputName = transfer.download.fileName ?: site.name
-        val output = partialPath(targetPath(folder, outputName), transfer.download.id)
-        output.parent?.let { fileSystem.prepareFolder(it) }
-        val args = Ffmpeg.args(ffmpeg.executable(Tool.FFMPEG.id), files.map { it.partial }, output, site.selection)
-        val ran =
-            when (val outcome = runner.run(ProcessSpec(args))) {
-                is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.FFMPEG.id)
-                is ProcessOutcome.Ok -> outcome.value
+            mergeMain(transfer, site, ffmpeg.executable(Tool.FFMPEG.id), streamFiles, embedded, coverRaw, folder, outputName)?.let {
+                return it
             }
-        if (ran.exitCode != 0) {
-            fileSystem.delete(output)
-            val reason =
-                ran.stderr
-                    .lineSequence()
-                    .lastOrNull { it.isNotBlank() }
-                    .orEmpty()
-            return StepResult.Failed(null, "ffmpeg failed (${ran.exitCode}): $reason".trim())
+            outputs += outputName
         }
+        if (ffmpeg != null) outputs += convertSubtitles(transfer, site, ffmpeg.executable(Tool.FFMPEG.id), separate, folder, stem, outputs)
         extractions.delete(transfer.download.id)
         val cleanup = if (site.fragments.isEmpty()) emptyList() else listOf(hiddenFolderName(outputName, transfer.download.id, "frag"))
-        return StepResult.Ok(FinalizeResult(listOf(outputName), consumed = files.map { it.file.path }, cleanup = cleanup))
+        return StepResult.Ok(FinalizeResult(outputs, consumed = files.map { it.file.path }.filter { it !in outputs }, cleanup = cleanup))
+    }
+
+    /** ffmpeg writes the main output's partial from the streams and the extras that came; null when it did, else the failure. */
+    private suspend fun mergeMain(
+        transfer: Transfer,
+        site: SiteProbe,
+        ffmpeg: Path,
+        streamFiles: List<TransferFile>,
+        embedded: List<Pair<SubtitleTrack, TransferFile>>,
+        coverRaw: TransferFile?,
+        folder: Path,
+        outputName: String,
+    ): StepResult.Failed? {
+        val stem = outputName.substringBeforeLast('.', outputName)
+        val id = transfer.download.id.value
+        val cover = coverRaw?.let { targetPath(folder, "$stem.cover.$id.tmp.jpg") }
+        val chapters = if (site.extras.chapters.isEmpty()) null else targetPath(folder, "$stem.chapters.$id.tmp")
+        try {
+            val coverUsable = coverRaw != null && cover != null && convertCover(ffmpeg, coverRaw.partial, cover)
+            if (coverRaw != null && !coverUsable) log.warn("media") { "cover picture skipped: ffmpeg couldn't read it" }
+            val chaptersUsable = chapters != null && writeSmall(chapters, ffmetadataOf(site.extras.chapters).encodeToByteArray())
+            if (chapters != null && !chaptersUsable) log.warn("media") { "chapters skipped: couldn't write the chapters file" }
+            val extras =
+                MergeExtras(
+                    embedded.map { (track, raw) -> EmbeddedSubtitle(raw.partial, track.lang, track.ext) },
+                    chapters?.takeIf { chaptersUsable },
+                    cover?.takeIf { coverUsable },
+                    site.extras.metadata,
+                )
+            val output = partialPath(targetPath(folder, outputName), transfer.download.id)
+            output.parent?.let { fileSystem.prepareFolder(it) }
+            val args = Ffmpeg.args(ffmpeg, streamFiles.map { it.partial }, output, site.selection, extras)
+            val ran =
+                when (val outcome = runner.run(ProcessSpec(args))) {
+                    is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.FFMPEG.id)
+                    is ProcessOutcome.Ok -> outcome.value
+                }
+            if (ran.exitCode != 0) {
+                fileSystem.delete(output)
+                val reason =
+                    ran.stderr
+                        .lineSequence()
+                        .lastOrNull { it.isNotBlank() }
+                        .orEmpty()
+                return StepResult.Failed(null, "ffmpeg failed (${ran.exitCode}): $reason".trim())
+            }
+            return null
+        } finally {
+            for (temp in listOfNotNull(cover, chapters)) fileSystem.delete(temp)
+        }
+    }
+
+    /** Each raw subtitle in [separate] as a file of its own, `<stem>.<lang>[-auto].<ext>`; the names that were made. */
+    private suspend fun convertSubtitles(
+        transfer: Transfer,
+        site: SiteProbe,
+        ffmpeg: Path,
+        separate: List<Pair<SubtitleTrack, TransferFile>>,
+        folder: Path,
+        stem: String,
+        taken: List<String>,
+    ): List<String> {
+        val convertTo = site.format.subtitles?.convertTo
+        val made = mutableListOf<String>()
+        for ((track, raw) in separate) {
+            val auto = if (track.auto) "-auto" else ""
+            val name = "$stem.${safeFormatId(track.lang)}$auto.${safeFormatId(convertTo?.extension ?: track.ext)}"
+            if (name in taken || name in made) continue
+            val out = partialPath(targetPath(folder, name), transfer.download.id)
+            val args = Ffmpeg.subtitleArgs(ffmpeg, raw.partial, out, convertTo, track.ext)
+            val ran = (runner.run(ProcessSpec(args)) as? ProcessOutcome.Ok)?.value
+            if (ran == null || ran.exitCode != 0) {
+                fileSystem.delete(out)
+                log.warn("media") { "subtitle ${track.lang} skipped: ffmpeg couldn't convert it" }
+            } else {
+                made += name
+            }
+        }
+        return made
+    }
+
+    private suspend fun hasBytes(file: TransferFile): Boolean = ((fileSystem.size(file.partial) as? FileResult.Ok)?.value ?: 0L) > 0L
+
+    /** [raw] as a JPEG at [cover]; false (and nothing left behind) when ffmpeg can't. */
+    private suspend fun convertCover(
+        ffmpeg: Path,
+        raw: Path,
+        cover: Path,
+    ): Boolean {
+        val ran = (runner.run(ProcessSpec(Ffmpeg.thumbnailArgs(ffmpeg, raw, cover))) as? ProcessOutcome.Ok)?.value
+        if (ran != null && ran.exitCode == 0) return true
+        fileSystem.delete(cover)
+        return false
+    }
+
+    /** A small file made whole, replacing any old one. */
+    private suspend fun writeSmall(
+        path: Path,
+        bytes: ByteArray,
+    ): Boolean {
+        fileSystem.delete(path)
+        if (fileSystem.preallocate(path, bytes.size.toLong()) !is FileResult.Ok) return false
+        val writer = (fileSystem.openWriter(path) as? FileResult.Ok)?.value ?: return false
+        return writer.use { it.write(0, bytes) } is FileResult.Ok
     }
 
     /** The file yt-dlp left in its staging folder becomes the output's partial; the runner places it and removes the folder. */
@@ -642,10 +768,26 @@ class SiteProtocol(
         output.parent?.let { fileSystem.prepareFolder(it) }
         val moved = fileSystem.atomicMove(produced, output, replace = true)
         if (moved is FileResult.Failed) return moved.toStepFailed()
+        // Subtitle files yt-dlp left beside the video (`out.<lang>.<ext>`) are outputs of their own.
+        val stem = outputName.substringBeforeLast('.', outputName)
+        val sidecars = mutableListOf<String>()
+        if (site.format.subtitles != null) {
+            for (file in (listed as FileResult.Ok).value.sortedBy { it.name }) {
+                val parts = file.name.split('.')
+                if (parts.size != 3 || parts[0] != "out" || parts[2].lowercase() !in SUBTITLE_EXTENSIONS) continue
+                val name = "$stem.${safeFormatId(parts[1])}.${parts[2].lowercase()}"
+                val target = partialPath(targetPath(folder, name), transfer.download.id)
+                if (fileSystem.atomicMove(file, target, replace = true) is FileResult.Ok) {
+                    sidecars += name
+                } else {
+                    log.warn("media") { "subtitle ${parts[1]} skipped: couldn't move it" }
+                }
+            }
+        }
         extractions.delete(transfer.download.id)
         return StepResult.Ok(
             FinalizeResult(
-                listOf(outputName),
+                listOf(outputName) + sidecars,
                 consumed = transfer.files.map { it.file.path },
                 cleanup = listOf(stagingName, hiddenFolderName(outputName, transfer.download.id, "frag")),
             ),

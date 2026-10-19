@@ -1,12 +1,21 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.CookieSource
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.EmbedChoice
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.MediaSettings
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.Pacing
+import dev.anydm.engine.core.PacingPreset
+import dev.anydm.engine.core.SponsorBlockChoice
+import dev.anydm.engine.core.SponsorBlockMode
+import dev.anydm.engine.core.SubtitleChoice
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.core.partialPath
 import dev.anydm.engine.http.FaultServer
 import dev.anydm.engine.http.HttpProtocol
@@ -71,12 +80,21 @@ class SiteProtocolYtDlpTest {
         exit: Int = 0,
     ) = FakeProcessRunner(listOf(FakeProcessRunner.Scripted(listOf("/tools/yt-dlp"), exit, stdout.toList(), stderr)))
 
-    private fun site(runner: ProcessRunner) =
-        SiteProtocol(HttpProtocol(OkHttpTransport()), runner, { if (it in available) tool(it) else null }, store.extractions, fs)
+    private fun site(
+        runner: ProcessRunner,
+        settings: MediaSettings = MediaSettings(),
+    ) = SiteProtocol(
+        HttpProtocol(OkHttpTransport()),
+        runner,
+        { if (it in available) tool(it) else null },
+        store.extractions,
+        fs,
+        mediaSettings = { settings },
+    )
 
-    private suspend fun request(): ProbeRequest {
+    private suspend fun request(format: Format = Format()): ProbeRequest {
         val download = store.downloads.add(NewDownload(DownloadKind.SITE, mirrors = listOf(pageUrl), saveFolder = "/dl"))
-        return ProbeRequest(download, store.downloads.mirrors(download.id).single(), null, Format())
+        return ProbeRequest(download, store.downloads.mirrors(download.id).single(), null, format)
     }
 
     private fun siteProbe(result: StepResult<*>) = result.shouldBeInstanceOf<StepResult.Ok<*>>().value as SiteProbe
@@ -106,10 +124,12 @@ class SiteProtocolYtDlpTest {
 
     private suspend fun rig(
         runner: ProcessRunner,
+        format: Format = Format(),
+        settings: MediaSettings = MediaSettings(),
         json: () -> String,
     ): Rig {
-        val site = site(runner)
-        val request = request()
+        val site = site(runner, settings)
+        val request = request(format)
         val probe = siteProbe(site.probe(request))
         val plan = ((site.plan(probe, PlanContext(request.download)) as StepResult.Ok).value as TransferPlan).files
         return Rig(site, request, probe, plan)
@@ -223,6 +243,101 @@ class SiteProtocolYtDlpTest {
             rig.site.finalize(rig.transfer()).shouldBeInstanceOf<StepResult.Ok<FinalizeResult>>()
 
             fs.read(partialPath(Path("/dl", "Test Video.flv"), rig.download.id))!!.toList() shouldBe listOf<Byte>(1, 2, 3)
+        }
+
+    private fun transferCommand(
+        format: Format,
+        settings: MediaSettings,
+    ): List<String> =
+        runBlocking {
+            val switching = Switching(yt(MediaFixtures.rtmpMuxedJson()))
+            val rig = rig(switching, format, settings) { "" }
+            val download = yt("""{"status":"downloading","filename":"out.flv","downloaded_bytes":5,"total_bytes":9}""")
+            switching.current = download
+            rig.site.transfer(rig.transfer(), ScriptedIo { 4000 }) shouldBe StepResult.Ok(Unit)
+            download.started.single().command
+        }
+
+    @Test
+    fun transferPassesTheChoicesTheCookiesAndThePacing() {
+        val format =
+            Format(
+                subtitles = SubtitleChoice(listOf("en"), mode = SubtitleMode.SEPARATE),
+                sponsorBlock = SponsorBlockChoice(SponsorBlockMode.CUT),
+                embed = EmbedChoice(metadata = true),
+            )
+        val settings = MediaSettings(CookieSource.File("/home/u/cookies.txt"), Pacing(PacingPreset.BALANCED))
+
+        val command = transferCommand(format, settings)
+
+        command.shouldContainInOrder("--write-subs", "--sub-langs", "en")
+        command.contains("--sponsorblock-remove") shouldBe true
+        command.contains("--embed-metadata") shouldBe true
+        command.shouldContainInOrder("--cookies", "/home/u/cookies.txt")
+        command.contains("--sleep-requests") shouldBe true
+        command.last() shouldBe pageUrl
+    }
+
+    @Test
+    fun noCookieSourceMeansNoCookieFlag() {
+        val command = transferCommand(Format(), MediaSettings(CookieSource.None, Pacing(PacingPreset.BALANCED)))
+
+        command.contains("--cookies") shouldBe false
+        command.contains("--write-subs") shouldBe false
+        command.contains("--sleep-requests") shouldBe true
+    }
+
+    @Test
+    fun aSponsorBlockJobNeedsFfmpeg() =
+        runBlocking<Unit> {
+            available = setOf(Tool.YT_DLP)
+
+            val missing =
+                failed(
+                    site(
+                        yt(MediaFixtures.rtmpMuxedJson()),
+                    ).probe(request(Format(sponsorBlock = SponsorBlockChoice(SponsorBlockMode.MARK)))),
+                )
+
+            missing.errorClass shouldBe ErrorClass.TOOL_MISSING
+            missing.message shouldBe "ffmpeg"
+        }
+
+    @Test
+    fun finalizeTakesSubtitleFilesYtDlpLeftAsOutputs() =
+        runBlocking<Unit> {
+            val rig = rig(yt(MediaFixtures.rtmpMuxedJson()), Format(subtitles = SubtitleChoice(listOf("en", "fr")))) { "" }
+            val folder = ".Test Video.${rig.download.id.value}.ytdlp"
+            fs.put(Path("/dl", folder, "out.flv"), byteArrayOf(1, 2, 3))
+            fs.put(Path("/dl", folder, "out.en.srt"), byteArrayOf(4))
+            fs.put(Path("/dl", folder, "out.fr.vtt"), byteArrayOf(5))
+            fs.put(Path("/dl", folder, "out.notes.txt"), byteArrayOf(6))
+
+            val result =
+                rig.site
+                    .finalize(rig.transfer())
+                    .shouldBeInstanceOf<StepResult.Ok<FinalizeResult>>()
+                    .value
+
+            result.outputs shouldBe listOf("Test Video.flv", "Test Video.en.srt", "Test Video.fr.vtt")
+            fs.read(partialPath(Path("/dl", "Test Video.en.srt"), rig.download.id))!!.toList() shouldBe listOf<Byte>(4)
+            fs.read(partialPath(Path("/dl", "Test Video.fr.vtt"), rig.download.id))!!.toList() shouldBe listOf<Byte>(5)
+            fs.exists(partialPath(Path("/dl", "Test Video.notes.txt"), rig.download.id)) shouldBe false
+        }
+
+    @Test
+    fun finalizeIgnoresSubtitleFilesWhenNoneWereAsked() =
+        runBlocking<Unit> {
+            val rig = rig(yt(MediaFixtures.rtmpMuxedJson())) { "" }
+            val folder = ".Test Video.${rig.download.id.value}.ytdlp"
+            fs.put(Path("/dl", folder, "out.flv"), byteArrayOf(1, 2, 3))
+            fs.put(Path("/dl", folder, "out.en.srt"), byteArrayOf(4))
+
+            rig.site
+                .finalize(rig.transfer())
+                .shouldBeInstanceOf<StepResult.Ok<FinalizeResult>>()
+                .value.outputs shouldBe
+                listOf("Test Video.flv")
         }
 
     @Test
