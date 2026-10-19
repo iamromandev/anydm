@@ -18,6 +18,8 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.measureTime
 
 class FragmentFetcherTest {
     private val server = FaultServer()
@@ -264,5 +266,22 @@ class FragmentFetcherTest {
             onDisk(1).delete()
 
             failed(fetcher.join(folder, 3, FileId(1), CollectingIo())).message shouldContain "fragment 1"
+        }
+
+    @Test
+    fun aGapSpacesTheFetches() =
+        runBlocking<Unit> {
+            serve(5)
+            val slow = FragmentFetcher(HttpProtocol(OkHttpTransport(), connections = { 1 }), DesktopFileSystem(), HostPacer())
+
+            val took =
+                measureTime {
+                    slow.fetch(folder, refs(5), null, CollectingIo(), trusted, gap = 200.milliseconds) shouldBe
+                        StepResult.Ok(total(5))
+                }
+
+            // four gaps of 200 ms, each jittered down by up to a quarter
+            (took >= 550.milliseconds) shouldBe true
+            for (i in 0 until 5) onDisk(i).readBytes().contentEquals(bytesOf(i)) shouldBe true
         }
 }

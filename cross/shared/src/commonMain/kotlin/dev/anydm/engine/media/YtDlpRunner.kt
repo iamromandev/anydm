@@ -16,6 +16,14 @@ private const val MAX_OUTPUT = 32 * 1024 * 1024
 private const val KEPT_ERROR_LINES = 50
 private val EXTRACT_LIMIT = 2.minutes
 
+/** The JSON of a page, and whether yt-dlp said formats were withheld (MED-19). */
+internal data class Extracted(
+    val json: String,
+    val hinted: Boolean,
+)
+
+private val WITHHELD_HINTS = listOf("formats have been skipped", "requested format is not available", "sign in to confirm")
+
 /** Runs `yt-dlp -J` for a page (MED-01) and says what came back as a [StepResult]. */
 internal class YtDlpRunner(
     private val runner: ProcessRunner,
@@ -25,12 +33,17 @@ internal class YtDlpRunner(
         ytDlp: ResolvedTool,
         deno: ResolvedTool?,
         url: String,
-    ): StepResult<String> {
+        extraArgs: List<String> = emptyList(),
+    ): StepResult<Extracted> {
         val command =
             buildList {
                 add(ytDlp.executable(Tool.YT_DLP.id).toString())
-                addAll(listOf("-J", "--no-playlist", "--no-warnings"))
+                // Our command alone: a user's yt-dlp config must not change what we get.
+                add("--ignore-config")
+                // Warnings stay on: "some formats have been skipped" in stderr is what tells a withheld format (MED-19).
+                addAll(listOf("-J", "--no-playlist"))
                 if (deno != null) addAll(listOf("--js-runtimes", "deno:${deno.executable(Tool.DENO.id)}"))
+                addAll(extraArgs)
                 add("--")
                 add(url)
             }
@@ -67,7 +80,8 @@ internal class YtDlpRunner(
         if (exit != 0) return ytDlpFailure(exit, errors)
         if (truncated) return StepResult.Failed(null, "yt-dlp's answer for this page is too big to read")
         val json = out.lineSequence().lastOrNull { it.startsWith("{") }
-        return if (json == null) StepResult.Ok("") else StepResult.Ok(json)
+        val hinted = errors.any { line -> WITHHELD_HINTS.any { it in line.lowercase() } }
+        return StepResult.Ok(Extracted(json ?: "", hinted))
     }
 }
 

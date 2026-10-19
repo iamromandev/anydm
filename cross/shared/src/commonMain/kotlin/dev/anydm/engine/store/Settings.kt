@@ -1,5 +1,7 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.core.CookieSource
+import dev.anydm.engine.core.Pacing
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.tools.YtDlpChannel
@@ -35,6 +37,10 @@ data class Settings(
     val ytDlpChannel: YtDlpChannel = YtDlpChannel.STABLE,
     /** Use a tool already on the machine (Homebrew, winget, apt) when it is new enough (BIN-03). */
     val systemTools: Boolean = true,
+    /** Where yt-dlp reads cookies from, for pages that need a login (MED-18). */
+    val cookieSource: CookieSource = CookieSource.None,
+    /** How carefully requests to a site are paced (MED-20). */
+    val pacing: Pacing = Pacing(),
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

@@ -1,5 +1,9 @@
 package dev.anydm.engine.store
 
+import dev.anydm.engine.core.CookieSource
+import dev.anydm.engine.core.Pacing
+import dev.anydm.engine.core.PacingPreset
+import dev.anydm.engine.core.PacingValues
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.store.db.AnydmDb
@@ -53,8 +57,34 @@ internal class SqlSettingsStore(
             historyLimit = read(HISTORY_LIMIT, DEFAULTS.historyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
             freeSpaceReserve = read(FREE_SPACE_RESERVE, DEFAULTS.freeSpaceReserve) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
             clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
+            cookieSource = read(COOKIE_SOURCE, DEFAULTS.cookieSource) { CookieSource.decode(it) },
+            pacing = readPacing(::read),
         )
     }
+
+    // A pacing preset, and for CUSTOM its three pauses; an unreadable one is the default.
+    private fun readPacing(read: (String, Pacing, (String) -> Pacing?) -> Pacing): Pacing =
+        read(PACING, DEFAULTS.pacing) { name ->
+            val preset = PacingPreset.entries.firstOrNull { it.name == name } ?: return@read null
+            if (preset != PacingPreset.CUSTOM) return@read Pacing(preset)
+            val values =
+                listOf(PACING_REQUEST, PACING_MIN, PACING_MAX).map { key ->
+                    queries
+                        .selectAll()
+                        .executeAsList()
+                        .firstOrNull {
+                            it.name ==
+                                key
+                        }?.data_
+                        ?.toDoubleOrNull()
+                }
+            if (values.any { it == null }) return@read null
+            try {
+                Pacing(preset, PacingValues(values[0]!!, values[1]!!, values[2]!!))
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
 
     // Only values that differ from their default take a row; names this version doesn't know are never touched.
     private fun write(settings: Settings) {
@@ -70,6 +100,17 @@ internal class SqlSettingsStore(
         put(HISTORY_LIMIT, settings.historyLimit.takeIf { it != DEFAULTS.historyLimit }?.toString())
         put(FREE_SPACE_RESERVE, settings.freeSpaceReserve.takeIf { it != DEFAULTS.freeSpaceReserve }?.toString())
         put(CLASH_POLICY, settings.clashPolicy.takeIf { it != DEFAULTS.clashPolicy }?.name)
+        put(COOKIE_SOURCE, settings.cookieSource.takeIf { it != DEFAULTS.cookieSource }?.let(CookieSource::encode))
+        put(
+            PACING,
+            settings.pacing.preset
+                .takeIf { it != PacingPreset.OFF }
+                ?.name,
+        )
+        val custom = settings.pacing.takeIf { it.preset == PacingPreset.CUSTOM }?.custom
+        put(PACING_REQUEST, custom?.requestSleep?.toString())
+        put(PACING_MIN, custom?.intervalMin?.toString())
+        put(PACING_MAX, custom?.intervalMax?.toString())
     }
 
     private fun put(
@@ -93,5 +134,10 @@ internal class SqlSettingsStore(
         const val HISTORY_LIMIT = "files.history_limit"
         const val YT_DLP_CHANNEL = "tools.yt_dlp_channel"
         const val SYSTEM_TOOLS = "tools.system_tools"
+        const val COOKIE_SOURCE = "media.cookie_source"
+        const val PACING = "media.pacing"
+        const val PACING_REQUEST = "media.pacing_request_sleep"
+        const val PACING_MIN = "media.pacing_interval_min"
+        const val PACING_MAX = "media.pacing_interval_max"
     }
 }

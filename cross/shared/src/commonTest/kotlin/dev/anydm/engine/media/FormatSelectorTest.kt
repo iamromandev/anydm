@@ -1,10 +1,14 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.AudioChannels
 import dev.anydm.engine.core.AudioFormat
 import dev.anydm.engine.core.Container
+import dev.anydm.engine.core.EmbedChoice
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.QualityPreset
+import dev.anydm.engine.core.SponsorBlockChoice
+import dev.anydm.engine.core.SponsorBlockMode
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import kotlin.test.Test
@@ -44,7 +48,26 @@ class FormatSelectorTest {
         codec: String = "mp4a.40.2",
         ext: String = "m4a",
         protocol: String = "https",
-    ) = MediaStream(id, "https://cdn.test/v/$id", ext, protocol, null, codec, null, null, false, tbr, 100_000L, emptyList(), null)
+        language: String? = null,
+        channels: Int? = null,
+    ) = MediaStream(
+        id,
+        "https://cdn.test/v/$id",
+        ext,
+        protocol,
+        null,
+        codec,
+        null,
+        null,
+        false,
+        tbr,
+        100_000L,
+        emptyList(),
+        language,
+        emptyList(),
+        false,
+        channels,
+    )
 
     private fun muxed(
         id: String,
@@ -359,5 +382,98 @@ class FormatSelectorTest {
         selection.route shouldBe StreamRoute.FRAGMENTS
         selection.needsFfmpeg shouldBe true
         selection.outputExtension shouldBe "mp4"
+    }
+
+    @Test
+    fun theWantedLanguageBeatsABetterBitrate() {
+        val streams = info(video("v"), audio("en", tbr = 100.0, language = "en"), audio("fr", tbr = 200.0, language = "fr"))
+
+        chosen(streams, Format(audioLanguage = "en")).audio!!.formatId shouldBe "en"
+        chosen(streams, Format(audioLanguage = "FR")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun aRegionalCodeMatchesInBothDirections() {
+        val streams = info(video("v"), audio("us", tbr = 100.0, language = "en-US"), audio("de", tbr = 200.0, language = "de"))
+
+        chosen(streams, Format(audioLanguage = "en")).audio!!.formatId shouldBe "us"
+        chosen(
+            info(video("v"), audio("plain", tbr = 100.0, language = "en"), audio("de", tbr = 200.0, language = "de")),
+            Format(audioLanguage = "en-GB"),
+        ).audio!!
+            .formatId shouldBe "plain"
+    }
+
+    @Test
+    fun aMissingLanguageFallsBackToTheBestBitrate() {
+        val streams = info(video("v"), audio("en", tbr = 100.0, language = "en"), audio("fr", tbr = 200.0, language = "fr"))
+
+        chosen(streams, Format(audioLanguage = "de")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun surroundPrefersSixChannels() {
+        val streams = info(video("v"), audio("st", tbr = 200.0, channels = 2), audio("sur", tbr = 100.0, channels = 6))
+
+        chosen(streams, Format(audioChannels = AudioChannels.SURROUND)).audio!!.formatId shouldBe "sur"
+    }
+
+    @Test
+    fun stereoPrefersTwoChannels() {
+        val streams = info(video("v"), audio("st", tbr = 100.0, channels = 2), audio("sur", tbr = 200.0, channels = 6))
+
+        chosen(streams, Format(audioChannels = AudioChannels.STEREO)).audio!!.formatId shouldBe "st"
+        chosen(streams, Format(audioChannels = AudioChannels.ANY)).audio!!.formatId shouldBe "sur"
+    }
+
+    @Test
+    fun languageThenChannelsThenBitrate() {
+        val streams =
+            info(
+                video("v"),
+                audio("en-st", tbr = 300.0, language = "en", channels = 2),
+                audio("en-sur", tbr = 100.0, language = "en", channels = 6),
+                audio("fr-sur", tbr = 400.0, language = "fr", channels = 6),
+            )
+
+        chosen(streams, Format(audioLanguage = "en", audioChannels = AudioChannels.SURROUND)).audio!!.formatId shouldBe "en-sur"
+    }
+
+    @Test
+    fun audioOnlyUsesTheSameOrder() {
+        val streams = info(audio("en", tbr = 300.0, language = "en"), audio("fr", tbr = 100.0, language = "fr"))
+
+        chosen(streams, Format(audioOnly = AudioFormat.M4A, audioLanguage = "fr")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun sponsorBlockMakesTheRouteYtDlp() {
+        val streams = info(video("v"), audio("a"))
+        val choice = SponsorBlockChoice(SponsorBlockMode.CUT)
+
+        val selection = chosen(streams, Format(sponsorBlock = choice))
+
+        selection.route shouldBe StreamRoute.YTDLP
+        selection.needsFfmpeg shouldBe true
+        chosen(info(audio("a")), Format(audioOnly = AudioFormat.M4A, embed = EmbedChoice(metadata = true))).route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun noSponsorBlockKeepsTheStreamRoute() {
+        chosen(info(video("v"), audio("a"))).route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun aPinnedChoiceStillGoesToYtDlpWithSponsorBlock() {
+        val streams = info(video("v"), audio("a"))
+
+        val pinned =
+            FormatSelector.choose(
+                streams,
+                Format(sponsorBlock = SponsorBlockChoice(SponsorBlockMode.MARK)),
+                pinned = listOf("v", "a"),
+            )
+
+        (pinned as Choice.Ok).selection.route shouldBe StreamRoute.YTDLP
     }
 }

@@ -1,5 +1,6 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.AudioChannels
 import dev.anydm.engine.core.AudioFormat
 import dev.anydm.engine.core.Container
 import dev.anydm.engine.core.Format
@@ -65,7 +66,7 @@ object FormatSelector {
         val target = format.audioOnly
         return when {
             target != null -> {
-                streams.singleOrNull()?.takeIf { it.hasAudio && !it.hasVideo }?.let { Choice.Ok(audioSelection(it, target)) }
+                streams.singleOrNull()?.takeIf { it.hasAudio && !it.hasVideo }?.let { Choice.Ok(audioSelection(it, target, format)) }
             }
 
             streams.size == 1 && streams[0].hasVideo -> {
@@ -98,12 +99,48 @@ object FormatSelector {
                 else -> null
             }
         val preferred = wanted?.let { w -> sources.filter { it.audioCodec.orEmpty().startsWith(w, ignoreCase = true) } }.orEmpty()
-        return Choice.Ok(audioSelection((preferred.ifEmpty { sources }).maxBy { it.bitrate ?: 0.0 }, target))
+        return Choice.Ok(audioSelection(requireNotNull(pickAudio(preferred.ifEmpty { sources }, format)), target, format))
     }
+
+    /**
+     * The audio stream to take (MED-12): one in the wanted language first, then (when asked) the wanted channel count,
+     * then the best bitrate. A language nobody speaks changes nothing.
+     */
+    private fun pickAudio(
+        candidates: List<MediaStream>,
+        format: Format,
+    ): MediaStream? =
+        candidates
+            .sortedWith(
+                compareByDescending<MediaStream> { languageMatches(it, format.audioLanguage) }
+                    .thenByDescending { channelsMatch(it, format.audioChannels) }
+                    .thenByDescending { it.bitrate ?: 0.0 },
+            ).firstOrNull()
+
+    /** A prefix either way, so `en` takes `en-US` and `en-GB` takes a plain `en`. */
+    private fun languageMatches(
+        stream: MediaStream,
+        wanted: String?,
+    ): Boolean {
+        val language = stream.language
+        return wanted != null && language != null &&
+            (language.startsWith(wanted, ignoreCase = true) || wanted.startsWith(language, ignoreCase = true))
+    }
+
+    private fun channelsMatch(
+        stream: MediaStream,
+        wanted: AudioChannels,
+    ): Boolean =
+        when (wanted) {
+            AudioChannels.ANY -> false
+            AudioChannels.STEREO -> stream.channels == 2
+            AudioChannels.SURROUND -> (stream.channels ?: 0) >= 6
+        }
 
     private fun audioSelection(
         stream: MediaStream,
         target: AudioFormat,
+        format: Format,
     ): Selection {
         val transcode =
             when (target) {
@@ -118,8 +155,11 @@ object FormatSelector {
             audioFormat = target,
             outputExtension = target.extension,
             transcode = transcode,
-            needsFfmpeg = transcode || stream.hasVideo || stream.ext != target.extension || stream.route == StreamRoute.FRAGMENTS,
-            route = stream.route,
+            needsFfmpeg =
+                transcode || stream.hasVideo || stream.ext != target.extension || stream.route == StreamRoute.FRAGMENTS ||
+                    format.sponsorBlock != null,
+            // SponsorBlock lookups and cuts are yt-dlp's.
+            route = if (format.sponsorBlock != null) StreamRoute.YTDLP else stream.route,
         )
     }
 
@@ -156,10 +196,7 @@ object FormatSelector {
         val best = sorted.first()
         if (best.hasAudio) return Choice.Ok(videoSelection(best, null, format))
         val audio =
-            plain.filter { it.hasAudio && !it.hasVideo && matches(it.audioCodec, format.audioCodec) }.maxByOrNull {
-                it.bitrate
-                    ?: 0.0
-            }
+            pickAudio(plain.filter { it.hasAudio && !it.hasVideo && matches(it.audioCodec, format.audioCodec) }, format)
         if (audio != null) return Choice.Ok(videoSelection(best, audio, format))
         // No usable sound to pair with. A video is never handed over silent when the page has sound somewhere.
         if (info.streams.none { it.hasAudio }) return Choice.Ok(videoSelection(best, null, format))
@@ -182,8 +219,11 @@ object FormatSelector {
             outputExtension = outputExtension,
             transcode = false,
             // Fragments are joined as they came (TS or fMP4 pieces): ffmpeg rewraps them into the container.
-            needsFfmpeg = audio != null || outputExtension != video.ext || routeOf(video, audio) == StreamRoute.FRAGMENTS,
-            route = routeOf(video, audio),
+            needsFfmpeg =
+                audio != null || outputExtension != video.ext || routeOf(video, audio) == StreamRoute.FRAGMENTS ||
+                    format.sponsorBlock != null,
+            // SponsorBlock lookups and cuts are yt-dlp's.
+            route = if (format.sponsorBlock != null) StreamRoute.YTDLP else routeOf(video, audio),
         )
     }
 

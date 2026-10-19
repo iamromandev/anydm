@@ -44,6 +44,12 @@ object YtDlpJson {
                 date = root.text("upload_date"),
                 extractor = root.text("extractor_key") ?: root.text("extractor") ?: "unknown",
                 streams = streams,
+                subtitles = subtitlesOf(root["subtitles"], auto = false) + subtitlesOf(root["automatic_captions"], auto = true),
+                chapters = chaptersOf(root["chapters"]),
+                thumbnails = thumbnailsOf(root),
+                duration = root.number("duration"),
+                description = root.text("description"),
+                webpageUrl = root.text("webpage_url") ?: root.text("original_url"),
             ),
         )
     }
@@ -70,6 +76,7 @@ object YtDlpJson {
             language = obj.text("language"),
             fragments = fragmentsOf(obj),
             drm = obj.flag("has_drm"),
+            channels = obj.number("audio_channels")?.toInt(),
         )
     }
 
@@ -94,6 +101,55 @@ object YtDlpJson {
         }
     }
 
+    /** `lang -> [ {ext, url, name?} ]`; an entry without an extension or an address is skipped. */
+    private fun subtitlesOf(
+        element: JsonElement?,
+        auto: Boolean,
+    ): List<SubtitleTrack> =
+        (element as? JsonObject).orEmpty().flatMap { (lang, entries) ->
+            (entries as? JsonArray).orEmpty().mapNotNull { entry ->
+                val track = entry as? JsonObject ?: return@mapNotNull null
+                val ext = track.text("ext")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val url = track.text("url")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                SubtitleTrack(lang, track.text("name"), auto, ext, url)
+            }
+        }
+
+    private fun chaptersOf(element: JsonElement?): List<Chapter> =
+        (element as? JsonArray).orEmpty().mapNotNull { entry ->
+            val chapter = entry as? JsonObject ?: return@mapNotNull null
+            val start = chapter.number("start_time") ?: return@mapNotNull null
+            val end = chapter.number("end_time") ?: return@mapNotNull null
+            val title = chapter.text("title")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            if (start < 0 || end <= start) null else Chapter(start, end, title)
+        }
+
+    private fun thumbnailsOf(root: JsonObject): List<Thumbnail> {
+        val listed =
+            (root["thumbnails"] as? JsonArray).orEmpty().mapNotNull { entry ->
+                val thumbnail = entry as? JsonObject ?: return@mapNotNull null
+                val url = thumbnail.text("url")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                Thumbnail(
+                    url,
+                    extensionOf(url),
+                    thumbnail.number("width")?.toInt(),
+                    thumbnail.number("height")?.toInt(),
+                    thumbnail.number("preference")?.toInt(),
+                )
+            }
+        if (listed.isNotEmpty()) return listed
+        return listOfNotNull(root.text("thumbnail")?.takeIf { it.isNotBlank() }?.let { Thumbnail(it, extensionOf(it), null, null, null) })
+    }
+
+    /** The extension of the file name in [url]'s path, lowercase; empty when there is none. */
+    private fun extensionOf(url: String): String =
+        url
+            .substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('/')
+            .substringAfterLast('.', "")
+            .lowercase()
+
     private fun headersOf(element: JsonElement?): List<Pair<String, String>> =
         (element as? JsonObject).orEmpty().mapNotNull { (name, value) -> (value as? JsonPrimitive)?.contentOrNull?.let { name to it } }
 
@@ -102,4 +158,23 @@ object YtDlpJson {
     private fun JsonObject.number(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
 
     private fun JsonObject.flag(key: String): Boolean = (this[key] as? JsonPrimitive)?.booleanOrNull ?: false
+}
+
+/**
+ * [json] without the `cookies` yt-dlp puts on the page and on each format when it read a cookie jar: they are the user's
+ * session, and the extraction is kept in the database until the job ends. Text that isn't JSON comes back as it was.
+ */
+internal fun withoutSessionCookies(json: String): String {
+    val root = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return json
+
+    fun scrub(obj: JsonObject) = JsonObject(obj.filterKeys { it != "cookies" })
+    val cleaned =
+        root.mapValues { (key, value) ->
+            if ((key == "formats" || key == "requested_formats") && value is JsonArray) {
+                JsonArray(value.map { if (it is JsonObject) scrub(it) else it })
+            } else {
+                value
+            }
+        }
+    return Json.encodeToString(JsonObject.serializer(), scrub(JsonObject(cleaned)))
 }

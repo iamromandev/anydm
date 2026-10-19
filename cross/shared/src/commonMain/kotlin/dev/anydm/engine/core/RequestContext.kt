@@ -22,6 +22,11 @@ data class RequestContext(
         cookies?.let { requireSendable("cookies", it) }
     }
 
+    /** Names only: the values, the user agent and above all the cookies stay out of any log line or message. */
+    override fun toString(): String =
+        "RequestContext(headers=${headers.map { it.first }}, referrer=${if (referrer != null) "***" else null}, " +
+            "userAgent=${if (userAgent != null) "***" else null}, cookies=${if (cookies != null) "***" else null})"
+
     private companion object {
         val token = Regex("""[!#$%&'*+.^_`|~0-9A-Za-z-]+""")
 

@@ -2,9 +2,11 @@ package dev.anydm.engine.store
 
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.Checksum
+import dev.anydm.engine.core.DEFAULT_SPONSORBLOCK_CATEGORIES
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.EmbedChoice
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Format
@@ -13,6 +15,9 @@ import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.core.SponsorBlockChoice
+import dev.anydm.engine.core.SubtitleChoice
+import dev.anydm.engine.core.SubtitleMode
 import dev.anydm.engine.store.db.AnydmDb
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
@@ -146,6 +151,22 @@ internal class SqlDownloadStore(
                     audioCodec = row.audio_codec,
                     audioOnly = row.audio_only,
                     container = row.container,
+                    audioLanguage = row.audio_language,
+                    audioChannels = row.audio_channels,
+                    subtitles =
+                        row.sub_languages?.let { languages ->
+                            SubtitleChoice(
+                                languages = languages.split(','),
+                                includeAuto = row.sub_include_auto,
+                                mode = row.sub_mode ?: SubtitleMode.SEPARATE,
+                                convertTo = row.sub_convert,
+                            )
+                        },
+                    sponsorBlock =
+                        row.sb_mode?.let { mode ->
+                            SponsorBlockChoice(mode, row.sb_categories?.split(',') ?: DEFAULT_SPONSORBLOCK_CATEGORIES)
+                        },
+                    embed = EmbedChoice(row.embed_metadata, row.embed_thumbnail, row.embed_chapters),
                 )
             }
         }
@@ -164,6 +185,17 @@ internal class SqlDownloadStore(
             audio_codec = format.audioCodec,
             audio_only = format.audioOnly,
             container = format.container,
+            audio_language = format.audioLanguage,
+            audio_channels = format.audioChannels,
+            sub_languages = format.subtitles?.languages?.joinToString(","),
+            sub_include_auto = format.subtitles?.includeAuto ?: false,
+            sub_mode = format.subtitles?.mode,
+            sub_convert = format.subtitles?.convertTo,
+            sb_mode = format.sponsorBlock?.mode,
+            sb_categories = format.sponsorBlock?.categories?.joinToString(","),
+            embed_metadata = format.embed.metadata,
+            embed_thumbnail = format.embed.thumbnail,
+            embed_chapters = format.embed.chapters,
         )
     }
 

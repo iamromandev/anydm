@@ -41,6 +41,19 @@ abstract class ExtractionStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun aCookielessExtractionIsRemembered() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.SITE)).id
+
+            store.extractions.put(extraction(id).copy(withoutCookies = true))
+            store.extractions.get(id)!!.withoutCookies shouldBe true
+
+            store.extractions.put(extraction(id))
+            store.extractions.get(id)!!.withoutCookies shouldBe false
+        }
+
+    @Test
     fun putReplacesTheEarlierOne() =
         runTest {
             val store = newStore()
