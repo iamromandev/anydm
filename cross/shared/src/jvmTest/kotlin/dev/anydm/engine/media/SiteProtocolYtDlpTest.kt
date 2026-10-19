@@ -197,7 +197,7 @@ class SiteProtocolYtDlpTest {
 
             result.outputs shouldBe listOf("Test Video.flv")
             result.consumed shouldBe listOf("Test Video.ytdlp")
-            result.cleanup shouldBe listOf(folder)
+            result.cleanup shouldBe listOf(folder, ".Test Video.${rig.download.id.value}.frag")
             fs.read(partialPath(Path("/dl", "Test Video.flv"), rig.download.id))!!.toList() shouldBe listOf<Byte>(1, 2, 3)
             fs.exists(Path("/dl", folder, "out.flv")) shouldBe false
         }
@@ -210,5 +210,29 @@ class SiteProtocolYtDlpTest {
             fs.put(Path("/dl", folder, "out.flv.part"), byteArrayOf(9))
 
             failed(rig.site.finalize(rig.transfer())).message shouldContain "left no file"
+        }
+
+    @Test
+    fun finalizePicksTheExactOutputNotAStaleFile() =
+        runBlocking<Unit> {
+            val rig = rig(yt(MediaFixtures.rtmpMuxedJson())) { "" }
+            val folder = ".Test Video.${rig.download.id.value}.ytdlp"
+            fs.put(Path("/dl", folder, "out.f1.flv"), byteArrayOf(9, 9))
+            fs.put(Path("/dl", folder, "out.flv"), byteArrayOf(1, 2, 3))
+
+            rig.site.finalize(rig.transfer()).shouldBeInstanceOf<StepResult.Ok<FinalizeResult>>()
+
+            fs.read(partialPath(Path("/dl", "Test Video.flv"), rig.download.id))!!.toList() shouldBe listOf<Byte>(1, 2, 3)
+        }
+
+    @Test
+    fun workFoldersNameTheFragmentAndStagingFolders() =
+        runBlocking<Unit> {
+            val rig = rig(yt(MediaFixtures.rtmpMuxedJson())) { "" }
+            val id = rig.download.id.value
+
+            rig.site.workFolders(rig.download.copy(fileName = "Test Video.flv")) shouldBe
+                listOf(".Test Video.$id.frag", ".Test Video.$id.ytdlp")
+            rig.site.workFolders(rig.download) shouldBe emptyList()
         }
 }

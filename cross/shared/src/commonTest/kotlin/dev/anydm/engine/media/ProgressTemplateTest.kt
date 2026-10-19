@@ -75,4 +75,14 @@ class ProgressTemplateTest {
         tally.add(YtDlpProgress("downloading", "v", 1000, null, null)) shouldBe 0L
         tally.add(YtDlpProgress("downloading", "v", 1500, null, null)) shouldBe 500L
     }
+
+    @Test
+    fun aSeededFileCountsOnlyWhatItGrowsBy() {
+        val tally = ProgressTally()
+        tally.seed("v", 1000)
+
+        tally.total shouldBe 1000L
+        tally.add(YtDlpProgress("downloading", "v", 1200, null, null)) shouldBe 200L
+        tally.total shouldBe 1200L
+    }
 }

@@ -144,6 +144,15 @@ class HlsPlaylistTest {
 
     @Test
     fun aByteOrderMarkBeforeTheHeaderIsAccepted() {
-        media("#EXTM3U\n#EXTINF:1,\na.ts\n#EXT-X-ENDLIST").size shouldBe 1
+        media(Char(0xFEFF) + "#EXTM3U\n#EXTINF:1,\na.ts\n#EXT-X-ENDLIST").size shouldBe 1
+    }
+
+    @Test
+    fun aNonPositiveByteRangeIsInvalid() {
+        for (range in listOf("-10@100", "0@5")) {
+            HlsPlaylist
+                .parse(lines("#EXTM3U", "#EXTINF:1,", "#EXT-X-BYTERANGE:$range", "a.ts", "#EXT-X-ENDLIST"), base)
+                .shouldBeInstanceOf<HlsParse.Invalid>()
+        }
     }
 }

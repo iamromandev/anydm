@@ -239,6 +239,7 @@ class SiteProtocolFragmentsTest {
                 .folder("hls-720")
                 .list()
                 .orEmpty()
+                .filter { it.matches(Regex("\\d{6}")) }
                 .sorted() shouldBe listOf("000000", "000001", "000002", "000003")
             io.limiter.bytes shouldBe joined.size.toLong()
         }
@@ -335,5 +336,39 @@ class SiteProtocolFragmentsTest {
         override suspend fun run(spec: ProcessSpec) = pick(spec).run(spec)
 
         override suspend fun start(spec: ProcessSpec): ProcessOutcome<RunningProcess> = pick(spec).start(spec)
+    }
+
+    @Test
+    fun thePagesCredentialsStayAwayFromAFragmentHost() =
+        runBlocking<Unit> {
+            FaultServer().use { cdn ->
+                val text =
+                    "#EXTM3U\n#EXT-X-MAP:URI=\"${cdn.url("/c/init.mp4")}\"\n#EXTINF:4,\n${cdn.url("/c/s0.ts")}\n#EXT-X-ENDLIST\n"
+                server.serve("/hls/index.m3u8", text.toByteArray())
+                cdn.serve("/c/init.mp4", parts.getValue("init"))
+                cdn.serve("/c/s0.ts", parts.getValue("s0"))
+                val site = site(yt(MediaFixtures.hlsPageJson(base)))
+                val download = store.downloads.add(NewDownload(DownloadKind.SITE, mirrors = listOf(pageUrl), saveFolder = root.toString()))
+                val context =
+                    dev.anydm.engine.core
+                        .RequestContext(listOf("Authorization" to "Bearer secret"), cookies = "session=1")
+                val probe = siteProbe(site.probe(ProbeRequest(download, store.downloads.mirrors(download.id).single(), context, null)))
+                val plan = ((site.plan(probe, PlanContext(download)) as StepResult.Ok).value as TransferPlan).files
+                val rig = Rig(site, ProbeRequest(download, store.downloads.mirrors(download.id).single(), context, null), probe, plan, root)
+
+                site.transfer(rig.transfer(), CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+                cdn.requests.size shouldBe 2
+                cdn.requests.none { it.headers["Authorization"] != null || it.headers["Cookie"] != null } shouldBe true
+            }
+        }
+
+    @Test
+    fun aFormatIdCannotLeaveItsFolder() {
+        safeFormatId("..") shouldBe "_.."
+        safeFormatId(".") shouldBe "_."
+        safeFormatId(".hidden") shouldBe "_.hidden"
+        safeFormatId("a/b c") shouldBe "a_b_c"
+        safeFormatId("hls-720_1.2") shouldBe "hls-720_1.2"
     }
 }

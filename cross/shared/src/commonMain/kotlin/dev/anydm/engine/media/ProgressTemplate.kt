@@ -58,6 +58,16 @@ internal class ProgressTally {
     var total: Long = 0L
         private set
 
+    /** [file] already holds [bytes] from an earlier run: they count toward the total but are not new. */
+    fun seed(
+        file: String,
+        bytes: Long,
+    ) {
+        if (bytes <= 0) return
+        last[file] = bytes
+        total += bytes
+    }
+
     /** The bytes [progress] adds to what was counted before. */
     fun add(progress: YtDlpProgress): Long {
         val downloaded = progress.downloaded ?: return 0L

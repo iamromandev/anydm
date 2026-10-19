@@ -31,6 +31,7 @@ import dev.anydm.engine.core.StepFailure
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.core.goneMirrors
+import dev.anydm.engine.core.isSafeRelativePath
 import dev.anydm.engine.core.mirrorToStart
 import dev.anydm.engine.core.nextMirror
 import dev.anydm.engine.core.partialPath
@@ -616,6 +617,12 @@ internal class QueueActor(
                 null -> Unit
                 is FileResult.TrashUnavailable -> return CommandResult.TrashUnavailable
                 else -> return CommandResult.TrashFailed(trashed)
+            }
+        }
+        // The protocol's own work folders are the engine's, never the user's: they go whatever happens to the files.
+        job.saveFolder?.let(::Path)?.let { folder ->
+            for (name in protocols[job.kind]?.workFolders(job).orEmpty()) {
+                if (isSafeRelativePath(name)) fileSystem.deleteTree(targetPath(folder, name))
             }
         }
         downloads.remove(job.id)

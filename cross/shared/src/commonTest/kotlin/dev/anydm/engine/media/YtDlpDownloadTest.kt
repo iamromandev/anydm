@@ -35,6 +35,7 @@ class YtDlpDownloadTest {
             YtDlpDownload(fake).download(::command, io) shouldBe StepResult.Ok(Unit)
 
             io.meter.bytes shouldBe 450L
+            io.limiter.bytes shouldBe 450L
             io.progress.last() shouldBe 450L
             io.progress shouldBe io.progress.sorted()
         }
@@ -76,6 +77,7 @@ class YtDlpDownloadTest {
 
             fake.started.map { it.command[2] } shouldBe listOf("1000", "5000")
             io.meter.bytes shouldBe 100L
+            io.limiter.bytes shouldBe 100L
         }
 
     @Test
@@ -123,5 +125,19 @@ class YtDlpDownloadTest {
             YtDlpDownload(fake).download(::command, ScriptedIo { share })
 
             fake.started.map { it.command[2] } shouldBe listOf("1000", "4000")
+        }
+
+    @Test
+    fun aResumedPartialIsNotCountedAgain() =
+        runTest {
+            val io = ScriptedIo()
+            val fake = runner(listOf(line("v", 1200)))
+
+            YtDlpDownload(fake).download(::command, io, seed = mapOf("v" to 1000L)) shouldBe StepResult.Ok(Unit)
+
+            io.meter.bytes shouldBe 200L
+            io.limiter.bytes shouldBe 200L
+            io.progress.first() shouldBe 1000L
+            io.progress.last() shouldBe 1200L
         }
 }

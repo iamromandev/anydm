@@ -101,4 +101,49 @@ class HttpFetchTest {
             runCatching { protocol.withSlot(url) { error("boom") } }
             protocol.slots.held(origin) shouldBe 0
         }
+
+    @Test
+    fun anEmptyBodyIsTransient() =
+        runBlocking<Unit> {
+            server.serve("/f", ByteArray(0))
+
+            failed(protocol.fetchFragment(server.url("/f"), null, null, null, CollectingIo())).errorClass shouldBe ErrorClass.TRANSIENT
+        }
+
+    @Test
+    fun aFragmentOverTheCapIsRefused() =
+        runBlocking<Unit> {
+            server.serve("/f", body)
+
+            val result = failed(protocol.fetchFragment(server.url("/f"), null, null, null, CollectingIo(), maxBytes = 1000))
+
+            result.errorClass shouldBe null
+            result.message shouldContain "bigger"
+        }
+
+    @Test
+    fun aMisLabelledMediaFileIsKept() =
+        runBlocking<Unit> {
+            val ts = ByteArray(3000) { if (it % 188 == 0) 0x47 else 0x11 }
+            server.serve("/f", ts, contentType = "text/plain")
+
+            ok(protocol.fetchFragment(server.url("/f"), null, null, null, CollectingIo())).contentEquals(ts) shouldBe true
+        }
+
+    @Test
+    fun anHtmlBodyUnderAMediaTypeIsRefused() =
+        runBlocking<Unit> {
+            server.serve("/f", "  <html><body>blocked</body></html>".toByteArray(), contentType = "video/mp2t")
+
+            failed(protocol.fetchFragment(server.url("/f"), null, null, null, CollectingIo())).errorClass shouldBe ErrorClass.TRANSIENT
+        }
+
+    @Test
+    fun anInvertedRangeIsRefusedNotThrown() =
+        runBlocking<Unit> {
+            server.serve("/f", body)
+            server.fault("/f", Fault.IgnoreRanges)
+
+            failed(protocol.fetchFragment(server.url("/f"), null, 200, 100, CollectingIo()))
+        }
 }

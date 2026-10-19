@@ -1,5 +1,6 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Format
@@ -36,7 +37,6 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 
 private val EXTRACTION_TTL = 1.hours
-private val CREDENTIAL_HEADERS = setOf("authorization", "proxy-authorization", "cookie")
 private val YOUTUBE_HOSTS = listOf("youtube.com", "youtu.be", "youtube-nocookie.com")
 
 /**
@@ -230,7 +230,7 @@ class SiteProtocol(
         if (probe.route == StreamRoute.YTDLP) return StepResult.Ok(TransferPlan(listOf(PlannedFile(index = 0, path = "$stem.ytdlp"))))
         val files =
             selection.streams.mapIndexed { index, stream ->
-                val path = if (selection.needsFfmpeg) "$stem.f${safeId(stream.formatId)}.${stream.ext}" else outputName
+                val path = if (selection.needsFfmpeg) "$stem.f${safeFormatId(stream.formatId)}.${stream.ext}" else outputName
                 if (stream.route == StreamRoute.PLAIN) {
                     http.planFile(
                         probe.probes.getValue(stream.formatId),
@@ -309,7 +309,16 @@ class SiteProtocol(
         val staging = stagingFolder(transfer, site) ?: return StepResult.Failed(null, "no save folder")
         val made = fileSystem.prepareFolder(staging)
         if (made is FileResult.Failed) return made.toStepFailed()
-        val output = Path(staging, "out.%(ext)s")
+        // What yt-dlp's files already hold from earlier runs is not new: its first report after a resume includes it.
+        val seed =
+            (fileSystem.list(staging) as? FileResult.Ok)
+                ?.value
+                .orEmpty()
+                .filterNot { it.name.endsWith(".ytdl") }
+                .mapNotNull { file ->
+                    val size = (fileSystem.size(file) as? FileResult.Ok)?.value ?: return@mapNotNull null
+                    file.toString().removeSuffix(".part") to size
+                }.toMap()
         return ytDlpDownload.download(
             { limit ->
                 YtDlpCommand.download(
@@ -317,12 +326,13 @@ class SiteProtocol(
                     ffmpeg?.executable(Tool.FFMPEG.id),
                     deno?.executable(Tool.DENO.id),
                     site.selection,
-                    output,
+                    staging,
                     site.url,
                     limit,
                 )
             },
             io,
+            seed,
         )
     }
 
@@ -336,9 +346,10 @@ class SiteProtocol(
     ): StepResult<Unit> {
         val list = sources.fragments.getValue(stream.formatId)
         val folder =
-            fragmentFolder(transfer, site)?.let { Path(it, safeId(stream.formatId)) } ?: return StepResult.Failed(null, "no save folder")
+            fragmentFolder(transfer, site)?.let { Path(it, safeFormatId(stream.formatId)) }
+                ?: return StepResult.Failed(null, "no save folder")
         val context = contextFor(site.context, stream, site.url)
-        when (val got = fragments.fetch(folder, list, context, io)) {
+        when (val got = fragments.fetch(folder, list, context, io, trustedUrl = stream.url)) {
             is StepResult.Failed -> return got
             is StepResult.Ok -> Unit
         }
@@ -467,10 +478,9 @@ class SiteProtocol(
         val outputName = transfer.download.fileName ?: site.name
         val stagingName = hiddenFolderName(outputName, transfer.download.id, "ytdlp")
         val listed = fileSystem.list(targetPath(folder, stagingName))
+        // Exactly the output we asked for: yt-dlp may leave other files beside it (intermediate streams, an old run's).
         val produced =
-            (listed as? FileResult.Ok)
-                ?.value
-                ?.firstOrNull { it.name.startsWith("out.") && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
+            (listed as? FileResult.Ok)?.value?.firstOrNull { it.name == "out.${site.selection.outputExtension}" }
                 ?: return StepResult.Failed(null, "yt-dlp finished but left no file")
         val output = partialPath(targetPath(folder, outputName), transfer.download.id)
         output.parent?.let { fileSystem.prepareFolder(it) }
@@ -478,7 +488,11 @@ class SiteProtocol(
         if (moved is FileResult.Failed) return moved.toStepFailed()
         extractions.delete(transfer.download.id)
         return StepResult.Ok(
-            FinalizeResult(listOf(outputName), consumed = transfer.files.map { it.file.path }, cleanup = listOf(stagingName)),
+            FinalizeResult(
+                listOf(outputName),
+                consumed = transfer.files.map { it.file.path },
+                cleanup = listOf(stagingName, hiddenFolderName(outputName, transfer.download.id, "frag")),
+            ),
         )
     }
 
@@ -508,9 +522,12 @@ class SiteProtocol(
         return targetPath(folder, hiddenFolderName(transfer.download.fileName ?: site.name, transfer.download.id, "ytdlp"))
     }
 
-    private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
+    override fun workFolders(download: Download): List<String> {
+        val name = download.fileName ?: return emptyList()
+        return listOf(hiddenFolderName(name, download.id, "frag"), hiddenFolderName(name, download.id, "ytdlp"))
+    }
 
-    private fun safeId(formatId: String) = formatId.map { if (it.isLetterOrDigit() || it in "._-") it else '_' }.joinToString("")
+    private fun missing(tool: Tool) = StepResult.Failed(ErrorClass.TOOL_MISSING, tool.id)
 
     private fun isYoutube(url: String): Boolean {
         val host = hostOf(url).substringBefore(':').lowercase()
@@ -527,4 +544,10 @@ internal fun hiddenFolderName(
     val folder = outputName.substringBeforeLast('/', "")
     val name = ".${outputName.substringAfterLast('/').substringBeforeLast('.')}.${id.value}.$suffix"
     return if (folder.isEmpty()) name else "$folder/$name"
+}
+
+/** A format id as a folder or file name part: `..` or a leading dot would leave or hide the folder. */
+internal fun safeFormatId(formatId: String): String {
+    val cleaned = formatId.map { if (it.isLetterOrDigit() || it in "._-") it else '_' }.joinToString("")
+    return if (cleaned.isEmpty() || cleaned.startsWith(".")) "_$cleaned" else cleaned
 }

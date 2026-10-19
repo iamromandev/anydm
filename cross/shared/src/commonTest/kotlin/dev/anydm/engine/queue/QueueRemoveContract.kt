@@ -51,4 +51,21 @@ abstract class QueueRemoveContract : QueueTestBase() {
 
             h.fs.trashed.map { it.name } shouldBe listOf("m.mp4")
         }
+
+    @Test
+    fun removingAJobDeletesItsWorkFolders() =
+        runTest {
+            val h = started()
+            val work = Path(dev.anydm.engine.core.stepRoot, ".work")
+            h.protocol.workFolderNames = listOf(".work")
+            h.fs.put(Path(work, "000000"), byteArrayOf(1))
+            h.fs.trashAvailable = true
+            val id = h.addJob()
+            advanceTimeBy(1.seconds)
+
+            h.queue.remove(id, RemoveFiles.KEEP) shouldBe CommandResult.Done(null)
+
+            h.fs.exists(work) shouldBe false
+            h.fs.trashed.none { it == work } shouldBe true
+        }
 }

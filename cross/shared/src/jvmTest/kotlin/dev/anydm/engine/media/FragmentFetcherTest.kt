@@ -2,6 +2,7 @@ package dev.anydm.engine.media
 
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.FileId
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.http.Fault
 import dev.anydm.engine.http.FaultServer
 import dev.anydm.engine.http.HttpProtocol
@@ -40,6 +41,8 @@ class FragmentFetcherTest {
 
     private fun refs(n: Int) = (0 until n).map { FragmentRef(server.url("/f/$it")) }
 
+    private val trusted get() = server.url("/")
+
     private fun onDisk(i: Int) = File(dir, fragmentName(i))
 
     private fun requestsTo(path: String) = server.requests.count { it.url.encodedPath == path }
@@ -54,7 +57,7 @@ class FragmentFetcherTest {
             serve(5)
             val io = CollectingIo()
 
-            fetcher.fetch(folder, refs(5), null, io) shouldBe StepResult.Ok(total(5))
+            fetcher.fetch(folder, refs(5), null, io, trusted) shouldBe StepResult.Ok(total(5))
 
             for (i in 0 until 5) onDisk(i).readBytes().contentEquals(bytesOf(i)) shouldBe true
             dir.list().orEmpty().none { it.endsWith(".tmp") } shouldBe true
@@ -71,7 +74,7 @@ class FragmentFetcherTest {
             onDisk(1).writeBytes(bytesOf(1))
             val io = CollectingIo()
 
-            fetcher.fetch(folder, refs(4), null, io) shouldBe StepResult.Ok(total(4))
+            fetcher.fetch(folder, refs(4), null, io, trusted) shouldBe StepResult.Ok(total(4))
 
             requestsTo("/f/0") shouldBe 0
             requestsTo("/f/1") shouldBe 0
@@ -85,7 +88,7 @@ class FragmentFetcherTest {
             dir.mkdirs()
             File(dir, "000002.tmp").writeBytes(byteArrayOf(9, 9, 9))
 
-            fetcher.fetch(folder, refs(3), null, CollectingIo()) shouldBe StepResult.Ok(total(3))
+            fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted) shouldBe StepResult.Ok(total(3))
 
             dir.list().orEmpty().none { it.endsWith(".tmp") } shouldBe true
             onDisk(2).readBytes().contentEquals(bytesOf(2)) shouldBe true
@@ -97,7 +100,7 @@ class FragmentFetcherTest {
             serve(3)
             server.fault("/f/2", Fault.Once(Fault.DropAfter(10)))
 
-            fetcher.fetch(folder, refs(3), null, CollectingIo()) shouldBe StepResult.Ok(total(3))
+            fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted) shouldBe StepResult.Ok(total(3))
 
             requestsTo("/f/2") shouldBe 2
             onDisk(2).readBytes().contentEquals(bytesOf(2)) shouldBe true
@@ -109,7 +112,7 @@ class FragmentFetcherTest {
             serve(3)
             server.fault("/f/1", Fault.Status(503))
 
-            failed(fetcher.fetch(folder, refs(3), null, CollectingIo())).errorClass shouldBe ErrorClass.TRANSIENT
+            failed(fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted)).errorClass shouldBe ErrorClass.TRANSIENT
 
             requestsTo("/f/1") shouldBe 3
         }
@@ -120,7 +123,7 @@ class FragmentFetcherTest {
             serve(3)
             server.fault("/f/1", Fault.Status(403))
 
-            failed(fetcher.fetch(folder, refs(3), null, CollectingIo())).errorClass shouldBe ErrorClass.AUTH
+            failed(fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted)).errorClass shouldBe ErrorClass.AUTH
 
             requestsTo("/f/1") shouldBe 1
         }
@@ -131,7 +134,7 @@ class FragmentFetcherTest {
             val big = ByteArray(5000) { (it % 200).toByte() }
             server.serve("/big", big)
 
-            fetcher.fetch(folder, listOf(FragmentRef(server.url("/big"), null, 100, 200)), null, CollectingIo()) shouldBe
+            fetcher.fetch(folder, listOf(FragmentRef(server.url("/big"), null, 100, 200)), null, CollectingIo(), trusted) shouldBe
                 StepResult.Ok(100L)
 
             onDisk(0).readBytes().contentEquals(big.copyOfRange(100, 200)) shouldBe true
@@ -146,7 +149,7 @@ class FragmentFetcherTest {
             onDisk(0).writeBytes(bytesOf(0))
             val io = CollectingIo()
 
-            fetcher.fetch(folder, refs(3), null, io)
+            fetcher.fetch(folder, refs(3), null, io, trusted)
 
             io.progress.first() shouldBe bytesOf(0).size.toLong()
             io.progress.last() shouldBe total(3)
@@ -154,15 +157,80 @@ class FragmentFetcherTest {
         }
 
     @Test
-    fun anEmptyFragmentIsKept() =
+    fun anEmptyBodyIsRetriedThenFails() =
         runBlocking<Unit> {
+            serve(2)
             server.serve("/f/0", ByteArray(0))
-            server.serve("/f/1", bytesOf(1))
 
-            fetcher.fetch(folder, refs(2), null, CollectingIo()) shouldBe StepResult.Ok(bytesOf(1).size.toLong())
+            failed(fetcher.fetch(folder, refs(2), null, CollectingIo(), trusted)).errorClass shouldBe ErrorClass.TRANSIENT
 
-            onDisk(0).length() shouldBe 0L
-            onDisk(0).exists() shouldBe true
+            requestsTo("/f/0") shouldBe 3
+            onDisk(0).exists() shouldBe false
+        }
+
+    @Test
+    fun aZeroByteFragmentFileIsFetchedAgain() =
+        runBlocking<Unit> {
+            serve(2)
+            dir.mkdirs()
+            onDisk(0).writeBytes(ByteArray(0))
+
+            fetcher.fetch(folder, refs(2), null, CollectingIo(), trusted) shouldBe StepResult.Ok(total(2))
+
+            onDisk(0).readBytes().contentEquals(bytesOf(0)) shouldBe true
+        }
+
+    @Test
+    fun credentialsStayAwayFromAnotherHost() =
+        runBlocking<Unit> {
+            FaultServer().use { other ->
+                serve(1)
+                other.serve("/g/1", bytesOf(1))
+                val context = RequestContext(listOf("Authorization" to "Bearer secret"), cookies = "session=1")
+                val fragments = listOf(FragmentRef(server.url("/f/0")), FragmentRef(other.url("/g/1")))
+
+                fetcher.fetch(folder, fragments, context, CollectingIo(), trusted) shouldBe StepResult.Ok(total(2))
+
+                other.requests.none { it.headers["Authorization"] != null || it.headers["Cookie"] != null } shouldBe true
+                server.requests.all { it.headers["Authorization"] == "Bearer secret" && it.headers["Cookie"] == "session=1" } shouldBe true
+            }
+        }
+
+    @Test
+    fun aChangedFragmentListStartsTheFolderOver() =
+        runBlocking<Unit> {
+            serve(3)
+            val first = (0 until 3).map { FragmentRef(server.url("/f/$it"), duration = 4.0) }
+            fetcher.fetch(folder, first, null, CollectingIo(), trusted)
+            for (i in 0 until 3) server.serve("/g/$i", bytesOf(i + 10))
+            val second = (0 until 3).map { FragmentRef(server.url("/g/$it"), duration = 6.0) }
+
+            fetcher.fetch(folder, second, null, CollectingIo(), trusted) shouldBe
+                StepResult.Ok((0 until 3).sumOf { bytesOf(it + 10).size.toLong() })
+
+            for (i in 0 until 3) onDisk(i).readBytes().contentEquals(bytesOf(i + 10)) shouldBe true
+        }
+
+    @Test
+    fun theSameListLeavesTheFolderAlone() =
+        runBlocking<Unit> {
+            serve(3)
+            val list = (0 until 3).map { FragmentRef(server.url("/f/$it"), duration = 4.0) }
+            fetcher.fetch(folder, list, null, CollectingIo(), trusted)
+            val before = server.requests.size
+
+            fetcher.fetch(folder, list, null, CollectingIo(), trusted) shouldBe StepResult.Ok(total(3))
+
+            server.requests.size shouldBe before
+        }
+
+    @Test
+    fun aBadAddressFailsCleanlyAmongMany() =
+        runBlocking<Unit> {
+            serve(6)
+            val list = refs(6).toMutableList().also { it[0] = FragmentRef("file:///etc/passwd") }
+
+            failed(fetcher.fetch(folder, list, null, CollectingIo(), trusted))
         }
 
     @Test
@@ -171,7 +239,7 @@ class FragmentFetcherTest {
             serve(3)
             server.serve("/f/1", "<html>blocked</html>".toByteArray(), contentType = "text/html")
 
-            failed(fetcher.fetch(folder, refs(3), null, CollectingIo())).errorClass shouldBe ErrorClass.TRANSIENT
+            failed(fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted)).errorClass shouldBe ErrorClass.TRANSIENT
 
             onDisk(1).exists() shouldBe false
         }
@@ -180,7 +248,7 @@ class FragmentFetcherTest {
     fun joinWritesFragmentsInOrderAtGrowingOffsets() =
         runBlocking<Unit> {
             serve(4)
-            fetcher.fetch(folder, refs(4), null, CollectingIo())
+            fetcher.fetch(folder, refs(4), null, CollectingIo(), trusted)
             val io = CollectingIo()
 
             fetcher.join(folder, 4, FileId(1), io) shouldBe StepResult.Ok(total(4))
@@ -192,7 +260,7 @@ class FragmentFetcherTest {
     fun joinFailsWhenAFragmentIsMissing() =
         runBlocking<Unit> {
             serve(3)
-            fetcher.fetch(folder, refs(3), null, CollectingIo())
+            fetcher.fetch(folder, refs(3), null, CollectingIo(), trusted)
             onDisk(1).delete()
 
             failed(fetcher.join(folder, 3, FileId(1), CollectingIo())).message shouldContain "fragment 1"

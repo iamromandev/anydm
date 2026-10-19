@@ -246,7 +246,7 @@ class SiteFragmentsEndToEndTest {
             val (download, mirror) = added()
             val failed = runner.run(prepared(download, mirror)).shouldBeInstanceOf<RunOutcome.Failed>()
             failed.failure.message shouldContain "boom: cannot merge"
-            File(dl, ".Test Video.${download.id.value}.frag/hls-720").list().orEmpty().size shouldBe 4
+            File(dl, ".Test Video.${download.id.value}.frag/hls-720").list().orEmpty().count { it.matches(Regex("\\d{6}")) } shouldBe 4
             failMerge.delete()
             val before = server.requests.size
 

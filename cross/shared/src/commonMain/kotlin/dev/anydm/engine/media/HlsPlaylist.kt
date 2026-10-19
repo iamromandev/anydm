@@ -31,7 +31,7 @@ object HlsPlaylist {
         text: String,
         baseUrl: String,
     ): HlsParse {
-        val lines = text.removePrefix("").lines().map { it.trim() }
+        val lines = text.removePrefix(Char(0xFEFF).toString()).lines().map { it.trim() }
         if (lines.firstOrNull { it.isNotEmpty() } != "#EXTM3U") return HlsParse.Invalid("this isn't an HLS playlist")
         var master = false
         var endList = false
@@ -77,7 +77,7 @@ object HlsPlaylist {
                 }
 
                 line.startsWith("#EXT-X-BYTERANGE:") -> {
-                    range = byteRange(line.substringAfter(':'))
+                    range = byteRange(line.substringAfter(':')) ?: return HlsParse.Invalid("a byte range of the playlist can't be read")
                 }
 
                 line == "#EXT-X-ENDLIST" -> {
@@ -119,7 +119,13 @@ object HlsPlaylist {
 
     /** `n` or `n@o`: the length, and the offset when there is one. */
     private fun byteRange(text: String): Pair<Long, Long?>? {
-        val length = text.substringBefore('@').trim().toLongOrNull() ?: return null
-        return length to text.substringAfter('@', "").trim().toLongOrNull()
+        val length =
+            text
+                .substringBefore('@')
+                .trim()
+                .toLongOrNull()
+                ?.takeIf { it > 0 } ?: return null
+        val offset = text.substringAfter('@', "").trim().toLongOrNull()
+        return if (offset != null && offset < 0) null else length to offset
     }
 }

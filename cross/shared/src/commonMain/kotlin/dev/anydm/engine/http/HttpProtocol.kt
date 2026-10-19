@@ -246,7 +246,8 @@ class HttpProtocol(
     /**
      * One fragment, whole, in memory: the bytes [start] until [endExclusive] of [url] when both are given (a server that
      * ignores the range is sliced here), else the entire body. Every chunk goes through the limiter and the meter. A body
-     * that ends short of its Content-Length, or a `text/` one (an error page), is a failed try, not a fragment.
+     * that ends short of its Content-Length, is empty, or is a web page or JSON (an error page under any type) is a
+     * failed try, not a fragment; one over [maxBytes] fails outright, so a huge resource can't fill the memory.
      */
     internal suspend fun fetchFragment(
         url: String,
@@ -254,8 +255,10 @@ class HttpProtocol(
         start: Long?,
         endExclusive: Long?,
         io: TransferIo,
+        maxBytes: Long = MAX_FRAGMENT_BYTES,
     ): StepResult<ByteArray> {
         val ranged = start != null && endExclusive != null
+        if (ranged && endExclusive!! <= start!!) return StepResult.Failed(null, "the playlist asks ${hostOf(url)} for an empty byte range")
         val headers = requestHeaders(context) + if (ranged) listOf("Range" to "bytes=$start-${endExclusive!! - 1}") else emptyList()
         val response =
             try {
@@ -270,10 +273,13 @@ class HttpProtocol(
                     ?.substringBefore(';')
                     ?.trim()
                     ?.lowercase()
-            if (type != null && type.startsWith("text/")) {
-                return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent $type, not media")
-            }
+            if (type in WEB_TYPES) return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent $type, not media")
             val expected = response.headers["Content-Length"]?.trim()?.toLongOrNull()
+            if (expected != null &&
+                expected > maxBytes
+            ) {
+                return StepResult.Failed(null, "a fragment from ${hostOf(url)} is bigger than $maxBytes bytes")
+            }
             val encoding = response.headers["Content-Encoding"]
             val encoded = !encoding.isNullOrEmpty() && !encoding.equals("identity", ignoreCase = true)
             val buffer = Buffer()
@@ -287,6 +293,11 @@ class HttpProtocol(
                     }
                 if (n < 0) break
                 if (n == 0) continue
+                if (buffer.size + n >
+                    maxBytes
+                ) {
+                    return StepResult.Failed(null, "a fragment from ${hostOf(url)} is bigger than $maxBytes bytes")
+                }
                 io.limiter.acquire(n)
                 io.meter.record(n.toLong())
                 buffer.write(chunk, 0, n)
@@ -295,6 +306,8 @@ class HttpProtocol(
                 return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent ${buffer.size} bytes, not $expected")
             }
             val all = buffer.readByteArray()
+            if (all.isEmpty()) return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent no bytes")
+            if (looksLikeWebPage(all)) return StepResult.Failed(ErrorClass.TRANSIENT, "${hostOf(url)} sent a web page, not media")
             if (ranged && response.status == 200) {
                 if (all.size <
                     endExclusive!!
@@ -485,3 +498,15 @@ internal class FetchedText(
     val text: String,
     val finalUrl: String,
 )
+
+/** The largest fragment held in memory. Real fragments are a few MiB; a bigger answer is a whole file the playlist points at. */
+internal const val MAX_FRAGMENT_BYTES = 256L shl 20
+
+private val WEB_TYPES = setOf("text/html", "application/xhtml+xml", "text/xml", "application/xml", "application/json")
+
+/** HTML or JSON starts with `<` or `{`; media starts with a TS sync byte, a box size, or a frame header. */
+private fun looksLikeWebPage(bytes: ByteArray): Boolean {
+    val first =
+        bytes.firstOrNull { it != 0x20.toByte() && it != 0x09.toByte() && it != 0x0A.toByte() && it != 0x0D.toByte() } ?: return false
+    return first == '<'.code.toByte() || first == '{'.code.toByte()
+}
