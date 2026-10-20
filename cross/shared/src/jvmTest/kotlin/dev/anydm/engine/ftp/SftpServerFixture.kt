@@ -6,6 +6,7 @@ import org.apache.sshd.common.file.virtualfs.VirtualFileSystemFactory
 import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.sftp.server.SftpSubsystemFactory
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.openssl.PKCS8Generator
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter
 import org.bouncycastle.openssl.jcajce.JcaPKCS8Generator
@@ -32,7 +33,10 @@ internal class ClientKey(
             // PKCS#8 ("PRIVATE KEY", or "ENCRYPTED PRIVATE KEY" with a passphrase): the form sshj reads for every key type.
             val encryptor =
                 passphrase?.let {
-                    JceOpenSSLPKCS8EncryptorBuilder(PKCS8Generator.AES_256_CBC).setPasssword(it.toCharArray()).build()
+                    JceOpenSSLPKCS8EncryptorBuilder(PKCS8Generator.AES_256_CBC)
+                        .setProvider(BouncyCastleProvider())
+                        .setPasssword(it.toCharArray())
+                        .build()
                 }
             JcaPEMWriter(text).use { it.writeObject(JcaPKCS8Generator(pair.private, encryptor)) }
             val file = File.createTempFile("anydm-key", ".pem", dir)

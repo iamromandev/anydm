@@ -4,6 +4,9 @@ import org.apache.ftpserver.ConnectionConfigFactory
 import org.apache.ftpserver.FtpServer
 import org.apache.ftpserver.FtpServerFactory
 import org.apache.ftpserver.ftplet.Authority
+import org.apache.ftpserver.ftplet.DefaultFtplet
+import org.apache.ftpserver.ftplet.FtpSession
+import org.apache.ftpserver.ftplet.FtpletResult
 import org.apache.ftpserver.listener.ListenerFactory
 import org.apache.ftpserver.ssl.SslConfigurationFactory
 import org.apache.ftpserver.usermanager.impl.BaseUser
@@ -11,6 +14,7 @@ import org.apache.ftpserver.usermanager.impl.WritePermission
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** A self-signed certificate in a JKS keystore, made with the JDK's `keytool`: [dns] is the one name it is good for. */
 internal class TlsFixture(
@@ -71,8 +75,30 @@ internal class FtpServerFixture(
     private val server: FtpServer
     val port: Int
 
+    private val open = AtomicInteger()
+    private val peak = AtomicInteger()
+
+    /** The most connections open at once so far. */
+    val peakConnections: Int get() = peak.get()
+
     init {
         val factory = FtpServerFactory()
+        factory.ftplets =
+            linkedMapOf(
+                "count" to
+                    object : DefaultFtplet() {
+                        override fun onConnect(session: FtpSession): FtpletResult {
+                            val now = open.incrementAndGet()
+                            peak.accumulateAndGet(now) { a, b -> maxOf(a, b) }
+                            return FtpletResult.DEFAULT
+                        }
+
+                        override fun onDisconnect(session: FtpSession): FtpletResult {
+                            open.decrementAndGet()
+                            return FtpletResult.DEFAULT
+                        }
+                    },
+            )
         val listener =
             ListenerFactory().apply {
                 this.port = 0
