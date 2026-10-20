@@ -2,6 +2,7 @@ package dev.anydm.engine.torrent
 
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.protocol.StepResult
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 /** A [TorrentService] with the torrents a test gives it, and a record of what it was asked to change on the running ones. */
 internal class FakeTorrentService : TorrentService {
@@ -13,6 +14,24 @@ internal class FakeTorrentService : TorrentService {
     val running = mutableSetOf<DownloadId>()
     val appliedPriorities = mutableMapOf<DownloadId, List<Int>>()
     val appliedSequential = mutableMapOf<DownloadId, Boolean>()
+
+    /** The jobs [stopSeeding] finds seeding, and the ones it stopped. */
+    val seeding = mutableSetOf<DownloadId>()
+    val stopped = mutableListOf<DownloadId>()
+
+    /** A test ends a seed by emitting here; the engine under test collects it. */
+    override val seedEnds = MutableSharedFlow<SeedEnd>(extraBufferCapacity = 16)
+
+    /** What [seedTraffic] answers once, then nothing until a test sets more. */
+    var traffic: List<SeedSample> = emptyList()
+
+    override suspend fun stopSeeding(id: DownloadId): Boolean {
+        if (!seeding.remove(id)) return false
+        stopped += id
+        return true
+    }
+
+    override suspend fun seedTraffic(): List<SeedSample> = traffic.also { traffic = emptyList() }
 
     override suspend fun inspect(source: String): StepResult<TorrentInfo> {
         inspected += source

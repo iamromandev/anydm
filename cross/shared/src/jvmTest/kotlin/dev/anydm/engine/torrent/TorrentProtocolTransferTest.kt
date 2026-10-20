@@ -31,10 +31,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.io.files.Path
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class TorrentProtocolTransferTest {
     private val store = Store(openInMemoryDatabase(), Dispatchers.IO)
@@ -44,7 +48,7 @@ class TorrentProtocolTransferTest {
     private val folder = Path("/dl")
     private val magnet = "magnet:?xt=urn:btih:" + "0123456789abcdef".repeat(3).take(40)
 
-    private val protocol =
+    private fun newProtocol(resumeEvery: Duration = 1.hours) =
         TorrentProtocol(
             http = HttpProtocol(OkHttpTransport()),
             backend = backend,
@@ -54,7 +58,10 @@ class TorrentProtocolTransferTest {
             policy = { clash },
             magnetTimeout = 50.milliseconds,
             pollEvery = 5.milliseconds,
+            resumeEvery = resumeEvery,
         )
+
+    private val protocol = newProtocol()
 
     private val pack = backend.torrent("Pack", "Pack/a.bin" to 100L, "Pack/b.bin" to 300L)
     private val one = backend.torrent("one.bin", "one.bin" to 50L)
@@ -322,6 +329,134 @@ class TorrentProtocolTransferTest {
             protocol.finalize(transfer)
 
             protocol.finalize(transfer).shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.TRANSIENT
+        }
+
+    private suspend fun waitFor(what: () -> Boolean) = withTimeout(5.seconds) { while (!what()) delay(5) }
+
+    private fun blobOf(info: TorrentInfo) = "resume-of-${info.infoHash}".encodeToByteArray()
+
+    @Test
+    fun transferAddsTheStoredResume() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            store.torrents.setResume(transfer.download.id, "stored".encodeToByteArray())
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            backend.added
+                .single()
+                .request.resume!!
+                .decodeToString() shouldBe "stored"
+        }
+
+    @Test
+    fun transferSavesResumeEveryInterval() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { newProtocol(resumeEvery = 20.milliseconds).transfer(transfer, CollectingIo()) }
+
+            waitFor { backend.added.isNotEmpty() && backend.added.single().resumeSaves >= 2 }
+
+            store.torrents
+                .get(transfer.download.id)!!
+                .resume!!
+                .toList() shouldBe blobOf(pack).toList()
+            running.cancelAndJoin()
+        }
+
+    @Test
+    fun pausingSavesResumeBeforeTheTorrentLeaves() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+
+            running.cancelAndJoin()
+
+            // the fake refuses to save once the torrent has left the session, as the library does
+            backend.added.single().removed shouldBe 1
+            store.torrents
+                .get(transfer.download.id)!!
+                .resume!!
+                .toList() shouldBe blobOf(pack).toList()
+        }
+
+    @Test
+    fun finalizeSavesResumeAtTheFinalPlace() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            backend.added.single().resume = "final".encodeToByteArray()
+
+            ok(protocol.finalize(transfer))
+
+            backend.added.single().movedAtLastSave shouldBe true
+            store.torrents
+                .get(transfer.download.id)!!
+                .resume!!
+                .decodeToString() shouldBe "final"
+        }
+
+    @Test
+    fun transferRecordsDownloadDeltasThroughTheMeter() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val io = CollectingIo()
+            val running = async(Dispatchers.Default) { protocol.transfer(prepared(), io) }
+            waitFor { backend.added.isNotEmpty() }
+            val torrent = backend.added.single()
+
+            torrent.stats =
+                TorrentStats(payloadDown = 100, payloadUp = 20, allTimeUp = 20, wanted = 300, seedingSeconds = 0, seeding = false)
+            waitFor { io.meter.bytes == 100L && io.meter.bytesUp == 20L }
+            torrent.stats =
+                TorrentStats(payloadDown = 250, payloadUp = 50, allTimeUp = 50, wanted = 300, seedingSeconds = 0, seeding = false)
+            waitFor { io.meter.bytes == 250L && io.meter.bytesUp == 50L }
+
+            running.cancelAndJoin()
+        }
+
+    @Test
+    fun transferSetsTheTorrentsDownloadLimitFromTheShare() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            var share: Long? = 4096
+            val running = async(Dispatchers.Default) { protocol.transfer(prepared(), CollectingIo { share }) }
+            waitFor { backend.added.isNotEmpty() && backend.added.single().limitedTo == 4096L }
+
+            share = 1000
+            waitFor { backend.added.single().limitedTo == 1000L }
+            share = null
+            waitFor { backend.added.single().limitedTo == null }
+
+            running.cancelAndJoin()
+        }
+
+    @Test
+    fun setGlobalLimitsGoToTheBackend() {
+        protocol.setGlobalLimits(100L, 200L)
+
+        backend.sessionLimits shouldBe (100L to 200L)
+    }
+
+    @Test
+    fun closeSavesResumeAndClosesTheBackend() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+
+            protocol.close()
+
+            backend.closed shouldBe 1
+            store.torrents
+                .get(transfer.download.id)!!
+                .resume!!
+                .toList() shouldBe blobOf(pack).toList()
+            running.cancelAndJoin()
         }
 
     @Test

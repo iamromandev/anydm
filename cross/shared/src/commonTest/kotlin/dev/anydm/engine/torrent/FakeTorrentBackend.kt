@@ -108,6 +108,9 @@ internal class FakeRunning(
     var resume: ByteArray? = "resume-of-${request.info.infoHash}".encodeToByteArray()
     var resumeSaves = 0
 
+    /** Whether the files had been moved when [saveResume] was last asked. */
+    var movedAtLastSave = false
+
     /** The last limit given to [setDownloadLimit]. */
     var limitedTo: Long? = null
 
@@ -115,8 +118,11 @@ internal class FakeRunning(
 
     override fun stats(): TorrentStats = stats
 
+    /** Like the library, a torrent that has left the session can't give resume data. */
     override suspend fun saveResume(): ByteArray? {
+        if (removed > 0) return null
         resumeSaves++
+        movedAtLastSave = moved != null
         return resume
     }
 
