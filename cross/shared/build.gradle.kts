@@ -71,6 +71,8 @@ kotlin {
             implementation(libs.ftpserver.core)
             implementation(libs.mina.sshd.core)
             implementation(libs.mina.sshd.sftp)
+            implementation(libs.bouncycastle.prov)
+            implementation(libs.bouncycastle.pkix)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
