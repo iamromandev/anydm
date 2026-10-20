@@ -132,6 +132,21 @@ class Queue internal constructor(
         return actor.call { setGlobalSpeedLimit(bytesPerSecond) }
     }
 
+    /** Every torrent's combined upload limit in bytes per second, or null for none; below 1 is Invalid (TOR-08). */
+    suspend fun setGlobalUploadLimit(bytesPerSecond: Long?): CommandResult {
+        if (bytesPerSecond != null && bytesPerSecond < 1) return CommandResult.Invalid("upload limit must be >= 1: $bytesPerSecond")
+        return actor.call { setGlobalUploadLimit(bytesPerSecond) }
+    }
+
+    /**
+     * A seed is over (TOR-05): SEEDING to COMPLETED, or to FAILED with [failure] as the reason. A job in any other
+     * status is Rejected.
+     */
+    suspend fun finishSeeding(
+        id: DownloadId,
+        failure: String?,
+    ): CommandResult = actor.call { finishSeeding(id, failure) }
+
     /** The job's own speed limit in bytes per second, or null for none; below 1 is Invalid. A running job follows it at once. */
     suspend fun setSpeedLimit(
         id: DownloadId,

@@ -28,6 +28,7 @@ internal class FakeTorrentService : TorrentService {
     override suspend fun stopSeeding(id: DownloadId): Boolean {
         if (!seeding.remove(id)) return false
         stopped += id
+        seedEnds.emit(SeedEnd.Ended(id, SeedEndReason.STOPPED))
         return true
     }
 

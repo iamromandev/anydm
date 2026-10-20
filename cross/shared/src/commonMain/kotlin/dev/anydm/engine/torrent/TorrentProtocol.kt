@@ -363,7 +363,10 @@ class TorrentProtocol(
         val request = AddTorrent(info, Path(folder), priorities, sequential = false, fileNames = names, resume = row.resume)
         val handle =
             when (val added = backend.add(request)) {
-                is StepResult.Failed -> return added
+                // The session didn't come up (no library on this machine): not the seed's fault, so the job stays SEEDING
+                // for the next start.
+                is StepResult.Failed -> return StepResult.Failed(ErrorClass.TRANSIENT, added.message)
+
                 is StepResult.Ok -> added.value
             }
         own(info.infoHash, id)

@@ -2,6 +2,7 @@ package dev.anydm.engine.torrent
 
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.files.NameCleaner
@@ -332,6 +333,21 @@ class TorrentProtocolSeedingTest {
 
             failed.message shouldContain "Pack/b.bin"
             backend.added.size shouldBe 0
+        }
+
+    @Test
+    fun resumeSeedingKeepsTheSeedWhenTheSessionWontStart() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            stored(transfer, "Pack/a.bin", "Pack/b.bin")
+            fs.put(Path(folder, "Pack/b.bin"), ByteArray(300))
+            backend.addFailure = StepResult.Failed(null, "torrents aren't supported here: no library")
+
+            val failed = protocol.resumeSeeding(transfer.download).shouldBeInstanceOf<StepResult.Failed>()
+
+            // TRANSIENT: the queue leaves the job SEEDING for the next start
+            failed.errorClass shouldBe ErrorClass.TRANSIENT
+            failed.message shouldContain "no library"
         }
 
     @Test

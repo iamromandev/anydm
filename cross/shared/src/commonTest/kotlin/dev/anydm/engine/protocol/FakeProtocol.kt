@@ -2,6 +2,7 @@ package dev.anydm.engine.protocol
 
 import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.store.NewSegment
@@ -110,6 +111,25 @@ internal class FakeProtocol(
 ) : Protocol {
     /** How many times [close] was called. */
     var closed = 0
+
+    /** Every job [resumeSeeding] was asked about, and what it answers. */
+    val resumeSeedingCalls = mutableListOf<DownloadId>()
+    var resumeSeedingResult: StepResult<Unit> = StepResult.Ok(Unit)
+
+    /** Every [setGlobalLimits] call: download, then upload. */
+    val globalLimits = mutableListOf<Pair<Long?, Long?>>()
+
+    override suspend fun resumeSeeding(download: Download): StepResult<Unit> {
+        resumeSeedingCalls += download.id
+        return resumeSeedingResult
+    }
+
+    override fun setGlobalLimits(
+        download: Long?,
+        upload: Long?,
+    ) {
+        globalLimits += download to upload
+    }
 
     override suspend fun close() {
         closed++
