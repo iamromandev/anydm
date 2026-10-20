@@ -80,7 +80,13 @@ class FtpProtocol(
     override suspend fun transfer(
         transfer: Transfer,
         io: TransferIo,
-    ): StepResult<Unit> = StepResult.Failed(null, "FTP transfers are not implemented yet")
+    ): StepResult<Unit> {
+        val probe = transfer.probe
+        check(probe is FtpProbe) { "FtpProtocol can't transfer a ${probe::class.simpleName}" }
+        val url = FtpUrl.parse(transfer.mirror.url) ?: return StepResult.Failed(null, "not an FTP, FTPS or SFTP address")
+        val login = loginFor(url) ?: return StepResult.Failed(ErrorClass.AUTH, "no login saved for ${url.origin}")
+        return FtpTransfer(clients, probe.target, login, transfer.files.single(), io, connections().coerceIn(1, MAX_BLOCKS)).run()
+    }
 
     /** The transfer already checked that every block arrived; the runner renames the partial into place. */
     override suspend fun finalize(transfer: Transfer): StepResult<FinalizeResult> =
