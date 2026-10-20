@@ -48,11 +48,13 @@ class TorrentProtocolTransferTest {
     private val folder = Path("/dl")
     private val magnet = "magnet:?xt=urn:btih:" + "0123456789abcdef".repeat(3).take(40)
 
+    private val failing = FailingTorrentStore(store.torrents)
+
     private fun newProtocol(resumeEvery: Duration = 1.hours) =
         TorrentProtocol(
             http = HttpProtocol(OkHttpTransport()),
             backend = backend,
-            torrents = store.torrents,
+            torrents = failing,
             cleaner = NameCleaner(OsProfile.LINUX),
             fileSystem = fs,
             policy = { clash },
@@ -331,7 +333,7 @@ class TorrentProtocolTransferTest {
             protocol.finalize(transfer).shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.TRANSIENT
         }
 
-    private suspend fun waitFor(what: () -> Boolean) = withTimeout(5.seconds) { while (!what()) delay(5) }
+    private suspend fun waitFor(what: suspend () -> Boolean) = withTimeout(5.seconds) { while (!what()) delay(5) }
 
     private fun blobOf(info: TorrentInfo) = "resume-of-${info.infoHash}".encodeToByteArray()
 
@@ -457,6 +459,109 @@ class TorrentProtocolTransferTest {
                 .resume!!
                 .toList() shouldBe blobOf(pack).toList()
             running.cancelAndJoin()
+        }
+
+    private fun runningStats(wanted: Long = 400) =
+        TorrentStats(payloadDown = 5, payloadUp = 7, allTimeUp = 7, wanted = wanted, seedingSeconds = 0, seeding = false)
+
+    private fun live(done: List<Long> = listOf(10L, 0L)) = TorrentLiveStats(3, 1, 1.5, 100, 20, done)
+
+    @Test
+    fun liveHoldsTheSummaryWhileATorrentRuns() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            backend.added.single().stats = runningStats()
+            backend.added.single().liveStats = live()
+
+            waitFor { protocol.live()[transfer.download.id]?.summary?.peers == 3 }
+
+            val held = protocol.live().getValue(transfer.download.id)
+            held.summary.seeds shouldBe 1
+            held.summary.availability shouldBe 1.5
+            held.summary.downloadRate shouldBe 100L
+            held.summary.uploadRate shouldBe 20L
+            held.summary.uploaded shouldBe 7L
+            held.summary.ratio shouldBe 7.0 / 400
+            held.fileDone shouldBe listOf(10L, 0L)
+            running.cancelAndJoin()
+        }
+
+    @Test
+    fun liveIsGoneOnceTheTransferEnds() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            waitFor { protocol.live().containsKey(transfer.download.id) }
+
+            running.cancelAndJoin()
+
+            protocol.live() shouldBe emptyMap()
+        }
+
+    @Test
+    fun ratioIsNullForZeroWanted() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(0, 0, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            backend.added.single().stats = runningStats(wanted = 0)
+            backend.added.single().liveStats = live()
+
+            waitFor { protocol.live()[transfer.download.id]?.summary?.peers == 3 }
+
+            protocol
+                .live()
+                .getValue(transfer.download.id)
+                .summary.ratio shouldBe null
+            running.cancelAndJoin()
+        }
+
+    @Test
+    fun pausingSavesFileDone() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            backend.added.single().liveStats = live(listOf(50L, 0L))
+
+            running.cancelAndJoin()
+
+            store.torrents.get(transfer.download.id)!!.fileDone shouldBe listOf(50L, 0L)
+        }
+
+    @Test
+    fun finalizeSavesFileDone() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            backend.added.single().liveStats = live(listOf(0L, 300L))
+
+            ok(protocol.finalize(transfer))
+
+            store.torrents.get(transfer.download.id)!!.fileDone shouldBe listOf(0L, 300L)
+        }
+
+    @Test
+    fun aFailingFileDoneSaveDoesNotFailTheTransfer() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            failing.failingFileDone = true
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            backend.added.single().liveStats = live()
+
+            running.cancelAndJoin()
+
+            backend.added.single().removed shouldBe 1
+            store.torrents.get(transfer.download.id)!!.fileDone shouldBe emptyList()
         }
 
     @Test

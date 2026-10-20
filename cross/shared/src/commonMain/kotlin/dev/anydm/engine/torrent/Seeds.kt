@@ -40,6 +40,10 @@ internal class Seeds(
     private val secondsPerMinute: Int,
     private val scope: CoroutineScope,
     private val save: suspend (DownloadId, RunningTorrent) -> Unit,
+    /** Told about each healthy seed at every check, to keep its live values (TOR-07). */
+    private val observe: suspend (DownloadId, RunningTorrent) -> Unit,
+    /** Told when a seed has left the session, ended or not. */
+    private val onLeave: suspend (DownloadId) -> Unit,
 ) {
     private class Seed(
         val handle: RunningTorrent,
@@ -59,6 +63,9 @@ internal class Seeds(
     val ends: Flow<SeedEnd> get() = events.receiveAsFlow()
 
     suspend fun has(id: DownloadId): Boolean = lock.withLock { id in seeds }
+
+    /** The torrent of the seed of [id], or null. */
+    suspend fun handle(id: DownloadId): RunningTorrent? = lock.withLock { seeds[id]?.handle }
 
     /** Starts keeping [handle] as the seed of [id]; [up] and [down] are what the meter has counted of it already. */
     suspend fun add(
@@ -109,7 +116,11 @@ internal class Seeds(
         val up = stats.payloadUp - seed.up
         val down = stats.payloadDown - seed.down
         if (up > 0 || down > 0) lock.withLock { finalSamples += SeedSample(id, maxOf(up, 0), maxOf(down, 0)) }
-        seed.handle.remove()
+        try {
+            seed.handle.remove()
+        } finally {
+            onLeave(id)
+        }
     }
 
     /** What each seed moved since the last call, and what the seeds that ended moved before they did. */
@@ -157,6 +168,7 @@ internal class Seeds(
                 fail(id, error.message)
                 continue
             }
+            observe(id, seed.handle)
             val (ratio, minutes) = seedLimits(torrents(id), current)
             val stats = seed.handle.stats()
             val reached =

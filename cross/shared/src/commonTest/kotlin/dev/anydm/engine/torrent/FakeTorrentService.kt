@@ -34,6 +34,16 @@ internal class FakeTorrentService : TorrentService {
 
     override suspend fun seedTraffic(): List<SeedSample> = traffic.also { traffic = emptyList() }
 
+    /** What [live] answers; a test changes it between the engine's polls. */
+    var liveMap: Map<DownloadId, TorrentLive> = emptyMap()
+
+    /** What [detail] answers per job; a job without an entry is not in the session. */
+    val details = mutableMapOf<DownloadId, TorrentDetail>()
+
+    override suspend fun live(): Map<DownloadId, TorrentLive> = liveMap
+
+    override suspend fun detail(id: DownloadId): TorrentDetail? = details[id]
+
     override suspend fun inspect(source: String): StepResult<TorrentInfo> {
         inspected += source
         return known[source]?.let { StepResult.Ok(it) } ?: StepResult.Failed(null, "no torrent at $source")

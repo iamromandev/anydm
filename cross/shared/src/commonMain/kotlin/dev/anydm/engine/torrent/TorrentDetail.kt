@@ -81,5 +81,11 @@ class TorrentDetail(
     }
 }
 
+/** The latest of a torrent the protocol holds: its [summary] and the bytes done of each file ([fileDone], torrent order). */
+class TorrentLive(
+    val summary: TorrentSummary,
+    val fileDone: List<Long>,
+)
+
 /** The most peers a [TorrentDetail] lists. */
 const val MAX_DETAIL_PEERS = 500

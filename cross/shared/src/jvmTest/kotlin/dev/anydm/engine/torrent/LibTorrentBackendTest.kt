@@ -442,8 +442,8 @@ class LibTorrentBackendTest {
             withTimeout(20.seconds) { while (running.live().downloadRate <= 0) delay(50) }
 
             seeding.live().peers shouldBe 1
-            (seeding.live().uploadRate > 0) shouldBe true
-            (running.live().availability >= 1.0) shouldBe true
+            // rates and availability are sampled by libtorrent once a second
+            withTimeout(20.seconds) { while (seeding.live().uploadRate <= 0 || running.live().availability < 1.0) delay(50) }
             running.setDownloadLimit(null)
             finish(running).finished shouldBe true
             // the file progress outlives the connection
