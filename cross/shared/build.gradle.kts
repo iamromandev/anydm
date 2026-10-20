@@ -24,6 +24,9 @@ kotlin {
                     implementation(libs.okhttp)
                     // BitTorrent (#541): the Java API; the native libraries are below, per desktop OS.
                     implementation(libs.libtorrent4j)
+                    // FTP, FTPS (Commons Net) and SFTP (sshj) (#542).
+                    implementation(libs.commons.net)
+                    implementation(libs.sshj)
                 }
             }
         val jvmCommonTest =
@@ -64,6 +67,10 @@ kotlin {
             )
             // FaultServer: a local server with ranges and injected faults (#567).
             implementation(libs.okhttp.mockwebserver)
+            // The FTP and SFTP servers the tests talk to (#542).
+            implementation(libs.ftpserver.core)
+            implementation(libs.mina.sshd.core)
+            implementation(libs.mina.sshd.sftp)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

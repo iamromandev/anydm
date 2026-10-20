@@ -18,6 +18,13 @@ jna = "5.17.0"
 # BitTorrent (#541): libtorrent 2.1 through libtorrent4j. Its Java API goes in jvmCommon; the native library is per OS and
 # goes where the app is built for that OS. The library doesn't unpack it from the jar: TorrentNatives does.
 libtorrent4j = "2.1.0-39"
+# FTP, FTPS and SFTP (#542): Commons Net for FTP and FTPS, sshj for SFTP, java-keyring for the OS keychain. The clients go in
+# jvmCommon; the keyring in jvm (desktop). Apache FtpServer and MINA SSHD (the stable 2.x line) are the servers the tests talk to.
+commons-net = "3.13.0"
+sshj = "0.41.2"
+java-keyring = "1.0.4"
+ftpserver = "1.2.1"
+mina-sshd = "2.20.0"
 
 [libraries]
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
@@ -40,6 +47,12 @@ libtorrent4j = { module = "org.libtorrent4j:libtorrent4j", version.ref = "libtor
 libtorrent4j-macos = { module = "org.libtorrent4j:libtorrent4j-macos", version.ref = "libtorrent4j" }
 libtorrent4j-linux = { module = "org.libtorrent4j:libtorrent4j-linux", version.ref = "libtorrent4j" }
 libtorrent4j-windows = { module = "org.libtorrent4j:libtorrent4j-windows", version.ref = "libtorrent4j" }
+commons-net = { module = "commons-net:commons-net", version.ref = "commons-net" }
+sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
+java-keyring = { module = "com.github.javakeyring:java-keyring", version.ref = "java-keyring" }
+ftpserver-core = { module = "org.apache.ftpserver:ftpserver-core", version.ref = "ftpserver" }
+mina-sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "mina-sshd" }
+mina-sshd-sftp = { module = "org.apache.sshd:sshd-sftp", version.ref = "mina-sshd" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 
 [plugins]
