@@ -73,6 +73,12 @@ interface RunningTorrent {
 
     /** What this torrent may take in, in bytes per second; null for no limit. */
     fun setDownloadLimit(bytesPerSecond: Long?)
+
+    /** Peers, rates, availability and the bytes done of each file (TOR-07); [TorrentLiveStats.None] once the torrent is gone. */
+    fun live(): TorrentLiveStats
+
+    /** The peer list, trackers and piece map; [TorrentDetail.Empty] once the torrent is gone. */
+    fun detail(): TorrentDetail
 }
 
 /** The library underneath (libtorrent4j); a fake stands in for it in most tests. */

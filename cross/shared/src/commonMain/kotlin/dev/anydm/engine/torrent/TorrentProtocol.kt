@@ -107,6 +107,8 @@ class TorrentProtocol(
             secondsPerMinute = secondsPerMinute,
             scope = seedScope,
             save = ::saveResume,
+            observe = { id, torrent -> record(id, torrent.stats(), torrent.live()) },
+            onLeave = ::forget,
         )
 
     override val seedEnds: Flow<SeedEnd> get() = seeds.ends
@@ -114,6 +116,43 @@ class TorrentProtocol(
     override suspend fun stopSeeding(id: DownloadId): Boolean = seeds.end(id, SeedEndReason.STOPPED)
 
     override suspend fun seedTraffic(): List<SeedSample> = seeds.traffic()
+
+    /** The latest live values of each torrent the protocol holds, by job (TOR-07): written by the polls, read by [live]. */
+    private val latest = mutableMapOf<DownloadId, TorrentLive>()
+    private val latestLock = Mutex()
+
+    // Only the torrents the protocol still holds: a poll that was cut short by an end can write a reading after the torrent left.
+    override suspend fun live(): Map<DownloadId, TorrentLive> {
+        val all = latestLock.withLock { latest.toMap() }
+        return all.filterKeys { handles.get(it) != null || seeds.has(it) }
+    }
+
+    // On a thread of its own: the read is a native call and a JNI call per piece, which no caller's UI thread should wait for.
+    override suspend fun detail(id: DownloadId): TorrentDetail? =
+        (handles.get(id) ?: seeds.handle(id))?.let { withContext(Dispatchers.Default) { it.detail() } }
+
+    private suspend fun record(
+        id: DownloadId,
+        stats: TorrentStats,
+        live: TorrentLiveStats,
+    ) {
+        val summary =
+            TorrentSummary(
+                peers = live.peers,
+                seeds = live.seeds,
+                availability = live.availability,
+                downloadRate = live.downloadRate,
+                uploadRate = live.uploadRate,
+                uploaded = stats.allTimeUp,
+                ratio = if (stats.wanted > 0) stats.allTimeUp.toDouble() / stats.wanted else null,
+                finishedSeconds = stats.seedingSeconds,
+            )
+        latestLock.withLock { latest[id] = TorrentLive(summary, live.fileDone) }
+    }
+
+    private suspend fun forget(id: DownloadId) {
+        latestLock.withLock { latest.remove(id) }
+    }
 
     /** Which download each infohash in the session belongs to, for resume data the backend hands over when it closes. */
     private val owners = mutableMapOf<String, DownloadId>()
@@ -134,13 +173,22 @@ class TorrentProtocol(
         id: DownloadId,
         torrent: RunningTorrent,
     ) {
-        val bytes = torrent.saveResume() ?: return
+        // The file progress first: it needs no wait, and a torrent that can't give a blob still has it.
+        // Not while it is checking its files: the count starts from zero again and would replace the saved progress.
+        val done = torrent.live().let { if (it.checking) emptyList() else it.fileDone }
+        val bytes = torrent.saveResume()
+        quietly { if (bytes != null) torrents.setResume(id, bytes) }
+        quietly { if (done.isNotEmpty()) torrents.setFileDone(id, done) }
+    }
+
+    // A full disk or a busy database costs a re-check later; it must not stop a torrent from leaving the session.
+    private suspend fun quietly(write: suspend () -> Unit) {
         try {
-            torrents.setResume(id, bytes)
+            write()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // A full disk or a busy database costs a re-check later; it must not stop a torrent from leaving the session.
+            // not worth failing the job
         }
     }
 
@@ -293,6 +341,7 @@ class TorrentProtocol(
                 if (stats.payloadUp > up) io.meter.record(stats.payloadUp - up, Direction.UP)
                 down = maxOf(down, stats.payloadDown)
                 up = maxOf(up, stats.payloadUp)
+                record(id, stats, handle.live())
                 progress.error?.let { return failureOf(it) }
                 if (progress.finished) {
                     finished = true
@@ -314,6 +363,7 @@ class TorrentProtocol(
                         saveResume(id, it)
                         it.remove()
                     }
+                    forget(id)
                 }
             }
         }
@@ -344,7 +394,12 @@ class TorrentProtocol(
             kept = true
             return StepResult.Ok(placed.value.copy(seeding = true))
         } finally {
-            if (!kept) withContext(NonCancellable) { handle.remove() }
+            if (!kept) {
+                withContext(NonCancellable) {
+                    handle.remove()
+                    forget(id)
+                }
+            }
         }
     }
 
@@ -539,6 +594,7 @@ class TorrentProtocol(
     override suspend fun close() {
         seeds.stop()
         backend.close()
+        latestLock.withLock { latest.clear() }
         // The backend handed over the resume data of every torrent it still held (the transfers were stopped before, the seeds are kept).
         while (true) {
             val (hash, bytes) = closing.tryReceive().getOrNull() ?: break

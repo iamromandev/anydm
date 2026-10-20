@@ -61,12 +61,16 @@ class LibTorrentBackendTest {
         root.deleteRecursively()
     }
 
-    private fun torrentOf(path: File): ByteArray {
+    private fun torrentOf(
+        path: File,
+        tracker: String? = null,
+    ): ByteArray {
         runBlocking { natives.load() }
         return TorrentBuilder()
             .path(path)
             .pieceSize(32 * 1024)
             .flags(TorrentBuilder.V1_ONLY)
+            .also { if (tracker != null) it.addTracker(tracker) }
             .generate()
             .entry()
             .bencode()
@@ -422,6 +426,147 @@ class LibTorrentBackendTest {
             (again.stats().allTimeUp >= size * 9L / 10) shouldBe true
             again.remove()
             running.remove()
+        }
+
+    @Test
+    fun liveStatsShowPeersRatesAndFileProgress() =
+        runBlocking<Unit> {
+            val a = file("pack/a.bin", 1024 * 1024, 41)
+            val b = file("pack/b.bin", 1024 * 1024, 42)
+            val info = infoOf(torrentOf(File(seedDir, "pack")))
+            val seeding = seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            // two seeds drop each other, so the peers are looked at while the leecher is still on its way
+            running.setDownloadLimit(384L * 1024)
+            withTimeout(20.seconds) { while (seeding.live().peers < 1 || running.live().seeds < 1) delay(50) }
+            withTimeout(20.seconds) { while (running.live().downloadRate <= 0) delay(50) }
+
+            seeding.live().peers shouldBe 1
+            // rates and availability are sampled by libtorrent once a second
+            withTimeout(20.seconds) { while (seeding.live().uploadRate <= 0 || running.live().availability < 1.0) delay(50) }
+            running.setDownloadLimit(null)
+            finish(running).finished shouldBe true
+            // the file progress outlives the connection
+            running.live().fileDone shouldBe listOf(a.size.toLong(), b.size.toLong())
+            seeding.live().fileDone shouldBe listOf(a.size.toLong(), b.size.toLong())
+            running.remove()
+            seeding.remove()
+        }
+
+    @Test
+    fun detailListsTheLeecherAsAPeer() =
+        runBlocking<Unit> {
+            file("data.bin", 2 * 1024 * 1024, 43)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            running.setDownloadLimit(384L * 1024)
+            withTimeout(20.seconds) { while (seeding.detail().peers.isEmpty() || running.detail().peers.isEmpty()) delay(50) }
+
+            // the seeder sees a leecher on its way, the leecher sees a seed
+            val leech = seeding.detail().peers.single()
+            // libtorrent may write a loopback peer as an IPv6-mapped address
+            leech.address.contains("127.0.0.1") shouldBe true
+            leech.seed shouldBe false
+            // a peer's pieces are known once it has said what it has
+            withTimeout(20.seconds) {
+                while (running
+                        .detail()
+                        .peers
+                        .singleOrNull()
+                        ?.seed != true
+                ) {
+                    delay(50)
+                }
+            }
+            running
+                .detail()
+                .peers
+                .single()
+                .progress shouldBe 1.0
+            withTimeout(20.seconds) {
+                while (seeding
+                        .detail()
+                        .peers
+                        .single()
+                        .uploaded <= 0L
+                ) {
+                    delay(50)
+                }
+            }
+            running.setDownloadLimit(null)
+            finish(running).finished shouldBe true
+            running.remove()
+            seeding.remove()
+        }
+
+    @Test
+    fun detailListsATrackerOfTheTorrent() =
+        runBlocking<Unit> {
+            file("data.bin", 128 * 1024, 44)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce"))
+            val seeding = seed(info)
+
+            val tracker = seeding.detail().trackers.single()
+
+            tracker.url shouldBe "http://127.0.0.1:1/announce"
+            tracker.tier shouldBe 0
+            tracker.enabled shouldBe true
+            seeding.remove()
+        }
+
+    @Test
+    fun readingTrackersSurvivesGarbageCollection() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 47)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce"))
+            val seeding = seed(info)
+
+            // the tracker list is native memory a collection can free; reading it while one runs must still give the url
+            repeat(300) {
+                seeding
+                    .detail()
+                    .trackers
+                    .single()
+                    .url shouldBe "http://127.0.0.1:1/announce"
+                if (it % 10 == 0) System.gc()
+            }
+            seeding.remove()
+        }
+
+    @Test
+    fun thePieceMapFillsAsTheDownloadCompletes() =
+        runBlocking<Unit> {
+            file("data.bin", 512 * 1024, 45)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            val pieces = (512 * 1024) / (32 * 1024)
+
+            seeding.detail().pieces.count shouldBe pieces
+            seeding.detail().pieces.haveCount shouldBe pieces
+
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            finish(running).finished shouldBe true
+            running.detail().pieces.count shouldBe pieces
+            running.detail().pieces.haveCount shouldBe pieces
+            running.detail().pieces.has(0) shouldBe true
+            running.remove()
+            seeding.remove()
+        }
+
+    @Test
+    fun liveAndDetailAreEmptyOnceRemoved() =
+        runBlocking<Unit> {
+            file("data.bin", 128 * 1024, 46)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            seeding.remove()
+
+            seeding.live().fileDone shouldBe emptyList()
+            seeding.live().peers shouldBe 0
+            seeding.detail().peers shouldBe emptyList()
+            seeding.detail().trackers shouldBe emptyList()
+            seeding.detail().pieces.count shouldBe 0
         }
 
     @Test

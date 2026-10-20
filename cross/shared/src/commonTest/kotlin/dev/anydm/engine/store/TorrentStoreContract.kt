@@ -105,6 +105,28 @@ abstract class TorrentStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun fileDoneRoundTripsAndClears() =
+        runTest {
+            val store = newStore()
+            val job = store.downloads.add(torrentJob())
+            store.torrents.get(job.id)!!.fileDone shouldBe emptyList()
+
+            store.torrents.setFileDone(job.id, listOf(10L, 0L, 300L)) shouldBe true
+            store.torrents.get(job.id)!!.fileDone shouldBe listOf(10L, 0L, 300L)
+
+            store.torrents.setFileDone(job.id, null) shouldBe true
+            store.torrents.get(job.id)!!.fileDone shouldBe emptyList()
+        }
+
+    @Test
+    fun anAddedTorrentHasNoFileDone() =
+        runTest {
+            val store = newStore()
+
+            store.torrents.get(store.downloads.add(torrentJob(NewTorrent())).id)!!.fileDone shouldBe emptyList()
+        }
+
+    @Test
     fun seedRulesRoundTrip() =
         runTest {
             val store = newStore()
@@ -148,6 +170,7 @@ abstract class TorrentStoreContract : StoreTestBase() {
             val store = newStore()
 
             store.torrents.setResume(DownloadId(99), bytes) shouldBe false
+            store.torrents.setFileDone(DownloadId(99), listOf(1L)) shouldBe false
             store.torrents.setSeedRules(DownloadId(99), SeedRule.Off, SeedRule.Off) shouldBe false
         }
 

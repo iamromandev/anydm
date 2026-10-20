@@ -1,0 +1,3 @@
+-- Version 16 to 17 (#541, sub-project H): how many bytes of each file of a torrent are done, kept with its resume data so a
+-- paused, restarted or seeding torrent shows its progress. 8 bytes per file, big-endian, in torrent order; NULL when unknown.
+ALTER TABLE torrent ADD COLUMN file_done BLOB;

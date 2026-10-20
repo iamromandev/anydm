@@ -8,6 +8,8 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.collectionStatus
 import dev.anydm.engine.core.itemCounts
+import dev.anydm.engine.torrent.TorrentLive
+import dev.anydm.engine.torrent.TorrentSummary
 
 /**
  * The engine's picture of every job, put together from what the queue reports. Not thread-safe: the engine calls it
@@ -21,6 +23,10 @@ internal class SnapshotCache {
         var mirrors: List<Mirror> = emptyList()
         var files: List<FileSnapshot> = emptyList()
         var live: Pair<Long, Long?>? = null
+
+        /** A torrent in the session (TOR-07): its summary and the bytes done of each file. */
+        var torrent: TorrentSummary? = null
+        var liveDone: List<Long>? = null
         var speed = 0L
         val samples = ArrayDeque<Long>()
     }
@@ -98,6 +104,28 @@ internal class SnapshotCache {
         entry.speed = 0
     }
 
+    /** The jobs that have a torrent summary now. */
+    fun liveTorrentIds(): Set<DownloadId> =
+        entries.values
+            .filter { it.torrent != null }
+            .map { it.download.id }
+            .toSet()
+
+    /**
+     * The latest of a torrent in the session (its summary, and the bytes done of each file while it is there), or null
+     * when it left it. True when the list would change.
+     */
+    fun torrentLive(
+        id: DownloadId,
+        live: TorrentLive?,
+    ): Boolean {
+        val entry = entries[id.value] ?: return false
+        if (entry.torrent == live?.summary && entry.liveDone == live?.fileDone) return false
+        entry.torrent = live?.summary
+        entry.liveDone = live?.fileDone
+        return true
+    }
+
     fun contains(id: DownloadId): Boolean = id.value in entries
 
     fun kindOf(id: DownloadId): DownloadKind? = entries[id.value]?.download?.kind
@@ -133,16 +161,21 @@ internal class SnapshotCache {
         entries.keys.sorted().map { key ->
             val entry = entries.getValue(key)
             val attempts = entry.attempts.values.sortedBy { it.id.value }
+            // While a torrent is in the session its files show what it reports (when it names every file we hold).
+            val done = entry.liveDone?.takeIf { it.size == entry.files.size }
+            val files = if (done == null) entry.files else entry.files.mapIndexed { i, file -> file.copy(done = done[i]) }
             DownloadSnapshot(
                 download = entry.download,
-                downloaded = entry.live?.first ?: entry.files.sumOf { it.written },
+                // Only the files the job wants: a torrent's skipped files hold some bytes of the pieces they share.
+                downloaded = entry.live?.first ?: files.filter { it.file.selected }.sumOf { it.written },
                 total = entry.live?.second ?: entry.download.size,
                 speed = entry.speed,
                 speedSamples = entry.samples.toList(),
                 lastFailure = attempts.lastOrNull { it.endedAt != null && (it.errorClass != null || it.message != null) },
                 attempts = attempts,
                 mirrors = entry.mirrors,
-                files = entry.files,
+                files = files,
+                torrent = entry.torrent,
             )
         }
 }

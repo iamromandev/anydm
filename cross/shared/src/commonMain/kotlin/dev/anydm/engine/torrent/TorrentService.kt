@@ -30,6 +30,12 @@ interface TorrentService {
     /** Ends the seed of job [id] as [SeedEndReason.STOPPED]; false if it isn't seeding. */
     suspend fun stopSeeding(id: DownloadId): Boolean
 
+    /** The latest summary and file progress of every torrent in the session, running or seeding, by job (TOR-07). A copy. */
+    suspend fun live(): Map<DownloadId, TorrentLive>
+
+    /** The peer list, trackers and piece map of job [id]'s torrent; null when it is not in the session (TOR-07). */
+    suspend fun detail(id: DownloadId): TorrentDetail?
+
     /** What each seed moved since the last call; the first call after a (re)add counts from the add (TOR-09). */
     suspend fun seedTraffic(): List<SeedSample>
 }

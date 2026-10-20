@@ -342,6 +342,7 @@ class Engine(
                         while (true) {
                             delay(SPEED_EVERY)
                             sampleSeeds(service)
+                            applyTorrentLive(service)
                         }
                     }
                 }
@@ -442,6 +443,13 @@ class Engine(
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
 
+    /** The peers, trackers and piece map of torrent job [id] (TOR-07), for the one being looked at. */
+    suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
+        val service = torrents ?: return TorrentDetailResult.Unavailable
+        val detail = command { service.detail(id) } ?: return TorrentDetailResult.NotInSession
+        return TorrentDetailResult.Detail(detail)
+    }
+
     /** Reads a torrent without adding it (TOR-02): its name and files, for a choice of which to download. */
     suspend fun inspectTorrent(source: String): InspectResult {
         val service = torrents ?: return InspectResult.Unavailable
@@ -524,7 +532,10 @@ class Engine(
                 if (row.priorities.isEmpty()) priorities.all { it > 0 } else row.priorities.map { it > 0 } == priorities.map { it > 0 }
             store.torrents.setPriorities(id, priorities)
             // Another set of files has other pieces: the saved resume data would describe the wrong ones (TOR-06).
-            if (!sameFiles) store.torrents.setResume(id, null)
+            if (!sameFiles) {
+                store.torrents.setResume(id, null)
+                store.torrents.setFileDone(id, null)
+            }
             if (sameFiles) torrents?.applyPriorities(id, priorities)
             CommandResult.Done(store.downloads.get(id))
         }
@@ -1076,6 +1087,8 @@ class Engine(
         running -= id
         published -= id
         if (cache.contains(id)) {
+            // A torrent's live numbers go with its run: what it saved is what the files show now, not a second-old reading.
+            cache.torrentLive(id, null)
             cache.filesChanged(id, filesOf(id))
             cache.stoppedRunning(id)
         }
@@ -1153,6 +1166,23 @@ class Engine(
         }
     }
 
+    // The torrents in the session as the protocol last saw them (TOR-07): a summary for each, and none left for the ones that
+    // went. Published only when something changed.
+    private suspend fun applyTorrentLive(service: TorrentService) {
+        val live =
+            try {
+                service.live()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("engine") { "torrent state unavailable: ${e.message}" }
+                return
+            }
+        var changed = false
+        for (id in cache.liveTorrentIds() + live.keys) changed = cache.torrentLive(id, live[id]) || changed
+        if (changed) publish()
+    }
+
     // What the seeds sent and received since the last second: counted for the day and the job (TOR-09), with no slot to carry it.
     private suspend fun sampleSeeds(service: TorrentService) {
         val moved =
@@ -1177,10 +1207,16 @@ class Engine(
         snapshots.value = cache.list()
     }
 
-    private suspend fun filesOf(id: DownloadId): List<FileSnapshot> =
-        store.downloads.files(id).map {
-            FileSnapshot(it, store.downloads.segments(it.id))
-        }
+    private suspend fun filesOf(id: DownloadId): List<FileSnapshot> {
+        val rows = store.downloads.files(id)
+        // A torrent's progress is kept per file in its row; it counts only when it names every file the job has.
+        val done =
+            store.torrents
+                .get(id)
+                ?.fileDone
+                ?.takeIf { it.size == rows.size }
+        return rows.mapIndexed { i, file -> FileSnapshot(file, store.downloads.segments(file.id), done?.get(i)) }
+    }
 
     // Jobs in a folder that has run low on space wait for it (FIL-08); the whole state goes to the queue every time. A
     // job paused for a low disk comes back once its folder holds what is left of its file plus the reserve, the same

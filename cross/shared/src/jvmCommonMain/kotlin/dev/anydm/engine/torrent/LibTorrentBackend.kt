@@ -22,6 +22,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
 import org.libtorrent4j.AddTorrentParams
 import org.libtorrent4j.AlertListener
+import org.libtorrent4j.AnnounceEntry
+import org.libtorrent4j.Entry
 import org.libtorrent4j.MoveFlags
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
@@ -30,6 +32,7 @@ import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
+import org.libtorrent4j.TorrentStatus
 import org.libtorrent4j.Vectors
 import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.AlertType
@@ -327,6 +330,12 @@ class LibTorrentBackend(
         live({}) {
             // Not auto-managed: libtorrent's own queue would hold all but 3 torrents back, whatever the engine's limit says.
             handle.unsetFlags(TorrentFlags.AUTO_MANAGED)
+            // libtorrent4j's session doesn't read the trackers out of the .torrent: give it the ones it doesn't have (a resume
+            // blob may already carry them).
+            val known = readTrackers(handle).map { it.url }.toSet()
+            for ((url, tier) in trackersOf(request.info.metadata)) {
+                if (url !in known) handle.addTracker(AnnounceEntry(url).also { it.tier(tier.toShort()) })
+            }
             request.fileNames.forEachIndexed { i, name -> if (name != torrentFiles[i].path) handle.renameFile(i, name) }
             handle.resume()
         }
@@ -484,6 +493,78 @@ class LibTorrentBackend(
 
         override suspend fun saveResume(): ByteArray? = requestResume(handle, hash)
 
+        // Removing is asynchronous: the handle can still look valid for a moment and then refuse a call.
+        override fun live(): TorrentLiveStats =
+            try {
+                readLive()
+            } catch (e: RuntimeException) {
+                TorrentLiveStats.None
+            }
+
+        override fun detail(): TorrentDetail =
+            try {
+                readDetail()
+            } catch (e: RuntimeException) {
+                TorrentDetail.Empty
+            }
+
+        private fun readLive(): TorrentLiveStats =
+            live({ TorrentLiveStats.None }) {
+                if (!handle.isValid) return@live TorrentLiveStats.None
+                val status = handle.status(TorrentHandle.QUERY_DISTRIBUTED_COPIES)
+                try {
+                    TorrentLiveStats(
+                        peers = status.numPeers(),
+                        seeds = status.numSeeds(),
+                        availability = status.distributedCopies().toDouble().coerceAtLeast(0.0),
+                        downloadRate = status.downloadPayloadRate().toLong(),
+                        uploadRate = status.uploadPayloadRate().toLong(),
+                        // By whole pieces: bytes of a piece still being fetched, or of a skipped file's share of one, are not done.
+                        fileDone = handle.fileProgress(TorrentHandle.PIECE_GRANULARITY).toList(),
+                        checking =
+                            status.state().let {
+                                it == TorrentStatus.State.CHECKING_FILES ||
+                                    it == TorrentStatus.State.CHECKING_RESUME_DATA
+                            },
+                    )
+                } finally {
+                    Reference.reachabilityFence(status)
+                }
+            }
+
+        private fun readDetail(): TorrentDetail =
+            live({ TorrentDetail.Empty }) {
+                if (!handle.isValid) return@live TorrentDetail.Empty
+                val status = handle.status(TorrentHandle.QUERY_PIECES)
+                try {
+                    val bits = status.pieces()
+                    val count = bits.size()
+                    val have = ByteArray((count + 7) / 8)
+                    for (i in 0 until count) if (bits.getBit(i)) have[i / 8] = (have[i / 8].toInt() or (1 shl (i % 8))).toByte()
+                    val current = status.currentTracker()
+                    val peers =
+                        handle
+                            .peerInfo()
+                            .map {
+                                TorrentPeer(
+                                    address = it.ip(),
+                                    client = it.client(),
+                                    progress = it.progressPpm() / PPM,
+                                    downloadRate = it.downSpeed().toLong(),
+                                    uploadRate = it.upSpeed().toLong(),
+                                    downloaded = it.totalDownload(),
+                                    uploaded = it.totalUpload(),
+                                    seed = it.progressPpm() >= PPM_FULL,
+                                )
+                            }.sortedByDescending { it.downloadRate + it.uploadRate }
+                            .take(MAX_DETAIL_PEERS)
+                    val trackers = readTrackers(handle).map { TorrentTracker(it.url, it.tier, it.verified, it.enabled, it.url == current) }
+                    TorrentDetail(peers, trackers, PieceMap(count, have))
+                } finally {
+                    Reference.reachabilityFence(status)
+                }
+            }
+
         override fun setDownloadLimit(bytesPerSecond: Long?) = live({}) { handle.setDownloadLimit(perTorrentLimit(bytesPerSecond)) }
     }
 
@@ -595,6 +676,47 @@ private fun perTorrentLimit(bytesPerSecond: Long?): Int = bytesPerSecond?.coerce
 
 private val RESUME_TIMEOUT = 10.seconds
 
+private class TrackerRead(
+    val url: String,
+    val tier: Int,
+    val verified: Boolean,
+    val enabled: Boolean,
+)
+
+/**
+ * The trackers [handle] has. libtorrent4j's own `trackers()` wraps entries that live in a vector nothing keeps alive; the
+ * vector is read here, inside a fence (the rule for every native object we read).
+ */
+private fun readTrackers(handle: TorrentHandle): List<TrackerRead> {
+    val all = handle.swig().trackers()
+    try {
+        return (0 until all.size).map { i ->
+            val entry = all[i]
+            val endpoints = entry.endpoints
+            TrackerRead(entry.url, entry.tier.toInt(), entry.verified, (0 until endpoints.size).any { endpoints[it].enabled })
+        }
+    } finally {
+        Reference.reachabilityFence(all)
+    }
+}
+
+/** The trackers a `.torrent` names with their tiers: its `announce-list`, else its `announce`; none for a file that has neither. */
+private fun trackersOf(torrent: ByteArray): List<Pair<String, Int>> =
+    try {
+        val root = Entry.bdecode(torrent).dictionary()
+        val tiers = root["announce-list"]?.list().orEmpty()
+        if (tiers.isNotEmpty()) {
+            tiers.flatMapIndexed { tier, urls -> urls.list().map { it.string() to tier } }
+        } else {
+            listOfNotNull(root["announce"]?.string()?.let { it to 0 })
+        }
+    } catch (e: RuntimeException) {
+        emptyList()
+    }
+
+// libtorrent reports a peer's progress in parts per million.
+private const val PPM_FULL = 1_000_000
+private const val PPM = 1_000_000.0
 private const val ENOSPC = 28
 private const val ERROR_DISK_FULL = 112
 private const val ADD_WAIT_TRIES = 500

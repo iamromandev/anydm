@@ -23,7 +23,6 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
-import dev.anydm.engine.store.TorrentStore
 import dev.anydm.engine.store.openInMemoryDatabase
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -51,22 +50,7 @@ class TorrentProtocolSeedingTest {
     private var settings = Settings()
     private var rows: List<File> = emptyList()
 
-    /** The torrent store, which can be told to fail every resume save (a full disk, a busy database). */
-    private class FailingResumeStore(
-        private val delegate: TorrentStore,
-    ) : TorrentStore by delegate {
-        var failing = false
-
-        override suspend fun setResume(
-            id: DownloadId,
-            bytes: ByteArray?,
-        ): Boolean {
-            if (failing) throw IllegalStateException("disk full")
-            return delegate.setResume(id, bytes)
-        }
-    }
-
-    private val resumeStore = FailingResumeStore(store.torrents)
+    private val resumeStore = FailingTorrentStore(store.torrents)
 
     private val protocol =
         TorrentProtocol(
@@ -360,7 +344,7 @@ class TorrentProtocolSeedingTest {
     fun aFailingResumeSaveStillEndsTheSeed() =
         runBlocking<Unit> {
             val (transfer, _) = finalized(ratio(5.0))
-            resumeStore.failing = true
+            resumeStore.failingResume = true
 
             protocol.stopSeeding(transfer.download.id) shouldBe true
 
@@ -373,7 +357,7 @@ class TorrentProtocolSeedingTest {
         runBlocking<Unit> {
             backend.script = listOf(TorrentProgress(10, 300, false))
             val transfer = prepared()
-            resumeStore.failing = true
+            resumeStore.failingResume = true
             val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
             withTimeout(5.seconds) { while (backend.added.isEmpty()) delay(5) }
 
@@ -393,6 +377,104 @@ class TorrentProtocolSeedingTest {
             // the seed went quietly: no end, and nothing left to stop
             noEnd() shouldBe true
             protocol.stopSeeding(transfer.download.id) shouldBe false
+        }
+
+    private fun busy(
+        peers: Int = 2,
+        done: List<Long> = listOf(0L, 300L),
+    ) = TorrentLiveStats(peers, 1, 2.5, 1000, 400, done)
+
+    @Test
+    fun aSeedIsInLiveToo() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            backend.added.single().liveStats = busy(peers = 3)
+            backend.added.single().stats = stats(up = 150)
+
+            withTimeout(5.seconds) { while (protocol.live()[transfer.download.id]?.summary?.peers != 3) delay(5) }
+
+            val live = protocol.live().getValue(transfer.download.id)
+            live.summary.uploaded shouldBe 150L
+            live.summary.uploadRate shouldBe 400L
+            live.fileDone shouldBe listOf(0L, 300L)
+        }
+
+    @Test
+    fun liveIsGoneWhenTheSeedEnds() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            protocol.live().containsKey(transfer.download.id) shouldBe true
+
+            protocol.stopSeeding(transfer.download.id) shouldBe true
+
+            protocol.live() shouldBe emptyMap()
+        }
+
+    @Test
+    fun liveIsGoneAfterClose() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            protocol.live().containsKey(transfer.download.id) shouldBe true
+
+            protocol.close()
+
+            protocol.live() shouldBe emptyMap()
+        }
+
+    @Test
+    fun aNoRuleTorrentLeavesNoLive() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized()
+
+            protocol.live().containsKey(transfer.download.id) shouldBe false
+        }
+
+    @Test
+    fun detailOfARunningTorrentAndOfASeed() =
+        runBlocking<Unit> {
+            val shown = TorrentDetail(emptyList(), emptyList(), PieceMap(8, byteArrayOf(0x0F)))
+            val (transfer, _) = finalized(ratio(5.0))
+            backend.added.single().detailData = shown
+
+            protocol.detail(transfer.download.id) shouldBe shown
+        }
+
+    @Test
+    fun detailOfARunningDownload() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            val shown = TorrentDetail(emptyList(), listOf(TorrentTracker("http://t/a", 0, true, true, true)), PieceMap.Empty)
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            withTimeout(5.seconds) { while (backend.added.isEmpty()) delay(5) }
+            backend.added.single().detailData = shown
+
+            protocol.detail(transfer.download.id) shouldBe shown
+
+            running.cancelAndJoin()
+            protocol.detail(transfer.download.id) shouldBe null
+        }
+
+    @Test
+    fun detailOfAnUnknownJobIsNull() =
+        runBlocking<Unit> {
+            protocol.detail(DownloadId(999)) shouldBe null
+        }
+
+    @Test
+    fun aNewTransferReplacesTheLiveOfASeed() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            backend.added.single().liveStats = busy(peers = 2)
+            withTimeout(5.seconds) { while (protocol.live()[transfer.download.id]?.summary?.peers != 2) delay(5) }
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            // the second torrent has no peers: the first one's numbers are not left behind
+            protocol
+                .live()
+                .getValue(transfer.download.id)
+                .summary.peers shouldBe 0
         }
 
     @Test

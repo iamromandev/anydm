@@ -11,6 +11,8 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.torrent.TorrentLive
+import dev.anydm.engine.torrent.TorrentSummary
 import io.kotest.matchers.shouldBe
 import kotlin.test.Test
 import kotlin.time.Instant
@@ -98,6 +100,111 @@ class SnapshotCacheTest {
             it.total shouldBe 1_000L
             it.speed shouldBe 0L
         }
+    }
+
+    private fun summary(peers: Int = 2) = TorrentSummary(peers, 1, 1.5, 100, 20, 7, 0.5, 0)
+
+    private fun live(
+        peers: Int = 2,
+        done: List<Long> = listOf(400L),
+    ) = TorrentLive(summary(peers), done)
+
+    @Test
+    fun aTorrentSummaryShowsInTheSnapshotAndClears() {
+        val cache = SnapshotCache().with(job(1, DownloadStatus.DOWNLOADING))
+        cache.list().single().torrent shouldBe null
+
+        cache.torrentLive(DownloadId(1), live()) shouldBe true
+        cache.list().single().torrent shouldBe summary()
+        cache.liveTorrentIds() shouldBe setOf(DownloadId(1))
+
+        cache.torrentLive(DownloadId(1), null) shouldBe true
+        cache.list().single().torrent shouldBe null
+        cache.liveTorrentIds() shouldBe emptySet()
+    }
+
+    @Test
+    fun liveFileDoneOverridesTheStoredDone() {
+        val cache = SnapshotCache().with(job(1))
+        val file = File(FileId(1), DownloadId(1), 0, "a.bin", 1_000, true)
+        cache.filesChanged(DownloadId(1), listOf(FileSnapshot(file, emptyList(), done = 100)))
+        cache
+            .list()
+            .single()
+            .files
+            .single()
+            .written shouldBe 100L
+        cache.list().single().downloaded shouldBe 100L
+
+        cache.torrentLive(DownloadId(1), live(done = listOf(650L)))
+
+        cache
+            .list()
+            .single()
+            .files
+            .single()
+            .written shouldBe 650L
+        cache.list().single().downloaded shouldBe 650L
+        // gone from the session: back to what was stored
+        cache.torrentLive(DownloadId(1), null)
+        cache
+            .list()
+            .single()
+            .files
+            .single()
+            .written shouldBe 100L
+    }
+
+    @Test
+    fun aLiveFileDoneOfTheWrongLengthIsIgnored() {
+        val cache = SnapshotCache().with(job(1))
+        val file = File(FileId(1), DownloadId(1), 0, "a.bin", 1_000, true)
+        cache.filesChanged(DownloadId(1), listOf(FileSnapshot(file, emptyList(), done = 100)))
+
+        cache.torrentLive(DownloadId(1), live(done = listOf(1L, 2L)))
+
+        cache
+            .list()
+            .single()
+            .files
+            .single()
+            .written shouldBe 100L
+        cache.list().single().torrent shouldBe summary()
+    }
+
+    @Test
+    fun aStoppedTorrentsDownloadedIsTheSumOfItsDone() {
+        val cache = SnapshotCache().with(job(1, DownloadStatus.PAUSED))
+        val a = File(FileId(1), DownloadId(1), 0, "a.bin", 1_000, true)
+        val b = File(FileId(2), DownloadId(1), 1, "b.bin", 1_000, true)
+        cache.filesChanged(DownloadId(1), listOf(FileSnapshot(a, emptyList(), 300), FileSnapshot(b, emptyList(), 50)))
+
+        cache.list().single().downloaded shouldBe 350L
+        cache.list().single().torrent shouldBe null
+    }
+
+    @Test
+    fun aPartialSelectionNeverShowsMoreThanItsTotal() {
+        val cache = SnapshotCache().with(job(1, DownloadStatus.SEEDING))
+        val wanted = File(FileId(1), DownloadId(1), 0, "a.bin", 300, true)
+        val skipped = File(FileId(2), DownloadId(1), 1, "b.bin", 700, false)
+        cache.filesChanged(DownloadId(1), listOf(FileSnapshot(wanted, emptyList(), 300), FileSnapshot(skipped, emptyList(), 120)))
+
+        // the skipped file shares pieces with the wanted one, so libtorrent reports some of its bytes: they are not downloaded
+        cache.list().single().downloaded shouldBe 300L
+        cache.torrentLive(DownloadId(1), live(done = listOf(300L, 150L)))
+        cache.list().single().downloaded shouldBe 300L
+    }
+
+    @Test
+    fun torrentLiveReportsNoChangeForAnEqualSummary() {
+        val cache = SnapshotCache().with(job(1))
+
+        cache.torrentLive(DownloadId(1), live()) shouldBe true
+        cache.torrentLive(DownloadId(1), live()) shouldBe false
+        cache.torrentLive(DownloadId(1), live(peers = 3)) shouldBe true
+        cache.torrentLive(DownloadId(99), live()) shouldBe false
+        cache.torrentLive(DownloadId(2), null) shouldBe false
     }
 
     @Test
