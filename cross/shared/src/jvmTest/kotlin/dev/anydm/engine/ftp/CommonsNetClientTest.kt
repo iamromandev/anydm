@@ -234,6 +234,30 @@ class CommonsNetClientTest {
         }
 
     @Test
+    fun aTlsResetIsTransientButARefusedCertificateIsACertificateFailure() {
+        tlsFailureOf(javax.net.ssl.SSLException("Connection reset", java.net.SocketException("Connection reset"))) shouldBe
+            RemoteFailure.TRANSIENT
+        tlsFailureOf(javax.net.ssl.SSLException("Broken pipe")) shouldBe RemoteFailure.TRANSIENT
+        tlsFailureOf(javax.net.ssl.SSLHandshakeException("PKIX path building failed")) shouldBe RemoteFailure.CERTIFICATE
+        tlsFailureOf(javax.net.ssl.SSLPeerUnverifiedException("no subject alternative names")) shouldBe RemoteFailure.CERTIFICATE
+        tlsFailureOf(
+            javax.net.ssl.SSLException("handshake failed", java.security.cert.CertificateException("expired")),
+        ) shouldBe RemoteFailure.CERTIFICATE
+    }
+
+    @Test
+    fun aServerThatRequiresTlsSessionReuseFailsClearlyInsteadOfRetrying() =
+        blocking {
+            val stub = StubFtpServer(data, retrReply = "522 SSL connection failed; session reuse required").also { opened += it }
+            val client = client()
+            client.connect(target(FtpScheme.FTP, stub.port), ann)
+
+            val error = failure { client.bytes("/a.bin") }
+
+            error shouldBe RemoteFailure.CERTIFICATE
+        }
+
+    @Test
     fun aDroppedControlConnectionIsTransient() =
         blocking {
             val stub = stub(hangUp = true)

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.coroutines.cancellation.CancellationException
 
 /** An SFTP login by private key (FTP-04): the key stays in the file at [keyPath]; the engine never copies it. */
 data class SshKeyLogin(
@@ -86,7 +87,10 @@ class KeychainCredentials(
     private suspend fun read(account: String): String? =
         try {
             keychain.get(account)
-        } catch (_: KeychainUnavailable) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // No keychain, a locked one, a broken library: whatever it was, the login just isn't there.
             null
         }
 
@@ -97,7 +101,10 @@ class KeychainCredentials(
         try {
             keychain.put(account, value)
             true
-        } catch (_: KeychainUnavailable) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The login stays in memory for this run; the download must not be lost over a keychain that fails.
             false
         }
 

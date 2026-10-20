@@ -14,7 +14,11 @@ import org.apache.commons.net.util.TrustManagerUtils
 import java.io.FileInputStream
 import java.io.IOException
 import java.security.KeyStore
+import java.security.cert.CertificateException
 import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLKeyException
+import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.X509TrustManager
 
 /** Which certificates an FTPS server may present: the JVM's trusted ones, or (in tests) those of one keystore. */
@@ -37,6 +41,19 @@ class TrustConfig private constructor(
             return TrustConfig(store)
         }
     }
+}
+
+/**
+ * Why a TLS error happened: a refused handshake or certificate is [RemoteFailure.CERTIFICATE] (the login can't succeed until
+ * the server or the trust changes); anything else, such as a connection reset in the middle of a transfer, is
+ * [RemoteFailure.TRANSIENT] and resumes like a plain FTP drop.
+ */
+internal fun tlsFailureOf(e: SSLException): RemoteFailure {
+    val refused =
+        generateSequence<Throwable>(e) { it.cause }.take(8).any {
+            it is SSLHandshakeException || it is SSLPeerUnverifiedException || it is SSLKeyException || it is CertificateException
+        }
+    return if (refused) RemoteFailure.CERTIFICATE else RemoteFailure.TRANSIENT
 }
 
 /**
@@ -163,7 +180,9 @@ class CommonsNetClient(
         } catch (e: RemoteException) {
             throw e
         } catch (e: SSLException) {
-            throw RemoteException(RemoteFailure.CERTIFICATE, "TLS failed: ${e.message?.take(160)}", e)
+            val failure = tlsFailureOf(e)
+            val what = if (failure == RemoteFailure.CERTIFICATE) "the server's certificate was refused" else "the TLS connection broke"
+            throw RemoteException(failure, "$what: ${e.message?.take(160)}", e)
         } catch (e: FTPConnectionClosedException) {
             // Commons Net throws this for a 421 reply: the server is full or going down, and has closed the connection.
             val failure = if (client.replyCode == SERVICE_NOT_AVAILABLE) RemoteFailure.TOO_MANY_CONNECTIONS else RemoteFailure.TRANSIENT
@@ -215,6 +234,14 @@ class CommonsNetClient(
                 .firstOrNull()
                 .orEmpty()
                 .take(160)
+        if (code == SESSION_REUSE_REQUIRED || text.contains("session reuse", ignoreCase = true)) {
+            // Commons Net can't resume the control connection's TLS session on a data connection, which some servers
+            // (vsftpd by default) insist on. Retrying can't help, so it fails like a refused certificate.
+            return RemoteException(
+                RemoteFailure.CERTIFICATE,
+                "the server requires TLS session reuse, which this client can't do (FTP reply $code)",
+            )
+        }
         val failure =
             when {
                 rest && (code == 501 || code == 502) -> RemoteFailure.REST_UNSUPPORTED
@@ -232,5 +259,6 @@ class CommonsNetClient(
         const val TIMEOUT_MS = 30_000
         const val NOT_FOUND = 550
         const val SERVICE_NOT_AVAILABLE = 421
+        const val SESSION_REUSE_REQUIRED = 522
     }
 }

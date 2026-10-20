@@ -80,6 +80,27 @@ class KeychainCredentialsTest {
         }
 
     @Test
+    fun anyKeychainErrorStillKeepsTheLoginInMemory() =
+        runTest {
+            keychain.failure = IllegalStateException("the native library would not load")
+
+            credentials.save("ftp://h:21", Credentials("ann", "pw")) shouldBe false
+            credentials.saveKey("sftp://h:22", SshKeyLogin("ann", "/k", null)) shouldBe false
+            credentials.credentialsFor("ftp://h:21") shouldBe Credentials("ann", "pw")
+            KeychainCredentials(keychain).credentialsFor("ftp://h:21") shouldBe null
+            KeychainCredentials(keychain).keyFor("sftp://h:22") shouldBe null
+        }
+
+    @Test
+    fun cancellationIsNotSwallowedByTheKeychainGuard() =
+        runTest {
+            keychain.failure = kotlin.coroutines.cancellation.CancellationException("stop")
+
+            shouldThrow<kotlin.coroutines.cancellation.CancellationException> { credentials.save("ftp://h:21", Credentials("ann", "pw")) }
+            shouldThrow<kotlin.coroutines.cancellation.CancellationException> { KeychainCredentials(keychain).credentialsFor("ftp://h:21") }
+        }
+
+    @Test
     fun aLoginWithAColonInTheUserIsRejectedBeforeItIsStored() {
         shouldThrow<IllegalArgumentException> { Credentials("a:b", "pw") }
     }

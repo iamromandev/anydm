@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The OS keychain through java-keyring (FTP-06): Keychain on macOS, Credential Manager on Windows, the Secret Service on
@@ -50,18 +51,24 @@ class JavaKeyringKeychain(
             }
         }
 
-    // Runs [block] on an IO thread against the backend, made on first use (and again if the last try found none).
+    // Runs [block] on an IO thread against the backend, made on first use (and again if the last try found none). Whatever the
+    // backend does wrong (no backend, a native library that won't load, a D-Bus error) is KeychainUnavailable.
     private suspend fun <T> use(block: (Keyring) -> T): T =
         withContext(Dispatchers.IO) {
-            val backend =
-                lock.withLock {
-                    keyring ?: try {
-                        create().also { keyring = it }
-                    } catch (e: BackendNotSupportedException) {
-                        throw KeychainUnavailable("this machine has no keychain java-keyring can use", e)
-                    }
-                }
-            block(backend)
+            try {
+                val backend = lock.withLock { keyring ?: create().also { keyring = it } }
+                block(backend)
+            } catch (e: KeychainUnavailable) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: BackendNotSupportedException) {
+                throw KeychainUnavailable("this machine has no keychain java-keyring can use", e)
+            } catch (e: Exception) {
+                throw KeychainUnavailable("the keychain failed: ${e::class.simpleName}", e)
+            } catch (e: LinkageError) {
+                throw KeychainUnavailable("the keychain's native library would not load: ${e.message}", e)
+            }
         }
 
     // java-keyring has no "not found" type: each OS says it in its own words.

@@ -14,6 +14,7 @@ internal class StubFtpServer(
     private val restReply: String = "350 Restarting",
     private val sizeReply: String? = null,
     private val hangUpAfterGreeting: Boolean = false,
+    private val retrReply: String? = null,
 ) : AutoCloseable {
     private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
@@ -80,6 +81,10 @@ internal class StubFtpServer(
                     }
 
                     "RETR" -> {
+                        if (retrReply != null) {
+                            reply(retrReply)
+                            continue
+                        }
                         val socketForData = data?.accept()
                         reply("150 opening data connection")
                         socketForData?.use { s -> s.getOutputStream().write(content, restart, content.size - restart) }

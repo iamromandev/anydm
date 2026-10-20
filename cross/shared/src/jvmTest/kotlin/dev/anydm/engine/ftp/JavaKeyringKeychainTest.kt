@@ -28,6 +28,23 @@ class JavaKeyringKeychainTest {
         }
 
     @Test
+    fun aNativeLibraryThatWillNotLoadIsKeychainUnavailable() =
+        blocking {
+            val keychain = JavaKeyringKeychain("anydm-test") { throw UnsatisfiedLinkError("osxkeychain.so: not a valid code signature") }
+
+            assertFailsWith<KeychainUnavailable> { keychain.get("a") }
+            assertFailsWith<KeychainUnavailable> { keychain.put("a", "b") }
+        }
+
+    @Test
+    fun anUnexpectedErrorFromTheBackendIsKeychainUnavailable() =
+        blocking {
+            val keychain = JavaKeyringKeychain("anydm-test") { throw IllegalStateException("D-Bus went away") }
+
+            assertFailsWith<KeychainUnavailable> { keychain.get("a") }
+        }
+
+    @Test
     fun aMissingBackendIsLookedForAgainOnTheNextCall() =
         blocking {
             var tries = 0
