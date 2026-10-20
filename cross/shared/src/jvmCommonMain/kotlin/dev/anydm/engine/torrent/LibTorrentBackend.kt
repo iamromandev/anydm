@@ -32,6 +32,7 @@ import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
+import org.libtorrent4j.TorrentStatus
 import org.libtorrent4j.Vectors
 import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.AlertType
@@ -331,7 +332,7 @@ class LibTorrentBackend(
             handle.unsetFlags(TorrentFlags.AUTO_MANAGED)
             // libtorrent4j's session doesn't read the trackers out of the .torrent: give it the ones it doesn't have (a resume
             // blob may already carry them).
-            val known = handle.trackers().map { it.url() }.toSet()
+            val known = readTrackers(handle).map { it.url }.toSet()
             for ((url, tier) in trackersOf(request.info.metadata)) {
                 if (url !in known) handle.addTracker(AnnounceEntry(url).also { it.tier(tier.toShort()) })
             }
@@ -518,7 +519,13 @@ class LibTorrentBackend(
                         availability = status.distributedCopies().toDouble().coerceAtLeast(0.0),
                         downloadRate = status.downloadPayloadRate().toLong(),
                         uploadRate = status.uploadPayloadRate().toLong(),
-                        fileDone = handle.fileProgress().toList(),
+                        // By whole pieces: bytes of a piece still being fetched, or of a skipped file's share of one, are not done.
+                        fileDone = handle.fileProgress(TorrentHandle.PIECE_GRANULARITY).toList(),
+                        checking =
+                            status.state().let {
+                                it == TorrentStatus.State.CHECKING_FILES ||
+                                    it == TorrentStatus.State.CHECKING_RESUME_DATA
+                            },
                     )
                 } finally {
                     Reference.reachabilityFence(status)
@@ -551,16 +558,7 @@ class LibTorrentBackend(
                                 )
                             }.sortedByDescending { it.downloadRate + it.uploadRate }
                             .take(MAX_DETAIL_PEERS)
-                    val trackers =
-                        handle.trackers().map {
-                            TorrentTracker(
-                                url = it.url(),
-                                tier = it.tier(),
-                                verified = it.isVerified,
-                                enabled = it.endpoints().any { endpoint -> endpoint.enabled() },
-                                current = it.url() == current,
-                            )
-                        }
+                    val trackers = readTrackers(handle).map { TorrentTracker(it.url, it.tier, it.verified, it.enabled, it.url == current) }
                     TorrentDetail(peers, trackers, PieceMap(count, have))
                 } finally {
                     Reference.reachabilityFence(status)
@@ -677,6 +675,30 @@ private fun sessionLimit(bytesPerSecond: Long?): Int = bytesPerSecond?.coerceIn(
 private fun perTorrentLimit(bytesPerSecond: Long?): Int = bytesPerSecond?.coerceIn(1, Int.MAX_VALUE.toLong())?.toInt() ?: -1
 
 private val RESUME_TIMEOUT = 10.seconds
+
+private class TrackerRead(
+    val url: String,
+    val tier: Int,
+    val verified: Boolean,
+    val enabled: Boolean,
+)
+
+/**
+ * The trackers [handle] has. libtorrent4j's own `trackers()` wraps entries that live in a vector nothing keeps alive; the
+ * vector is read here, inside a fence (the rule for every native object we read).
+ */
+private fun readTrackers(handle: TorrentHandle): List<TrackerRead> {
+    val all = handle.swig().trackers()
+    try {
+        return (0 until all.size).map { i ->
+            val entry = all[i]
+            val endpoints = entry.endpoints
+            TrackerRead(entry.url, entry.tier.toInt(), entry.verified, (0 until endpoints.size).any { endpoints[it].enabled })
+        }
+    } finally {
+        Reference.reachabilityFence(all)
+    }
+}
 
 /** The trackers a `.torrent` names with their tiers: its `announce-list`, else its `announce`; none for a file that has neither. */
 private fun trackersOf(torrent: ByteArray): List<Pair<String, Int>> =

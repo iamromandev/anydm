@@ -166,7 +166,8 @@ internal class SnapshotCache {
             val files = if (done == null) entry.files else entry.files.mapIndexed { i, file -> file.copy(done = done[i]) }
             DownloadSnapshot(
                 download = entry.download,
-                downloaded = entry.live?.first ?: files.sumOf { it.written },
+                // Only the files the job wants: a torrent's skipped files hold some bytes of the pieces they share.
+                downloaded = entry.live?.first ?: files.filter { it.file.selected }.sumOf { it.written },
                 total = entry.live?.second ?: entry.download.size,
                 speed = entry.speed,
                 speedSamples = entry.samples.toList(),

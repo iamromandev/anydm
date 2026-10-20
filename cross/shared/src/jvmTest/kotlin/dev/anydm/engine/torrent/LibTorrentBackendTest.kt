@@ -516,6 +516,25 @@ class LibTorrentBackendTest {
         }
 
     @Test
+    fun readingTrackersSurvivesGarbageCollection() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 47)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce"))
+            val seeding = seed(info)
+
+            // the tracker list is native memory a collection can free; reading it while one runs must still give the url
+            repeat(300) {
+                seeding
+                    .detail()
+                    .trackers
+                    .single()
+                    .url shouldBe "http://127.0.0.1:1/announce"
+                if (it % 10 == 0) System.gc()
+            }
+            seeding.remove()
+        }
+
+    @Test
     fun thePieceMapFillsAsTheDownloadCompletes() =
         runBlocking<Unit> {
             file("data.bin", 512 * 1024, 45)

@@ -25,6 +25,8 @@ class TorrentLiveStats(
     val downloadRate: Long,
     val uploadRate: Long,
     val fileDone: List<Long>,
+    /** libtorrent is checking the files: [fileDone] climbs from zero and is not worth saving. */
+    val checking: Boolean = false,
 ) {
     companion object {
         /** A torrent that is not in the session. */

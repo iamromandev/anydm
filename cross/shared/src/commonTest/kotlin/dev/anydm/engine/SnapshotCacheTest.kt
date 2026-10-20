@@ -184,6 +184,19 @@ class SnapshotCacheTest {
     }
 
     @Test
+    fun aPartialSelectionNeverShowsMoreThanItsTotal() {
+        val cache = SnapshotCache().with(job(1, DownloadStatus.SEEDING))
+        val wanted = File(FileId(1), DownloadId(1), 0, "a.bin", 300, true)
+        val skipped = File(FileId(2), DownloadId(1), 1, "b.bin", 700, false)
+        cache.filesChanged(DownloadId(1), listOf(FileSnapshot(wanted, emptyList(), 300), FileSnapshot(skipped, emptyList(), 120)))
+
+        // the skipped file shares pieces with the wanted one, so libtorrent reports some of its bytes: they are not downloaded
+        cache.list().single().downloaded shouldBe 300L
+        cache.torrentLive(DownloadId(1), live(done = listOf(300L, 150L)))
+        cache.list().single().downloaded shouldBe 300L
+    }
+
+    @Test
     fun torrentLiveReportsNoChangeForAnEqualSummary() {
         val cache = SnapshotCache().with(job(1))
 

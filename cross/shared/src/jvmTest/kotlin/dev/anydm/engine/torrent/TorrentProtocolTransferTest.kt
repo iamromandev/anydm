@@ -537,6 +537,34 @@ class TorrentProtocolTransferTest {
         }
 
     @Test
+    fun aCheckingTorrentKeepsTheStoredFileDone() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(0, 300, false))
+            val transfer = prepared()
+            store.torrents.setFileDone(transfer.download.id, listOf(50L, 0L))
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            waitFor { backend.added.isNotEmpty() }
+            // paused during a re-check, which counts up from zero
+            backend.added.single().liveStats = TorrentLiveStats(0, 0, 0.0, 0, 0, listOf(0L, 0L), checking = true)
+
+            running.cancelAndJoin()
+
+            store.torrents.get(transfer.download.id)!!.fileDone shouldBe listOf(50L, 0L)
+        }
+
+    @Test
+    fun aHandleThatLeftTheSessionLeavesNoLive() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            protocol.live().containsKey(transfer.download.id) shouldBe true
+
+            protocol.handles.take(transfer.download.id)
+
+            protocol.live() shouldBe emptyMap()
+        }
+
+    @Test
     fun finalizeSavesFileDone() =
         runBlocking<Unit> {
             val transfer = prepared()

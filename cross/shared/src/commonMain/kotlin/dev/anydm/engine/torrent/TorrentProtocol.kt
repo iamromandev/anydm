@@ -121,9 +121,15 @@ class TorrentProtocol(
     private val latest = mutableMapOf<DownloadId, TorrentLive>()
     private val latestLock = Mutex()
 
-    override suspend fun live(): Map<DownloadId, TorrentLive> = latestLock.withLock { latest.toMap() }
+    // Only the torrents the protocol still holds: a poll that was cut short by an end can write a reading after the torrent left.
+    override suspend fun live(): Map<DownloadId, TorrentLive> {
+        val all = latestLock.withLock { latest.toMap() }
+        return all.filterKeys { handles.get(it) != null || seeds.has(it) }
+    }
 
-    override suspend fun detail(id: DownloadId): TorrentDetail? = (handles.get(id) ?: seeds.handle(id))?.detail()
+    // On a thread of its own: the read is a native call and a JNI call per piece, which no caller's UI thread should wait for.
+    override suspend fun detail(id: DownloadId): TorrentDetail? =
+        (handles.get(id) ?: seeds.handle(id))?.let { withContext(Dispatchers.Default) { it.detail() } }
 
     private suspend fun record(
         id: DownloadId,
@@ -168,7 +174,8 @@ class TorrentProtocol(
         torrent: RunningTorrent,
     ) {
         // The file progress first: it needs no wait, and a torrent that can't give a blob still has it.
-        val done = torrent.live().fileDone
+        // Not while it is checking its files: the count starts from zero again and would replace the saved progress.
+        val done = torrent.live().let { if (it.checking) emptyList() else it.fileDone }
         val bytes = torrent.saveResume()
         quietly { if (bytes != null) torrents.setResume(id, bytes) }
         quietly { if (done.isNotEmpty()) torrents.setFileDone(id, done) }
