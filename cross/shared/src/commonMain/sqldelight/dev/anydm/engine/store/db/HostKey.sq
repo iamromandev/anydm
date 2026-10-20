@@ -1,0 +1,18 @@
+-- The SSH host key trusted for each SFTP server (FTP-04), saved the first time the engine connects: `fingerprint` is the
+-- key's SHA-256 as OpenSSH prints it (`SHA256:...`). A later connection must present the same key. `host` is lowercase.
+CREATE TABLE ssh_host_key (
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    key_type TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    PRIMARY KEY (host, port)
+);
+
+selectByHost:
+SELECT * FROM ssh_host_key WHERE host = ? AND port = ?;
+
+put:
+INSERT OR REPLACE INTO ssh_host_key(host, port, key_type, fingerprint) VALUES (?, ?, ?, ?);
+
+remove:
+DELETE FROM ssh_host_key WHERE host = ? AND port = ?;

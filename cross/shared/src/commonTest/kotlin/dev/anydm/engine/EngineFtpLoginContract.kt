@@ -9,6 +9,7 @@ import dev.anydm.engine.ftp.KeychainCredentials
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.http.Credentials
 import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.store.HostKey
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
@@ -194,6 +195,22 @@ abstract class EngineFtpLoginContract : StoreTestBase() {
             val h = started(writer = null)
             try {
                 h.engine.saveKeyLogin("sftp://host/f.bin", SshKeyLogin("ann", "/k", null)) shouldBe false
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun forgetHostKeyClearsIt() =
+        runTest {
+            val h = started()
+            try {
+                h.store.hostKeys.put("host", 22, HostKey("ssh-ed25519", "SHA256:abc"))
+
+                h.engine.forgetHostKey("host", 22) shouldBe true
+
+                h.store.hostKeys.get("host", 22) shouldBe null
+                h.engine.forgetHostKey("host", 22) shouldBe false
             } finally {
                 h.engine.stop()
             }

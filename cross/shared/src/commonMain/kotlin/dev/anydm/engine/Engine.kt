@@ -460,6 +460,12 @@ class Engine(
         return command { writer.saveKey(originFor(url), login) }
     }
 
+    /** Stops trusting the SSH key of [host]:[port] (FTP-04), after the user has confirmed it changed; true if there was one. */
+    suspend fun forgetHostKey(
+        host: String,
+        port: Int,
+    ): Boolean = command { store.hostKeys.forget(host, port) }
+
     // Where a login for [url] is kept: FTP's origin spells the port out for every scheme, HTTP's only for http and https.
     private fun originFor(url: String): String = FtpUrl.parse(url)?.origin ?: originOf(url)
 
