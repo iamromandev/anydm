@@ -26,9 +26,17 @@ internal class SqlTrafficStore(
                 queries.ensureDay(key.first, key.second, key.third.name)
                 queries.addDay(bytes = bytes, day = key.first, network = key.second, kind = key.third.name)
             }
+            for ((key, bytes) in batch.daysUp) {
+                queries.ensureDay(key.first, key.second, key.third.name)
+                queries.addDayUp(bytes = bytes, day = key.first, network = key.second, kind = key.third.name)
+            }
             for ((id, bytes) in batch.downloads) {
                 queries.ensureDownload(id.value)
                 queries.addDownload(bytes = bytes, id = id.value)
+            }
+            for ((id, bytes) in batch.downloadsUp) {
+                queries.ensureDownload(id.value)
+                queries.addDownloadUp(bytes = bytes, id = id.value)
             }
             for ((day, speed) in batch.speedDays) {
                 queries.ensureSpeedDay(day)
@@ -47,7 +55,7 @@ internal class SqlTrafficStore(
         to: String,
     ): List<DayTraffic> =
         withContext(io) {
-            queries.daysBetween(from, to).executeAsList().map { DayTraffic(it.day, it.network, kindOf(it.kind), it.bytes) }
+            queries.daysBetween(from, to).executeAsList().map { DayTraffic(it.day, it.network, kindOf(it.kind), it.bytes, it.bytes_up) }
         }
 
     override suspend fun speedDays(
@@ -63,6 +71,9 @@ internal class SqlTrafficStore(
 
     override suspend fun downloadTraffic(id: DownloadId): Long =
         withContext(io) { queries.downloadBytes(id.value).executeAsOneOrNull() ?: 0L }
+
+    override suspend fun downloadUpload(id: DownloadId): Long =
+        withContext(io) { queries.downloadUpBytes(id.value).executeAsOneOrNull() ?: 0L }
 
     private fun kindOf(name: String): DownloadKind =
         DownloadKind.entries.firstOrNull { it.name == name }

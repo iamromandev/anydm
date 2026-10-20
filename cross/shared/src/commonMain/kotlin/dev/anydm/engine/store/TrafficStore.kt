@@ -4,12 +4,13 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.net.TrafficBatch
 
-/** Bytes received on [network] by downloads of [kind] on local [day]. */
+/** Bytes received on [network] by downloads of [kind] on local [day], and the bytes they sent ([bytesUp]). */
 data class DayTraffic(
     val day: String,
     val network: String,
     val kind: DownloadKind,
     val bytes: Long,
+    val bytesUp: Long = 0,
 )
 
 /** A local day's bytes, its largest one-second total (B/s) and the seconds anything was received. */
@@ -54,4 +55,7 @@ interface TrafficStore {
 
     /** Every byte [id] received; 0 when none or it is gone. */
     suspend fun downloadTraffic(id: DownloadId): Long
+
+    /** Every byte [id] sent; 0 when none or it is gone. */
+    suspend fun downloadUpload(id: DownloadId): Long
 }

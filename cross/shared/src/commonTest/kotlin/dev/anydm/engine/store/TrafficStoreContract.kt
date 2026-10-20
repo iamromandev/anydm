@@ -76,6 +76,47 @@ abstract class TrafficStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun uploadBytesAddToDaysAndDownloads() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.TORRENT)).id
+            val key = Triple(day, "en0", DownloadKind.TORRENT)
+            store.traffic.add(
+                TrafficBatch(days = mapOf(key to 100L), daysUp = mapOf(key to 40L), downloadsUp = mapOf(id to 40L)),
+                pruneBefore = 0,
+            )
+            store.traffic.add(TrafficBatch(daysUp = mapOf(key to 10L), downloadsUp = mapOf(id to 10L)), pruneBefore = 0)
+
+            store.traffic.trafficByDay(day, day) shouldBe listOf(DayTraffic(day, "en0", DownloadKind.TORRENT, 100, bytesUp = 50))
+            store.traffic.downloadUpload(id) shouldBe 50L
+        }
+
+    @Test
+    fun downloadBytesAreUnchangedByUpload() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.TORRENT)).id
+            store.traffic.add(TrafficBatch(downloads = mapOf(id to 500L), downloadsUp = mapOf(id to 70L)), pruneBefore = 0)
+
+            store.traffic.downloadTraffic(id) shouldBe 500L
+            store.traffic.downloadUpload(id) shouldBe 70L
+        }
+
+    @Test
+    fun aRemovedDownloadsUploadIsDropped() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.TORRENT)).id
+            store.traffic.add(TrafficBatch(downloadsUp = mapOf(id to 9L, DownloadId(999) to 9L)), pruneBefore = 0)
+            store.traffic.downloadUpload(id) shouldBe 9L
+            store.traffic.downloadUpload(DownloadId(999)) shouldBe 0L
+
+            store.downloads.remove(id)
+
+            store.traffic.downloadUpload(id) shouldBe 0L
+        }
+
+    @Test
     fun trafficOfARemovedDownloadIsDropped() =
         runTest {
             val store = newStore()
