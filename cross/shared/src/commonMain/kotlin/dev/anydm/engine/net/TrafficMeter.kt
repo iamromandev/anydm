@@ -9,22 +9,26 @@ import kotlin.time.Instant
 internal fun epochMinute(at: Instant): Long = at.epochSeconds.floorDiv(60)
 
 /**
- * Counts received bytes (NET-04) once a second, from the engine's speed sampler: by local day, network and kind, by
- * download, and as speed per day and per minute (bytes, the largest one-second total, the seconds with any bytes).
- * [drain] hands over what was counted since the last save. Not thread-safe: the engine uses it from one thread.
+ * Counts received and sent bytes (NET-04, TOR-09) once a second, from the engine's speed sampler: by local day, network
+ * and kind, by download, and as speed per day and per minute (bytes, the largest one-second total, the seconds with any
+ * bytes). Only received bytes make speed; sent bytes are totals. [drain] hands over what was counted since the last save.
+ * Not thread-safe: the engine uses it from one thread.
  */
 internal class TrafficMeter(
     private val dayOf: (Instant) -> String = ::localDayOf,
 ) {
-    /** What one running download received in a second. */
+    /** What one running download received, and sent ([bytesUp]), in a second. */
     data class Sample(
         val id: DownloadId,
         val kind: DownloadKind,
         val bytes: Long,
+        val bytesUp: Long = 0,
     )
 
     private val days = mutableMapOf<Triple<String, String, DownloadKind>, Long>()
     private val downloads = mutableMapOf<DownloadId, Long>()
+    private val daysUp = mutableMapOf<Triple<String, String, DownloadKind>, Long>()
+    private val downloadsUp = mutableMapOf<DownloadId, Long>()
     private val speedDays = mutableMapOf<String, SpeedDelta>()
     private val speedMinutes = mutableMapOf<Long, SpeedDelta>()
 
@@ -35,13 +39,9 @@ internal class TrafficMeter(
         samples: List<Sample>,
     ) {
         val total = samples.sumOf { it.bytes }
-        if (total <= 0) return
         val day = dayOf(at)
-        for (sample in samples) {
-            if (sample.bytes <= 0) continue
-            days.mergeWith(Triple(day, network, sample.kind), sample.bytes, Long::plus)
-            downloads.mergeWith(sample.id, sample.bytes, Long::plus)
-        }
+        add(day, network, samples)
+        if (total <= 0) return
         speedDays.mergeWith(day, SpeedDelta(total, total, 1), ::combined)
         speedMinutes.mergeWith(epochMinute(at), SpeedDelta(total, total), ::combined)
     }
@@ -56,22 +56,38 @@ internal class TrafficMeter(
         samples: List<Sample>,
     ) {
         val total = samples.sumOf { it.bytes }
-        if (total <= 0) return
         val day = dayOf(at)
-        for (sample in samples) {
-            if (sample.bytes <= 0) continue
-            days.mergeWith(Triple(day, network, sample.kind), sample.bytes, Long::plus)
-            downloads.mergeWith(sample.id, sample.bytes, Long::plus)
-        }
+        add(day, network, samples)
+        if (total <= 0) return
         speedDays.mergeWith(day, SpeedDelta(total, 0), ::combined)
         speedMinutes.mergeWith(epochMinute(at), SpeedDelta(total, 0), ::combined)
     }
 
+    private fun add(
+        day: String,
+        network: String,
+        samples: List<Sample>,
+    ) {
+        for (sample in samples) {
+            if (sample.bytes > 0) {
+                days.mergeWith(Triple(day, network, sample.kind), sample.bytes, Long::plus)
+                downloads.mergeWith(sample.id, sample.bytes, Long::plus)
+            }
+            if (sample.bytesUp > 0) {
+                daysUp.mergeWith(Triple(day, network, sample.kind), sample.bytesUp, Long::plus)
+                downloadsUp.mergeWith(sample.id, sample.bytesUp, Long::plus)
+            }
+        }
+    }
+
     /** What was counted since the last drain; the meter starts empty again. */
     fun drain(): TrafficBatch {
-        val batch = TrafficBatch(days.toMap(), downloads.toMap(), speedDays.toMap(), speedMinutes.toMap())
+        val batch =
+            TrafficBatch(days.toMap(), downloads.toMap(), speedDays.toMap(), speedMinutes.toMap(), daysUp.toMap(), downloadsUp.toMap())
         days.clear()
         downloads.clear()
+        daysUp.clear()
+        downloadsUp.clear()
         speedDays.clear()
         speedMinutes.clear()
         return batch
@@ -81,6 +97,8 @@ internal class TrafficMeter(
     fun restore(batch: TrafficBatch) {
         batch.days.forEach { (key, bytes) -> days.mergeWith(key, bytes, Long::plus) }
         batch.downloads.forEach { (id, bytes) -> downloads.mergeWith(id, bytes, Long::plus) }
+        batch.daysUp.forEach { (key, bytes) -> daysUp.mergeWith(key, bytes, Long::plus) }
+        batch.downloadsUp.forEach { (id, bytes) -> downloadsUp.mergeWith(id, bytes, Long::plus) }
         batch.speedDays.forEach { (day, speed) -> speedDays.mergeWith(day, speed, ::combined) }
         batch.speedMinutes.forEach { (minute, speed) -> speedMinutes.mergeWith(minute, speed, ::combined) }
     }

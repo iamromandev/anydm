@@ -11,6 +11,22 @@ class AddTorrent(
     val priorities: List<Int>,
     val sequential: Boolean,
     val fileNames: List<String>,
+    /** libtorrent's resume data from an earlier [RunningTorrent.saveResume], or null to check the files (TOR-06). */
+    val resume: ByteArray? = null,
+)
+
+/**
+ * A torrent's counters. [payloadDown] and [payloadUp] are the payload bytes moved since it was added to this session
+ * (they restart with a re-add); [allTimeUp] and [seedingSeconds] carry across resume data. [wanted] is the bytes of the
+ * files taken; [seeding] is whether it has everything it wants and is uploading.
+ */
+class TorrentStats(
+    val payloadDown: Long,
+    val payloadUp: Long,
+    val allTimeUp: Long,
+    val wanted: Long,
+    val seedingSeconds: Long,
+    val seeding: Boolean,
 )
 
 /** [LOST]: the torrent is no longer in the session (it will be added again on a retry). */
@@ -49,6 +65,14 @@ interface RunningTorrent {
 
     /** Takes the torrent out of the session, keeping its files. */
     suspend fun remove()
+
+    fun stats(): TorrentStats
+
+    /** libtorrent's resume data for the torrent as it is now; null if libtorrent could not make it in 10 seconds. */
+    suspend fun saveResume(): ByteArray?
+
+    /** What this torrent may take in, in bytes per second; null for no limit. */
+    fun setDownloadLimit(bytesPerSecond: Long?)
 }
 
 /** The library underneath (libtorrent4j); a fake stands in for it in most tests. */
@@ -63,6 +87,15 @@ interface TorrentBackend {
     fun metadataOfBytes(bytes: ByteArray): StepResult<TorrentInfo>
 
     suspend fun add(request: AddTorrent): StepResult<RunningTorrent>
+
+    /** The session's limits in bytes per second (null for none): applied when the session starts, and at once after. */
+    fun setSessionLimits(
+        download: Long?,
+        upload: Long?,
+    )
+
+    /** Told the resume data of every torrent still in the session when [close] stops it. */
+    var resumeSink: ((infoHash: String, bytes: ByteArray) -> Unit)?
 
     suspend fun close()
 }

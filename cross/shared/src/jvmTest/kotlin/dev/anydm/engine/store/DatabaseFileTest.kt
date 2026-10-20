@@ -30,6 +30,7 @@ import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.platform.toNioPath
 import dev.anydm.engine.platform.writeText
 import dev.anydm.engine.store.db.AnydmDb
+import dev.anydm.engine.torrent.SeedRule
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -115,7 +116,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.downloads.context(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -135,7 +136,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.checksum shouldBe null
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -155,7 +156,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.traffic.trafficByDay("0000-01-01", "9999-12-31") shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -175,7 +176,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.categoryId shouldBe CategoryId(5)
             store.categories.list() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -194,7 +195,7 @@ class DatabaseFileTest {
             val store = open()
             store.downloads.get(DownloadId(1))!!.allowDuplicate shouldBe false
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -214,7 +215,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.history.list(10) shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -237,7 +238,7 @@ class DatabaseFileTest {
                 .single()
                 .placedPath shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -257,7 +258,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.tools.all() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -278,7 +279,7 @@ class DatabaseFileTest {
             store.downloads.format(DownloadId(1)) shouldBe null
             store.extractions.get(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -298,7 +299,7 @@ class DatabaseFileTest {
             val store = open()
             store.downloads.format(DownloadId(1)) shouldBe Format(QualityPreset.SMALL, height = 480)
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -320,7 +321,7 @@ class DatabaseFileTest {
             kept.sourceUrl shouldBe null
             kept.selection shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     @Test
@@ -337,7 +338,40 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.status shouldBe DownloadStatus.QUEUED
             store.torrents.get(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 15L }
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
+        }
+
+    @Test
+    fun versionFifteenUpgradesWithTorrentsAndTrafficKept() =
+        runTest {
+            val snapshots = requireNotNull(System.getProperty("anydm.schemaDir")) { "anydm.schemaDir is not set" }
+            Files.copy(Path(snapshots, "15.db").toNioPath(), file.toNioPath())
+            rawDriver(file).use { raw ->
+                raw.exec("PRAGMA user_version = 15")
+                raw.exec("INSERT INTO download(kind, status, priority, attempt_count) VALUES ('TORRENT', 'QUEUED', 0, 0)")
+                raw.exec("INSERT INTO torrent(download_id, metadata, priorities, sequential) VALUES (1, X'0102', '4,0', 1)")
+                raw.exec("INSERT INTO traffic_day(day, network, kind, bytes) VALUES ('2026-10-18', 'en0', 'TORRENT', 500)")
+                raw.exec("INSERT INTO download_traffic(download_id, bytes) VALUES (1, 70)")
+            }
+
+            val store = open()
+            val row = store.torrents.get(DownloadId(1))!!
+            row.priorities shouldBe listOf(4, 0)
+            row.sequential shouldBe true
+            row.resume shouldBe null
+            row.seedRatio shouldBe SeedRule.Inherit
+            row.seedMinutes shouldBe SeedRule.Inherit
+            store.traffic
+                .trafficByDay("2026-10-18", "2026-10-18")
+                .single()
+                .let {
+                    it.bytes shouldBe 500L
+                    it.bytesUp shouldBe 0L
+                }
+            store.traffic.downloadTraffic(DownloadId(1)) shouldBe 70L
+            store.traffic.downloadUpload(DownloadId(1)) shouldBe 0L
+            store.close()
+            rawDriver(file).use { it.userVersion() shouldBe 16L }
         }
 
     // A made-up version 2 whose migration is [change], run on a version 1 file; create is the real schema.
@@ -376,9 +410,9 @@ class DatabaseFileTest {
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
         // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 15L
+        AnydmDb.Schema.version shouldBe 16L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 15L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 16L }
     }
 
     @Test

@@ -15,6 +15,7 @@ import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
+import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.files.CollectionFinishHook
 import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
@@ -50,6 +51,8 @@ import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolManager
 import dev.anydm.engine.torrent.MAX_FILE_PRIORITY
+import dev.anydm.engine.torrent.SeedEnd
+import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentService
 import dev.anydm.engine.torrent.TorrentSource
@@ -58,6 +61,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -160,6 +164,9 @@ class Engine(
     private class Live {
         val progress = MutableStateFlow<Pair<Long, Long?>?>(null)
         val bytes = MutableStateFlow(0L)
+
+        /** Bytes the run sent since the last sampled second (TOR-09). */
+        val bytesUp = MutableStateFlow(0L)
 
         /** Its kind once known, kept so a job removed mid-run still counts under it (NET-04). */
         @Volatile var kind: DownloadKind? = null
@@ -294,6 +301,13 @@ class Engine(
             live.value[id]?.bytes?.update { it + bytes }
         }
 
+        override fun sent(
+            id: DownloadId,
+            bytes: Long,
+        ) {
+            live.value[id]?.bytesUp?.update { it + bytes }
+        }
+
         override fun slotStarted(id: DownloadId) {
             live.update { it + (id to Live()) }
             inSlots.update { it + id }
@@ -321,6 +335,16 @@ class Engine(
         val startup =
             scope.async {
                 if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
+                torrents?.let { service ->
+                    // Subscribed before the queue starts: a seed taken up again may end at once.
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) { service.seedEnds.collect { finishSeed(it) } }
+                    scope.launch(publisher) {
+                        while (true) {
+                            delay(SPEED_EVERY)
+                            sampleSeeds(service)
+                        }
+                    }
+                }
                 queue.start()
                 val jobs = store.downloads.list()
                 log.info("engine") { "engine started (${jobs.size} jobs)" }
@@ -439,8 +463,12 @@ class Engine(
         sequential: Boolean = false,
         template: NewDownload = NewDownload(DownloadKind.TORRENT),
         info: TorrentInfo? = null,
+        /** This torrent's own seeding limits (TOR-05); Inherit takes the settings'. */
+        seedRatio: SeedRule<Double> = SeedRule.Inherit,
+        seedMinutes: SeedRule<Int> = SeedRule.Inherit,
     ): AddTorrentResult {
         if (TorrentSource.parse(source) == null) return AddTorrentResult.BadSource
+        seedRuleProblem(seedRatio, seedMinutes)?.let { return AddTorrentResult.Refused(CommandResult.Invalid(it)) }
         var known = info
         if (files != null && known == null) {
             val service = torrents ?: return AddTorrentResult.Unavailable
@@ -457,7 +485,7 @@ class Engine(
                     template.copy(
                         kind = DownloadKind.TORRENT,
                         mirrors = listOf(source),
-                        torrent = NewTorrent(known?.metadata, priorities, sequential),
+                        torrent = NewTorrent(known?.metadata, priorities, sequential, seedRatio, seedMinutes),
                     ),
                 )
             }
@@ -495,6 +523,8 @@ class Engine(
             val sameFiles =
                 if (row.priorities.isEmpty()) priorities.all { it > 0 } else row.priorities.map { it > 0 } == priorities.map { it > 0 }
             store.torrents.setPriorities(id, priorities)
+            // Another set of files has other pieces: the saved resume data would describe the wrong ones (TOR-06).
+            if (!sameFiles) store.torrents.setResume(id, null)
             if (sameFiles) torrents?.applyPriorities(id, priorities)
             CommandResult.Done(store.downloads.get(id))
         }
@@ -777,7 +807,24 @@ class Engine(
     suspend fun remove(
         id: DownloadId,
         files: RemoveFiles = RemoveFiles.TRASH,
-    ): CommandResult = command { queue.remove(id, files) }
+    ): CommandResult =
+        command {
+            val service = torrents
+            val seeding = service != null && store.downloads.get(id)?.status == DownloadStatus.SEEDING
+            // A seed leaves the session before its files go (TOR-05); its end is not news for a job that is being removed.
+            if (seeding) {
+                removing.update { it + id }
+                service?.stopSeeding(id)
+            }
+            try {
+                val removed = queue.remove(id, files)
+                // A removal the trash refused leaves the job: its seed is over all the same.
+                if (seeding && removed !is CommandResult.Done) queue.finishSeeding(id, null)
+                removed
+            } finally {
+                if (seeding) removing.update { it - id }
+            }
+        }
 
     suspend fun retry(id: DownloadId): CommandResult = command { queue.retry(id) }
 
@@ -794,6 +841,49 @@ class Engine(
     suspend fun setLimit(limit: Int): CommandResult = command { queue.setLimit(limit) }
 
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult = command { queue.setGlobalSpeedLimit(bytesPerSecond) }
+
+    /** The most all torrents together may send, in bytes per second, null for no limit (TOR-08). */
+    suspend fun setGlobalUploadLimit(bytesPerSecond: Long?): CommandResult = command { queue.setGlobalUploadLimit(bytesPerSecond) }
+
+    /**
+     * Ends the seed of torrent job [id] now (TOR-05); the job completes. Only a SEEDING job takes it. A seed the protocol
+     * no longer holds (its session never came up) completes all the same, so the user is never stuck with it.
+     */
+    suspend fun stopSeeding(id: DownloadId): CommandResult =
+        command {
+            val job = store.downloads.get(id) ?: return@command CommandResult.NotFound
+            if (job.status != DownloadStatus.SEEDING) {
+                return@command CommandResult.Rejected(TransitionResult.Rejected(job.status, DownloadStatus.COMPLETED))
+            }
+            torrents?.stopSeeding(id)
+            val finished = queue.finishSeeding(id, null)
+            // The protocol's own end may have completed the job first.
+            val now = store.downloads.get(id)
+            if (finished is CommandResult.Rejected && now?.status == DownloadStatus.COMPLETED) CommandResult.Done(now) else finished
+        }
+
+    /** Torrent job [id]'s own seeding limits (TOR-05); a rule applies at the next check of the seed. */
+    suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): CommandResult =
+        command {
+            if (store.torrents.get(id) == null) return@command CommandResult.NotFound
+            seedRuleProblem(ratio, minutes)?.let { return@command CommandResult.Invalid(it) }
+            store.torrents.setSeedRules(id, ratio, minutes)
+            CommandResult.Done(store.downloads.get(id))
+        }
+
+    private fun seedRuleProblem(
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): String? =
+        when {
+            ratio is SeedRule.At && ratio.value <= 0 -> "a seed ratio must be > 0: ${ratio.value}"
+            minutes is SeedRule.At && minutes.value <= 0 -> "seed minutes must be > 0: ${minutes.value}"
+            else -> null
+        }
 
     suspend fun setSpeedLimit(
         id: DownloadId,
@@ -1025,10 +1115,11 @@ class Engine(
         for (id in running) {
             val holder = live.value[id]
             val sample = holder?.bytes?.getAndUpdate { 0L } ?: 0L
+            val sentSample = holder?.bytesUp?.getAndUpdate { 0L } ?: 0L
             cache.speed(id, sample)
             total += sample
             val kind = holder?.kind ?: cache.kindOf(id)?.also { holder?.kind = it }
-            if (kind != null && sample > 0) samples += TrafficMeter.Sample(id, kind, sample)
+            if (kind != null && (sample > 0 || sentSample > 0)) samples += TrafficMeter.Sample(id, kind, sample, sentSample)
         }
         val now = clock.now()
         meter.second(now, network.current(), samples)
@@ -1037,6 +1128,44 @@ class Engine(
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
         speedFlow.value = SpeedWindow(total, totalSamples.toList())
         publish()
+    }
+
+    /** Jobs being removed while their seed is stopped: that end finishes nothing. */
+    private val removing = MutableStateFlow<Set<DownloadId>>(emptySet())
+
+    // A seed ended in the protocol: its job completes, or fails with the reason. The protocol's end can land before the run
+    // that finalized the seed has stored SEEDING, so a job still on its way there is asked again for a moment.
+    private suspend fun finishSeed(end: SeedEnd) {
+        if (end.id in removing.value) return
+        val failure = (end as? SeedEnd.Failed)?.message
+        repeat(SEED_FINISH_TRIES) {
+            val result =
+                try {
+                    command { queue.finishSeeding(end.id, failure) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IllegalStateException) {
+                    return
+                }
+            val from = (result as? CommandResult.Rejected)?.rejected?.from
+            if (from != DownloadStatus.DOWNLOADING && from != DownloadStatus.MUXING) return
+            delay(SEED_FINISH_WAIT)
+        }
+    }
+
+    // What the seeds sent and received since the last second: counted for the day and the job (TOR-09), with no slot to carry it.
+    private suspend fun sampleSeeds(service: TorrentService) {
+        val moved =
+            try {
+                service.seedTraffic()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("engine") { "seed traffic unavailable: ${e.message}" }
+                return
+            }
+        if (moved.isEmpty()) return
+        meter.bytes(clock.now(), network.current(), moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) })
     }
 
     /** How many snapshot lists were built, for tests of the batching. */
@@ -1087,7 +1216,8 @@ class Engine(
     /** A run that ended: the bytes it got since its last sampled second, to count with the next save. */
     private fun keepLeftover(holder: Live) {
         val left = holder.bytes.getAndUpdate { 0L }
-        if (left <= 0) return
+        val leftUp = holder.bytesUp.getAndUpdate { 0L }
+        if (left <= 0 && leftUp <= 0) return
         val id =
             live.value.entries
                 .firstOrNull { it.value === holder }
@@ -1097,7 +1227,7 @@ class Engine(
                 .find { it.download.id == id }
                 ?.download
                 ?.kind ?: return
-        leftovers.update { it + TrafficMeter.Sample(id, kind, left) }
+        leftovers.update { it + TrafficMeter.Sample(id, kind, left, leftUp) }
     }
 
     private fun takeLeftovers(now: Instant) {
@@ -1148,6 +1278,10 @@ class Engine(
         val SPEED_EVERY = 1.seconds
         val DISK_CHECK_EVERY = 30.seconds
         val TOOL_RELEASE_DELAY = 2.seconds
+
+        /** A seed that ends before its job has stored SEEDING is asked again, this often, this many times. */
+        val SEED_FINISH_WAIT = 100.milliseconds
+        const val SEED_FINISH_TRIES = 50
         val DISK_WATCHED = setOf(DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING)
     }
 }

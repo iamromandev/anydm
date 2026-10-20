@@ -1,6 +1,7 @@
 package dev.anydm.engine.core
 
 import dev.anydm.engine.platform.FakeFileSystem
+import dev.anydm.engine.protocol.Direction
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Limiter
 import dev.anydm.engine.protocol.Meter
@@ -76,9 +77,13 @@ internal class RecordingLimiter : Limiter {
 
 internal class RecordingMeter : Meter {
     var bytes = 0L
+    var bytesUp = 0L
 
-    override fun record(bytes: Long) {
-        this.bytes += bytes
+    override fun record(
+        bytes: Long,
+        direction: Direction,
+    ) {
+        if (direction == Direction.UP) bytesUp += bytes else this.bytes += bytes
     }
 }
 

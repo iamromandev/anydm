@@ -5,6 +5,7 @@ CREATE TABLE traffic_day (
     network TEXT NOT NULL,
     kind TEXT NOT NULL,
     bytes INTEGER NOT NULL,
+    bytes_up INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (day, network, kind)
 );
 
@@ -23,15 +24,19 @@ CREATE TABLE speed_minute (
 
 CREATE TABLE download_traffic (
     download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
-    bytes INTEGER NOT NULL
+    bytes INTEGER NOT NULL,
+    bytes_up INTEGER NOT NULL DEFAULT 0
 );
 
 -- Each add is a row made if missing, then the delta added to it.
 ensureDay:
-INSERT OR IGNORE INTO traffic_day(day, network, kind, bytes) VALUES (?, ?, ?, 0);
+INSERT OR IGNORE INTO traffic_day(day, network, kind, bytes, bytes_up) VALUES (?, ?, ?, 0, 0);
 
 addDay:
 UPDATE traffic_day SET bytes = bytes + :bytes WHERE day = :day AND network = :network AND kind = :kind;
+
+addDayUp:
+UPDATE traffic_day SET bytes_up = bytes_up + :bytes WHERE day = :day AND network = :network AND kind = :kind;
 
 ensureSpeedDay:
 INSERT OR IGNORE INTO speed_day(day, bytes, peak, active_seconds) VALUES (?, 0, 0, 0);
@@ -48,10 +53,13 @@ UPDATE speed_minute SET bytes = bytes + :bytes, peak = max(peak, :peak) WHERE mi
 
 -- A download removed since its bytes were counted gets no row: its bytes are dropped.
 ensureDownload:
-INSERT OR IGNORE INTO download_traffic(download_id, bytes) SELECT :id, 0 WHERE EXISTS (SELECT 1 FROM download WHERE id = :id);
+INSERT OR IGNORE INTO download_traffic(download_id, bytes, bytes_up) SELECT :id, 0, 0 WHERE EXISTS (SELECT 1 FROM download WHERE id = :id);
 
 addDownload:
 UPDATE download_traffic SET bytes = bytes + :bytes WHERE download_id = :id;
+
+addDownloadUp:
+UPDATE download_traffic SET bytes_up = bytes_up + :bytes WHERE download_id = :id;
 
 pruneMinutes:
 DELETE FROM speed_minute WHERE minute < ?;
@@ -67,3 +75,6 @@ SELECT * FROM speed_minute WHERE minute >= ? ORDER BY minute;
 
 downloadBytes:
 SELECT bytes FROM download_traffic WHERE download_id = ?;
+
+downloadUpBytes:
+SELECT bytes_up FROM download_traffic WHERE download_id = ?;

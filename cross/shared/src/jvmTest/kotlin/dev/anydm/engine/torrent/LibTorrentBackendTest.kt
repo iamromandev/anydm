@@ -14,6 +14,7 @@ import kotlinx.io.files.Path
 import org.junit.Assume.assumeTrue
 import org.libtorrent4j.TorrentBuilder
 import java.io.File
+import java.io.RandomAccessFile
 import java.net.ServerSocket
 import java.nio.file.Files
 import kotlin.random.Random
@@ -87,7 +88,8 @@ class LibTorrentBackendTest {
         priorities: List<Int> = emptyList(),
         names: List<String> = info.files.map { it.path },
         sequential: Boolean = false,
-    ) = AddTorrent(info, Path(to.toString()), priorities, sequential, names)
+        resume: ByteArray? = null,
+    ) = AddTorrent(info, Path(to.toString()), priorities, sequential, names, resume)
 
     private suspend fun finish(running: RunningTorrent): TorrentProgress =
         withTimeout(60.seconds) {
@@ -267,6 +269,222 @@ class LibTorrentBackendTest {
             running.moveStorage(Path(File(root, "final").toString()), false).shouldBeInstanceOf<StepResult.Failed>()
             running.renameFiles(listOf("x.bin")).shouldBeInstanceOf<StepResult.Failed>()
             seeder.add(addRequest(info, seedDir)).shouldBeInstanceOf<StepResult.Failed>()
+        }
+
+    /** The first byte of the finished file changed, its size and time kept: a resume that trusts its blob doesn't notice. */
+    private fun damageQuietly(target: File) {
+        val time = target.lastModified()
+        RandomAccessFile(target, "rw").use {
+            it.seek(0)
+            val first = it.read()
+            it.seek(0)
+            it.write(first.inv() and 0xff)
+        }
+        target.setLastModified(time)
+    }
+
+    @Test
+    fun resumeDataRoundTripsAndSkipsTheRecheck() =
+        runBlocking<Unit> {
+            val data = file("data.bin", 4 * 1024 * 1024, 21)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            val staging = File(leechDir, "staging")
+            val first = ok(leecher.add(addRequest(info, staging)))
+            finish(first).finished shouldBe true
+            val blob = first.saveResume()!!
+            first.remove()
+            delay(300)
+            val target = File(staging, "data.bin")
+            damageQuietly(target)
+
+            val again = ok(leecher.add(addRequest(info, staging, resume = blob)))
+            finish(again).finished shouldBe true
+
+            // finished at once and the damaged byte is still there: the pieces were taken from the blob, not hashed again
+            target.readBytes()[0] shouldBe data[0].toInt().inv().toByte()
+            again.remove()
+        }
+
+    @Test
+    fun withoutTheBlobADamagedFileIsFoundAndFetchedAgain() =
+        runBlocking<Unit> {
+            val data = file("data.bin", 1024 * 1024, 22)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            val staging = File(leechDir, "staging")
+            val first = ok(leecher.add(addRequest(info, staging)))
+            finish(first).finished shouldBe true
+            first.remove()
+            delay(300)
+            val target = File(staging, "data.bin")
+            damageQuietly(target)
+
+            val again = ok(leecher.add(addRequest(info, staging)))
+            finish(again).finished shouldBe true
+
+            target.readBytes().toList() shouldBe data.toList()
+            again.remove()
+        }
+
+    @Test
+    fun anUnreadableResumeBlobFallsBackToARecheck() =
+        runBlocking<Unit> {
+            val data = file("data.bin", 512 * 1024, 23)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"), resume = "this is not bencode".toByteArray())))
+            finish(running).finished shouldBe true
+
+            File(leechDir, "staging/data.bin").readBytes().toList() shouldBe data.toList()
+            running.remove()
+        }
+
+    @Test
+    fun aResumeBlobForAnotherTorrentIsIgnored() =
+        runBlocking<Unit> {
+            val one = file("one.bin", 256 * 1024, 24)
+            val two = file("two.bin", 256 * 1024, 25)
+            val infoOne = infoOf(torrentOf(File(seedDir, "one.bin")))
+            val infoTwo = infoOf(torrentOf(File(seedDir, "two.bin")))
+            seed(infoOne)
+            seed(infoTwo)
+            val first = ok(leecher.add(addRequest(infoOne, File(leechDir, "one"))))
+            finish(first).finished shouldBe true
+            val blobOfOne = first.saveResume()!!
+            first.remove()
+
+            val second = ok(leecher.add(addRequest(infoTwo, File(leechDir, "two"), resume = blobOfOne)))
+            finish(second).finished shouldBe true
+
+            File(leechDir, "two/two.bin").readBytes().toList() shouldBe two.toList()
+            File(leechDir, "one/one.bin").readBytes().toList() shouldBe one.toList()
+            second.remove()
+        }
+
+    @Test
+    fun statsCountUploadAndSeedingTime() =
+        runBlocking<Unit> {
+            val size = 1024 * 1024
+            file("data.bin", size, 26)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            finish(running).finished shouldBe true
+
+            val down = running.stats()
+            down.payloadDown shouldBe size.toLong()
+            down.wanted shouldBe size.toLong()
+            // the seeder's counters follow a moment behind the leecher's
+            withTimeout(10.seconds) { while (seeding.stats().payloadUp < size) delay(100) }
+            val up = seeding.stats()
+            up.seeding shouldBe true
+            (up.allTimeUp >= size) shouldBe true
+            (up.seedingSeconds >= 0) shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun seedingTimeCountsForATorrentWithSkippedFiles() =
+        runBlocking<Unit> {
+            file("pack/a.bin", 256 * 1024, 31)
+            file("pack/b.bin", 256 * 1024, 32)
+            val info = infoOf(torrentOf(File(seedDir, "pack")))
+            seed(info)
+            val skipped = info.files.single { it.path.endsWith("b.bin") }.index
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"), info.files.map { if (it.index == skipped) 0 else 4 })))
+            finish(running).finished shouldBe true
+
+            delay(2200)
+
+            // libtorrent's seeding time never runs for a torrent that lacks a file; the time since it finished does
+            (running.stats().seedingSeconds >= 1) shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun uploadedBytesSurviveAResumeSavedWithPeersStillConnected() =
+        runBlocking<Unit> {
+            val size = 1024 * 1024
+            file("data.bin", size, 33)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            finish(running).finished shouldBe true
+            withTimeout(10.seconds) { while (seeding.stats().payloadUp < size) delay(50) }
+            delay(1500)
+
+            val blob = seeding.saveResume()!!
+            seeding.remove()
+            val again = ok(seeder.add(addRequest(info, seedDir, resume = blob)))
+
+            (again.stats().allTimeUp >= size * 9L / 10) shouldBe true
+            again.remove()
+            running.remove()
+        }
+
+    @Test
+    fun aDownloadLimitHolds() =
+        runBlocking<Unit> {
+            file("data.bin", 3 * 1024 * 1024, 27)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            running.setDownloadLimit(512L * 1024)
+            val started = System.nanoTime()
+
+            finish(running).finished shouldBe true
+
+            // 3 MiB at 512 KiB/s is 6 s; some of it came before the limit took hold
+            ((System.nanoTime() - started) / 1_000_000_000.0 >= 3.0) shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun removingTheLimitLetsTheTorrentGoFast() =
+        runBlocking<Unit> {
+            file("data.bin", 3 * 1024 * 1024, 30)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            running.setDownloadLimit(128L * 1024)
+            delay(500)
+            running.setDownloadLimit(null)
+
+            // 3 MiB at 128 KiB/s would be 24 s
+            withTimeout(8.seconds) { while (!running.progress().finished) delay(50) }
+            running.remove()
+        }
+
+    @Test
+    fun theSessionLimitsReachTheSessionBeforeAndAfterItStarts() =
+        runBlocking<Unit> {
+            // libtorrent leaves peers on the local network unthrottled, so the limit is read back from the session instead
+            seeder.setSessionLimits(null, 512L * 1024)
+            file("data.bin", 256 * 1024, 28)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            seeder.appliedSessionLimits() shouldBe (0 to 512 * 1024)
+
+            seeder.setSessionLimits(256L * 1024, null)
+
+            seeder.appliedSessionLimits() shouldBe (256 * 1024 to 0)
+        }
+
+    @Test
+    fun closeSavesResumeDataForRunningTorrents() =
+        runBlocking<Unit> {
+            file("data.bin", 256 * 1024, 29)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val saved = mutableMapOf<String, ByteArray>()
+            leecher.resumeSink = { hash, bytes -> saved[hash] = bytes }
+            // no seeder has it: the torrent stays in the session, unfinished
+            ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+
+            leecher.close()
+
+            saved[info.infoHash]!!.isNotEmpty() shouldBe true
         }
 
     @Test

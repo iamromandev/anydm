@@ -57,6 +57,9 @@ internal class SqlSettingsStore(
             debugLogging = read(DEBUG_LOGGING, DEFAULTS.debugLogging) { it.toBooleanStrictOrNull() },
             connectionsPerDownload = read(CONNECTIONS, DEFAULTS.connectionsPerDownload) { it.toIntOrNull()?.takeIf { n -> n in 1..16 } },
             globalSpeedLimit = read(GLOBAL_SPEED_LIMIT, DEFAULTS.globalSpeedLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
+            seedRatio = read(SEED_RATIO, DEFAULTS.seedRatio) { it.toDoubleOrNull()?.takeIf { n -> n > 0 && n.isFinite() } },
+            seedMinutes = read(SEED_MINUTES, DEFAULTS.seedMinutes) { it.toIntOrNull()?.takeIf { n -> n > 0 } },
+            globalUploadLimit = read(GLOBAL_UPLOAD_LIMIT, DEFAULTS.globalUploadLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
             ytDlpChannel = read(YT_DLP_CHANNEL, DEFAULTS.ytDlpChannel) { name -> YtDlpChannel.entries.firstOrNull { it.name == name } },
             systemTools = read(SYSTEM_TOOLS, DEFAULTS.systemTools) { it.toBooleanStrictOrNull() },
             historyLimit = read(HISTORY_LIMIT, DEFAULTS.historyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
@@ -103,6 +106,9 @@ internal class SqlSettingsStore(
         put(DEBUG_LOGGING, settings.debugLogging.takeIf { it != DEFAULTS.debugLogging }?.toString())
         put(CONNECTIONS, settings.connectionsPerDownload.takeIf { it != DEFAULTS.connectionsPerDownload }?.toString())
         put(GLOBAL_SPEED_LIMIT, settings.globalSpeedLimit?.toString())
+        put(SEED_RATIO, settings.seedRatio?.toString())
+        put(SEED_MINUTES, settings.seedMinutes?.toString())
+        put(GLOBAL_UPLOAD_LIMIT, settings.globalUploadLimit?.toString())
         put(YT_DLP_CHANNEL, settings.ytDlpChannel.takeIf { it != DEFAULTS.ytDlpChannel }?.name)
         put(SYSTEM_TOOLS, settings.systemTools.takeIf { it != DEFAULTS.systemTools }?.toString())
         put(HISTORY_LIMIT, settings.historyLimit.takeIf { it != DEFAULTS.historyLimit }?.toString())
@@ -139,6 +145,9 @@ internal class SqlSettingsStore(
         const val DEBUG_LOGGING = "log.debug"
         const val CONNECTIONS = "http.connections"
         const val GLOBAL_SPEED_LIMIT = "net.global_speed_limit"
+        const val GLOBAL_UPLOAD_LIMIT = "net.global_upload_limit"
+        const val SEED_RATIO = "torrent.seed_ratio"
+        const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"
         const val FREE_SPACE_RESERVE = "files.free_space_reserve"
         const val HISTORY_LIMIT = "files.history_limit"

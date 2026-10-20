@@ -52,6 +52,18 @@ interface Protocol {
      */
     fun workFolders(download: Download): List<String> = emptyList()
 
+    /**
+     * The engine-wide limits in bytes per second, null for none (NET-02, TOR-08): told at start and on each change. Only a
+     * protocol whose library paces its own sockets needs them; the others have the [Limiter].
+     */
+    fun setGlobalLimits(
+        download: Long?,
+        upload: Long?,
+    ) = Unit
+
+    /** At start, for a job left SEEDING: takes it up again. A Failed sends the job to FAILED with its message. */
+    suspend fun resumeSeeding(download: Download): StepResult<Unit> = StepResult.Ok(Unit)
+
     /** Called once when the engine stops, after the queue has: release what the protocol holds (a session, a socket). */
     suspend fun close() = Unit
 }

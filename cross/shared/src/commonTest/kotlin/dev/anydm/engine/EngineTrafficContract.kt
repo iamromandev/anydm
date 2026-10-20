@@ -1,9 +1,12 @@
 package dev.anydm.engine
 
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.StoreTestBase
+import dev.anydm.engine.torrent.FakeTorrentService
+import dev.anydm.engine.torrent.SeedSample
 import io.kotest.matchers.longs.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
@@ -19,13 +22,55 @@ import kotlin.time.Duration.Companion.seconds
 abstract class EngineTrafficContract : StoreTestBase() {
     private val whole = 64 * 1024L
 
-    private suspend fun TestScope.started(network: NetworkIdentity = NetworkIdentity.Unknown): Pair<EngineHarness, RecordingTraffic> {
+    private suspend fun TestScope.started(
+        network: NetworkIdentity = NetworkIdentity.Unknown,
+        torrents: FakeTorrentService? = null,
+    ): Pair<EngineHarness, RecordingTraffic> {
         val store = newStore()
         val traffic = RecordingTraffic(store.traffic)
-        val h = EngineHarness(this, store, network = network, traffic = traffic)
+        val h = EngineHarness(this, store, network = network, traffic = traffic, torrents = torrents)
         h.engine.start()
         return h to traffic
     }
+
+    @Test
+    fun seedTrafficIsCountedWithoutASlot() =
+        runTest {
+            val service = FakeTorrentService()
+            val (h, traffic) = started(torrents = service)
+            val id = DownloadId(7)
+            service.traffic = listOf(SeedSample(id, up = 5000, down = 300))
+            advanceTimeBy(11.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            batch.daysUp.values.sum() shouldBe 5000L
+            batch.daysUp.keys
+                .single()
+                .third shouldBe DownloadKind.TORRENT
+            batch.days.values.sum() shouldBe 300L
+            batch.downloadsUp shouldBe mapOf(id to 5000L)
+            h.engine.stop()
+        }
+
+    @Test
+    fun seedTrafficAndSlotTrafficAreNotCountedTwice() =
+        runTest {
+            val service = FakeTorrentService()
+            val (h, traffic) = started(torrents = service)
+            h.protocol.uploadPerJob = 8 * 1024
+            val job = h.addJob()
+            service.traffic = listOf(SeedSample(DownloadId(7), up = 5000, down = 0))
+            advanceTimeBy(11.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            // the running job's 8 KiB and the seed's 5000 bytes, each once
+            batch.daysUp.values.sum() shouldBe 8 * 1024L + 5000L
+            batch.downloadsUp shouldBe mapOf(job to 8 * 1024L, DownloadId(7) to 5000L)
+            batch.days.values.sum() shouldBe whole
+            h.engine.stop()
+        }
 
     @Test
     fun nothingIsSavedBeforeTenSeconds() =
@@ -66,6 +111,40 @@ abstract class EngineTrafficContract : StoreTestBase() {
             h.engine.stop()
 
             traffic.bytes shouldBe whole
+        }
+
+    @Test
+    fun uploadRecordedByAJobIsSavedWithItsKind() =
+        runTest {
+            val (h, traffic) = started()
+            h.protocol.uploadPerJob = 8 * 1024
+            val id = h.addJob()
+            advanceTimeBy(11.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            batch.daysUp.values.sum() shouldBe 8 * 1024L
+            batch.daysUp.keys
+                .single()
+                .third shouldBe DownloadKind.DIRECT
+            batch.downloadsUp shouldBe mapOf(id to 8 * 1024L)
+            traffic.bytes shouldBe whole
+            h.store.traffic.downloadUpload(id) shouldBe 8 * 1024L
+            h.engine.stop()
+        }
+
+    @Test
+    fun totalSpeedStaysDownloadOnly() =
+        runTest {
+            val (h, _) = started()
+            h.protocol.uploadPerJob = 10L * 1024 * 1024
+            h.addJob()
+            advanceTimeBy(2.seconds)
+            runCurrent()
+
+            // 16 KiB/s of download; the 10 MiB sent is not in the speed readout
+            h.engine.totalSpeed.value.current shouldBe 16 * 1024L
+            h.engine.stop()
         }
 
     @Test

@@ -2,6 +2,7 @@ package dev.anydm.engine.store
 
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.store.db.AnydmDb
+import dev.anydm.engine.torrent.SeedRule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -18,7 +19,15 @@ internal class SqlTorrentStore(
     override suspend fun get(id: DownloadId): TorrentRow? =
         withContext(io) {
             queries.selectByDownload(id).executeAsOneOrNull()?.let {
-                TorrentRow(it.download_id, it.metadata, decodePriorities(it.priorities), it.sequential)
+                TorrentRow(
+                    it.download_id,
+                    it.metadata,
+                    decodePriorities(it.priorities),
+                    it.sequential,
+                    it.resume,
+                    ratioRule(it.seed_ratio),
+                    minutesRule(it.seed_minutes),
+                )
             }
         }
 
@@ -39,7 +48,50 @@ internal class SqlTorrentStore(
         id: DownloadId,
         on: Boolean,
     ): Boolean = withContext(writeContext) { queries.setSequential(on, id).value > 0 }
+
+    override suspend fun setResume(
+        id: DownloadId,
+        bytes: ByteArray?,
+    ): Boolean = withContext(writeContext) { queries.setResume(bytes, id).value > 0 }
+
+    override suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): Boolean {
+        requireSeedRules(ratio, minutes)
+        return withContext(writeContext) { queries.setSeedRules(storedRatio(ratio), storedMinutes(minutes), id).value > 0 }
+    }
 }
+
+// NULL takes the global setting, 0 is no limit, anything above is the limit.
+internal fun storedRatio(rule: SeedRule<Double>): Double? =
+    when (rule) {
+        SeedRule.Inherit -> null
+        SeedRule.Off -> 0.0
+        is SeedRule.At -> rule.value
+    }
+
+internal fun storedMinutes(rule: SeedRule<Int>): Long? =
+    when (rule) {
+        SeedRule.Inherit -> null
+        SeedRule.Off -> 0L
+        is SeedRule.At -> rule.value.toLong()
+    }
+
+private fun ratioRule(stored: Double?): SeedRule<Double> =
+    when {
+        stored == null -> SeedRule.Inherit
+        stored > 0 -> SeedRule.At(stored)
+        else -> SeedRule.Off
+    }
+
+private fun minutesRule(stored: Long?): SeedRule<Int> =
+    when {
+        stored == null -> SeedRule.Inherit
+        stored > 0 -> SeedRule.At(stored.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        else -> SeedRule.Off
+    }
 
 // '' is no choice; a value this version can't read counts as no choice too: a stored row must not stop the engine.
 private fun decodePriorities(text: String): List<Int> =

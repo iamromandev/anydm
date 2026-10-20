@@ -19,6 +19,16 @@ data class TrafficBatch(
     val speedDays: Map<String, SpeedDelta> = emptyMap(),
     /** Epoch minute to speed. */
     val speedMinutes: Map<Long, SpeedDelta> = emptyMap(),
+    /** The same keys as [days] and [downloads], for the bytes sent (TOR-09). */
+    val daysUp: Map<Triple<String, String, DownloadKind>, Long> = emptyMap(),
+    val downloadsUp: Map<DownloadId, Long> = emptyMap(),
 ) {
-    val isEmpty: Boolean get() = days.isEmpty() && downloads.isEmpty() && speedDays.isEmpty() && speedMinutes.isEmpty()
+    val isEmpty: Boolean
+        get() =
+            days.isEmpty() &&
+                downloads.isEmpty() &&
+                speedDays.isEmpty() &&
+                speedMinutes.isEmpty() &&
+                daysUp.isEmpty() &&
+                downloadsUp.isEmpty()
 }

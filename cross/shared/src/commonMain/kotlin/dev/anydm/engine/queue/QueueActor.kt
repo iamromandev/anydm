@@ -43,6 +43,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.protocol.Direction
 import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.RelinkRequest
@@ -157,6 +158,8 @@ internal class QueueActor(
                     bandwidth.setGlobal(settings.globalSpeedLimit)
                     for (job in downloads.list()) lastStatus[job.id] = job.status
                     reconcile()
+                    applyLimits()
+                    resumeSeeds()
                     reschedule()
                     started.complete(Unit)
                     for (message in inbox) handle(message)
@@ -552,7 +555,83 @@ internal class QueueActor(
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
         settings = store.settings.update { it.copy(globalSpeedLimit = bytesPerSecond) }
         bandwidth.setGlobal(bytesPerSecond)
+        applyLimits()
         return CommandResult.Done(null)
+    }
+
+    /** The limit all uploads share (TOR-08): kept, and told to the protocols that pace their own sockets. */
+    suspend fun setGlobalUploadLimit(bytesPerSecond: Long?): CommandResult {
+        settings = store.settings.update { it.copy(globalUploadLimit = bytesPerSecond) }
+        applyLimits()
+        return CommandResult.Done(null)
+    }
+
+    // Each protocol once, however many kinds share it.
+    private fun applyLimits() {
+        for (protocol in protocols.values.distinct()) protocol.setGlobalLimits(settings.globalSpeedLimit, settings.globalUploadLimit)
+    }
+
+    /**
+     * Every job the last run left SEEDING is taken up again by its protocol, each in a coroutine of its own so the start
+     * doesn't wait for a session. A protocol that says it can't (TRANSIENT: no library yet) leaves the job SEEDING for the
+     * next start; any other failure ends the seed as FAILED with its message (TOR-05).
+     */
+    private suspend fun resumeSeeds() {
+        for (job in downloads.list(SEEDING)) {
+            val protocol = protocols[job.kind] ?: continue
+            slotScope.launch {
+                val result =
+                    try {
+                        protocol.resumeSeeding(job)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        StepResult.Failed(null, internalError(e))
+                    }
+                if (result !is StepResult.Failed) return@launch
+                if (result.errorClass == ErrorClass.TRANSIENT) {
+                    log.warn("queue") { "seed ${job.id.value} can't be taken up yet: ${result.message}" }
+                    return@launch
+                }
+                try {
+                    call { finishSeeding(job.id, result.message) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IllegalStateException) {
+                    // The queue is stopping; the job stays SEEDING and tries again at the next start.
+                }
+            }
+        }
+    }
+
+    /** A seed is over: SEEDING to COMPLETED, or to FAILED with [failure] on its last Attempt. Any other status is Rejected. */
+    suspend fun finishSeeding(
+        id: DownloadId,
+        failure: String?,
+    ): CommandResult =
+        withJob(id) { job ->
+            val target = if (failure == null) COMPLETED else FAILED
+            if (job.status != SEEDING) return@withJob CommandResult.Rejected(TransitionResult.Rejected(job.status, target))
+            if (failure != null) noteSeedFailure(id, failure)
+            val result = change(job.transitionTo(target))
+            if (result is CommandResult.Done) {
+                observer.event(if (failure == null) EngineEvent.Completed(id, emptyList()) else EngineEvent.Failed(id, null, failure))
+            }
+            result
+        }
+
+    private suspend fun noteSeedFailure(
+        id: DownloadId,
+        message: String,
+    ) {
+        val now = clock.now()
+        val last = downloads.attempts(id).lastOrNull()
+        if (last != null) {
+            updateAttempt(last.copy(endedAt = last.endedAt ?: now, message = message))
+        } else {
+            val made = downloads.addAttempt(NewAttempt(id, now, null))
+            updateAttempt(made.copy(endedAt = now, message = message))
+        }
     }
 
     /** The job's own limit (NET-02), kept like the priority; a running job slows or speeds up at once. */
@@ -918,7 +997,10 @@ internal class QueueActor(
             }
         val meter =
             object : Meter {
-                override fun record(bytes: Long) = observer.received(slot.id, bytes)
+                override fun record(
+                    bytes: Long,
+                    direction: Direction,
+                ) = if (direction == Direction.UP) observer.sent(slot.id, bytes) else observer.received(slot.id, bytes)
             }
         return when (val ran = runner.run(ready, listener, slot.limiter, meter) { bandwidth.shareOf(slot.id) }) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
@@ -977,7 +1059,10 @@ internal class QueueActor(
                     if (slot.stopping) null else afterCrash(slot)
                 }
             }
-        if (after != null && after != slot.download) save(after)
+        // A seed can end while the run that made it is still finishing: its job is over, and the slot's old view of it
+        // (SEEDING) must not put it back.
+        val over = after?.status == SEEDING && downloads.get(slot.id)?.status.let { it == COMPLETED || it == FAILED }
+        if (after != null && after != slot.download && !over) save(after)
         later.forEach(observer::event)
         val end = message.end
         when {

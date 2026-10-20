@@ -62,8 +62,28 @@ internal class FakeTorrentBackend : TorrentBackend {
         return StepResult.Ok(FakeRunning(request, script).also { added += it })
     }
 
+    /** The limits last given to [setSessionLimits]: download, then upload. */
+    var sessionLimits: Pair<Long?, Long?>? = null
+
+    override fun setSessionLimits(
+        download: Long?,
+        upload: Long?,
+    ) {
+        sessionLimits = download to upload
+    }
+
+    override var resumeSink: ((infoHash: String, bytes: ByteArray) -> Unit)? = null
+
+    /** What [close] hands the sink: the resume data of each torrent still added (not removed), by hash. */
+    val resumeAtClose = mutableMapOf<String, ByteArray>()
+
     override suspend fun close() {
         closed++
+        for (running in added.filter { it.removed == 0 }) {
+            val bytes = running.resume ?: continue
+            resumeSink?.invoke(running.request.info.infoHash, bytes)
+            resumeAtClose[running.request.info.infoHash] = bytes
+        }
     }
 }
 
@@ -81,7 +101,34 @@ internal class FakeRunning(
     var renameFailure: StepResult.Failed? = null
     var moveFailure: StepResult.Failed? = null
 
+    /** What [stats] answers; a test changes it between polls. */
+    var stats: TorrentStats = TorrentStats(0, 0, 0, 0, 0, false)
+
+    /** What [saveResume] answers (null: libtorrent could not make it), and how often it was asked. */
+    var resume: ByteArray? = "resume-of-${request.info.infoHash}".encodeToByteArray()
+    var resumeSaves = 0
+
+    /** Whether the files had been moved when [saveResume] was last asked. */
+    var movedAtLastSave = false
+
+    /** The last limit given to [setDownloadLimit]. */
+    var limitedTo: Long? = null
+
     override fun progress(): TorrentProgress = script[minOf(at++, script.lastIndex)]
+
+    override fun stats(): TorrentStats = stats
+
+    /** Like the library, a torrent that has left the session can't give resume data. */
+    override suspend fun saveResume(): ByteArray? {
+        if (removed > 0) return null
+        resumeSaves++
+        movedAtLastSave = moved != null
+        return resume
+    }
+
+    override fun setDownloadLimit(bytesPerSecond: Long?) {
+        limitedTo = bytesPerSecond
+    }
 
     override fun setPriorities(priorities: List<Int>) {
         chosen = priorities

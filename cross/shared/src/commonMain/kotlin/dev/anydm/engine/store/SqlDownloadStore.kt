@@ -140,7 +140,17 @@ internal class SqlDownloadStore(
         }
         new.context?.let { putContext(download.id, it) }
         new.format?.let { putFormat(download.id, it) }
-        new.torrent?.let { torrentQueries.put(download.id, it.metadata, it.priorities.joinToString(","), it.sequential) }
+        new.torrent?.let {
+            torrentQueries.put(
+                download.id,
+                it.metadata,
+                it.priorities.joinToString(","),
+                it.sequential,
+                null,
+                storedRatio(it.seedRatio),
+                storedMinutes(it.seedMinutes),
+            )
+        }
         return download
     }
 

@@ -2,6 +2,7 @@ package dev.anydm.engine.torrent
 
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.protocol.StepResult
+import kotlinx.coroutines.flow.Flow
 
 /**
  * What the engine asks of the torrent protocol outside a transfer: a look inside a torrent before it is added (TOR-02),
@@ -22,4 +23,13 @@ interface TorrentService {
         id: DownloadId,
         on: Boolean,
     ): Boolean
+
+    /** The seeds that ended, each once: by a rule, by [stopSeeding], or broken. Buffered, so none is lost before a collector comes. */
+    val seedEnds: Flow<SeedEnd>
+
+    /** Ends the seed of job [id] as [SeedEndReason.STOPPED]; false if it isn't seeding. */
+    suspend fun stopSeeding(id: DownloadId): Boolean
+
+    /** What each seed moved since the last call; the first call after a (re)add counts from the add (TOR-09). */
+    suspend fun seedTraffic(): List<SeedSample>
 }

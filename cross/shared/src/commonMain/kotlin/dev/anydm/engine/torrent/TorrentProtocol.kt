@@ -3,6 +3,7 @@ package dev.anydm.engine.torrent
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.File
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.nextFreeName
@@ -10,6 +11,7 @@ import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.media.hiddenFolderName
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.protocol.Direction
 import dev.anydm.engine.protocol.FinalizeResult
 import dev.anydm.engine.protocol.PlanContext
 import dev.anydm.engine.protocol.PlannedFile
@@ -20,16 +22,26 @@ import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.Transfer
 import dev.anydm.engine.protocol.TransferIo
 import dev.anydm.engine.protocol.TransferPlan
+import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.TorrentStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** What a torrent probe learns: the metadata and the file choice (a priority per file, 0 skips it). */
 class TorrentProbe(
@@ -66,10 +78,76 @@ class TorrentProtocol(
     private val torrentLimit: Int = 10 shl 20,
     /** How often a running torrent is asked how far it is. */
     private val pollEvery: Duration = 500.milliseconds,
+    /** The settings as they are now: the seeding rules and what a job without its own takes. */
+    private val settings: suspend () -> Settings = { Settings() },
+    /** How often a running or seeding torrent's resume data is saved. */
+    private val resumeEvery: Duration = 30.seconds,
+    /** How often the seeds are checked against their rules. */
+    private val seedPollEvery: Duration = 5.seconds,
+    /** Seconds in a minute of seeding time; a test sets 1 to make a minute short. */
+    private val secondsPerMinute: Int = 60,
+    /** The file rows of a job, for the names its files have now when a seed is taken up again after a restart. */
+    private val files: suspend (DownloadId) -> List<File> = { emptyList() },
+    /** Where the seed loop runs; by default a scope of its own that [close] cancels. */
+    scope: CoroutineScope? = null,
 ) : Protocol,
     TorrentService {
     /** The torrents in the session, by download: put there by a transfer, taken by its finalize or its end. */
     internal val handles = RunningTorrents()
+
+    private val seedScope = scope ?: CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val ownsScope = scope == null
+
+    private val seeds =
+        Seeds(
+            torrents = torrents::get,
+            settings = settings,
+            resumeEvery = resumeEvery,
+            seedPollEvery = seedPollEvery,
+            secondsPerMinute = secondsPerMinute,
+            scope = seedScope,
+            save = ::saveResume,
+        )
+
+    override val seedEnds: Flow<SeedEnd> get() = seeds.ends
+
+    override suspend fun stopSeeding(id: DownloadId): Boolean = seeds.end(id, SeedEndReason.STOPPED)
+
+    override suspend fun seedTraffic(): List<SeedSample> = seeds.traffic()
+
+    /** Which download each infohash in the session belongs to, for resume data the backend hands over when it closes. */
+    private val owners = mutableMapOf<String, DownloadId>()
+    private val ownersLock = Mutex()
+    private val closing = Channel<Pair<String, ByteArray>>(Channel.UNLIMITED)
+
+    init {
+        backend.resumeSink = { hash, bytes -> closing.trySend(hash to bytes) }
+    }
+
+    private suspend fun own(
+        hash: String,
+        id: DownloadId,
+    ) = ownersLock.withLock { owners[hash] = id }
+
+    /** Stores the torrent's resume data (TOR-06). A torrent that can't give any is skipped: resume data only saves a re-check. */
+    private suspend fun saveResume(
+        id: DownloadId,
+        torrent: RunningTorrent,
+    ) {
+        val bytes = torrent.saveResume() ?: return
+        try {
+            torrents.setResume(id, bytes)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A full disk or a busy database costs a re-check later; it must not stop a torrent from leaving the session.
+        }
+    }
+
+    override fun setGlobalLimits(
+        download: Long?,
+        upload: Long?,
+    ) = backend.setSessionLimits(download, upload)
 
     override val ownsFiles: Boolean get() = true
 
@@ -180,8 +258,10 @@ class TorrentProtocol(
         val probe = transfer.probe
         check(probe is TorrentProbe) { "TorrentProtocol can't transfer a ${probe::class.simpleName}" }
         val id = transfer.download.id
-        // A handle an earlier run left (its transfer was cut short without a chance to remove it) is replaced.
+        // A handle an earlier run left (its transfer was cut short without a chance to remove it) is replaced, and so is
+        // a seed this job still has (its run failed after finalize kept the torrent).
         handles.take(id)?.remove()
+        seeds.drop(id)
         val request =
             AddTorrent(
                 info = probe.info,
@@ -190,6 +270,8 @@ class TorrentProtocol(
                 sequential = probe.sequential,
                 // The torrent's own names: libtorrent finds what a paused or restarted download already has by them.
                 fileNames = probe.info.files.map { it.path },
+                // A changed file choice has dropped it (Task 6): what is stored matches what is asked for.
+                resume = torrents.get(id)?.resume,
             )
         val handle =
             when (val added = backend.add(request)) {
@@ -197,22 +279,42 @@ class TorrentProtocol(
                 is StepResult.Ok -> added.value
             }
         handles.put(id, handle)
+        own(probe.info.infoHash, id)
         var finished = false
+        var down = 0L
+        var up = 0L
+        var savedAt = TimeSource.Monotonic.markNow()
         try {
             while (true) {
                 val progress = handle.progress()
                 io.progress(progress.wantedDone)
+                val stats = handle.stats()
+                if (stats.payloadDown > down) io.meter.record(stats.payloadDown - down, Direction.DOWN)
+                if (stats.payloadUp > up) io.meter.record(stats.payloadUp - up, Direction.UP)
+                down = maxOf(down, stats.payloadDown)
+                up = maxOf(up, stats.payloadUp)
                 progress.error?.let { return failureOf(it) }
                 if (progress.finished) {
                     finished = true
                     return StepResult.Ok(Unit)
                 }
+                handle.setDownloadLimit(io.speedShare())
+                if (savedAt.elapsedNow() >= resumeEvery) {
+                    saveResume(id, handle)
+                    savedAt = TimeSource.Monotonic.markNow()
+                }
                 delay(pollEvery)
             }
         } finally {
-            // Whatever ended the transfer but a finished download leaves the session; the files stay where they are.
+            // Whatever ended the transfer but a finished download leaves the session, with its resume data saved first;
+            // the files stay where they are.
             if (!finished) {
-                withContext(NonCancellable) { handles.take(id)?.remove() }
+                withContext(NonCancellable) {
+                    handles.take(id)?.let {
+                        saveResume(id, it)
+                        it.remove()
+                    }
+                }
             }
         }
     }
@@ -228,11 +330,72 @@ class TorrentProtocol(
         val id = transfer.download.id
         val handle =
             handles.take(id) ?: return StepResult.Failed(ErrorClass.TRANSIENT, "the torrent is no longer in the session")
-        // Gone from the session at the end whatever happens: a failed finalize is retried from the transfer.
-        return try {
-            place(transfer, handle)
+        // Gone from the session at the end whatever happens, but a seed: a failed finalize is retried from the transfer.
+        var kept = false
+        try {
+            val placed = place(transfer, handle)
+            if (placed !is StepResult.Ok) return placed
+            // The blob carries the final names and place, so a restart finds the files without a check.
+            saveResume(id, handle)
+            val (ratio, minutes) = seedLimits(torrents.get(id), settings())
+            if (ratio == null && minutes == null) return placed
+            val stats = handle.stats()
+            withContext(NonCancellable) { seeds.add(id, handle, stats.payloadUp, stats.payloadDown) }
+            kept = true
+            return StepResult.Ok(placed.value.copy(seeding = true))
         } finally {
-            withContext(NonCancellable) { handle.remove() }
+            if (!kept) withContext(NonCancellable) { handle.remove() }
+        }
+    }
+
+    override suspend fun resumeSeeding(download: Download): StepResult<Unit> {
+        val id = download.id
+        if (seeds.has(id)) return StepResult.Ok(Unit)
+        val row = torrents.get(id) ?: return StepResult.Failed(null, "the torrent's record is gone")
+        val metadata = row.metadata ?: return StepResult.Failed(null, "the torrent's metadata is gone")
+        val info =
+            when (val read = backend.metadataOfBytes(metadata)) {
+                is StepResult.Failed -> return read
+                is StepResult.Ok -> read.value
+            }
+        val folder = download.saveFolder ?: return StepResult.Failed(null, "the download has no save folder")
+        val priorities =
+            resolvePriorities(row.priorities, info.files.size)
+                ?: return StepResult.Failed(null, "the saved file choice doesn't fit this torrent")
+        val names = finalNames(info, files(id))
+        for ((i, name) in names.withIndex()) {
+            if (priorities[i] == 0) continue
+            if (fileSystem.size(Path(folder, name)) is FileResult.NotFound) {
+                return StepResult.Failed(null, "the seeded file is gone: $name")
+            }
+        }
+        val request = AddTorrent(info, Path(folder), priorities, sequential = false, fileNames = names, resume = row.resume)
+        val handle =
+            when (val added = backend.add(request)) {
+                // The session didn't come up (no library on this machine): not the seed's fault, so the job stays SEEDING
+                // for the next start.
+                is StepResult.Failed -> return StepResult.Failed(ErrorClass.TRANSIENT, added.message)
+
+                is StepResult.Ok -> added.value
+            }
+        own(info.infoHash, id)
+        seeds.add(id, handle, up = 0, down = 0)
+        return StepResult.Ok(Unit)
+    }
+
+    /**
+     * The names a finished torrent's files have now, in torrent order: from the file rows (where a clash may have moved
+     * them), and for a file with no row of its own (one that was skipped) the torrent's name under the same folder.
+     */
+    private fun finalNames(
+        info: TorrentInfo,
+        rows: List<File>,
+    ): List<String> {
+        val byIndex = rows.associateBy { it.index }
+        val placedRoot = rows.minByOrNull { it.index }?.let { (it.placedPath ?: it.path).substringBefore('/') }
+        return info.files.mapIndexed { i, file ->
+            byIndex[i]?.let { it.placedPath ?: it.path }
+                ?: if (placedRoot != null && '/' in file.path) placedRoot + "/" + file.path.substringAfter('/') else file.path
         }
     }
 
@@ -373,7 +536,17 @@ class TorrentProtocol(
         return listOf(hiddenFolderName(name, download.id, "torrent"))
     }
 
-    override suspend fun close() = backend.close()
+    override suspend fun close() {
+        seeds.stop()
+        backend.close()
+        // The backend handed over the resume data of every torrent it still held (the transfers were stopped before, the seeds are kept).
+        while (true) {
+            val (hash, bytes) = closing.tryReceive().getOrNull() ?: break
+            val id = ownersLock.withLock { owners[hash] } ?: continue
+            torrents.setResume(id, bytes)
+        }
+        if (ownsScope) seedScope.cancel()
+    }
 }
 
 /** The running torrents by download id. Calls come from several coroutines (a transfer, a command), so it is locked. */

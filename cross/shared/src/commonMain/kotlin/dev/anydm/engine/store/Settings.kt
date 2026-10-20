@@ -44,6 +44,12 @@ data class Settings(
     val pacing: Pacing = Pacing(),
     /** The port torrents listen on (TOR-04); 0 picks one. */
     val torrentPort: Int = 6881,
+    /** A finished torrent seeds until it has sent this many times its size (TOR-05); null for no ratio limit. A torrent can have its own. */
+    val seedRatio: Double? = null,
+    /** A finished torrent seeds this many minutes (TOR-05); null for no time limit. A torrent can have its own. */
+    val seedMinutes: Int? = null,
+    /** The most bytes per second every upload together may send (TOR-08); null means no limit. */
+    val globalUploadLimit: Long? = null,
     /** Keep an `.m3u8` of each collection's finished items in its folder (MED-17). */
     val playlistFile: Boolean = true,
     /** The profile a new download takes when it names none (SET-02). */
@@ -57,6 +63,11 @@ data class Settings(
         require(torrentPort in 0..65535) { "torrentPort must be in 0..65535: $torrentPort" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }
         require(globalSpeedLimit == null || globalSpeedLimit > 0) { "globalSpeedLimit must be > 0, or null for none: $globalSpeedLimit" }
+        require(seedRatio == null || seedRatio > 0) { "seedRatio must be > 0, or null for none: $seedRatio" }
+        require(seedMinutes == null || seedMinutes > 0) { "seedMinutes must be > 0, or null for none: $seedMinutes" }
+        require(
+            globalUploadLimit == null || globalUploadLimit > 0,
+        ) { "globalUploadLimit must be > 0, or null for none: $globalUploadLimit" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }
