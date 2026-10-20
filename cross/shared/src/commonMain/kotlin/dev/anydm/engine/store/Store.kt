@@ -27,6 +27,7 @@ class Store internal constructor(
     val collectionItems: CollectionItemStore = SqlCollectionItemStore(database, io)
     val profiles: ProfileStore = SqlProfileStore(database, io)
     val torrents: TorrentStore = SqlTorrentStore(database, io)
+    val hostKeys: HostKeyStore = SqlHostKeyStore(database, io)
 
     /**
      * Closes the driver. With the JDBC driver on a file there is nothing held open between calls, so this changes

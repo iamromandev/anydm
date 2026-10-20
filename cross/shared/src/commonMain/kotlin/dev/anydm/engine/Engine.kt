@@ -26,6 +26,12 @@ import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
+import dev.anydm.engine.ftp.CredentialWriter
+import dev.anydm.engine.ftp.FtpUrl
+import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.ftp.stripUserInfo
+import dev.anydm.engine.http.originOf
+import dev.anydm.engine.http.userInfoOf
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.LogLevel
 import dev.anydm.engine.media.LISTING_CAP
@@ -130,6 +136,8 @@ class Engine(
     private val playlists: PlaylistSource? = null,
     /** Reads a torrent before it is added and changes one that is downloading (TOR-02); without one, only a whole torrent can be added. */
     private val torrents: TorrentService? = null,
+    /** Takes in the logins found in FTP and HTTP URLs when a job is added (FTP-06); without one, URLs keep their logins. */
+    private val credentials: CredentialWriter? = null,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
@@ -441,7 +449,46 @@ class Engine(
         log.info("engine") { "engine stopped" }
     }
 
-    suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
+    suspend fun add(new: NewDownload): CommandResult = command { queue.add(withoutLogins(new)) }
+
+    /** Saves an SFTP key login under [url]'s origin (FTP-04); false when it only reached memory, or the engine has no keychain. */
+    suspend fun saveKeyLogin(
+        url: String,
+        login: SshKeyLogin,
+    ): Boolean {
+        val writer = credentials ?: return false
+        return command { writer.saveKey(originFor(url), login) }
+    }
+
+    /** Stops trusting the SSH key of [host]:[port] (FTP-04), after the user has confirmed it changed; true if there was one. */
+    suspend fun forgetHostKey(
+        host: String,
+        port: Int,
+    ): Boolean = command { store.hostKeys.forget(host, port) }
+
+    // Where a login for [url] is kept: FTP's origin spells the port out for every scheme, HTTP's only for http and https.
+    private fun originFor(url: String): String = FtpUrl.parse(url)?.origin ?: originOf(url)
+
+    // A job's FTP and HTTP URLs without the user:password in them: the login goes to the keychain, and the rows never hold it.
+    private suspend fun withoutLogins(new: NewDownload): NewDownload {
+        val writer = credentials ?: return new
+        if (new.kind != DownloadKind.FTP && new.kind != DownloadKind.DIRECT) return new
+        val mirrors = new.mirrors.map { moveLogin(writer, it) }
+        val source = new.sourceUrl?.let { moveLogin(writer, it) }
+        return if (mirrors == new.mirrors && source == new.sourceUrl) new else new.copy(mirrors = mirrors, sourceUrl = source)
+    }
+
+    private suspend fun moveLogin(
+        writer: CredentialWriter,
+        url: String,
+    ): String {
+        val bare = stripUserInfo(url)
+        if (bare == url) return url
+        val login = userInfoOf(url) ?: return bare
+        val origin = originFor(url)
+        if (!writer.save(origin, login)) eventFlow.tryEmit(EngineEvent.CredentialsNotSaved(origin))
+        return bare
+    }
 
     /** The peers, trackers and piece map of torrent job [id] (TOR-07), for the one being looked at. */
     suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
@@ -1063,6 +1110,10 @@ class Engine(
 
             is EngineEvent.PausedForTool -> {
                 log.info("job") { "job ${event.id.value} paused: needs ${event.tool}" }
+            }
+
+            is EngineEvent.CredentialsNotSaved -> {
+                log.warn("job") { "login for ${event.origin} not saved in the keychain; kept for this run" }
             }
 
             is EngineEvent.StopTimedOut, is EngineEvent.EngineFailed -> {

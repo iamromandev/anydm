@@ -35,6 +35,14 @@ class RedactorTest {
         )
 
     @Test
+    fun maskedUserinfoOfFtpSftpUrls() {
+        for (scheme in listOf("ftp", "ftps", "ftpes", "sftp")) {
+            redactor.redact("$scheme://ann:pw@host/f") shouldBe "$scheme://***:***@host/f"
+            redactor.redact("$scheme://ann@host/f") shouldBe "$scheme://***@host/f"
+        }
+    }
+
+    @Test
     fun everyFormIsMasked() {
         for ((input, expected) in cases) withClue(input) { redactor.redact(input) shouldBe expected }
     }
