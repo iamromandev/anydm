@@ -44,10 +44,16 @@ import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewItem
+import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolManager
+import dev.anydm.engine.torrent.MAX_FILE_PRIORITY
+import dev.anydm.engine.torrent.TorrentInfo
+import dev.anydm.engine.torrent.TorrentService
+import dev.anydm.engine.torrent.TorrentSource
+import dev.anydm.engine.torrent.prioritiesFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -118,8 +124,13 @@ class Engine(
     private val tools: ToolManager? = null,
     /** Lists a playlist or channel for [addPlaylist] (MED-16); without one, a playlist can't be added. */
     private val playlists: PlaylistSource? = null,
+    /** Reads a torrent before it is added and changes one that is downloading (TOR-02); without one, only a whole torrent can be added. */
+    private val torrents: TorrentService? = null,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
+
+    // Each protocol once, however many kinds share it.
+    private val protocolList = protocols.values.distinct()
 
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -386,6 +397,16 @@ class Engine(
                 }
             }
         }
+        // The queue has stopped: what the protocols hold (a torrent session) can go. One that fails to close does not stop this.
+        for (protocol in protocolList) {
+            try {
+                protocol.close()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("engine") { "a protocol didn't close: ${e.message}" }
+            }
+        }
         engineJob.cancel()
         // The publisher may be reading the store: let it finish before the store closes.
         withTimeoutOrNull(stopTimeout) { engineJob.join() }
@@ -396,6 +417,98 @@ class Engine(
     }
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(new) }
+
+    /** Reads a torrent without adding it (TOR-02): its name and files, for a choice of which to download. */
+    suspend fun inspectTorrent(source: String): InspectResult {
+        val service = torrents ?: return InspectResult.Unavailable
+        return when (val inspected = command { service.inspect(source) }) {
+            is StepResult.Failed -> InspectResult.Failed(inspected)
+            is StepResult.Ok -> InspectResult.Inspected(inspected.value)
+        }
+    }
+
+    /**
+     * Adds a torrent (TOR-01) from a magnet link, the address of a `.torrent` file or a path to one. [files] are the
+     * torrent paths to download, null for all of them; a choice needs the file list, which is [info] from an earlier
+     * [inspectTorrent] or else read now. The job is [template] with the torrent's own options, [sequential] asking for
+     * the pieces in order (TOR-03).
+     */
+    suspend fun addTorrent(
+        source: String,
+        files: Set<String>? = null,
+        sequential: Boolean = false,
+        template: NewDownload = NewDownload(DownloadKind.TORRENT),
+        info: TorrentInfo? = null,
+    ): AddTorrentResult {
+        if (TorrentSource.parse(source) == null) return AddTorrentResult.BadSource
+        var known = info
+        if (files != null && known == null) {
+            val service = torrents ?: return AddTorrentResult.Unavailable
+            known =
+                when (val inspected = command { service.inspect(source) }) {
+                    is StepResult.Failed -> return AddTorrentResult.Failed(inspected)
+                    is StepResult.Ok -> inspected.value
+                }
+        }
+        val priorities = if (known == null) emptyList() else prioritiesFor(known, files) ?: return AddTorrentResult.EmptySelection
+        val added =
+            command {
+                queue.add(
+                    template.copy(
+                        kind = DownloadKind.TORRENT,
+                        mirrors = listOf(source),
+                        torrent = NewTorrent(known?.metadata, priorities, sequential),
+                    ),
+                )
+            }
+        return when (added) {
+            is CommandResult.Done -> AddTorrentResult.Added(checkNotNull(added.download) { "the queue added no job" })
+            else -> AddTorrentResult.Refused(added)
+        }
+    }
+
+    /**
+     * Chooses the files of torrent job [id] (TOR-02): a priority from 0 (skip) to 7 for each file in torrent order, not
+     * all 0. A torrent that is downloading follows at once when the files it takes stay the same; a different set takes
+     * effect the next time the job runs, since its files were made for the old one.
+     */
+    suspend fun setTorrentFiles(
+        id: DownloadId,
+        priorities: List<Int>,
+    ): CommandResult =
+        command {
+            val row = store.torrents.get(id) ?: return@command CommandResult.NotFound
+            if (priorities.any { it !in 0..MAX_FILE_PRIORITY }) {
+                return@command CommandResult.Invalid("file priorities are 0 to $MAX_FILE_PRIORITY: $priorities")
+            }
+            if (priorities.all { it == 0 }) return@command CommandResult.Invalid("no file is selected")
+            // The torrent's files are known from its rows once it has run, else from the choice it was added with.
+            val count =
+                store.downloads
+                    .files(id)
+                    .size
+                    .takeIf { it > 0 } ?: row.priorities.size.takeIf { it > 0 }
+            if (count != null && priorities.size != count) {
+                return@command CommandResult.Invalid("the torrent has $count files, not ${priorities.size}")
+            }
+            // No stored choice means every file is selected.
+            val sameFiles =
+                if (row.priorities.isEmpty()) priorities.all { it > 0 } else row.priorities.map { it > 0 } == priorities.map { it > 0 }
+            store.torrents.setPriorities(id, priorities)
+            if (sameFiles) torrents?.applyPriorities(id, priorities)
+            CommandResult.Done(store.downloads.get(id))
+        }
+
+    /** Sets whether torrent job [id] takes its pieces in order (TOR-03); a torrent that is downloading follows at once. */
+    suspend fun setSequential(
+        id: DownloadId,
+        on: Boolean,
+    ): CommandResult =
+        command {
+            if (!store.torrents.setSequential(id, on)) return@command CommandResult.NotFound
+            torrents?.applySequential(id, on)
+            CommandResult.Done(store.downloads.get(id))
+        }
 
     /**
      * Adds a playlist or channel as a collection (MED-16): one flat listing of [url], then a parent job and one child job

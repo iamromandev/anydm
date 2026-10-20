@@ -157,7 +157,7 @@ class StepRunner(
         }
         val learned = probe.size
         if (learned != null && (learned != download.size || plan.folder != folder)) {
-            val room = checkSpace(plan.folder, learned - writtenBytes(download.id))
+            val room = checkSpace(plan.folder, learned - bytesAlreadyHeld(download))
             // The size stays with the job, so whoever waits for room knows how much it needs.
             if (room is StepResult.Failed) return prepareFailed(download.copy(size = learned), Step.PROBE, room)
         }
@@ -214,9 +214,12 @@ class StepRunner(
         download: Download,
         folder: Path,
     ): StepResult<Unit> {
-        for (file in store.files(download.id)) {
-            val deleted = fileSystem.delete(partialPath(targetPath(folder, file.path), download.id))
-            if (deleted is FileResult.Failed && deleted !is FileResult.NotFound) return deleted.toStepFailed()
+        // A protocol's own files are its, and the user's: only the rows go.
+        if (!owns(download)) {
+            for (file in store.files(download.id)) {
+                val deleted = fileSystem.delete(partialPath(targetPath(folder, file.path), download.id))
+                if (deleted is FileResult.Failed && deleted !is FileResult.NotFound) return deleted.toStepFailed()
+            }
         }
         store.replaceFiles(download.id, emptyList())
         return StepResult.Ok(Unit)
@@ -252,7 +255,7 @@ class StepRunner(
         // Only one file has one checksum; bad output paths are placeOutputs' to refuse, before anything reads them.
         if (expected != null && finalized.outputs.size == 1 && pathProblem(finalized.outputs) == null) {
             val target = targetPath(folder, finalized.outputs.single())
-            val checked = checkFile(partialPath(target, job.download.id), target, expected)
+            val checked = checkFile(if (owns(job.download)) target else partialPath(target, job.download.id), target, expected)
             if (checked is StepResult.Failed) return runFailed(muxing, Step.POST_PROCESS, checked)
         }
         val outputs =
@@ -304,7 +307,7 @@ class StepRunner(
             val row = rows.firstOrNull { it.path == path } ?: continue
             val target = targetPath(folder, path)
             // Only the partial is the job's own: a file at the stream's final name is somebody else's.
-            fileSystem.delete(partialPath(target, download.id))
+            if (!owns(download)) fileSystem.delete(partialPath(target, download.id))
             store.removeFile(row.id)
         }
         for (path in finalized.cleanup) {
@@ -322,7 +325,7 @@ class StepRunner(
         val prepared = fileSystem.prepareFolder(folder)
         if (prepared is FileResult.Failed) return prepared.toStepFailed()
         if (download.size != null) {
-            val room = checkSpace(folder, download.size - writtenBytes(download.id))
+            val room = checkSpace(folder, download.size - bytesAlreadyHeld(download))
             if (room is StepResult.Failed) return room
         }
         return StepResult.Ok(folder)
@@ -346,7 +349,7 @@ class StepRunner(
         val stored =
             store.files(download.id).map { file ->
                 val target = targetPath(folder, file.path)
-                TransferFile(file, store.segments(file.id), partialPath(target, download.id), target)
+                TransferFile(file, store.segments(file.id), if (protocol.ownsFiles) target else partialPath(target, download.id), target)
             }
         val plan =
             when (val planned = protocol.plan(job.probe, PlanContext(download, stored))) {
@@ -403,7 +406,8 @@ class StepRunner(
                 is StepResult.Ok -> opened.value
             }
         for (part in transfer.files) part.segments.forEach { owners[it.id] = part.file.id }
-        val total = if (plan.files.all { it.size != null }) plan.files.map { it.size ?: 0L }.saturatingSum() else null
+        val counted = plan.files.filter { it.selected }
+        val total = if (counted.all { it.size != null }) counted.map { it.size ?: 0L }.saturatingSum() else null
         val io = RunIo(transfer, writers, checkpointer, limiter, meter, listener, total, share)
         val moved = transferWithCheckpoints(protocol, transfer, io, checkpointer)
         if (moved is StepResult.Failed) return moved
@@ -492,6 +496,7 @@ class StepRunner(
     ): StepResult<Transfer> {
         val planned = plan.files.sortedBy { it.index }
         pathProblem(planned.map { it.path })?.let { return StepResult.Failed(null, "the plan can't be made in the save folder: $it") }
+        val owns = protocols.getValue(download.kind).ownsFiles
         val sameFiles = stored.map { it.file.key() } == planned.map { it.key() }
         val earlier = if (sameFiles) stored else emptyList()
         val kept =
@@ -501,18 +506,27 @@ class StepRunner(
                     resumes(old, new)
                 }.map { (old, _) -> old.segments.sumOf { it.written } }
                 .saturatingSum()
-        val room = checkSpace(folder, planned.map { it.size ?: 0L }.saturatingSum() - kept)
+        // An owning protocol's bytes on disk aren't in any segment: a job that ran before is taken to have what it has.
+        val room =
+            if (owns && stored.isNotEmpty()) {
+                StepResult.Ok(Unit)
+            } else {
+                checkSpace(folder, planned.filter { it.selected }.map { it.size ?: 0L }.saturatingSum() - kept)
+            }
         if (room is StepResult.Failed) return room
-        if (!sameFiles) {
+        if (!sameFiles && !owns) {
             val targets = planned.map { targetPath(folder, it.path) }.toSet()
             for (old in stored.filter { it.target !in targets && isSafeRelativePath(it.file.path) }) {
                 val gone = fileSystem.delete(old.partial)
                 if (gone is FileResult.Failed && gone !is FileResult.NotFound) return gone.toStepFailed()
             }
         }
-        for (parent in planned.map { requireNotNull(targetPath(folder, it.path).parent) }.distinct()) {
-            val made = fileSystem.prepareFolder(parent)
-            if (made is FileResult.Failed) return made.toStepFailed()
+        // An owning protocol makes its own folders: an empty one made here would look like a clash.
+        if (!owns) {
+            for (parent in planned.map { requireNotNull(targetPath(folder, it.path).parent) }.distinct()) {
+                val made = fileSystem.prepareFolder(parent)
+                if (made is FileResult.Failed) return made.toStepFailed()
+            }
         }
         val rows =
             if (sameFiles) {
@@ -520,13 +534,17 @@ class StepRunner(
             } else {
                 store.replaceFiles(
                     download.id,
-                    planned.map { NewFile(it.index, it.path, it.size) },
+                    planned.map { NewFile(it.index, it.path, it.size, it.selected) },
                 )
             }
         val files = mutableListOf<TransferFile>()
         for ((i, new) in planned.withIndex()) {
             val file = rows[i]
             val target = targetPath(folder, new.path)
+            if (owns) {
+                files += TransferFile(file, if (sameFiles) stored[i].segments else emptyList(), target, target)
+                continue
+            }
             val partial = partialPath(target, download.id)
             val old = earlier.getOrNull(i)
             val placedAt = old?.file?.placedPath?.let { targetPath(folder, it) } ?: target
@@ -644,6 +662,15 @@ class StepRunner(
                 placed += before
                 continue
             }
+            if (owns(download)) {
+                // The protocol put it there itself: it only has to be there.
+                if (fileSystem.size(target) !is FileResult.Ok) {
+                    return StepResult.Failed(null, "the protocol finished, but $output isn't in the save folder")
+                }
+                placed += target
+                if (row != null) withContext(NonCancellable) { store.setPlacedPath(row.id, output) }
+                continue
+            }
             val partial = partialPath(target, download.id)
             val moved = placement.place(download, partial, target)
             // No partial but the output is there: a stopped run placed it already.
@@ -729,6 +756,16 @@ class StepRunner(
         }
     }
 
+    // Whether the download's protocol keeps its own files (a torrent's): the runner then makes rows only.
+    private fun owns(download: Download): Boolean = protocols[download.kind]?.ownsFiles == true
+
+    /**
+     * What the download has on disk, as far as the runner can tell. An owning protocol keeps no segments, so a job that
+     * ran before counts as holding everything it needs (the protocol reports a full disk itself).
+     */
+    private suspend fun bytesAlreadyHeld(download: Download): Long =
+        if (owns(download) && store.files(download.id).isNotEmpty()) Long.MAX_VALUE else writtenBytes(download.id)
+
     private suspend fun writtenBytes(id: DownloadId): Long =
         store
             .files(id)
@@ -774,9 +811,16 @@ private fun mergedRanges(ranges: List<LongRange>): List<LongRange> {
 
 private fun StepResult.Failed.toFailure(step: Step) = StepFailure(step, errorClass, message, retryAfter)
 
-private fun File.key() = Triple(index, path, size)
+private data class FileKey(
+    val index: Int,
+    val path: String,
+    val size: Long?,
+    val selected: Boolean,
+)
 
-private fun PlannedFile.key() = Triple(index, path, size)
+private fun File.key() = FileKey(index, path, size, selected)
+
+private fun PlannedFile.key() = FileKey(index, path, size, selected)
 
 private fun resumes(
     old: TransferFile,

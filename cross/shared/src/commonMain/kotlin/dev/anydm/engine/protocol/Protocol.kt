@@ -8,9 +8,17 @@ import dev.anydm.engine.core.Download
  * an ErrorClass, or none when no class fits); bugs throw. Never catch CancellationException: pause and cancel arrive
  * as cancellation, and partial files and watermarks stay for the next run. One instance serves every download of its
  * kind, so keep per-job state in the ProbeResult or on disk. The runner owns the save folder: it creates each planned
- * file's `.anydm` partial, hands it over through TransferIo, and renames FinalizeResult.outputs into place (FIL-07).
+ * file's `.anydm` partial, hands it over through TransferIo, and renames FinalizeResult.outputs into place (FIL-07),
+ * unless the protocol [ownsFiles].
  */
 interface Protocol {
+    /**
+     * The protocol keeps its own files (a torrent's library writes them and moves them into place, TOR-10). The runner
+     * then makes the file rows only: no `.anydm` partial, no preallocation, no segments, no placement. [finalize] says
+     * where the files are, relative to the save folder, and they must be there.
+     */
+    val ownsFiles: Boolean get() = false
+
     /** What there is: name, size, and whatever [plan] needs (HTTP-01, TOR-02, MED-01). */
     suspend fun probe(request: ProbeRequest): StepResult<ProbeResult>
 
@@ -43,4 +51,7 @@ interface Protocol {
      * lives there.
      */
     fun workFolders(download: Download): List<String> = emptyList()
+
+    /** Called once when the engine stops, after the queue has: release what the protocol holds (a session, a socket). */
+    suspend fun close() = Unit
 }

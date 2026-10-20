@@ -42,6 +42,7 @@ internal class SqlDownloadStore(
     private val segmentQueries = database.segmentQueries
     private val attemptQueries = database.attemptQueries
     private val collectionItemQueries = database.collectionItemQueries
+    private val torrentQueries = database.torrentQueries
 
     // One transaction per call: the JDBC driver opens a connection per statement outside one, and
     // last_insert_rowid() only means something on the connection that inserted. The block never suspends.
@@ -139,6 +140,7 @@ internal class SqlDownloadStore(
         }
         new.context?.let { putContext(download.id, it) }
         new.format?.let { putFormat(download.id, it) }
+        new.torrent?.let { torrentQueries.put(download.id, it.metadata, it.priorities.joinToString(","), it.sequential) }
         return download
     }
 

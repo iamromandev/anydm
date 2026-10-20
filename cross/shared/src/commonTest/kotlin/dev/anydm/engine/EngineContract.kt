@@ -651,4 +651,27 @@ abstract class EngineContract : StoreTestBase() {
                 h.engine.stop()
             }
         }
+
+    @Test
+    fun stopClosesEveryProtocolOnce() =
+        runTest {
+            val h = started()
+
+            h.engine.stop()
+
+            // Every kind shares one protocol here: it is closed once, not once per kind.
+            h.protocol.closed shouldBe 1
+        }
+
+    @Test
+    fun aFailingCloseDoesNotStopTheEngineFromStopping() =
+        runTest {
+            val h = started()
+            h.protocol.closeFailure = IllegalStateException("boom")
+
+            h.engine.stop()
+
+            h.engine.state.value shouldBe EngineState.Stopped
+            h.protocol.closed shouldBe 1
+        }
 }

@@ -42,6 +42,8 @@ data class Settings(
     val cookieSource: CookieSource = CookieSource.None,
     /** How carefully requests to a site are paced (MED-20). */
     val pacing: Pacing = Pacing(),
+    /** The port torrents listen on (TOR-04); 0 picks one. */
+    val torrentPort: Int = 6881,
     /** Keep an `.m3u8` of each collection's finished items in its folder (MED-17). */
     val playlistFile: Boolean = true,
     /** The profile a new download takes when it names none (SET-02). */
@@ -52,6 +54,7 @@ data class Settings(
         require(historyLimit >= 1) { "historyLimit must be >= 1: $historyLimit" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
+        require(torrentPort in 0..65535) { "torrentPort must be in 0..65535: $torrentPort" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }
         require(globalSpeedLimit == null || globalSpeedLimit > 0) { "globalSpeedLimit must be > 0, or null for none: $globalSpeedLimit" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {

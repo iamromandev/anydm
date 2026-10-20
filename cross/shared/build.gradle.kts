@@ -22,6 +22,8 @@ kotlin {
                 dependencies {
                     // The HTTP transport (#567).
                     implementation(libs.okhttp)
+                    // BitTorrent (#541): the Java API; the native libraries are below, per desktop OS.
+                    implementation(libs.libtorrent4j)
                 }
             }
         val jvmCommonTest =
@@ -49,6 +51,10 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
             // GetDriveType for the Windows Recycle Bin guard; only loaded on Windows.
             implementation(libs.jna.platform)
+            // libtorrent's native library for each desktop OS (#541); TorrentNatives picks the one that fits at run time.
+            implementation(libs.libtorrent4j.macos)
+            implementation(libs.libtorrent4j.linux)
+            implementation(libs.libtorrent4j.windows)
         }
         jvmTest.dependencies {
             // FaultServer: a local server with ranges and injected faults (#567).

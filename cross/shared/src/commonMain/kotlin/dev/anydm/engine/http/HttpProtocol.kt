@@ -215,7 +215,29 @@ class HttpProtocol(
         url: String,
         context: RequestContext?,
         limit: Int = 4 shl 20,
-    ): StepResult<FetchedText> {
+    ): StepResult<FetchedText> =
+        when (val got = fetchWhole(url, context, limit)) {
+            is StepResult.Failed -> got
+            is StepResult.Ok -> StepResult.Ok(FetchedText(got.value.first.decodeToString(), got.value.second))
+        }
+
+    /** A small binary file, such as a `.torrent`: read whole, at most [limit] bytes, with failures mapped as [fetchText] does. */
+    internal suspend fun fetchBytes(
+        url: String,
+        context: RequestContext?,
+        limit: Int,
+    ): StepResult<ByteArray> =
+        when (val got = fetchWhole(url, context, limit)) {
+            is StepResult.Failed -> got
+            is StepResult.Ok -> StepResult.Ok(got.value.first)
+        }
+
+    // The body and the address it was finally served from.
+    private suspend fun fetchWhole(
+        url: String,
+        context: RequestContext?,
+        limit: Int,
+    ): StepResult<Pair<ByteArray, String>> {
         val response =
             try {
                 auth.open(HttpRequest(url, headers = requestHeaders(context)))
@@ -237,7 +259,7 @@ class HttpProtocol(
                 if (buffer.size + n > limit) return StepResult.Failed(null, "the file at ${hostOf(url)} is bigger than $limit bytes")
                 buffer.write(chunk, 0, n)
             }
-            return StepResult.Ok(FetchedText(buffer.readByteArray().decodeToString(), response.finalUrl))
+            return StepResult.Ok(buffer.readByteArray() to response.finalUrl)
         } finally {
             response.body.close()
         }

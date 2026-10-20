@@ -314,4 +314,33 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.load().cookieSource shouldBe CookieSource.None
             settings.load().pacing shouldBe Pacing()
         }
+
+    @Test
+    fun torrentPortRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+
+            settings.load().torrentPort shouldBe 6881
+            settings.update { it.copy(torrentPort = 51413) }.torrentPort shouldBe 51413
+            settings.load().torrentPort shouldBe 51413
+            settings.update { it.copy(torrentPort = 0) }
+            settings.load().torrentPort shouldBe 0
+            settings.update { it.copy(torrentPort = 6881) }
+            rows() shouldBe emptyList()
+        }
+
+    @Test
+    fun aTorrentPortOutOfRangeIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(torrentPort = 70000) }
+        shouldThrow<IllegalArgumentException> { Settings(torrentPort = -1) }
+    }
+
+    @Test
+    fun anUnreadableTorrentPortFallsBack() =
+        runTest {
+            val store = newStore()
+            driver.exec("INSERT INTO setting(name, data) VALUES ('torrent.port', 'abc')")
+
+            store.settings.load().torrentPort shouldBe 6881
+        }
 }
