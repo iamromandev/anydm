@@ -6,6 +6,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.torrent.TorrentSummary
 
 /**
  * One job as a UI shows it (FND-11): its stored row, what it is doing now, and everything stored about it.
@@ -29,14 +30,20 @@ data class DownloadSnapshot(
     val files: List<FileSnapshot>,
     /** A collection: how many of its items are in each state (MED-16); null for any other job. */
     val items: ItemCounts? = null,
+    /** A torrent in the session: its peers, rates and ratio (TOR-07); null for any other job and for a torrent that is not running or seeding. */
+    val torrent: TorrentSummary? = null,
 )
 
-/** A file of a job with its segments, as of the last checkpoint. */
+/**
+ * A file of a job with its segments, as of the last checkpoint. A torrent has no segments: its [done] bytes come from the
+ * store, or live from the session while it runs.
+ */
 data class FileSnapshot(
     val file: File,
     val segments: List<Segment>,
+    val done: Long? = null,
 ) {
-    val written: Long get() = segments.sumOf { it.written }
+    val written: Long get() = done ?: segments.sumOf { it.written }
 }
 
 /** A speed now and the last 60 one-second samples, oldest first. */

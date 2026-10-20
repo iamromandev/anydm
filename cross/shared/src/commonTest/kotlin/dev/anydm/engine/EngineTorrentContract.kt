@@ -14,11 +14,15 @@ import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.StoreTestBase
 import dev.anydm.engine.torrent.FakeTorrentService
+import dev.anydm.engine.torrent.PieceMap
 import dev.anydm.engine.torrent.SeedEnd
 import dev.anydm.engine.torrent.SeedEndReason
 import dev.anydm.engine.torrent.SeedRule
+import dev.anydm.engine.torrent.TorrentDetail
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentInfo
+import dev.anydm.engine.torrent.TorrentLive
+import dev.anydm.engine.torrent.TorrentSummary
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -398,6 +402,202 @@ abstract class EngineTorrentContract : StoreTestBase() {
 
     private fun TestScope.eventsOf(h: EngineHarness): List<EngineEvent> =
         mutableListOf<EngineEvent>().also { events -> backgroundScope.launch { h.engine.events.collect { events += it } } }
+
+    // Snapshot detail (TOR-07)
+
+    private fun summaryOf(peers: Int = 4) = TorrentSummary(peers, 1, 1.5, 2000, 300, 9000, 0.25, 12)
+
+    private suspend fun TestScope.finishedTorrent(h: EngineHarness): DownloadId {
+        val id = h.torrent()
+        advanceTimeBy(6.seconds)
+        runCurrent()
+        h.status(id) shouldBe DownloadStatus.COMPLETED
+        return id
+    }
+
+    @Test
+    fun theSummaryReachesTheSnapshot() =
+        runTest {
+            val h = started()
+            try {
+                val id = finishedTorrent(h)
+                h.snapshot(id)!!.torrent shouldBe null
+
+                service.liveMap = mapOf(id to TorrentLive(summaryOf(), listOf(12_345L)))
+                advanceTimeBy(2.seconds)
+                runCurrent()
+
+                val snapshot = h.snapshot(id)!!
+                snapshot.torrent shouldBe summaryOf()
+                snapshot.files.single().written shouldBe 12_345L
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aSeedHasASummaryWithoutASlot() =
+        runTest {
+            val h = started()
+            try {
+                val id = seeding(h)
+                service.liveMap = mapOf(id to TorrentLive(summaryOf(peers = 7), listOf(65_536L)))
+
+                advanceTimeBy(2.seconds)
+                runCurrent()
+
+                h.snapshot(id)!!.torrent!!.peers shouldBe 7
+                h.snapshot(id)!!.downloaded shouldBe 65_536L
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun theSummaryClearsWhenTheTorrentLeaves() =
+        runTest {
+            val h = started()
+            try {
+                val id = finishedTorrent(h)
+                service.liveMap = mapOf(id to TorrentLive(summaryOf(), listOf(1L)))
+                advanceTimeBy(2.seconds)
+                runCurrent()
+                h.snapshot(id)!!.torrent shouldBe summaryOf()
+
+                service.liveMap = emptyMap()
+                advanceTimeBy(2.seconds)
+                runCurrent()
+
+                h.snapshot(id)!!.torrent shouldBe null
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun anUnchangedSummaryDoesNotRepublish() =
+        runTest {
+            val h = started()
+            try {
+                val id = finishedTorrent(h)
+                service.liveMap = mapOf(id to TorrentLive(summaryOf(), listOf(1L)))
+                advanceTimeBy(2.seconds)
+                runCurrent()
+                val published = h.engine.publishCount
+
+                advanceTimeBy(5.seconds)
+                runCurrent()
+
+                h.engine.publishCount shouldBe published
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aStoppedTorrentShowsItsStoredProgress() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                advanceTimeBy(1.seconds)
+                runCurrent()
+                h.store.torrents.setFileDone(id, listOf(777L))
+                advanceTimeBy(6.seconds)
+                runCurrent()
+
+                h.status(id) shouldBe DownloadStatus.COMPLETED
+                h
+                    .snapshot(id)!!
+                    .files
+                    .single()
+                    .written shouldBe 777L
+                h.snapshot(id)!!.downloaded shouldBe 777L
+                h.snapshot(id)!!.torrent shouldBe null
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aWrongLengthStoredFileDoneIsIgnored() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                advanceTimeBy(1.seconds)
+                runCurrent()
+                h.store.torrents.setFileDone(id, listOf(1L, 2L))
+                advanceTimeBy(6.seconds)
+                runCurrent()
+
+                h
+                    .snapshot(id)!!
+                    .files
+                    .single()
+                    .written shouldBe 64L * 1024
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aChangedSelectionClearsFileDone() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                h.store.torrents.setFileDone(id, listOf(5L, 6L))
+
+                h.engine.setTorrentFiles(id, listOf(7, 1)).shouldBeInstanceOf<CommandResult.Done>()
+                h.store.torrents
+                    .get(id)!!
+                    .fileDone shouldBe listOf(5L, 6L)
+
+                h.engine.setTorrentFiles(id, listOf(0, 4)).shouldBeInstanceOf<CommandResult.Done>()
+                h.store.torrents
+                    .get(id)!!
+                    .fileDone shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun torrentDetailAnswers() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                h.engine.torrentDetail(id) shouldBe TorrentDetailResult.NotInSession
+
+                val shown = TorrentDetail(emptyList(), emptyList(), PieceMap(8, byteArrayOf(1)))
+                service.details[id] = shown
+
+                h.engine
+                    .torrentDetail(id)
+                    .shouldBeInstanceOf<TorrentDetailResult.Detail>()
+                    .detail shouldBe shown
+            } finally {
+                h.engine.stop()
+            }
+            val bare = started(torrents = null)
+            try {
+                bare.engine.torrentDetail(DownloadId(1)) shouldBe TorrentDetailResult.Unavailable
+            } finally {
+                bare.engine.stop()
+            }
+        }
+
+    @Test
+    fun aStoppedEngineTakesNoDetailCall() =
+        runTest {
+            val h = started()
+            val id = h.torrent()
+            h.engine.stop()
+
+            runCatching { h.engine.torrentDetail(id) }.exceptionOrNull().shouldBeInstanceOf<IllegalStateException>()
+        }
 
     @Test
     fun aSeedEndedByRuleBecomesCompletedAndEmitsCompleted() =
