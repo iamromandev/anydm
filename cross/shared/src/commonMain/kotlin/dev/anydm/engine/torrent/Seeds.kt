@@ -154,9 +154,9 @@ internal class Seeds(
             val (ratio, minutes) = seedLimits(torrents(id), current)
             val stats = seed.handle.stats()
             val reached =
-                ratio == null && minutes == null ||
-                    ratio != null && stats.wanted > 0 && stats.allTimeUp.toDouble() / stats.wanted >= ratio ||
-                    minutes != null && stats.seedingSeconds >= minutes.toLong() * secondsPerMinute
+                (ratio == null && minutes == null) ||
+                    (ratio != null && stats.wanted > 0 && stats.allTimeUp.toDouble() / stats.wanted >= ratio) ||
+                    (minutes != null && stats.seedingSeconds >= minutes.toLong() * secondsPerMinute)
             if (reached) {
                 end(id, SeedEndReason.RULE)
             } else if (seed.savedAt.elapsedNow() >= resumeEvery) {
