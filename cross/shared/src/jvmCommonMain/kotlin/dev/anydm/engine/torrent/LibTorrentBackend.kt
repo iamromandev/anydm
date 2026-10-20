@@ -472,7 +472,8 @@ class LibTorrentBackend(
                         payloadUp = status.totalPayloadUpload(),
                         allTimeUp = uploadedBefore + status.totalPayloadUpload(),
                         wanted = status.totalWanted(),
-                        seedingSeconds = status.seedingDuration(),
+                        // Since it finished, not libtorrent's seeding time: that one only runs for a torrent with every file.
+                        seedingSeconds = status.finishedDuration(),
                         seeding = status.isSeeding,
                     )
                 } finally {

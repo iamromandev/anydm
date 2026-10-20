@@ -1,6 +1,7 @@
 package dev.anydm.engine.torrent
 
 import dev.anydm.engine.core.Download
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
@@ -22,11 +23,14 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.TorrentStore
 import dev.anydm.engine.store.openInMemoryDatabase
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -47,11 +51,28 @@ class TorrentProtocolSeedingTest {
     private var settings = Settings()
     private var rows: List<File> = emptyList()
 
+    /** The torrent store, which can be told to fail every resume save (a full disk, a busy database). */
+    private class FailingResumeStore(
+        private val delegate: TorrentStore,
+    ) : TorrentStore by delegate {
+        var failing = false
+
+        override suspend fun setResume(
+            id: DownloadId,
+            bytes: ByteArray?,
+        ): Boolean {
+            if (failing) throw IllegalStateException("disk full")
+            return delegate.setResume(id, bytes)
+        }
+    }
+
+    private val resumeStore = FailingResumeStore(store.torrents)
+
     private val protocol =
         TorrentProtocol(
             http = HttpProtocol(OkHttpTransport()),
             backend = backend,
-            torrents = store.torrents,
+            torrents = resumeStore,
             cleaner = NameCleaner(OsProfile.LINUX),
             fileSystem = fs,
             magnetTimeout = 50.milliseconds,
@@ -333,6 +354,45 @@ class TorrentProtocolSeedingTest {
 
             failed.message shouldContain "Pack/b.bin"
             backend.added.size shouldBe 0
+        }
+
+    @Test
+    fun aFailingResumeSaveStillEndsTheSeed() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            resumeStore.failing = true
+
+            protocol.stopSeeding(transfer.download.id) shouldBe true
+
+            nextEnd() shouldBe SeedEnd.Ended(transfer.download.id, SeedEndReason.STOPPED)
+            backend.added.single().removed shouldBe 1
+        }
+
+    @Test
+    fun aFailingResumeSaveDoesNotKeepAPausedTorrentInTheSession() =
+        runBlocking<Unit> {
+            backend.script = listOf(TorrentProgress(10, 300, false))
+            val transfer = prepared()
+            resumeStore.failing = true
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            withTimeout(5.seconds) { while (backend.added.isEmpty()) delay(5) }
+
+            running.cancelAndJoin()
+
+            backend.added.single().removed shouldBe 1
+        }
+
+    @Test
+    fun aNewTransferReplacesTheSeedOfTheSameJob() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            backend.added.first().removed shouldBe 1
+            // the seed went quietly: no end, and nothing left to stop
+            noEnd() shouldBe true
+            protocol.stopSeeding(transfer.download.id) shouldBe false
         }
 
     @Test

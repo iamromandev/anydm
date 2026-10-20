@@ -84,6 +84,12 @@ internal class Seeds(
         return true
     }
 
+    /** Takes the seed of [id], if it has one, out of the session without an end: its job is being run again. */
+    suspend fun drop(id: DownloadId) {
+        val seed = lock.withLock { seeds.remove(id) } ?: return
+        withContext(NonCancellable) { leave(id, seed) }
+    }
+
     private suspend fun fail(
         id: DownloadId,
         message: String,

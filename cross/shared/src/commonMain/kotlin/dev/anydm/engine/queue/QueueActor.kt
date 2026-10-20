@@ -1059,7 +1059,10 @@ internal class QueueActor(
                     if (slot.stopping) null else afterCrash(slot)
                 }
             }
-        if (after != null && after != slot.download) save(after)
+        // A seed can end while the run that made it is still finishing: its job is over, and the slot's old view of it
+        // (SEEDING) must not put it back.
+        val over = after?.status == SEEDING && downloads.get(slot.id)?.status.let { it == COMPLETED || it == FAILED }
+        if (after != null && after != slot.download && !over) save(after)
         later.forEach(observer::event)
         val end = message.end
         when {

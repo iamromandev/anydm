@@ -386,6 +386,45 @@ class LibTorrentBackendTest {
         }
 
     @Test
+    fun seedingTimeCountsForATorrentWithSkippedFiles() =
+        runBlocking<Unit> {
+            file("pack/a.bin", 256 * 1024, 31)
+            file("pack/b.bin", 256 * 1024, 32)
+            val info = infoOf(torrentOf(File(seedDir, "pack")))
+            seed(info)
+            val skipped = info.files.single { it.path.endsWith("b.bin") }.index
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"), info.files.map { if (it.index == skipped) 0 else 4 })))
+            finish(running).finished shouldBe true
+
+            delay(2200)
+
+            // libtorrent's seeding time never runs for a torrent that lacks a file; the time since it finished does
+            (running.stats().seedingSeconds >= 1) shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun uploadedBytesSurviveAResumeSavedWithPeersStillConnected() =
+        runBlocking<Unit> {
+            val size = 1024 * 1024
+            file("data.bin", size, 33)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            val seeding = seed(info)
+            val running = ok(leecher.add(addRequest(info, File(leechDir, "staging"))))
+            finish(running).finished shouldBe true
+            withTimeout(10.seconds) { while (seeding.stats().payloadUp < size) delay(50) }
+            delay(1500)
+
+            val blob = seeding.saveResume()!!
+            seeding.remove()
+            val again = ok(seeder.add(addRequest(info, seedDir, resume = blob)))
+
+            (again.stats().allTimeUp >= size * 9L / 10) shouldBe true
+            again.remove()
+            running.remove()
+        }
+
+    @Test
     fun aDownloadLimitHolds() =
         runBlocking<Unit> {
             file("data.bin", 3 * 1024 * 1024, 27)

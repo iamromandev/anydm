@@ -36,6 +36,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -134,7 +135,13 @@ class TorrentProtocol(
         torrent: RunningTorrent,
     ) {
         val bytes = torrent.saveResume() ?: return
-        torrents.setResume(id, bytes)
+        try {
+            torrents.setResume(id, bytes)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A full disk or a busy database costs a re-check later; it must not stop a torrent from leaving the session.
+        }
     }
 
     override fun setGlobalLimits(
@@ -251,8 +258,10 @@ class TorrentProtocol(
         val probe = transfer.probe
         check(probe is TorrentProbe) { "TorrentProtocol can't transfer a ${probe::class.simpleName}" }
         val id = transfer.download.id
-        // A handle an earlier run left (its transfer was cut short without a chance to remove it) is replaced.
+        // A handle an earlier run left (its transfer was cut short without a chance to remove it) is replaced, and so is
+        // a seed this job still has (its run failed after finalize kept the torrent).
         handles.take(id)?.remove()
+        seeds.drop(id)
         val request =
             AddTorrent(
                 info = probe.info,
