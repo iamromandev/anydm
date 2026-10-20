@@ -80,6 +80,14 @@ sealed interface EngineEvent {
         val stillSaving: List<DownloadId>,
     ) : EngineEvent
 
+    /**
+     * A login found in a URL could not be saved in the OS keychain (FTP-06): the download was added and uses it for this
+     * run only. [origin] is scheme, host and port; the login itself is never in an event.
+     */
+    data class CredentialsNotSaved(
+        val origin: String,
+    ) : EngineEvent
+
     /** The store failed; the engine has stopped. */
     data class EngineFailed(
         val error: Throwable,

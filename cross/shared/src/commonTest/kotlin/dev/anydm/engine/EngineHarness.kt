@@ -7,6 +7,7 @@ import dev.anydm.engine.core.FixedRandom
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.ftp.CredentialWriter
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
@@ -46,6 +47,7 @@ internal class EngineHarness(
     tools: ToolManager? = null,
     playlists: PlaylistSource? = null,
     torrents: TorrentService? = null,
+    credentials: CredentialWriter? = null,
 ) {
     val engine =
         Engine(
@@ -64,6 +66,7 @@ internal class EngineHarness(
             tools = tools,
             playlists = playlists,
             torrents = torrents,
+            credentials = credentials,
         )
 
     private var added = 0
