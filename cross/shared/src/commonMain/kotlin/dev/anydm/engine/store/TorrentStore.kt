@@ -43,6 +43,8 @@ class TorrentRow(
     val resume: ByteArray? = null,
     val seedRatio: SeedRule<Double> = SeedRule.Inherit,
     val seedMinutes: SeedRule<Int> = SeedRule.Inherit,
+    /** Bytes done of each file in torrent order, as of the last save; empty when unknown (TOR-07). */
+    val fileDone: List<Long> = emptyList(),
 )
 
 interface TorrentStore {
@@ -69,6 +71,12 @@ interface TorrentStore {
     suspend fun setResume(
         id: DownloadId,
         bytes: ByteArray?,
+    ): Boolean
+
+    /** Saves the bytes done of each file; null clears them. False if the job has no torrent row. */
+    suspend fun setFileDone(
+        id: DownloadId,
+        done: List<Long>?,
     ): Boolean
 
     /** The torrent's own seeding limits; an [SeedRule.At] has to be above 0, or [IllegalArgumentException]. False if the job has no torrent row. */

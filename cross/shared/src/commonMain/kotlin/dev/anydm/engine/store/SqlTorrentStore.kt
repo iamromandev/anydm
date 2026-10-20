@@ -27,6 +27,7 @@ internal class SqlTorrentStore(
                     it.resume,
                     ratioRule(it.seed_ratio),
                     minutesRule(it.seed_minutes),
+                    decodeFileDone(it.file_done),
                 )
             }
         }
@@ -54,6 +55,11 @@ internal class SqlTorrentStore(
         bytes: ByteArray?,
     ): Boolean = withContext(writeContext) { queries.setResume(bytes, id).value > 0 }
 
+    override suspend fun setFileDone(
+        id: DownloadId,
+        done: List<Long>?,
+    ): Boolean = withContext(writeContext) { queries.setFileDone(done?.let(::encodeFileDone), id).value > 0 }
+
     override suspend fun setSeedRules(
         id: DownloadId,
         ratio: SeedRule<Double>,
@@ -62,6 +68,29 @@ internal class SqlTorrentStore(
         requireSeedRules(ratio, minutes)
         return withContext(writeContext) { queries.setSeedRules(storedRatio(ratio), storedMinutes(minutes), id).value > 0 }
     }
+}
+
+private const val FILE_DONE_BYTES = 8
+
+/** Eight bytes per file, big-endian. */
+internal fun encodeFileDone(done: List<Long>): ByteArray {
+    val out = ByteArray(done.size * FILE_DONE_BYTES)
+    done.forEachIndexed { i, value ->
+        for (b in 0 until FILE_DONE_BYTES) out[i * FILE_DONE_BYTES + b] = (value ushr (8 * (FILE_DONE_BYTES - 1 - b))).toByte()
+    }
+    return out
+}
+
+/** Empty for nothing stored, for a length that is not a whole number of files, and for a value below zero. */
+internal fun decodeFileDone(stored: ByteArray?): List<Long> {
+    if (stored == null || stored.isEmpty() || stored.size % FILE_DONE_BYTES != 0) return emptyList()
+    val done =
+        List(stored.size / FILE_DONE_BYTES) { i ->
+            var value = 0L
+            for (b in 0 until FILE_DONE_BYTES) value = (value shl 8) or (stored[i * FILE_DONE_BYTES + b].toLong() and 0xFF)
+            value
+        }
+    return if (done.any { it < 0 }) emptyList() else done
 }
 
 // NULL takes the global setting, 0 is no limit, anything above is the limit.
