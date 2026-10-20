@@ -106,6 +106,75 @@ abstract class SettingsStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun seedRatioRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().seedRatio shouldBe null
+
+            settings.update { it.copy(seedRatio = 1.5) }
+            settings.load().seedRatio shouldBe 1.5
+            rows() shouldContain "torrent.seed_ratio=1.5"
+
+            settings.update { it.copy(seedRatio = null) }
+            settings.load().seedRatio shouldBe null
+            rows().none { it?.startsWith("torrent.seed_ratio=") == true } shouldBe true
+            shouldThrow<IllegalArgumentException> { Settings(seedRatio = 0.0) }
+            shouldThrow<IllegalArgumentException> { Settings(seedRatio = -1.0) }
+        }
+
+    @Test
+    fun seedMinutesRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().seedMinutes shouldBe null
+
+            settings.update { it.copy(seedMinutes = 120) }
+            settings.load().seedMinutes shouldBe 120
+            rows() shouldContain "torrent.seed_minutes=120"
+
+            settings.update { it.copy(seedMinutes = null) }
+            settings.load().seedMinutes shouldBe null
+            rows().none { it?.startsWith("torrent.seed_minutes=") == true } shouldBe true
+            shouldThrow<IllegalArgumentException> { Settings(seedMinutes = 0) }
+        }
+
+    @Test
+    fun globalUploadLimitRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().globalUploadLimit shouldBe null
+
+            settings.update { it.copy(globalUploadLimit = 256_000) }
+            settings.load().globalUploadLimit shouldBe 256_000L
+            rows() shouldContain "net.global_upload_limit=256000"
+
+            settings.update { it.copy(globalUploadLimit = null) }
+            settings.load().globalUploadLimit shouldBe null
+            rows().none { it?.startsWith("net.global_upload_limit=") == true } shouldBe true
+            shouldThrow<IllegalArgumentException> { Settings(globalUploadLimit = 0) }
+        }
+
+    @Test
+    fun anUnreadableSeedSettingFallsBack() =
+        runTest {
+            val store = newStore().settings
+            for ((name, data) in listOf(
+                "torrent.seed_ratio" to "abc",
+                "torrent.seed_ratio" to "0",
+                "torrent.seed_ratio" to "-2",
+                "torrent.seed_minutes" to "0",
+                "torrent.seed_minutes" to "1.5",
+                "net.global_upload_limit" to "-5",
+                "net.global_upload_limit" to "x",
+            )) {
+                driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('$name', '$data')")
+
+                store.load() shouldBe Settings()
+                driver.exec("DELETE FROM setting WHERE name = '$name'")
+            }
+        }
+
+    @Test
     fun unreadableValuesFallBackToTheirDefault() =
         runTest {
             val store = newStore().settings
