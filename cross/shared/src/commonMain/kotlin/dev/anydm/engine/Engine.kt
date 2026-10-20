@@ -1087,6 +1087,8 @@ class Engine(
         running -= id
         published -= id
         if (cache.contains(id)) {
+            // A torrent's live numbers go with its run: what it saved is what the files show now, not a second-old reading.
+            cache.torrentLive(id, null)
             cache.filesChanged(id, filesOf(id))
             cache.stoppedRunning(id)
         }

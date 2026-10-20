@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** Torrents through the engine (TOR-01 to TOR-03), on a new database from [newDriver] for each test. */
@@ -430,6 +431,36 @@ abstract class EngineTorrentContract : StoreTestBase() {
                 val snapshot = h.snapshot(id)!!
                 snapshot.torrent shouldBe summaryOf()
                 snapshot.files.single().written shouldBe 12_345L
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aRunThatEndsTakesItsSummaryAndLiveProgressWithIt() =
+        runTest {
+            val h = started()
+            try {
+                h.protocol.bytesPerSecond = 4 * 1024 // 16 s: still running when it is paused
+                val id = h.torrent()
+                service.liveMap = mapOf(id to TorrentLive(summaryOf(), listOf(555L)))
+                advanceTimeBy(1500.milliseconds)
+                runCurrent()
+                h.snapshot(id)!!.torrent shouldBe summaryOf()
+
+                h.engine.pause(id).shouldBeInstanceOf<CommandResult.Done>()
+                runCurrent()
+
+                // not a second later, when the engine next asks: the moment the run is over
+                h.status(id) shouldBe DownloadStatus.PAUSED
+                h.snapshot(id)!!.torrent shouldBe null
+                (
+                    h
+                        .snapshot(id)!!
+                        .files
+                        .singleOrNull()
+                        ?.written != 555L
+                ) shouldBe true
             } finally {
                 h.engine.stop()
             }
