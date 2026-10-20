@@ -114,6 +114,14 @@ internal class FakeRunning(
     /** The last limit given to [setDownloadLimit]. */
     var limitedTo: Long? = null
 
+    /** What [live] and [detail] answer while the torrent is in the session; a test changes them between polls. */
+    var liveStats: TorrentLiveStats = TorrentLiveStats.None
+    var detailData: TorrentDetail = TorrentDetail.Empty
+
+    override fun live(): TorrentLiveStats = if (removed > 0) TorrentLiveStats.None else liveStats
+
+    override fun detail(): TorrentDetail = if (removed > 0) TorrentDetail.Empty else detailData
+
     override fun progress(): TorrentProgress = script[minOf(at++, script.lastIndex)]
 
     override fun stats(): TorrentStats = stats
