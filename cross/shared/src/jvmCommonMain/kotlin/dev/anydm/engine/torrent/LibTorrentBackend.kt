@@ -8,6 +8,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -18,6 +20,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.files.Path
+import org.libtorrent4j.AddTorrentParams
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.MoveFlags
 import org.libtorrent4j.Priority
@@ -27,13 +30,18 @@ import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
+import org.libtorrent4j.Vectors
 import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.AlertType
 import org.libtorrent4j.alerts.FileRenameFailedAlert
 import org.libtorrent4j.alerts.FileRenamedAlert
+import org.libtorrent4j.alerts.SaveResumeDataAlert
+import org.libtorrent4j.alerts.SaveResumeDataFailedAlert
 import org.libtorrent4j.alerts.StorageMovedAlert
 import org.libtorrent4j.alerts.StorageMovedFailedAlert
 import org.libtorrent4j.alerts.TorrentAlert
+import org.libtorrent4j.swig.error_code
+import org.libtorrent4j.swig.libtorrent
 import org.libtorrent4j.swig.settings_pack
 import java.io.File
 import java.lang.ref.Reference
@@ -42,6 +50,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * [TorrentBackend] over libtorrent (libtorrent4j). The session starts the first time something needs it and once, and
@@ -57,6 +66,7 @@ class LibTorrentBackend(
     private var closed = false
     private val moves = ConcurrentHashMap<String, CompletableDeferred<StepResult<Unit>>>()
     private val renames = ConcurrentHashMap<String, Renames>()
+    private val resumes = ConcurrentHashMap<String, CompletableDeferred<ByteArray?>>()
     private val watch = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // A handle used after its session was stopped is a crash, not an error: every call on one holds this for reading,
@@ -120,7 +130,11 @@ class LibTorrentBackend(
 
     private fun settings(port: Int): SettingsPack {
         val interfaces = if (config.loopbackOnly) "127.0.0.1:$port" else "0.0.0.0:$port,[::]:$port"
-        val pack = SettingsPack().listenInterfaces(interfaces)
+        val pack =
+            SettingsPack()
+                .listenInterfaces(interfaces)
+                .downloadRateLimit(sessionLimit(limitDown))
+                .uploadRateLimit(sessionLimit(limitUp))
         // Each file of a torrent that is renamed is an alert, and the default queue of 2000 drops the rest of a big torrent's.
         pack.setInteger(settings_pack.int_types.alert_queue_size.swigValue(), ALERT_QUEUE_SIZE)
         if (config.loopbackOnly) {
@@ -147,6 +161,8 @@ class LibTorrentBackend(
                     AlertType.STORAGE_MOVED_FAILED.swig(),
                     AlertType.FILE_RENAMED.swig(),
                     AlertType.FILE_RENAME_FAILED.swig(),
+                    AlertType.SAVE_RESUME_DATA.swig(),
+                    AlertType.SAVE_RESUME_DATA_FAILED.swig(),
                 )
 
             override fun alert(alert: Alert<*>) {
@@ -172,6 +188,14 @@ class LibTorrentBackend(
 
                     is FileRenameFailedAlert -> {
                         renames[hash]?.done?.complete(StepResult.Failed(null, "can't rename a file: ${alert.error.message}"))
+                    }
+
+                    is SaveResumeDataAlert -> {
+                        resumes[hash]?.complete(AddTorrentParams.writeResumeDataBuf(alert.params()))
+                    }
+
+                    is SaveResumeDataFailedAlert -> {
+                        resumes[hash]?.complete(null)
                     }
 
                     else -> {
@@ -271,7 +295,18 @@ class LibTorrentBackend(
                 val saveTo = File(request.saveTo.toString())
                 withContext(Dispatchers.IO) {
                     saveTo.mkdirs()
-                    manager.download(info, saveTo, null, priorities, peers, flags)
+                    val resumed = request.resume?.let { readResume(it, hash.toHex()) }
+                    if (resumed == null) {
+                        manager.download(info, saveTo, null, priorities, peers, flags)
+                    } else {
+                        // The blob knows which pieces are good; the job's current choices replace what it saved of those.
+                        resumed.torrentInfo = info
+                        resumed.savePath = saveTo.absolutePath
+                        if (priorities != null) resumed.filePriorities(priorities)
+                        resumed.flags = flags
+                        resumed.peers(peers)
+                        manager.swig().async_add_torrent(resumed.swig())
+                    }
                 }
                 // Adding is asynchronous: the handle shows up shortly.
                 var found: TorrentHandle? = null
@@ -297,6 +332,19 @@ class LibTorrentBackend(
         }
         return StepResult.Ok(Running(manager, handle, hash.toHex()))
     }
+
+    /** The parameters saved in [blob], or null when it can't be read or is for another torrent than [hash]. */
+    private fun readResume(
+        blob: ByteArray,
+        hash: String,
+    ): AddTorrentParams? =
+        try {
+            val code = error_code()
+            val params = AddTorrentParams(libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(blob), code))
+            if (code.value() == 0 && params.infoHashes.best.toHex() == hash) params else null
+        } catch (e: RuntimeException) {
+            null
+        }
 
     /** The torrent may reach the session a moment after its add was cancelled: look until it has, then remove it. */
     private suspend fun dropAfterCancel(
@@ -337,6 +385,18 @@ class LibTorrentBackend(
         private val hash: String,
     ) : RunningTorrent {
         private val gone = TorrentProgress(0, 0, false, TorrentError(TorrentErrorKind.LOST, "the torrent left the session"))
+
+        /** What it had uploaded before this add (from resume data): libtorrent's own all-time counter only catches up when a peer leaves. */
+        private val uploadedBefore: Long =
+            live({ 0L }) {
+                if (!handle.isValid) return@live 0L
+                val status = handle.status()
+                try {
+                    status.allTimeUpload()
+                } finally {
+                    Reference.reachabilityFence(status)
+                }
+            }
 
         override fun progress(): TorrentProgress =
             live({ gone }) {
@@ -400,6 +460,94 @@ class LibTorrentBackend(
             // The files stay: the session is only told to forget the torrent.
             withContext(Dispatchers.IO) { live({}) { if (handle.isValid) manager.remove(handle) } }
         }
+
+        override fun stats(): TorrentStats {
+            val none = TorrentStats(0, 0, 0, 0, 0, false)
+            return live({ none }) {
+                if (!handle.isValid) return@live none
+                val status = handle.status()
+                try {
+                    TorrentStats(
+                        payloadDown = status.totalPayloadDownload(),
+                        payloadUp = status.totalPayloadUpload(),
+                        allTimeUp = uploadedBefore + status.totalPayloadUpload(),
+                        wanted = status.totalWanted(),
+                        seedingSeconds = status.seedingDuration(),
+                        seeding = status.isSeeding,
+                    )
+                } finally {
+                    Reference.reachabilityFence(status)
+                }
+            }
+        }
+
+        override suspend fun saveResume(): ByteArray? = requestResume(handle, hash)
+
+        override fun setDownloadLimit(bytesPerSecond: Long?) = live({}) { handle.setDownloadLimit(perTorrentLimit(bytesPerSecond)) }
+    }
+
+    /** Asks libtorrent for [handle]'s resume data and waits for the alert that carries it. */
+    private suspend fun requestResume(
+        handle: TorrentHandle,
+        hash: String,
+    ): ByteArray? {
+        val done = CompletableDeferred<ByteArray?>()
+        resumes[hash] = done
+        try {
+            live(
+                { done.complete(null) },
+            ) { if (handle.isValid) handle.saveResumeData(TorrentHandle.FLUSH_DISK_CACHE) else done.complete(null) }
+            return withTimeoutOrNull(RESUME_TIMEOUT) { done.await() }
+        } finally {
+            resumes.remove(hash, done)
+        }
+    }
+
+    @Volatile
+    private var limitDown: Long? = null
+
+    @Volatile
+    private var limitUp: Long? = null
+
+    override fun setSessionLimits(
+        download: Long?,
+        upload: Long?,
+    ) {
+        limitDown = download
+        limitUp = upload
+        val session = manager ?: return
+        live({}) { session.applySettings(SettingsPack().downloadRateLimit(sessionLimit(download)).uploadRateLimit(sessionLimit(upload))) }
+    }
+
+    /**
+     * The download and upload limits the running session holds (0: none), or null before it starts. libtorrent does not
+     * apply a session limit to peers on the local network, so a test cannot see the limit in a transfer's speed.
+     */
+    internal fun appliedSessionLimits(): Pair<Int, Int>? {
+        val session = manager ?: return null
+        return live({ null }) {
+            val pack = session.settings()
+            try {
+                pack.downloadRateLimit() to pack.uploadRateLimit()
+            } finally {
+                Reference.reachabilityFence(pack)
+            }
+        }
+    }
+
+    override var resumeSink: ((infoHash: String, bytes: ByteArray) -> Unit)? = null
+
+    /** The resume data of every torrent in the session, handed to [resumeSink]; waits for them all for at most [RESUME_TIMEOUT]. */
+    private suspend fun saveAllResume(session: SessionManager) {
+        val sink = resumeSink ?: return
+        val handles =
+            live({ emptyList() }) {
+                val all = session.swig().get_torrents()
+                (0 until all.size).map { i -> TorrentHandle(all[i]).let { it to it.infoHash().toHex() } }
+            }
+        withTimeoutOrNull(RESUME_TIMEOUT) {
+            handles.map { (handle, hash) -> async { requestResume(handle, hash)?.let { sink(hash, it) } } }.awaitAll()
+        }
     }
 
     private fun kindOf(
@@ -417,6 +565,8 @@ class LibTorrentBackend(
                 closed = true
                 manager.also { manager = null }
             } ?: return
+        // Everything still in the session is saved while the library can still answer.
+        saveAllResume(stopping)
         withContext(Dispatchers.IO) {
             val write = native.writeLock()
             write.lock()
@@ -436,6 +586,13 @@ class LibTorrentBackend(
 }
 
 private val STOPPED = StepResult.Failed(null, "the torrent engine stopped")
+
+// libtorrent: 0 is no limit for the session, -1 for a torrent; a limit is an Int of bytes per second.
+private fun sessionLimit(bytesPerSecond: Long?): Int = bytesPerSecond?.coerceIn(1, Int.MAX_VALUE.toLong())?.toInt() ?: 0
+
+private fun perTorrentLimit(bytesPerSecond: Long?): Int = bytesPerSecond?.coerceIn(1, Int.MAX_VALUE.toLong())?.toInt() ?: -1
+
+private val RESUME_TIMEOUT = 10.seconds
 
 private const val ENOSPC = 28
 private const val ERROR_DISK_FULL = 112
