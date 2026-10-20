@@ -54,6 +54,11 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
             // GetDriveType for the Windows Recycle Bin guard; only loaded on Windows.
             implementation(libs.jna.platform)
+            // The OS keychain (FTP-06): Keychain on macOS, Credential Manager on Windows, the Secret Service on Linux.
+            // Installer size, macOS .dmg: 98.8 MB on dev; 109.7 MB with Commons Net, sshj and BouncyCastle (bcprov alone is 8.9 MB,
+            // sshj needs it); 110.1 MB with java-keyring (+0.4 MB: it, secret-service, dbus-java and jkeychain with its 117 KB
+            // universal macOS native). No jar carries a native for another OS that the installer could trim.
+            implementation(libs.java.keyring)
         }
         jvmTest.dependencies {
             // libtorrent's native library for this machine's OS (BIN-05): the app carries its own (see :desktopApp), the tests
