@@ -1,10 +1,20 @@
 package dev.anydm.engine.protocol
 
-/** Counts bytes received for speed and totals (NET-04); [None] counts nothing until #538 brings the real one. */
+/** Which way counted bytes went: [DOWN] arrived, [UP] was sent (a torrent seeds, TOR-09). */
+enum class Direction { DOWN, UP }
+
+/** Counts bytes received and sent for speed and totals (NET-04); [None] counts nothing. */
 interface Meter {
-    fun record(bytes: Long)
+    /** Counts [bytes]; a protocol that only downloads leaves [direction] at [Direction.DOWN]. */
+    fun record(
+        bytes: Long,
+        direction: Direction = Direction.DOWN,
+    )
 
     data object None : Meter {
-        override fun record(bytes: Long) = Unit
+        override fun record(
+            bytes: Long,
+            direction: Direction,
+        ) = Unit
     }
 }

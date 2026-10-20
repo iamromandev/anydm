@@ -161,6 +161,9 @@ class Engine(
         val progress = MutableStateFlow<Pair<Long, Long?>?>(null)
         val bytes = MutableStateFlow(0L)
 
+        /** Bytes the run sent since the last sampled second (TOR-09). */
+        val bytesUp = MutableStateFlow(0L)
+
         /** Its kind once known, kept so a job removed mid-run still counts under it (NET-04). */
         @Volatile var kind: DownloadKind? = null
     }
@@ -292,6 +295,13 @@ class Engine(
             bytes: Long,
         ) {
             live.value[id]?.bytes?.update { it + bytes }
+        }
+
+        override fun sent(
+            id: DownloadId,
+            bytes: Long,
+        ) {
+            live.value[id]?.bytesUp?.update { it + bytes }
         }
 
         override fun slotStarted(id: DownloadId) {
@@ -1025,10 +1035,11 @@ class Engine(
         for (id in running) {
             val holder = live.value[id]
             val sample = holder?.bytes?.getAndUpdate { 0L } ?: 0L
+            val sentSample = holder?.bytesUp?.getAndUpdate { 0L } ?: 0L
             cache.speed(id, sample)
             total += sample
             val kind = holder?.kind ?: cache.kindOf(id)?.also { holder?.kind = it }
-            if (kind != null && sample > 0) samples += TrafficMeter.Sample(id, kind, sample)
+            if (kind != null && (sample > 0 || sentSample > 0)) samples += TrafficMeter.Sample(id, kind, sample, sentSample)
         }
         val now = clock.now()
         meter.second(now, network.current(), samples)
@@ -1087,7 +1098,8 @@ class Engine(
     /** A run that ended: the bytes it got since its last sampled second, to count with the next save. */
     private fun keepLeftover(holder: Live) {
         val left = holder.bytes.getAndUpdate { 0L }
-        if (left <= 0) return
+        val leftUp = holder.bytesUp.getAndUpdate { 0L }
+        if (left <= 0 && leftUp <= 0) return
         val id =
             live.value.entries
                 .firstOrNull { it.value === holder }
@@ -1097,7 +1109,7 @@ class Engine(
                 .find { it.download.id == id }
                 ?.download
                 ?.kind ?: return
-        leftovers.update { it + TrafficMeter.Sample(id, kind, left) }
+        leftovers.update { it + TrafficMeter.Sample(id, kind, left, leftUp) }
     }
 
     private fun takeLeftovers(now: Instant) {

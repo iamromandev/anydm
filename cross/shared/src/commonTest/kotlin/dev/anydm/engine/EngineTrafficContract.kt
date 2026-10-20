@@ -69,6 +69,40 @@ abstract class EngineTrafficContract : StoreTestBase() {
         }
 
     @Test
+    fun uploadRecordedByAJobIsSavedWithItsKind() =
+        runTest {
+            val (h, traffic) = started()
+            h.protocol.uploadPerJob = 8 * 1024
+            val id = h.addJob()
+            advanceTimeBy(11.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            batch.daysUp.values.sum() shouldBe 8 * 1024L
+            batch.daysUp.keys
+                .single()
+                .third shouldBe DownloadKind.DIRECT
+            batch.downloadsUp shouldBe mapOf(id to 8 * 1024L)
+            traffic.bytes shouldBe whole
+            h.store.traffic.downloadUpload(id) shouldBe 8 * 1024L
+            h.engine.stop()
+        }
+
+    @Test
+    fun totalSpeedStaysDownloadOnly() =
+        runTest {
+            val (h, _) = started()
+            h.protocol.uploadPerJob = 10L * 1024 * 1024
+            h.addJob()
+            advanceTimeBy(2.seconds)
+            runCurrent()
+
+            // 16 KiB/s of download; the 10 MiB sent is not in the speed readout
+            h.engine.totalSpeed.value.current shouldBe 16 * 1024L
+            h.engine.stop()
+        }
+
+    @Test
     fun theNetworkIsTheIdentitysKey() =
         runTest {
             val (h, traffic) = started(network = { "wlan0" })

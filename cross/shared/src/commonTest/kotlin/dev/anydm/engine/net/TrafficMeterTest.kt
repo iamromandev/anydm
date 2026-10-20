@@ -29,6 +29,67 @@ class TrafficMeterTest {
     }
 
     @Test
+    fun uploadIsCountedByDayNetworkKindAndDownload() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 30), TrafficMeter.Sample(b, SITE, 0, bytesUp = 5)))
+        meter.second(t0 + 1.seconds, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 0, bytesUp = 2)))
+
+        val batch = meter.drain()
+        batch.days shouldBe mapOf(Triple(day, "en0", DIRECT) to 100L)
+        batch.daysUp shouldBe mapOf(Triple(day, "en0", DIRECT) to 32L, Triple(day, "en0", SITE) to 5L)
+        batch.downloads shouldBe mapOf(a to 100L)
+        batch.downloadsUp shouldBe mapOf(a to 32L, b to 5L)
+    }
+
+    @Test
+    fun uploadDoesNotChangeSpeedOrPeaks() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 900)))
+
+        val batch = meter.drain()
+        batch.speedDays shouldBe mapOf(day to SpeedDelta(100, 100, 1))
+        batch.speedMinutes shouldBe mapOf(epochMinute(t0) to SpeedDelta(100, 100, 0))
+    }
+
+    @Test
+    fun aSampleWithOnlyUploadAddsNoSpeedSecond() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(b, SITE, 0, bytesUp = 7)))
+
+        val batch = meter.drain()
+        batch.speedDays shouldBe emptyMap()
+        batch.speedMinutes shouldBe emptyMap()
+        batch.daysUp shouldBe mapOf(Triple(day, "en0", SITE) to 7L)
+        batch.isEmpty shouldBe false
+    }
+
+    @Test
+    fun leftoverUploadCountsWithoutBeingASecond() {
+        val meter = meter()
+        meter.bytes(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 3, bytesUp = 4)))
+
+        val batch = meter.drain()
+        batch.days shouldBe mapOf(Triple(day, "en0", DIRECT) to 3L)
+        batch.daysUp shouldBe mapOf(Triple(day, "en0", DIRECT) to 4L)
+        batch.downloadsUp shouldBe mapOf(a to 4L)
+    }
+
+    @Test
+    fun drainAndRestoreKeepUpload() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 10, bytesUp = 6)))
+        val batch = meter.drain()
+        meter.drain().isEmpty shouldBe true
+
+        meter.restore(batch)
+        meter.second(t0 + 1.seconds, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 0, bytesUp = 1)))
+
+        val again = meter.drain()
+        again.daysUp shouldBe mapOf(Triple(day, "en0", DIRECT) to 7L)
+        again.downloadsUp shouldBe mapOf(a to 7L)
+    }
+
+    @Test
     fun peakIsTheLargestSecondAndQuietSecondsArentActive() {
         val meter = meter()
         meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100), TrafficMeter.Sample(b, SITE, 50)))

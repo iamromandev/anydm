@@ -41,6 +41,12 @@ internal interface QueueObserver {
         bytes: Long,
     ) {}
 
+    /** From a slot: [bytes] just went out (a torrent uploading, TOR-09). */
+    fun sent(
+        id: DownloadId,
+        bytes: Long,
+    ) {}
+
     /** From a slot: its checkpoints were saved, so its file and segment rows changed. */
     fun checkpointed(id: DownloadId) {}
 

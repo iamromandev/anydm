@@ -43,6 +43,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.protocol.Direction
 import dev.anydm.engine.protocol.Meter
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.RelinkRequest
@@ -918,7 +919,10 @@ internal class QueueActor(
             }
         val meter =
             object : Meter {
-                override fun record(bytes: Long) = observer.received(slot.id, bytes)
+                override fun record(
+                    bytes: Long,
+                    direction: Direction,
+                ) = if (direction == Direction.UP) observer.sent(slot.id, bytes) else observer.received(slot.id, bytes)
             }
         return when (val ran = runner.run(ready, listener, slot.limiter, meter) { bandwidth.shareOf(slot.id) }) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)
