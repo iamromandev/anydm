@@ -51,12 +51,17 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
             // GetDriveType for the Windows Recycle Bin guard; only loaded on Windows.
             implementation(libs.jna.platform)
-            // libtorrent's native library for each desktop OS (#541); TorrentNatives picks the one that fits at run time.
-            implementation(libs.libtorrent4j.macos)
-            implementation(libs.libtorrent4j.linux)
-            implementation(libs.libtorrent4j.windows)
         }
         jvmTest.dependencies {
+            // libtorrent's native library for this machine's OS (BIN-05): the app carries its own (see :desktopApp), the tests
+            // use the real one. TorrentNatives picks it out of the class path at run time.
+            runtimeOnly(
+                when (rootProject.extra["libtorrentNativeOs"]) {
+                    "macos" -> libs.libtorrent4j.macos
+                    "windows" -> libs.libtorrent4j.windows
+                    else -> libs.libtorrent4j.linux
+                },
+            )
             // FaultServer: a local server with ranges and injected faults (#567).
             implementation(libs.okhttp.mockwebserver)
         }

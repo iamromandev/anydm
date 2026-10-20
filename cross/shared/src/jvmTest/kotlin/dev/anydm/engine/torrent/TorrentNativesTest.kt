@@ -78,6 +78,19 @@ class TorrentNativesTest {
         }
 
     @Test
+    fun anIntelMacSaysTorrentsAreNotSupportedThere() =
+        runBlocking<Unit> {
+            // libtorrent4j ships no native for it (BIN-05): the job pauses with this message, nothing else breaks
+            val natives = TorrentNatives(Path(File(root, "out").toString()), loaderWith("lib/x", ByteArray(1)), "Mac OS X", "x86_64")
+
+            val failed = natives.load().shouldBeInstanceOf<StepResult.Failed>()
+
+            failed.message shouldContain "torrents aren't supported here"
+            failed.message shouldContain "Mac OS X"
+            failed.message shouldContain "x86_64"
+        }
+
+    @Test
     fun anUnknownSystemIsAClearFailure() =
         runBlocking<Unit> {
             val natives = TorrentNatives(Path(File(root, "out").toString()), loaderWith("lib/x", ByteArray(1)), "Linux", "riscv64")
