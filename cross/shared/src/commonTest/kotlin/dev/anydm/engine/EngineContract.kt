@@ -41,6 +41,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -73,6 +74,25 @@ abstract class EngineContract : StoreTestBase() {
                 .map { it.download.id } shouldBe listOf(a.id, b.id)
             h.engine.downloads.value
                 .map { it.download.status } shouldBe listOf(PAUSED, PAUSED)
+            h.engine.stop()
+        }
+
+    @Test
+    fun setStartTimeIsStoredOnTheJob() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            val at = h.clock.now() + 1.hours
+
+            h.engine.setStartTime(a, at).shouldBeInstanceOf<CommandResult.Done>()
+
+            h.store.downloads
+                .get(a)!!
+                .startAt shouldBe at
+            h.engine.setStartTime(a, null).shouldBeInstanceOf<CommandResult.Done>()
+            h.store.downloads
+                .get(a)!!
+                .startAt shouldBe null
             h.engine.stop()
         }
 

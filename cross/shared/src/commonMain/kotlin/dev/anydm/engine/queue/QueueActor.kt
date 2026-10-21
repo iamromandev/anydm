@@ -694,6 +694,45 @@ internal class QueueActor(
         return CommandResult.Done(slot.download)
     }
 
+    /**
+     * The job's start time (NET-09): it takes no slot before then. A running job that isn't MUXING and gets a future time
+     * is stopped and waits again; any other job just keeps the time. A collection's own row only stores it.
+     */
+    suspend fun setStartTime(
+        id: DownloadId,
+        at: Instant?,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        val slot = slots[id]
+        val job = slot?.download ?: downloads.get(id)
+        when {
+            job == null -> {
+                reply.complete(CommandResult.NotFound)
+            }
+
+            job.isCollection -> {
+                reply.complete(CommandResult.Done(save(job.copy(startAt = at))))
+            }
+
+            job.status == COMPLETED || job.status == CANCELLED || job.status == SEEDING -> {
+                reply.complete(CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED)))
+            }
+
+            slot != null && job.status != MUXING && at != null && at > clock.now() -> {
+                stop(slot, { requeue(it.copy(startAt = at)) }, reply)
+            }
+
+            slot != null -> {
+                slot.download = save(slot.download.copy(startAt = at))
+                reply.complete(CommandResult.Done(slot.download))
+            }
+
+            else -> {
+                reply.complete(CommandResult.Done(save(job.copy(startAt = at))))
+            }
+        }
+    }
+
     /** The limit applies at once: the next reschedule preempts what is over it. */
     suspend fun setLimit(limit: Int): CommandResult {
         settings = store.settings.update { it.copy(concurrencyLimit = limit) }
@@ -945,7 +984,8 @@ internal class QueueActor(
 
     // Scheduling
 
-    // A job waiting for a retry (nextAttemptAt in the future) isn't ready yet; the timer wakes the queue when it is.
+    // A job waiting for a retry (nextAttemptAt in the future) or for its start time (startAt) isn't ready yet; the timer
+    // wakes the queue when it is.
     private suspend fun reschedule() {
         val now = clock.now()
         val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots && !it.isCollection }
@@ -956,12 +996,15 @@ internal class QueueActor(
             armWake(null, now)
             return
         }
-        val ready = waiting.filter { job -> job.nextAttemptAt.let { it == null || it <= now } }
+        val ready =
+            waiting.filter { job ->
+                job.nextAttemptAt.let { it == null || it <= now } && job.startAt.let { it == null || it <= now }
+            }
         val decision = schedule(ready, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = ready.associateBy { it.id }
         decision.start.forEach { launchSlot(byId.getValue(it)) }
         decision.preempt.forEach { stop(slots.getValue(it), ::requeue, null) }
-        armWake(waiting.mapNotNull { it.nextAttemptAt }.filter { it > now }.minOrNull(), now)
+        armWake(waiting.flatMap { listOfNotNull(it.nextAttemptAt, it.startAt) }.filter { it > now }.minOrNull(), now)
     }
 
     private fun armWake(

@@ -24,6 +24,7 @@ import dev.anydm.engine.store.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.io.files.Path
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.time.TimeSource
 
 /**
@@ -166,6 +167,15 @@ class Queue internal constructor(
             alsoCollection = true,
         ) { actor.call { setSpeedLimit(id, bytesPerSecond) } }
     }
+
+    /**
+     * Sets when the job may start (NET-09), or clears it with null: until then it takes no slot. A running job given a
+     * future time is stopped and waits; finished and cancelled jobs are Rejected. A collection's items and its own row take it.
+     */
+    suspend fun setStartTime(
+        id: DownloadId,
+        at: Instant?,
+    ): CommandResult = forItems(id, { setStartTime(it, at) }, alsoCollection = true) { actor.callLater { setStartTime(id, at, it) } }
 
     /** Sets the job's checksum (HTTP-14), or clears it with null. A running job is checked with it from its next run. */
     suspend fun setChecksum(

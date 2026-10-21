@@ -920,6 +920,12 @@ class Engine(
             if (finished is CommandResult.Rejected && now?.status == DownloadStatus.COMPLETED) CommandResult.Done(now) else finished
         }
 
+    /** Sets when the job may start (NET-09), or clears it with null; a running job given a future time is stopped and waits. */
+    suspend fun setStartTime(
+        id: DownloadId,
+        at: Instant?,
+    ): CommandResult = command { queue.setStartTime(id, at) }
+
     /** Torrent job [id]'s own seeding limits (TOR-05); a rule applies at the next check of the seed. */
     suspend fun setSeedRules(
         id: DownloadId,

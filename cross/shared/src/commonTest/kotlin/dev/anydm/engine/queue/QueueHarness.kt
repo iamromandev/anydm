@@ -33,6 +33,7 @@ import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 
 /**
  * A queue over [store] with the fakes: by default one [FakeProtocol] for every kind, serving one 64 KiB file at 16 KiB/s
@@ -101,6 +102,7 @@ internal class QueueHarness(
         checksum: Checksum? = null,
         speedLimit: Long? = null,
         folder: Path = stepRoot,
+        startAt: Instant? = null,
     ): DownloadId {
         val added =
             queue.add(
@@ -112,6 +114,7 @@ internal class QueueHarness(
                     priority = priority,
                     checksum = checksum,
                     speedLimit = speedLimit,
+                    startAt = startAt,
                 ),
             )
         return added.shouldBeInstanceOf<CommandResult.Done>().download!!.id
