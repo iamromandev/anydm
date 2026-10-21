@@ -136,6 +136,44 @@ abstract class RuleKeeperContract : StoreTestBase() {
         }
 
     @Test
+    fun aCheckWaitsForASaveInFlightSoUsedNeverDips() =
+        runTest {
+            val f = Fixture(this)
+            f.withAllowance()
+            f.stored(1000)
+            f.unsaved(200)
+            f.keeper.start()
+            f.used shouldBe 1200
+            val gate = CompletableDeferred<Unit>()
+            val inFlight = CompletableDeferred<Unit>()
+
+            val saving =
+                launch {
+                    f.keeper.saveTraffic {
+                        val batch = f.meter.drain()
+                        inFlight.complete(Unit)
+                        gate.await()
+                        f.traffic.add(batch, 0)
+                        batch
+                    }
+                }
+            runCurrent()
+            inFlight.isCompleted shouldBe true
+            val checking = launch { f.keeper.check() }
+            runCurrent()
+
+            // The batch is in neither the meter nor the store yet: a check now would read 1000.
+            checking.isCompleted shouldBe false
+            f.used shouldBe 1200
+
+            gate.complete(Unit)
+            runCurrent()
+            saving.isCompleted shouldBe true
+            checking.isCompleted shouldBe true
+            f.used shouldBe 1200
+        }
+
+    @Test
     fun aFailedSaveCountsTheBytesOnceFromTheMeter() =
         runTest {
             val f = Fixture(this)

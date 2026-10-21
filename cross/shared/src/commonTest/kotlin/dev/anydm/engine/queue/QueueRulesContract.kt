@@ -24,6 +24,7 @@ import io.kotest.matchers.longs.shouldBeLessThanOrEqual
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -140,6 +141,24 @@ abstract class QueueRulesContract : QueueTestBase() {
             h.reasons(user) shouldBe setOf(PauseReason.USER, PauseReason.GLOBAL)
             h.reasons(disk) shouldBe setOf(PauseReason.LOW_DISK, PauseReason.GLOBAL)
             h.reasons(plain) shouldBe setOf(PauseReason.GLOBAL)
+        }
+
+    @Test
+    fun aRulePauseLiftedWhileTheSlotIsStoppingDoesNotLeaveTheJobPaused() =
+        runTest {
+            val h = started()
+            val id = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.status(id) shouldBe DOWNLOADING
+
+            val held = async { h.queue.applyRules(pause) }
+            val lifted = async { h.queue.applyRules(RuleEffect.None) }
+            held.await()
+            lifted.await()
+            runCurrent()
+
+            h.status(id) shouldBe DOWNLOADING
+            h.reasons(id) shouldBe emptySet()
         }
 
     @Test
