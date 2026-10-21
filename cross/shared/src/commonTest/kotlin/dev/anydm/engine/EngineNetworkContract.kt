@@ -26,6 +26,7 @@ import dev.anydm.engine.store.StoreTestBase
 import dev.anydm.engine.store.TrafficStore
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -326,7 +327,7 @@ abstract class EngineNetworkContract : StoreTestBase() {
         }
 
     // The return's rules cannot be read: the jobs stay paused (the network may forbid them), the check is tried again within a
-    // minute, and the release follows the rules it finds.
+    // few seconds, and the release follows the rules it finds.
     private suspend fun TestScope.returnWithAFailingRuleRead(
         f: Fixture,
         traffic: RecordingTraffic,
@@ -340,11 +341,11 @@ abstract class EngineNetworkContract : StoreTestBase() {
         advance(9.seconds)
         f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
 
-        // The new network's usage cannot be read, once, when the connection returns.
+        // The new network's usage cannot be read, once, when the connection returns. The retry is a few seconds away.
         traffic.failNetworkReads = 1
         f.net = "en7"
         f.probe.online = true
-        repeat(12) {
+        repeat(3) {
             advance(1.seconds)
             f.h.status(id) shouldBe DownloadStatus.PAUSED
             f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
@@ -363,8 +364,8 @@ abstract class EngineNetworkContract : StoreTestBase() {
             val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
             val id = returnWithAFailingRuleRead(f, recording!!, NetworkPolicy(allowance = huge))
 
-            // The timer checks again within a minute: the rules allow, and the jobs run.
-            advance(60.seconds)
+            // The retry checks again within seconds, not a minute: the rules allow, and the jobs run.
+            advance(10.seconds)
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
             f.h.engine.state.value shouldBe EngineState.Running
 
@@ -421,6 +422,98 @@ abstract class EngineNetworkContract : StoreTestBase() {
             f.probe.online = true
             advance(3.seconds)
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+        }
+
+    @Test
+    fun aReleaseWhoseRulesAreStillBeingPushedIsDroppedWhenALaterReturnCannotReadItsRules() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f =
+                fixture(
+                    protocol = FakeProtocol(files = listOf(FakeFile("file.zip", 16L shl 20))),
+                    traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } },
+                )
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(speedLimit = 1_000_000, allowance = huge))
+            f.h.engine.setNetworkPolicy("en8", NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE, allowance = huge))
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+            f.probe.online = false
+            advance(6.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 1
+
+            // The queue takes its time over the next rules: the push of the first return's retry waits at this gate.
+            val gate = CompletableDeferred<Unit>()
+            f.h.engine.beforeRulesApplied = { gate.await() }
+
+            // The first return cannot read its rules (the check of the return and one beside it fail); its retry reads them
+            // and releases, but its push waits.
+            traffic.failNetworkReads = 2
+            f.net = "en7"
+            f.probe.online = true
+            advance(3.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+            advance(6.seconds)
+            traffic.failNetworkReads shouldBe 0
+
+            // Offline again, and back on a metered network that pauses: its rules cannot be read either.
+            f.probe.online = false
+            advance(6.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 2
+            traffic.failNetworkReads = 2
+            f.net = "en8"
+            f.probe.online = true
+            advance(3.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 2
+
+            // The push of the first return ends now. Its release must not start the job on a network that was never read.
+            gate.complete(Unit)
+            advance(90.seconds)
+
+            f.h.protocol.transfers.size shouldBe 1
+            f.events.filterIsInstance<EngineEvent.StatusChanged>().count { it.to == DownloadStatus.DOWNLOADING } shouldBe 1
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.SCHEDULE)
+        }
+
+    @Test
+    fun aRulePushThatFailsOnTheReturnKeepsTheJobsPausedUntilTheRetryPushesThem() =
+        engineTest {
+            val f = fixture()
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE, allowance = huge))
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.probe.online = false
+            advance(9.seconds)
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+            // The queue cannot store the new network's rules once: the jobs must not be released without them.
+            var refusals = 1
+            f.h.engine.beforeRulesApplied = {
+                if (refusals > 0) {
+                    refusals--
+                    throw RuntimeException("disk gone")
+                }
+            }
+            f.net = "en7"
+            f.probe.online = true
+            repeat(3) {
+                advance(1.seconds)
+                f.h.status(id) shouldBe DownloadStatus.PAUSED
+                f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+            }
+            refusals shouldBe 0
+            f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+
+            // The retry pushes the rules, which pause the job for them; it never started on the metered network.
+            advance(10.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.SCHEDULE)
+            f.h.protocol.transfers.size shouldBe 1
+            f.h.engine.state.value shouldBe EngineState.Running
         }
 
     @Test

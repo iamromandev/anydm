@@ -325,14 +325,24 @@ class Engine(
             log,
             leftovers = { leftovers.value.sumOf { it.bytes + it.bytesUp } },
             emit = ::tell,
-            apply = { queue.applyRules(it) },
+            apply = { effect ->
+                beforeRulesApplied?.invoke()
+                queue.applyRules(effect)
+            },
             detectedMetered = { monitor.state.value.metered == true },
         )
+
+    /** A seam for tests: runs before the queue is given new rules, so a test can make that push fail. */
+    internal var beforeRulesApplied: (suspend () -> Unit)? = null
     private var ruleTimer: Job? = null
     private var ruleTimerAt: Instant? = null
+    private var ruleTimerDue: Duration = Duration.ZERO
 
     // A return whose rules could not be read: its release waits for a check that can (on the publisher).
     private var releasePending = false
+
+    // Bumped by each return: a release belongs to the return whose rules it follows (on the publisher).
+    private var releaseGeneration = 0
 
     // The last rule check failed: a check the bytes trigger waits for the timer, and the recovery is logged once (on the publisher).
     private var rulesFailing = false
@@ -1227,6 +1237,11 @@ class Engine(
         after: After = After.NOTHING,
     ) {
         if (byBytes && rulesFailing) return
+        // Only a check that begins after the return failed may take its release: one already under way read the rules of the
+        // network before it.
+        if (returning) releaseGeneration++
+        val generation = releaseGeneration
+        val pending = releasePending
         try {
             keeper.check() ?: return
         } catch (e: CancellationException) {
@@ -1241,7 +1256,7 @@ class Engine(
             // The rules cannot be read now, and the new network may forbid the jobs: they stay paused for the network, and the
             // retry's success pushes the rules and then releases them.
             if (returning) releasePending = true
-            armRuleRetry()
+            armRuleRetry(if (releasePending) RELEASE_RETRY else RULES_IDLE_CHECK)
             if (after != After.NOTHING) launchQuietly { restart(after) }
             return
         }
@@ -1250,13 +1265,28 @@ class Engine(
             log.info("net") { "rules checked again" }
         }
         armRuleTimer()
-        val release = returning || takeRelease()
-        if (returning) releasePending = false
+        val release = returning || (pending && generation == releaseGeneration)
+        if (release) releasePending = false
         launchQuietly {
-            pushQuietly()
-            // The push may have waited at the queue while the network dropped again: the Lost's offline is already there, and
-            // a release behind it would undo it. Nothing suspends between this check and the send.
-            if (release && monitor.state.value.online) queue.applyNetwork(false)
+            val pushed = pushQuietly()
+            when {
+                !release -> {
+                    Unit
+                }
+
+                // A release only follows the rules it was decided with, or a job would start on a network they forbid.
+                !pushed -> {
+                    releasePending = true
+                    armRuleRetry(RELEASE_RETRY)
+                }
+
+                // The push may have waited at the queue while the network dropped, or came back and could not be read: the
+                // Lost's offline is already there, and a release behind it would undo it. Nothing suspends between this
+                // check and the send.
+                generation == releaseGeneration && monitor.state.value.online -> {
+                    queue.applyNetwork(false)
+                }
+            }
             restart(after)
         }
     }
@@ -1270,9 +1300,6 @@ class Engine(
             After.RESTART_IF_ONLINE -> if (monitor.pollNow().online) queue.restartConnections()
         }
     }
-
-    // On the publisher: whether a return still waits for its release (its rules could not be read); asked once.
-    private fun takeRelease(): Boolean = releasePending.also { releasePending = false }
 
     // On the publisher, every WAKE_TICK: a jump of the clock means the machine slept or froze. The rules are decided again at
     // once, then the connections start again, if the network is still there.
@@ -1371,8 +1398,9 @@ class Engine(
         }
     }
 
-    // A queue that has stopped has nothing to apply the rules to.
-    private suspend fun pushQuietly() {
+    // A queue that has stopped has nothing to apply the rules to. False when the push failed for another reason: the rules
+    // are not in place, and what must follow them (the release on a return) waits.
+    private suspend fun pushQuietly(): Boolean {
         try {
             keeper.push()
         } catch (e: CancellationException) {
@@ -1380,9 +1408,10 @@ class Engine(
         } catch (e: IllegalStateException) {
             log.debug("net") { "rules not applied: ${e.message}" }
         } catch (e: Exception) {
-            // A store that fails inside the queue must not skip what comes after the push (the release on a return).
             log.warn("net") { "rules not applied: ${e.message}" }
+            return false
         }
+        return true
     }
 
     // On the publisher: one timer for the next schedule boundary or allowance reset, at most RULES_IDLE_CHECK away, so a
@@ -1392,10 +1421,11 @@ class Engine(
         if (ruleTimer?.isActive == true && target == ruleTimerAt) return
         ruleTimer?.cancel()
         ruleTimerAt = target
+        val wait = (if (target == null) RULES_IDLE_CHECK else minOf(target - clock.now(), RULES_IDLE_CHECK)).coerceAtLeast(Duration.ZERO)
+        ruleTimerDue = monoStart.elapsedNow() + wait
         ruleTimer =
             scope.launch(publisher) {
-                val wait = if (target == null) RULES_IDLE_CHECK else minOf(target - clock.now(), RULES_IDLE_CHECK)
-                delay(wait.coerceAtLeast(Duration.ZERO))
+                delay(wait)
                 // This timer is done: the check below may arm the next one.
                 ruleTimer = null
                 ruleTimerAt = null
@@ -1403,14 +1433,17 @@ class Engine(
             }
     }
 
-    // On the publisher: after a failed check, a timer one idle period away unless one is running, so a store that stays broken
-    // is asked once a minute, however often the bytes ask for a check.
-    private fun armRuleRetry() {
-        if (ruleTimer?.isActive == true) return
+    // On the publisher: after a failed check, a timer [wait] away, so a store that stays broken is asked once a minute, however
+    // often the bytes ask for a check. A return that waits for its release asks sooner. A timer that is due earlier stays.
+    private fun armRuleRetry(wait: Duration) {
+        val due = monoStart.elapsedNow() + wait
+        if (ruleTimer?.isActive == true && ruleTimerDue <= due) return
+        ruleTimer?.cancel()
         ruleTimerAt = null
+        ruleTimerDue = due
         ruleTimer =
             scope.launch(publisher) {
-                delay(RULES_IDLE_CHECK)
+                delay(wait)
                 ruleTimer = null
                 ruleTimerAt = null
                 checkRules()
@@ -1871,6 +1904,9 @@ class Engine(
 
         /** The longest the rules go unchecked while nothing transfers (NET-08): a wall clock jump or a network change shows by then. */
         val RULES_IDLE_CHECK = 1.minutes
+
+        // A return waiting for its release asks for its rules again after this, not after a whole idle period.
+        val RELEASE_RETRY = 5.seconds
 
         /** A seed that ends before its job has stored SEEDING is asked again, this often, this many times. */
         val SEED_FINISH_WAIT = 100.milliseconds
