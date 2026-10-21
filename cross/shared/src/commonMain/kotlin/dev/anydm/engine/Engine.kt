@@ -1361,8 +1361,6 @@ class Engine(
     private suspend fun onNetworkStep(step: NetworkStep) {
         when (step) {
             NetworkStep.Lost -> {
-                // The queue is offline now: a return that waited for its rules has nothing left to release.
-                releasePending = false
                 tell(EngineEvent.NetworkLost)
                 launchQuietly { queue.applyNetwork(true) }
                 checkRules()

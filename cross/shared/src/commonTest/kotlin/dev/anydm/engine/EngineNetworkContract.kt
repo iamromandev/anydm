@@ -401,19 +401,23 @@ abstract class EngineNetworkContract : StoreTestBase() {
             f.h.protocol.transfers.size shouldBe 1
         }
 
+    // The release that waits for the rules is never sent while the network is down: the check that takes it finds it offline.
     @Test
-    fun aDropWhileTheReleaseIsPendingForgetsItAndNoLaterCheckReleasesWhileOffline() =
+    fun aReleaseThatWaitsForTheRulesIsNotSentWhileOfflineAndTheNextReturnReleases() =
         engineTest {
             var recording: RecordingTraffic? = null
             val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
             val traffic = recording!!
             val id = returnWithAFailingRuleRead(f, traffic, NetworkPolicy(allowance = huge))
 
+            // The retries keep failing, so the release is still pending when the connection drops again.
+            traffic.failNetworkReads = 1_000
             f.probe.online = false
             advance(9.seconds)
             f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 2
 
             // Checks that succeed while offline do not release the jobs.
+            traffic.failNetworkReads = 0
             advance(130.seconds)
             f.h.engine.network.value.online shouldBe false
             f.h.status(id) shouldBe DownloadStatus.PAUSED
