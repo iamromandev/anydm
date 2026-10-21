@@ -58,6 +58,12 @@ internal class SqlTrafficStore(
             queries.daysBetween(from, to).executeAsList().map { DayTraffic(it.day, it.network, kindOf(it.kind), it.bytes, it.bytes_up) }
         }
 
+    override suspend fun networkBytes(
+        network: String,
+        from: String,
+        to: String,
+    ): Long = withContext(io) { queries.networkBytesBetween(network, from, to).executeAsOne() }
+
     override suspend fun speedDays(
         from: String,
         to: String,

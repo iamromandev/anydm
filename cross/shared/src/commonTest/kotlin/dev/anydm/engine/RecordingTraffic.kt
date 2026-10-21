@@ -13,6 +13,9 @@ internal class RecordingTraffic(
     var failAlways = false
     var gate: CompletableDeferred<Unit>? = null
 
+    /** How many times a network's stored bytes were read. */
+    var networkReads = 0
+
     val bytes: Long get() = adds.sumOf { batch -> batch.days.values.sum() }
 
     override suspend fun add(
@@ -27,5 +30,14 @@ internal class RecordingTraffic(
         adds += batch
         gate?.await()
         inner.add(batch, pruneBefore)
+    }
+
+    override suspend fun networkBytes(
+        network: String,
+        from: String,
+        to: String,
+    ): Long {
+        networkReads++
+        return inner.networkBytes(network, from, to)
     }
 }

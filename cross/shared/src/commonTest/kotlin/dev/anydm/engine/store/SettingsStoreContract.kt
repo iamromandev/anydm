@@ -139,6 +139,52 @@ abstract class SettingsStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun slowModeRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().slowMode shouldBe false
+
+            settings.update { it.copy(slowMode = true) }
+            settings.load().slowMode shouldBe true
+            rows() shouldContain "net.slow_mode=true"
+
+            settings.update { it.copy(slowMode = false) }
+            settings.load().slowMode shouldBe false
+            rows().none { it?.startsWith("net.slow_mode=") == true } shouldBe true
+        }
+
+    @Test
+    fun slowModeLimitRoundTripsAndDefaultsTo1MiB() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().slowModeLimit shouldBe 1_048_576L
+
+            settings.update { it.copy(slowModeLimit = 2048) }
+            settings.load().slowModeLimit shouldBe 2048L
+            rows() shouldContain "net.slow_mode_limit=2048"
+
+            settings.update { it.copy(slowModeLimit = 1_048_576) }
+            settings.load().slowModeLimit shouldBe 1_048_576L
+            rows().none { it?.startsWith("net.slow_mode_limit=") == true } shouldBe true
+        }
+
+    @Test
+    fun anUnreadableSlowModeLimitFallsBack() =
+        runTest {
+            val settings = newStore().settings
+            for (bad in listOf("0", "x", "-5")) {
+                driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('net.slow_mode_limit', '$bad')")
+                settings.load().slowModeLimit shouldBe 1_048_576L
+            }
+        }
+
+    @Test
+    fun aSlowModeLimitBelowOneIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(slowModeLimit = 0) }
+        shouldThrow<IllegalArgumentException> { Settings(slowModeLimit = -1) }
+    }
+
+    @Test
     fun globalUploadLimitRoundTrips() =
         runTest {
             val settings = newStore().settings

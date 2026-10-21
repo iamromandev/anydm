@@ -13,6 +13,33 @@ abstract class TrafficStoreContract : StoreTestBase() {
     private val day = "2026-10-18"
 
     @Test
+    fun networkBytesSumsDownAndUpOfOneNetworkInRange() =
+        runTest {
+            val traffic = newStore().traffic
+            traffic.add(
+                TrafficBatch(
+                    days =
+                        mapOf(
+                            Triple("2026-10-20", "wifi", DownloadKind.DIRECT) to 100L,
+                            Triple("2026-10-21", "wifi", DownloadKind.DIRECT) to 200L,
+                            Triple("2026-10-21", "eth", DownloadKind.DIRECT) to 1000L,
+                            Triple("2026-10-22", "wifi", DownloadKind.DIRECT) to 7L,
+                        ),
+                    daysUp =
+                        mapOf(
+                            Triple("2026-10-20", "wifi", DownloadKind.DIRECT) to 10L,
+                            Triple("2026-10-21", "wifi", DownloadKind.TORRENT) to 50L,
+                        ),
+                ),
+                pruneBefore = 0,
+            )
+
+            traffic.networkBytes("wifi", "2026-10-20", "2026-10-21") shouldBe 360L
+            traffic.networkBytes("eth", "2026-10-20", "2026-10-21") shouldBe 1000L
+            traffic.networkBytes("none", "2026-10-20", "2026-10-21") shouldBe 0L
+        }
+
+    @Test
     fun addAccumulates() =
         runTest {
             val traffic = newStore().traffic

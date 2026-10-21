@@ -80,6 +80,13 @@ internal class TrafficMeter(
         }
     }
 
+    /** Bytes received and sent on [network] on the local days [from]..[to] (`YYYY-MM-DD`, inclusive) that are not drained yet. */
+    fun pendingBytes(
+        network: String,
+        from: String,
+        to: String,
+    ): Long = networkTotal(days, daysUp, network, from, to)
+
     /** What was counted since the last drain; the meter starts empty again. */
     fun drain(): TrafficBatch {
         val batch =
