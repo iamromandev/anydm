@@ -171,6 +171,79 @@ class MeteredRefreshTest {
         }
 
     @Test
+    fun theSameKeyAfterOfflineGetsItsCachedValueBeforeDetectionEnds() =
+        runTest {
+            val f = Fixture(this, t0)
+            f.refresh.first(f.monitor.first())
+            f.monitor.state.value.metered shouldBe true
+            f.probe.online = false
+            f.refresh.refresh(f.monitor.pollNow())
+            f.fake.delay = 4.seconds
+
+            f.probe.online = true
+            f.refresh.refresh(f.monitor.pollNow())
+            runCurrent()
+
+            f.monitor.state.value.key shouldBe "en0"
+            f.monitor.state.value.metered shouldBe true
+            f.fake.calls.size shouldBe 2
+        }
+
+    @Test
+    fun aNullAnswerIsAskedAgainAfterThirtySecondsAndARealOneAfterFiveMinutes() =
+        runTest {
+            val f = Fixture(this, t0)
+            f.fake.answers.remove("en0")
+            f.refresh.first(f.monitor.first())
+            f.fake.calls.size shouldBe 1
+
+            advanceTimeBy(29.seconds)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 1
+
+            advanceTimeBy(1.seconds)
+            f.fake.answers["en0"] = true
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 2
+            f.monitor.state.value.metered shouldBe true
+
+            advanceTimeBy(1.minutes)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 2
+        }
+
+    @Test
+    fun invalidateAsksAgainOnTheSameKeyAndReplacesARunningDetection() =
+        runTest {
+            val f = Fixture(this, t0)
+            f.refresh.first(f.monitor.first())
+            advanceTimeBy(1.minutes)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 1
+
+            f.fake.answers["en0"] = false
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+
+            f.fake.calls.size shouldBe 2
+            f.monitor.state.value.metered shouldBe false
+
+            f.fake.delay = 4.seconds
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 4
+        }
+
+    @Test
     fun aThrowingDetectorIsNoAnswer() =
         runTest {
             val f = Fixture(this, t0, MeteredDetector { error("no nmcli") })

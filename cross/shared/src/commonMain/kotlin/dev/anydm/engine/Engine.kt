@@ -1213,6 +1213,7 @@ class Engine(
     private suspend fun wakeTick() {
         val slept = wake.observe(clock.now(), monoStart.elapsedNow()) ?: return
         tell(EngineEvent.SystemWoke(slept))
+        meteredRefresh.invalidate()
         checkRulesThenRestart(confirmOnline = true)
     }
 
@@ -1263,6 +1264,7 @@ class Engine(
 
             NetworkStep.Restored -> {
                 tell(EngineEvent.NetworkRestored)
+                meteredRefresh.invalidate()
                 // The new network's rules reach the queue before the release, or a job would start on a forbidden network.
                 val changed = keeper.check() != null
                 if (changed) armRuleTimer()

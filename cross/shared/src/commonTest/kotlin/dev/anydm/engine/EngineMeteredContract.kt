@@ -2,6 +2,7 @@ package dev.anydm.engine
 
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.net.MeteredAction
@@ -10,9 +11,13 @@ import dev.anydm.engine.net.RuleAction
 import dev.anydm.engine.net.RuleSource
 import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.platform.FakeMeteredDetector
+import dev.anydm.engine.platform.FakeOnlineProbe
+import dev.anydm.engine.platform.ShiftedClock
 import dev.anydm.engine.platform.virtualClock
+import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -25,6 +30,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -146,6 +152,70 @@ abstract class EngineMeteredContract : StoreTestBase() {
         }
 
     @Test
+    fun aWakeAsksTheDetectorAgainOnTheSameInterface() =
+        engineTest {
+            val detector = FakeMeteredDetector(mutableMapOf("en0" to false))
+            val clock = ShiftedClock(virtualClock())
+            val h =
+                EngineHarness(
+                    this,
+                    newStore(),
+                    FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20))),
+                    clock = clock,
+                    network = { "en0" },
+                    meteredDetector = detector,
+                    wakeGap = 30.seconds,
+                ).also { harnesses += it }
+            val woke = mutableListOf<EngineEvent>()
+            backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { h.engine.events.collect { woke += it } }
+            h.engine.start()
+            h.engine.network.value.metered shouldBe false
+            advance(6.seconds)
+
+            // Home Wi-Fi to a hotspot on the same interface while asleep: no change of key, and well under five minutes.
+            detector.answers["en0"] = true
+            clock.offset += 1.minutes
+            advance(10.seconds)
+
+            woke.filterIsInstance<EngineEvent.SystemWoke>().size shouldBe 1
+            detector.calls.size shouldBe 2
+            h.engine.network.value.metered shouldBe true
+        }
+
+    @Test
+    fun aReturnAfterAConnectionErrorAsksTheDetectorAgain() =
+        engineTest {
+            val detector = FakeMeteredDetector(mutableMapOf("en0" to false))
+            val probe = FakeOnlineProbe()
+            val h =
+                EngineHarness(
+                    this,
+                    newStore(),
+                    FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20))).also {
+                        it.failure = FakeFailure.AtTransfer(32_768, StepResult.Failed(ErrorClass.TRANSIENT, "reset"))
+                    },
+                    clock = virtualClock(),
+                    network = { "en0" },
+                    onlineProbe = probe,
+                    meteredDetector = detector,
+                ).also { harnesses += it }
+            val events = mutableListOf<EngineEvent>()
+            backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { h.engine.events.collect { events += it } }
+            h.engine.start()
+            h.addJob()
+            advance(1.seconds)
+            probe.online = false
+            advance(1100.milliseconds)
+            probe.online = true
+            detector.answers["en0"] = true
+            advance(5.seconds)
+
+            events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+            detector.calls.size shouldBe 2
+            h.engine.network.value.metered shouldBe true
+        }
+
+    @Test
     fun aSlowDetectorKeepsThePreviousValue() =
         engineTest {
             val detector = FakeMeteredDetector(mutableMapOf("en0" to true))
@@ -155,8 +225,9 @@ abstract class EngineMeteredContract : StoreTestBase() {
 
             detector.answers["en0"] = false
             detector.delay = 10.seconds
-            advance(6.minutes)
+            advance(5.minutes + 20.seconds)
 
+            // The answer came after the timeout: the first call's value stands, and the next ask is 30 s away.
             detector.calls.size shouldBe 2
             h.engine.network.value.metered shouldBe true
         }

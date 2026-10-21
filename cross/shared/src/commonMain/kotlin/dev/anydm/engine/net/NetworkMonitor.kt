@@ -220,11 +220,16 @@ internal class MeteredRefresh(
     private val every: Duration = 5.minutes,
     private val timeout: Duration = 5.seconds,
 ) {
+    private companion object {
+        val RETRY_AFTER_NO_ANSWER = 30.seconds
+    }
+
     private val cache = mutableMapOf<String, Boolean>()
     private var lastKey: String? = null
     private var lastOnline = false
     private var lastAt: Instant? = null
     private var inFlight: Job? = null
+    private var forced = false
 
     /** Detects for [state] and waits for the answer (startup). */
     suspend fun first(state: NetworkState) {
@@ -235,6 +240,14 @@ internal class MeteredRefresh(
         detect(state.key)
     }
 
+    /**
+     * The next [refresh] asks again, even on the same key and over a running detection: the interface name stays the same
+     * when the machine moves from one Wi-Fi to another, so a wake or a return may leave the answer stale.
+     */
+    fun invalidate() {
+        forced = true
+    }
+
     /** Launches one detection when due; none while one for this network is in flight. */
     fun refresh(state: NetworkState) {
         val wasOnline = lastOnline
@@ -242,14 +255,16 @@ internal class MeteredRefresh(
         if (!state.online) return
         val at = lastAt
         val keyChanged = state.key != lastKey
-        val due = keyChanged || !wasOnline || at == null || clock.now() - at >= every
+        val due = keyChanged || forced || !wasOnline || at == null || clock.now() - at >= every
         if (!due) return
-        if (!keyChanged && inFlight?.isActive == true) return
+        if (!keyChanged && !forced && inFlight?.isActive == true) return
+        forced = false
         inFlight?.cancel()
         lastKey = state.key
         lastAt = clock.now()
         val key = state.key
-        val known = keyChanged && cache.containsKey(key)
+        // The cached answer stands in until the new one comes, whenever the state has none yet (a return to the same key too).
+        val known = state.metered == null && cache.containsKey(key)
         inFlight =
             scope.launch {
                 if (known) monitor.setMetered(key, cache[key])
@@ -269,6 +284,8 @@ internal class MeteredRefresh(
             }
         if (answer == null) {
             log.debug("net") { "metered detection gave no answer for $key" }
+            // No answer (a cold PowerShell, an nmcli hiccup): ask again soon, not after the full period.
+            lastAt = clock.now() - every + RETRY_AFTER_NO_ANSWER
         } else {
             cache[key] = answer
         }
