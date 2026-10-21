@@ -54,6 +54,8 @@ data class Download(
     val sourceUrl: String? = null,
     /** A collection: the range and limit chosen; a sync applies them again. */
     val selection: ItemSelection? = null,
+    /** Waits without a slot until then (NET-09). */
+    val startAt: Instant? = null,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }
