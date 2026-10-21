@@ -40,6 +40,7 @@ import dev.anydm.engine.media.PlaylistEntry
 import dev.anydm.engine.media.PlaylistListing
 import dev.anydm.engine.media.PlaylistParse
 import dev.anydm.engine.media.PlaylistSource
+import dev.anydm.engine.net.AfterQueueKeeper
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
@@ -1278,6 +1279,26 @@ class Engine(
 
             is EngineEvent.AllowanceReached -> {
                 log.info("net") { "allowance on ${event.network} reached: ${event.action} until ${event.resetsAt}" }
+            }
+
+            is EngineEvent.SystemWoke -> {
+                log.info("net") { "woke after ${event.slept.inWholeSeconds.seconds}" }
+            }
+
+            is EngineEvent.AfterQueueCountdown -> {
+                log.info("net") { "after queue: ${event.action} in ${AfterQueueKeeper.AFTER_QUEUE_COUNTDOWN.inWholeSeconds} s" }
+            }
+
+            is EngineEvent.AfterQueueCancelled -> {
+                log.info("net") { "after queue: ${event.action} cancelled" }
+            }
+
+            is EngineEvent.AfterQueueDone -> {
+                log.info("net") { "after queue: ${event.action}" }
+            }
+
+            is EngineEvent.AfterQueueFailed -> {
+                log.info("net") { "after queue: ${event.action} failed: ${event.message}" }
             }
 
             is EngineEvent.StopTimedOut, is EngineEvent.EngineFailed -> {
