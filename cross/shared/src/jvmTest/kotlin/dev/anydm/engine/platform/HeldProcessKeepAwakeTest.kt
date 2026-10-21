@@ -44,7 +44,26 @@ class HeldProcessKeepAwakeTest {
             val keep = keepAwakeFor(DesktopOs.LINUX, FakeProcessRunner(emptyList()), 4242, noWindows, log())
 
             keep.shouldBeInstanceOf<HeldProcessKeepAwake>().spec.command shouldBe
-                listOf("systemd-inhibit", "--what=idle:sleep", "--who=AnyDM", "--why=Downloading", "--mode=block", "sleep", "infinity")
+                listOf(
+                    "systemd-inhibit",
+                    "--what=idle:sleep",
+                    "--who=AnyDM",
+                    "--why=Downloading",
+                    "--mode=block",
+                    "sh",
+                    "-c",
+                    "while kill -0 4242 2>/dev/null; do sleep 5; done",
+                )
+        }
+
+    @Test
+    fun theLinuxHelperEndsWithTheJvmAndNeverWaitsForever() =
+        runTest {
+            val keep = keepAwakeFor(DesktopOs.LINUX, FakeProcessRunner(emptyList()), 31337, noWindows, log())
+
+            val command = keep.shouldBeInstanceOf<HeldProcessKeepAwake>().spec.command
+            command.any { "kill -0 31337 " in it } shouldBe true
+            command.any { "infinity" in it } shouldBe false
         }
 
     @Test
