@@ -331,6 +331,9 @@ class Engine(
     private var ruleTimer: Job? = null
     private var ruleTimerAt: Instant? = null
 
+    // A return whose rules could not be read: its release waits for a check that can (on the publisher).
+    private var releasePending = false
+
     /** What the network rules decide now: the action, its causes, caps, allowance and next change; [RuleStatus.None] until [start]. */
     val rules: StateFlow<RuleStatus> = keeper.status
 
@@ -548,7 +551,14 @@ class Engine(
             EngineState.Running -> {
                 if (!stateFlow.compareAndSet(now, EngineState.Stopping)) return stop()
                 // The hold goes first: a stop that times out below still lets the machine sleep again.
-                withContext(NonCancellable) { withTimeoutOrNull(stopTimeout) { withContext(publisher) { awake.close() } } }
+                withContext(NonCancellable) {
+                    withTimeoutOrNull(stopTimeout) {
+                        withContext(publisher) {
+                            releasePending = false
+                            awake.close()
+                        }
+                    }
+                }
                 queueJob.cancel()
                 val ended = withTimeoutOrNull(stopTimeout) { queueJob.join() }
                 if (ended == null) {
@@ -1214,8 +1224,15 @@ class Engine(
             return
         }
         armRuleTimer()
-        scope.launch(publisher) { pushQuietly() }
+        val release = takeRelease()
+        launchQuietly {
+            pushQuietly()
+            if (release && monitor.state.value.online) queue.applyNetwork(false)
+        }
     }
+
+    // On the publisher: whether a return still waits for its release (its rules could not be read); asked once.
+    private fun takeRelease(): Boolean = releasePending.also { releasePending = false }
 
     // On the publisher, every WAKE_TICK: a jump of the clock means the machine slept or froze. The rules are decided again at
     // once, then the connections start again, if the network is still there.
@@ -1277,6 +1294,8 @@ class Engine(
     private suspend fun onNetworkStep(step: NetworkStep) {
         when (step) {
             NetworkStep.Lost -> {
+                // The queue is offline now: a return that waited for its rules has nothing left to release.
+                releasePending = false
                 tell(EngineEvent.NetworkLost)
                 launchQuietly { queue.applyNetwork(true) }
                 checkRules()
@@ -1286,19 +1305,22 @@ class Engine(
                 tell(EngineEvent.NetworkRestored)
                 meteredRefresh.invalidate()
                 // The new network's rules reach the queue before the release, or a job would start on a forbidden network.
-                val changed =
-                    try {
-                        keeper.check() != null
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // The rules cannot be read now: the release must not wait for them, and what the queue has is pushed.
-                        log.warn("net") { "rules not checked on the return: ${e.message}" }
-                        true
-                    }
-                if (changed) armRuleTimer()
+                try {
+                    keeper.check()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // The rules cannot be read now, and the new network may forbid the jobs: they stay paused for the network,
+                    // and the check is tried again (the timer); its success pushes the rules and then releases them.
+                    log.warn("net") { "rules not checked on the return: ${e.message}" }
+                    releasePending = true
+                    armRuleRetry()
+                    return
+                }
+                releasePending = false
+                armRuleTimer()
                 launchQuietly {
-                    if (changed) pushQuietly()
+                    pushQuietly()
                     // The push may have waited at the queue while the network dropped again: the Lost's offline is already
                     // there, and a release behind it would undo it. Nothing suspends between this check and the send.
                     if (monitor.state.value.online) queue.applyNetwork(false)
@@ -1322,8 +1344,10 @@ class Engine(
     private suspend fun checkRulesThenRestart(confirmOnline: Boolean = false) {
         keeper.check() ?: return
         armRuleTimer()
+        val release = takeRelease()
         launchQuietly {
             pushQuietly()
+            if (release && monitor.state.value.online) queue.applyNetwork(false)
             if (!confirmOnline || monitor.pollNow().online) queue.restartConnections()
         }
     }

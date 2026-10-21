@@ -321,31 +321,96 @@ abstract class EngineNetworkContract : StoreTestBase() {
             f.h.reasons(id) shouldBe setOf(PauseReason.GLOBAL)
         }
 
+    // The return's rules cannot be read: the jobs stay paused (the network may forbid them), the check is tried again within a
+    // minute, and the release follows the rules it finds.
+    private suspend fun TestScope.returnWithAFailingRuleRead(
+        f: Fixture,
+        traffic: RecordingTraffic,
+        policy: NetworkPolicy,
+    ): DownloadId {
+        f.h.engine.start()
+        f.h.engine.setNetworkPolicy("en7", policy)
+        val id = f.h.addJob()
+        advance(2.seconds)
+        f.probe.online = false
+        advance(9.seconds)
+        f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+        // The new network's usage cannot be read, once, when the connection returns.
+        traffic.failNetworkReads = 1
+        f.net = "en7"
+        f.probe.online = true
+        repeat(12) {
+            advance(1.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+        }
+        traffic.failNetworkReads shouldBe 0
+        f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+        return id
+    }
+
+    private val huge = Allowance(1L shl 40, AllowancePeriod.Daily)
+
     @Test
-    fun aFailingRuleCheckOnTheReturnStillReleasesTheJobsAndTheNextStepsAreSeen() =
+    fun aFailingRuleCheckOnTheReturnKeepsTheJobsPausedUntilTheRetryAndThenReleasesThem() =
         engineTest {
             var recording: RecordingTraffic? = null
             val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
-            val traffic = recording!!
-            f.h.engine.start()
-            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(allowance = Allowance(1L shl 40, AllowancePeriod.Daily)))
-            val id = f.h.addJob()
-            advance(2.seconds)
-            f.probe.online = false
-            advance(9.seconds)
-            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+            val id = returnWithAFailingRuleRead(f, recording!!, NetworkPolicy(allowance = huge))
 
-            // The new network's usage cannot be read, once, when the connection returns.
-            traffic.failNetworkReads = 1
-            f.net = "en7"
-            f.probe.online = true
-            advance(3.seconds)
-
+            // The timer checks again within a minute: the rules allow, and the jobs run.
+            advance(60.seconds)
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+            f.h.engine.state.value shouldBe EngineState.Running
 
             // The collector lives: a later drop pauses and the return after it resumes.
             f.probe.online = false
             advance(9.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+            f.probe.online = true
+            advance(3.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+        }
+
+    @Test
+    fun aFailingRuleCheckOnTheReturnToAForbiddingNetworkNeverStartsTheJobs() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val id =
+                returnWithAFailingRuleRead(
+                    f,
+                    recording!!,
+                    NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE, allowance = huge),
+                )
+
+            // The retry finds the metered network's rule: paused for it, and no transfer ever started on it.
+            repeat(70) {
+                advance(1.seconds)
+                f.h.status(id) shouldBe DownloadStatus.PAUSED
+            }
+            f.h.reasons(id) shouldBe setOf(PauseReason.SCHEDULE)
+            f.h.protocol.transfers.size shouldBe 1
+        }
+
+    @Test
+    fun aDropWhileTheReleaseIsPendingForgetsItAndNoLaterCheckReleasesWhileOffline() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            val id = returnWithAFailingRuleRead(f, traffic, NetworkPolicy(allowance = huge))
+
+            f.probe.online = false
+            advance(9.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 2
+
+            // Checks that succeed while offline do not release the jobs.
+            advance(130.seconds)
+            f.h.engine.network.value.online shouldBe false
             f.h.status(id) shouldBe DownloadStatus.PAUSED
             f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
 
