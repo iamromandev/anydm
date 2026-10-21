@@ -14,6 +14,7 @@ import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.net.RuleEffect
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Protocol
@@ -56,7 +57,13 @@ class Queue internal constructor(
         QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates, profiles)
 
     /** Loads the stored jobs and starts running them. Call once. */
-    suspend fun start() = actor.start(scope)
+    suspend fun start() = start(RuleEffect.None)
+
+    /** Starts with the network rules already in force, so no job starts against them (#543). */
+    internal suspend fun start(initialRules: RuleEffect) = actor.start(scope, initialRules)
+
+    /** The network rules changed: pause, release and cap (#543). Returns once the stopped jobs have ended. */
+    internal suspend fun applyRules(effect: RuleEffect): CommandResult = actor.callLater { applyRules(effect, it) }
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }

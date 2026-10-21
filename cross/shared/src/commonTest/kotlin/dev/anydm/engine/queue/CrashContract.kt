@@ -1,6 +1,5 @@
 package dev.anydm.engine.queue
 
-import app.cash.sqldelight.db.SqlDriver
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.stepRoot
@@ -17,8 +16,6 @@ import io.kotest.property.arbitrary.boolean
 import io.kotest.property.arbitrary.int
 import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -28,24 +25,14 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * The engine stopped at any moment, by a kill or a power cut, and started again on the same store and disk (#554): every
  * job finishes, and every file is byte for byte the source. Each case runs on a new database from [newDriver].
  */
-abstract class CrashContract {
-    protected abstract fun newDriver(): SqlDriver
-
+abstract class CrashContract : QueueTestBase() {
     private val size = 256 * 1024
-
-    private fun TestScope.childScope() = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
-
-    private fun TestScope.settle() {
-        advanceTimeBy(10.minutes)
-        runCurrent()
-    }
 
     @Test
     fun aKillOrPowerCutAtAnyMomentStillGivesTheSameFiles() =

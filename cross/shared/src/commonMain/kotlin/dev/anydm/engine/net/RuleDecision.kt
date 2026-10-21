@@ -43,7 +43,7 @@ internal fun allowancePeriod(
     return periodOf(allowance.period, now.toLocalDateTime(zone).date)
 }
 
-private fun minOfNotNull(
+internal fun minOfNotNull(
     a: Long?,
     b: Long?,
 ): Long? =
