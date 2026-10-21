@@ -7,6 +7,8 @@ import dev.anydm.engine.platform.FakeOnlineProbe
 import dev.anydm.engine.platform.MeteredDetector
 import dev.anydm.engine.platform.virtualClock
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -327,6 +329,58 @@ class MeteredRefreshTest {
             f.refresh.refresh(f.monitor.state.value)
             runCurrent()
             f.fake.calls.size shouldBe 5
+        }
+
+    @Test
+    fun invalidateCancelsARunningDetectionAndItsLateAnswerIsNeverShown() =
+        runTest {
+            val cancelled = mutableListOf<Int>()
+            var calls = 0
+            val detector =
+                MeteredDetector {
+                    val call = ++calls
+                    when (call) {
+                        1 -> {
+                            true
+                        }
+
+                        2 -> {
+                            // Slow, and late with the other answer.
+                            try {
+                                delay(4.seconds)
+                                true
+                            } catch (e: CancellationException) {
+                                cancelled += call
+                                throw e
+                            }
+                        }
+
+                        else -> {
+                            false
+                        }
+                    }
+                }
+            val f = Fixture(this, t0, detector)
+            f.refresh.first(f.monitor.first())
+            f.monitor.state.value.metered shouldBe true
+
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            calls shouldBe 2
+
+            advanceTimeBy(1.seconds)
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            calls shouldBe 3
+            f.monitor.state.value.metered shouldBe false
+
+            advanceTimeBy(10.seconds)
+            runCurrent()
+
+            cancelled shouldBe listOf(2)
+            f.monitor.state.value.metered shouldBe false
         }
 
     @Test
