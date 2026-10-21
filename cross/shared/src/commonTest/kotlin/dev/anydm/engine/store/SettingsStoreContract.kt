@@ -7,6 +7,7 @@ import dev.anydm.engine.core.PacingValues
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
+import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.tools.YtDlpChannel
 import io.kotest.assertions.throwables.shouldThrow
@@ -183,6 +184,53 @@ abstract class SettingsStoreContract : StoreTestBase() {
         shouldThrow<IllegalArgumentException> { Settings(slowModeLimit = 0) }
         shouldThrow<IllegalArgumentException> { Settings(slowModeLimit = -1) }
     }
+
+    @Test
+    fun keepAwakeIsOnByDefaultAndOffIsStored() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().keepAwake shouldBe true
+
+            settings.update { it.copy(keepAwake = false) }
+            settings.load().keepAwake shouldBe false
+            rows() shouldContain "net.keep_awake=false"
+
+            settings.update { it.copy(keepAwake = true) }
+            settings.load().keepAwake shouldBe true
+            rows().none { it?.startsWith("net.keep_awake=") == true } shouldBe true
+        }
+
+    @Test
+    fun afterQueueRoundTrips() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().afterQueue shouldBe AfterQueueAction.NONE
+
+            settings.update { it.copy(afterQueue = AfterQueueAction.SLEEP) }
+            settings.load().afterQueue shouldBe AfterQueueAction.SLEEP
+            rows() shouldContain "net.after_queue=SLEEP"
+
+            settings.update { it.copy(afterQueue = AfterQueueAction.SHUT_DOWN) }
+            settings.load().afterQueue shouldBe AfterQueueAction.SHUT_DOWN
+            rows() shouldContain "net.after_queue=SHUT_DOWN"
+
+            settings.update { it.copy(afterQueue = AfterQueueAction.NONE) }
+            settings.load().afterQueue shouldBe AfterQueueAction.NONE
+            rows().none { it?.startsWith("net.after_queue=") == true } shouldBe true
+        }
+
+    @Test
+    fun unreadableKeepAwakeAndAfterQueueFallBack() =
+        runTest {
+            val settings = newStore().settings
+            driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('net.keep_awake', 'maybe')")
+            driver.exec("INSERT OR REPLACE INTO setting(name, data) VALUES ('net.after_queue', 'HIBERNATE')")
+
+            val loaded = settings.load()
+
+            loaded.keepAwake shouldBe true
+            loaded.afterQueue shouldBe AfterQueueAction.NONE
+        }
 
     @Test
     fun globalUploadLimitRoundTrips() =

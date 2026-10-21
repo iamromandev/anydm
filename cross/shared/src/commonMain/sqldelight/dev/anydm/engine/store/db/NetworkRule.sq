@@ -3,7 +3,8 @@ import dev.anydm.engine.core.ScheduleRuleId;
 -- What applies on each network (NET-05, NET-07): `network` is a NetworkIdentity key, and '*' is the default policy. The
 -- allowance columns are all NULL without an allowance. `allowance_period` is DAILY, WEEKLY or MONTHLY; `allowance_reset_day`
 -- is the ISO day 1..7 for WEEKLY and 1..31 for MONTHLY; `allowance_action` is PAUSE or SLOW. They are plain TEXT, read in
--- SqlRuleStore, so one row this version can't read is skipped instead of failing the whole query.
+-- SqlRuleStore, so one row this version can't read is skipped instead of failing the whole query. `metered` is the user's
+-- flag (NET-14) and `on_metered` is NONE, SLOW or PAUSE.
 CREATE TABLE network_policy (
     network TEXT NOT NULL PRIMARY KEY,
     speed_limit INTEGER CHECK (speed_limit > 0),
@@ -12,7 +13,9 @@ CREATE TABLE network_policy (
     allowance_period TEXT,
     allowance_reset_day INTEGER,
     allowance_warn_percent INTEGER,
-    allowance_action TEXT
+    allowance_action TEXT,
+    metered INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    on_metered TEXT NOT NULL DEFAULT 'NONE'
 );
 
 -- Weekly schedule rules (NET-08): `days` are DayOfWeek names, comma-separated, in ISO order; the minutes are of the local
@@ -30,8 +33,8 @@ SELECT * FROM network_policy ORDER BY network;
 
 upsertPolicy:
 INSERT OR REPLACE INTO network_policy(network, speed_limit, upload_limit, allowance_bytes, allowance_period,
-    allowance_reset_day, allowance_warn_percent, allowance_action)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    allowance_reset_day, allowance_warn_percent, allowance_action, metered, on_metered)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deletePolicy:
 DELETE FROM network_policy WHERE network = ?;

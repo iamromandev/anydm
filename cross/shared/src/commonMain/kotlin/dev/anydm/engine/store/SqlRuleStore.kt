@@ -5,6 +5,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Allowance
 import dev.anydm.engine.net.AllowanceAction
 import dev.anydm.engine.net.AllowancePeriod
+import dev.anydm.engine.net.MeteredAction
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
 import dev.anydm.engine.net.NewScheduleRule
@@ -68,6 +69,8 @@ internal class SqlRuleStore(
                         allowance_reset_day = allowance?.period?.let(::resetDay),
                         allowance_warn_percent = allowance?.warnPercent?.toLong(),
                         allowance_action = allowance?.atLimit?.name,
+                        metered = policy.metered,
+                        on_metered = policy.onMetered.name,
                     ).value
             }
         }
@@ -125,7 +128,8 @@ internal class SqlRuleStore(
                     val action = AllowanceAction.entries.firstOrNull { it.name == allowance_action } ?: return null
                     Allowance(bytes, period, allowance_warn_percent?.toInt(), action)
                 }
-            NetworkPolicy(speed_limit, upload_limit, allowance)
+            val onMetered = MeteredAction.entries.firstOrNull { it.name == on_metered } ?: return null
+            NetworkPolicy(speed_limit, upload_limit, allowance, metered, onMetered)
         } catch (_: IllegalArgumentException) {
             null
         } catch (_: NullPointerException) {
