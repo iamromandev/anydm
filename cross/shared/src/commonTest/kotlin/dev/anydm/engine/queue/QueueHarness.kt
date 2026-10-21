@@ -56,6 +56,8 @@ internal class QueueHarness(
     observer: QueueObserver = QueueObserver.None,
     duplicates: DuplicateCheck = DuplicateCheck.None,
     placement: Placement = DirectPlacement(fs),
+    /** Asked when a transient failure comes while the queue thinks it is online (#543). */
+    networkCheck: suspend () -> Boolean = { true },
 ) {
     val finished = mutableListOf<DownloadId>()
     val runner =
@@ -90,6 +92,7 @@ internal class QueueHarness(
             observer,
             timeSource = test.testScheduler.timeSource,
             duplicates = duplicates,
+            networkCheck = networkCheck,
         )
 
     private var added = 0
@@ -142,11 +145,12 @@ abstract class QueueTestBase : StoreTestBase() {
     internal suspend fun TestScope.started(
         limit: Int? = null,
         rules: RuleEffect = RuleEffect.None,
+        offline: Boolean = false,
         harness: (TestScope) -> QueueHarness = { QueueHarness(it, newStore()) },
     ): QueueHarness =
         harness(this).also { h ->
             if (limit != null) h.store.settings.update { it.copy(concurrencyLimit = limit) }
-            h.queue.start(rules)
+            h.queue.start(rules, offline)
         }
 
     /** A scope inside the test's background scope that a test can cancel alone, to stop a queue and start another. */

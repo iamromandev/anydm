@@ -93,6 +93,8 @@ internal class FakeProtocol(
     var relinkAnswer: StepResult<Relinked>? = null,
     /** When set, [relink] waits for it first. */
     var relinkGate: CompletableDeferred<Unit>? = null,
+    /** When set, [probe] waits for it once the request is recorded. */
+    var probeGate: CompletableDeferred<Unit>? = null,
     /** Mirror urls whose probe answers GONE. */
     var gone: Set<String> = emptySet(),
     /** What the probe says the content type is (ProbeResult.mime). */
@@ -152,6 +154,7 @@ internal class FakeProtocol(
         log("probe")
         requests += request
         probed += request.mirror.url
+        probeGate?.await()
         if (request.mirror.url in gone) return StepResult.Failed(ErrorClass.GONE, "gone: ${request.mirror.url}")
         when (val scripted = failure) {
             is FakeFailure.AtProbe -> return scripted.failure

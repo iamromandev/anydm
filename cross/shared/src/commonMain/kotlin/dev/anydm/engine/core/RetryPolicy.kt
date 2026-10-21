@@ -13,6 +13,7 @@ import kotlin.time.Instant
  * | Error class                            | Action                                        |
  * |----------------------------------------|-----------------------------------------------|
  * | TRANSIENT, RATE_LIMITED                | [FailureAction.Retry] while the budget lasts  |
+ * | TRANSIENT while offline                | [FailureAction.Pause] for NETWORK, uncounted  |
  * | GONE                                   | [FailureAction.NextMirror] if one is left     |
  * | DISK_FULL                              | [FailureAction.Pause] for LOW_DISK            |
  * | TOOL_MISSING                           | [FailureAction.Pause] for TOOLS               |
@@ -39,7 +40,9 @@ class RetryPolicy(
     /**
      * The action for [failure] of [job] (as the run left it). [nextMirror] is the mirror a GONE moves to, or null when
      * none is left; [madeProgress] is whether this attempt wrote bytes; [integrityBefore] is whether an earlier attempt
-     * of the job already ended INTEGRITY, so a checksum mismatch starts over from zero only once (HTTP-14).
+     * of the job already ended INTEGRITY, so a checksum mismatch starts over from zero only once (HTTP-14). [offline] says
+     * the network is gone: a TRANSIENT failure is then the drop itself, so the job waits for it (NETWORK) instead of
+     * spending a retry. A RATE_LIMITED, GONE or AUTH answer came from a server, so the network works and nothing changes.
      */
     fun decide(
         job: Download,
@@ -49,16 +52,15 @@ class RetryPolicy(
         maxRetries: Int,
         now: Instant,
         integrityBefore: Boolean = false,
+        offline: Boolean = false,
     ): FailureAction =
         when (failure.errorClass) {
-            ErrorClass.TRANSIENT, ErrorClass.RATE_LIMITED -> {
-                val count = (if (madeProgress) 0 else job.attemptCount) + 1
-                if (count > maxRetries) {
-                    FailureAction.Fail
-                } else {
-                    val wait = failure.retryAfter?.coerceAtMost(rateLimitCap) ?: jittered(backoff(count))
-                    FailureAction.Retry(now + wait, count)
-                }
+            ErrorClass.TRANSIENT -> {
+                if (offline) FailureAction.Pause(PauseReason.NETWORK) else retry(job, failure, madeProgress, maxRetries, now)
+            }
+
+            ErrorClass.RATE_LIMITED -> {
+                retry(job, failure, madeProgress, maxRetries, now)
             }
 
             ErrorClass.GONE -> {
@@ -81,6 +83,19 @@ class RetryPolicy(
                 FailureAction.Fail
             }
         }
+
+    private fun retry(
+        job: Download,
+        failure: StepFailure,
+        madeProgress: Boolean,
+        maxRetries: Int,
+        now: Instant,
+    ): FailureAction {
+        val count = (if (madeProgress) 0 else job.attemptCount) + 1
+        if (count > maxRetries) return FailureAction.Fail
+        val wait = failure.retryAfter?.coerceAtMost(rateLimitCap) ?: jittered(backoff(count))
+        return FailureAction.Retry(now + wait, count)
+    }
 
     // Doubles from base and stops at the cap, so a huge count can't overflow.
     private fun backoff(count: Int): Duration {

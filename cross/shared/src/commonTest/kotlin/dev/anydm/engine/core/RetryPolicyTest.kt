@@ -32,6 +32,7 @@ class RetryPolicyTest {
         nextMirror: Mirror? = m1,
         retryAfter: Duration? = null,
         integrityBefore: Boolean = false,
+        offline: Boolean = false,
     ) = decide(
         job = aPendingDownload().copy(attemptCount = attemptCount),
         failure = StepFailure(Step.TRANSFER, errorClass, "failed", retryAfter),
@@ -40,6 +41,7 @@ class RetryPolicyTest {
         maxRetries = maxRetries,
         now = t0,
         integrityBefore = integrityBefore,
+        offline = offline,
     )
 
     @Test
@@ -117,6 +119,40 @@ class RetryPolicyTest {
         policy().decide(RATE_LIMITED, retryAfter = 2.hours) shouldBe FailureAction.Retry(t0 + 1.hours, 1)
         policy().decide(TRANSIENT, retryAfter = 10.seconds) shouldBe FailureAction.Retry(t0 + 10.seconds, 1)
         policy().decide(RATE_LIMITED) shouldBe FailureAction.Retry(t0 + 2.5.seconds, 1)
+    }
+
+    @Test
+    fun transientWhileOfflineIsANetworkPause() {
+        for (count in listOf(0, 99)) {
+            withClue("attemptCount $count") {
+                policy().decide(TRANSIENT, attemptCount = count, maxRetries = 5, offline = true) shouldBe
+                    FailureAction.Pause(PauseReason.NETWORK)
+            }
+        }
+    }
+
+    @Test
+    fun rateLimitedWhileOfflineStillRetries() {
+        policy().decide(RATE_LIMITED, offline = true) shouldBe FailureAction.Retry(t0 + 2.5.seconds, 1)
+        policy().decide(RATE_LIMITED, attemptCount = 5, offline = true) shouldBe FailureAction.Fail
+    }
+
+    @Test
+    fun offlineFalseChangesNothing() {
+        for (errorClass in ErrorClass.entries + null) {
+            withClue(errorClass) { policy().decide(errorClass, offline = false) shouldBe policy().decide(errorClass) }
+        }
+        policy().decide(TRANSIENT, offline = false) shouldBe FailureAction.Retry(t0 + 2.5.seconds, 1)
+    }
+
+    @Test
+    fun goneAndAuthIgnoreOffline() {
+        policy().decide(GONE, offline = true) shouldBe FailureAction.NextMirror(m1)
+        policy().decide(GONE, nextMirror = null, offline = true) shouldBe FailureAction.Fail
+        policy().decide(AUTH, offline = true) shouldBe FailureAction.Fail
+        for (errorClass in ErrorClass.entries.filter { it != TRANSIENT }) {
+            withClue(errorClass) { policy().decide(errorClass, offline = true) shouldBe policy().decide(errorClass) }
+        }
     }
 
     @Test
