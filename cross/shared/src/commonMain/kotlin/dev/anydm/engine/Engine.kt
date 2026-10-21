@@ -1116,6 +1116,15 @@ class Engine(
                 log.warn("job") { "login for ${event.origin} not saved in the keychain; kept for this run" }
             }
 
+            is EngineEvent.AllowanceWarning -> {
+                val pct = if (event.limit == 0L) 100 else event.used * 100 / event.limit
+                log.info("net") { "allowance on ${event.network}: $pct% used (${event.used}/${event.limit} bytes)" }
+            }
+
+            is EngineEvent.AllowanceReached -> {
+                log.info("net") { "allowance on ${event.network} reached: ${event.action} until ${event.resetsAt}" }
+            }
+
             is EngineEvent.StopTimedOut, is EngineEvent.EngineFailed -> {
                 Unit
             }

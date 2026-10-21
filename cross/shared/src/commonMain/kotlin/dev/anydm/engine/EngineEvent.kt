@@ -4,6 +4,7 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.net.AllowanceAction
 import kotlinx.io.files.Path
 import kotlin.time.Instant
 
@@ -86,6 +87,23 @@ sealed interface EngineEvent {
      */
     data class CredentialsNotSaved(
         val origin: String,
+    ) : EngineEvent
+
+    /** [network] used its warning share of the allowance ([used] of [limit] bytes); the period resets at [resetsAt] (NET-07). */
+    data class AllowanceWarning(
+        val network: String,
+        val used: Long,
+        val limit: Long,
+        val resetsAt: Instant,
+    ) : EngineEvent
+
+    /** [network] reached its allowance: [action] holds until [resetsAt] (NET-07). */
+    data class AllowanceReached(
+        val network: String,
+        val used: Long,
+        val limit: Long,
+        val action: AllowanceAction,
+        val resetsAt: Instant,
     ) : EngineEvent
 
     /** The store failed; the engine has stopped. */
