@@ -719,7 +719,9 @@ internal class QueueActor(
             }
 
             slot != null && job.status != MUXING && at != null && at > clock.now() -> {
-                stop(slot, { requeue(it.copy(startAt = at)) }, reply)
+                // Stored first: whatever else was asked of the stopping slot runs on a job that already has it.
+                slot.download = save(slot.download.copy(startAt = at))
+                stop(slot, ::requeue, reply)
             }
 
             slot != null -> {

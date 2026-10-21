@@ -25,6 +25,7 @@ import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewItem
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -101,6 +102,42 @@ abstract class QueueStartTimeContract : QueueTestBase() {
             h.status(a) shouldBe QUEUED
             advanceTimeBy(2.seconds)
             h.status(a) shouldBe DOWNLOADING
+        }
+
+    @Test
+    fun aStartTimeAskedWhileAPauseIsStoppingTheSlotIsStored() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            val at = h.clock.now() + 1.hours
+
+            val paused = async { h.queue.pause(a) }
+            val timed = async { h.queue.setStartTime(a, at) }
+            paused.await()
+            timed.await().shouldBeInstanceOf<CommandResult.Done>()
+
+            h.status(a) shouldBe PAUSED
+            h.job(a)!!.startAt shouldBe at
+        }
+
+    @Test
+    fun aStartTimeAskedWhileARulePauseIsStoppingTheSlotIsStored() =
+        runTest {
+            val h = started()
+            val a = h.addJob()
+            advanceTimeBy(1.seconds)
+            h.status(a) shouldBe DOWNLOADING
+            val at = h.clock.now() + 1.hours
+
+            val ruled = async { h.queue.applyRules(RuleEffect(true, null, null)) }
+            val timed = async { h.queue.setStartTime(a, at) }
+            ruled.await()
+            timed.await().shouldBeInstanceOf<CommandResult.Done>()
+
+            h.status(a) shouldBe PAUSED
+            h.job(a)!!.startAt shouldBe at
         }
 
     @Test
