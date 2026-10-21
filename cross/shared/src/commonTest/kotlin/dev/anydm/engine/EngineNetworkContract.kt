@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -381,6 +382,106 @@ abstract class EngineNetworkContract : StoreTestBase() {
             f.probe.online = true
             advance(3.seconds)
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+        }
+
+    @Test
+    fun aFailingRuleCheckOfTheTimerDoesNotEndTheEngineAndIsTriedAgain() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy(
+                "en7",
+                NetworkPolicy(
+                    metered = true,
+                    onMetered = MeteredAction.PAUSE,
+                    allowance =
+                        Allowance(1L shl 40, AllowancePeriod.Daily),
+                ),
+            )
+            advance(2.seconds)
+
+            // The change reads the new network's usage and fails; so does the timer's check a minute after the start.
+            traffic.failNetworkReads = 2
+            f.net = "en7"
+            advance(4.seconds)
+            traffic.failNetworkReads shouldBe 1
+            advance(60.seconds)
+
+            traffic.failNetworkReads shouldBe 0
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.events.filterIsInstance<EngineEvent.EngineFailed>().shouldBeEmpty()
+
+            // The check after it succeeds and the rules of the new network apply.
+            val id = f.h.addJob()
+            advance(70.seconds)
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+        }
+
+    @Test
+    fun aFailingRuleCheckOfTheBytesDoesNotEndTheEngine() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy(
+                "en7",
+                NetworkPolicy(
+                    metered = true,
+                    onMetered = MeteredAction.PAUSE,
+                    allowance =
+                        Allowance(1L shl 40, AllowancePeriod.Daily),
+                ),
+            )
+            val id = f.h.addJob()
+            advance(3.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            // The change fails to read, and the check that the bytes trigger a moment later fails too.
+            traffic.failNetworkReads = 2
+            f.net = "en7"
+            advance(4.seconds)
+
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.events.filterIsInstance<EngineEvent.EngineFailed>().shouldBeEmpty()
+            traffic.failNetworkReads shouldBe 0
+
+            // The next check that succeeds applies the rules of the new network.
+            advance(3.seconds)
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+        }
+
+    @Test
+    fun aRuleCheckThatKeepsFailingIsTriedOnceAMinute() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(allowance = Allowance(1L shl 40, AllowancePeriod.Daily)))
+            advance(2.seconds)
+
+            traffic.failNetworkReads = 1_000
+            f.net = "en7"
+            advance(4.seconds)
+            val before = traffic.networkReads
+            advance(3.minutes)
+
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.events.filterIsInstance<EngineEvent.EngineFailed>().shouldBeEmpty()
+            (traffic.networkReads - before) shouldBe 3
+
+            traffic.failNetworkReads = 0
+            advance(1.minutes)
+            val settled = traffic.networkReads
+            advance(3.minutes)
+            f.h.engine.state.value shouldBe EngineState.Running
+            // Read once more for the new network, then kept: no more reads.
+            (traffic.networkReads - settled) shouldBe 0
         }
 
     @Test

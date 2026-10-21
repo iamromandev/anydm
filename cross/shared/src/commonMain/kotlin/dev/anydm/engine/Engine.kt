@@ -1202,8 +1202,17 @@ class Engine(
         }
 
     // On the publisher: decides again, re-arms the timer and sends a changed effect to the queue.
+    // A check that fails (a store that cannot be read) must not end the engine: it is tried again with the idle period.
     private suspend fun checkRules() {
-        keeper.check() ?: return
+        try {
+            keeper.check() ?: return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("net") { "rules not checked: ${e.message}" }
+            armRuleRetry()
+            return
+        }
         armRuleTimer()
         scope.launch(publisher) { pushQuietly() }
     }
@@ -1358,6 +1367,20 @@ class Engine(
                 val wait = if (target == null) RULES_IDLE_CHECK else minOf(target - clock.now(), RULES_IDLE_CHECK)
                 delay(wait.coerceAtLeast(Duration.ZERO))
                 // This timer is done: the check below may arm the next one.
+                ruleTimer = null
+                ruleTimerAt = null
+                checkRules()
+            }
+    }
+
+    // On the publisher: after a failed check, a timer one idle period away unless one is running, so a store that stays broken
+    // is asked once a minute, however often the bytes ask for a check.
+    private fun armRuleRetry() {
+        if (ruleTimer?.isActive == true) return
+        ruleTimerAt = null
+        ruleTimer =
+            scope.launch(publisher) {
+                delay(RULES_IDLE_CHECK)
                 ruleTimer = null
                 ruleTimerAt = null
                 checkRules()
