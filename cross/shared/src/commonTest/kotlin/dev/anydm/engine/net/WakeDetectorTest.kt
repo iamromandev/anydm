@@ -32,6 +32,13 @@ class WakeDetectorTest {
     }
 
     @Test
+    fun aMonotonicJumpWithANormalWallClockIsAWake() {
+        val detector = WakeDetector()
+        detector.observe(t0, Duration.ZERO)
+        detector.observe(t0 + 5.seconds, 60.seconds) shouldBe 60.seconds
+    }
+
+    @Test
     fun bothClocksJumpingIsAWake() {
         val detector = WakeDetector()
         detector.observe(t0, Duration.ZERO)
