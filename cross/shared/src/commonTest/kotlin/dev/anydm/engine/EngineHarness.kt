@@ -24,6 +24,7 @@ import dev.anydm.engine.torrent.TorrentService
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -48,6 +49,7 @@ internal class EngineHarness(
     playlists: PlaylistSource? = null,
     torrents: TorrentService? = null,
     credentials: CredentialWriter? = null,
+    timeZone: () -> TimeZone = { TimeZone.UTC },
 ) {
     val engine =
         Engine(
@@ -67,6 +69,7 @@ internal class EngineHarness(
             playlists = playlists,
             torrents = torrents,
             credentials = credentials,
+            timeZone = timeZone,
         )
 
     private var added = 0

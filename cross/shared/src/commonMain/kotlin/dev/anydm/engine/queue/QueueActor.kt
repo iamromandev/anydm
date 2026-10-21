@@ -41,6 +41,8 @@ import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
+import dev.anydm.engine.net.RuleEffect
+import dev.anydm.engine.net.minOfNotNull
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.protocol.Direction
@@ -136,6 +138,9 @@ internal class QueueActor(
     // Each job's status as last stored, to report StatusChanged (#555).
     private val lastStatus = mutableMapOf<DownloadId, DownloadStatus>()
     private lateinit var settings: Settings
+
+    // What the network rules say now (NET-05..08); set before the first job can start.
+    private var rules: RuleEffect = RuleEffect.None
     private lateinit var slotScope: CoroutineScope
     private var launched = false
 
@@ -143,7 +148,10 @@ internal class QueueActor(
     private var wake: Job? = null
     private var wakeAt: Instant? = null
 
-    suspend fun start(scope: CoroutineScope) {
+    suspend fun start(
+        scope: CoroutineScope,
+        initialRules: RuleEffect,
+    ) {
         check(!launched) { "the queue is already started" }
         launched = true
         val started = CompletableDeferred<Unit>()
@@ -155,7 +163,7 @@ internal class QueueActor(
                 // Inside the scope, before it waits for the slots: a slot may be waiting for an ack only stopped() gives.
                 try {
                     settings = store.settings.load()
-                    bandwidth.setGlobal(settings.globalSpeedLimit)
+                    rules = initialRules
                     for (job in downloads.list()) lastStatus[job.id] = job.status
                     reconcile()
                     applyLimits()
@@ -288,7 +296,7 @@ internal class QueueActor(
         observer.jobChanged(added)
         observer.mirrorsChanged(added.id, downloads.mirrors(added.id))
         observer.event(EngineEvent.Added(added.id))
-        val held = holdIfGlobal(added)
+        val held = hold(added)
         return CommandResult.Done(if (held == added) added else save(held))
     }
 
@@ -347,10 +355,10 @@ internal class QueueActor(
         }
     }
 
-    // While global pause is on, jobs that start waiting wait paused instead.
+    // While global pause or a rule pause is on, jobs that start waiting wait paused instead.
     private suspend fun hold(jobs: List<Download>): List<Download> =
         jobs.map { job ->
-            holdIfGlobal(job).let {
+            hold(job).let {
                 if (it ==
                     job
                 ) {
@@ -408,7 +416,7 @@ internal class QueueActor(
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
                 // The user wants it now: a pending retry doesn't wait out its delay.
-                change(job.transitionTo(QUEUED)) { holdIfGlobal(it.copy(queuedAt = clock.now(), nextAttemptAt = null)) }
+                change(job.transitionTo(QUEUED)) { hold(it.copy(queuedAt = clock.now(), nextAttemptAt = null)) }
             }
         }
 
@@ -429,7 +437,7 @@ internal class QueueActor(
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
                 change(job.transitionTo(QUEUED)) {
-                    holdIfGlobal(it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()))
+                    hold(it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()))
                 }
             }
         }
@@ -554,7 +562,6 @@ internal class QueueActor(
     /** The limit every job shares by priority (NET-02, NET-03); applies to running jobs at once. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {
         settings = store.settings.update { it.copy(globalSpeedLimit = bytesPerSecond) }
-        bandwidth.setGlobal(bytesPerSecond)
         applyLimits()
         return CommandResult.Done(null)
     }
@@ -566,10 +573,52 @@ internal class QueueActor(
         return CommandResult.Done(null)
     }
 
-    // Each protocol once, however many kinds share it.
-    private fun applyLimits() {
-        for (protocol in protocols.values.distinct()) protocol.setGlobalLimits(settings.globalSpeedLimit, settings.globalUploadLimit)
+    // The only place a limit reaches the bandwidth and the protocols: the user's limit and the rules' cap, whichever is
+    // lower, per direction. Each protocol once, however many kinds share it.
+    private suspend fun applyLimits() {
+        val down = minOfNotNull(settings.globalSpeedLimit, rules.downloadCap)
+        val up = minOfNotNull(settings.globalUploadLimit, rules.uploadCap)
+        bandwidth.setGlobal(down)
+        for (protocol in protocols.values.distinct()) protocol.setGlobalLimits(down, up)
     }
+
+    /**
+     * The network rules changed (NET-05..08). A rule pause stops every running job that isn't MUXING and holds the
+     * waiting ones, paused for SCHEDULE; lifting it releases only that reason. The caps apply at once. Idempotent, so the
+     * engine can send the whole effect on every change. The reply comes once every stopped slot has ended.
+     */
+    suspend fun applyRules(
+        effect: RuleEffect,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        rules = effect
+        applyLimits()
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (job in downloads.list().filterNot { it.isCollection }) {
+            val slot = slots[job.id]
+            if (effect.pause) {
+                when {
+                    slot != null -> {
+                        if (slot.download.status in RUNNABLE) {
+                            stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterRuleStop, it) }
+                        }
+                    }
+
+                    job.status in WAITING || job.status == PAUSED -> {
+                        val paused = (job.pause(PauseReason.SCHEDULE) as TransitionResult.Moved).download
+                        if (paused != job) save(paused)
+                    }
+                }
+            } else if (slot == null && job.status == PAUSED && PauseReason.SCHEDULE in job.pauseReasons) {
+                release(job, PauseReason.SCHEDULE)
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    // A slot stopped by a rule pause: paused SCHEDULE, unless the rules relaxed while it stopped.
+    private suspend fun afterRuleStop(job: Download): CommandResult =
+        if (rules.pause) change(job.pause(PauseReason.SCHEDULE)) else requeue(job)
 
     /**
      * Every job the last run left SEEDING is taken up again by its protocol, each in a coroutine of its own so the start
@@ -645,6 +694,47 @@ internal class QueueActor(
         return CommandResult.Done(slot.download)
     }
 
+    /**
+     * The job's start time (NET-09): it takes no slot before then. A running job that isn't MUXING and gets a future time
+     * is stopped and waits again; any other job just keeps the time. A collection's own row only stores it.
+     */
+    suspend fun setStartTime(
+        id: DownloadId,
+        at: Instant?,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        val slot = slots[id]
+        val job = slot?.download ?: downloads.get(id)
+        when {
+            job == null -> {
+                reply.complete(CommandResult.NotFound)
+            }
+
+            job.isCollection -> {
+                reply.complete(CommandResult.Done(save(job.copy(startAt = at))))
+            }
+
+            job.status == COMPLETED || job.status == CANCELLED || job.status == SEEDING -> {
+                reply.complete(CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED)))
+            }
+
+            slot != null && job.status != MUXING && at != null && at > clock.now() -> {
+                // Stored first: whatever else was asked of the stopping slot runs on a job that already has it.
+                slot.download = save(slot.download.copy(startAt = at))
+                stop(slot, ::requeue, reply)
+            }
+
+            slot != null -> {
+                slot.download = save(slot.download.copy(startAt = at))
+                reply.complete(CommandResult.Done(slot.download))
+            }
+
+            else -> {
+                reply.complete(CommandResult.Done(save(job.copy(startAt = at))))
+            }
+        }
+    }
+
     /** The limit applies at once: the next reschedule preempts what is over it. */
     suspend fun setLimit(limit: Int): CommandResult {
         settings = store.settings.update { it.copy(concurrencyLimit = limit) }
@@ -670,15 +760,14 @@ internal class QueueActor(
         if (released != job) save(if (released.status == QUEUED) released.copy(queuedAt = clock.now()) else released)
     }
 
-    /** While global pause is on, a job that starts waiting waits paused instead. */
-    private fun holdIfGlobal(job: Download): Download =
-        if (settings.globalPause && job.status in WAITING &&
-            !job.isCollection
-        ) {
-            (job.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
-        } else {
-            job
-        }
+    /** While global pause or a rule pause is on, a job that starts waiting waits paused instead (GLOBAL, SCHEDULE). */
+    private fun hold(job: Download): Download {
+        if (job.status !in WAITING || job.isCollection) return job
+        var held = job
+        if (settings.globalPause) held = (held.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
+        if (rules.pause) held = (held.pause(PauseReason.SCHEDULE) as TransitionResult.Moved).download
+        return held
+    }
 
     /**
      * After a restart nothing runs: every attempt left open ends ("the app stopped", not counted), a job left mid-run
@@ -697,18 +786,25 @@ internal class QueueActor(
                     else -> job
                 }
             if (fixed.status in WAITING && fixed.queuedAt == null) fixed = fixed.copy(queuedAt = now)
-            if (settings.globalPause) {
-                if (fixed.status in WAITING ||
-                    fixed.status == PAUSED
-                ) {
-                    fixed = (fixed.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
-                }
-                if (fixed != job) save(fixed)
-            } else {
-                if (fixed != job) save(fixed)
-                release(fixed)
-            }
+            fixed = reconciled(fixed, PauseReason.GLOBAL, settings.globalPause, now)
+            fixed = reconciled(fixed, PauseReason.SCHEDULE, rules.pause, now)
+            if (fixed != job) save(fixed)
         }
+    }
+
+    // A waiting or paused job takes [reason] while it applies, and lets go of it once it doesn't; a job that is then paused
+    // for nothing waits again.
+    private fun reconciled(
+        job: Download,
+        reason: PauseReason,
+        applies: Boolean,
+        now: Instant,
+    ): Download {
+        if (applies) {
+            return if (job.status in WAITING || job.status == PAUSED) (job.pause(reason) as TransitionResult.Moved).download else job
+        }
+        val released = (job.release(reason) as TransitionResult.Moved).download
+        return if (released.status == QUEUED && job.status != QUEUED) released.copy(queuedAt = now) else released
     }
 
     /**
@@ -803,7 +899,7 @@ internal class QueueActor(
             }.copy(nextAttemptAt = null, attemptCount = 0, sourceValidator = validator ?: job.sourceValidator)
         if (again.status !in WAITING) return CommandResult.Done(if (again != job) save(again) else again)
         val queuedAt = if (job.status in WAITING) job.queuedAt else clock.now()
-        return CommandResult.Done(save(holdIfGlobal(again.copy(queuedAt = queuedAt))))
+        return CommandResult.Done(save(hold(again.copy(queuedAt = queuedAt))))
     }
 
     private suspend fun removeJob(
@@ -890,16 +986,27 @@ internal class QueueActor(
 
     // Scheduling
 
-    // A job waiting for a retry (nextAttemptAt in the future) isn't ready yet; the timer wakes the queue when it is.
+    // A job waiting for a retry (nextAttemptAt in the future) or for its start time (startAt) isn't ready yet; the timer
+    // wakes the queue when it is.
     private suspend fun reschedule() {
         val now = clock.now()
         val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots && !it.isCollection }
-        val ready = waiting.filter { job -> job.nextAttemptAt.let { it == null || it <= now } }
+        if (rules.pause) {
+            // Nothing starts under a rule pause. Whatever got back to waiting without passing through hold (a requeue after
+            // a stop, a release of LOW_DISK or TOOLS from a job paused after the pause took hold) is held again here.
+            for (job in waiting) hold(job).let { if (it != job) save(it) }
+            armWake(null, now)
+            return
+        }
+        val ready =
+            waiting.filter { job ->
+                job.nextAttemptAt.let { it == null || it <= now } && job.startAt.let { it == null || it <= now }
+            }
         val decision = schedule(ready, slots.values.map { SlotView(it.download, it.stopping) }, settings.concurrencyLimit)
         val byId = ready.associateBy { it.id }
         decision.start.forEach { launchSlot(byId.getValue(it)) }
         decision.preempt.forEach { stop(slots.getValue(it), ::requeue, null) }
-        armWake(waiting.mapNotNull { it.nextAttemptAt }.filter { it > now }.minOrNull(), now)
+        armWake(waiting.flatMap { listOfNotNull(it.nextAttemptAt, it.startAt) }.filter { it > now }.minOrNull(), now)
     }
 
     private fun armWake(
@@ -1129,14 +1236,14 @@ internal class QueueActor(
         return when (action) {
             is FailureAction.Retry -> {
                 later += EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount)
-                holdIfGlobal(
+                hold(
                     job.backToWaiting().copy(attemptCount = action.attemptCount, nextAttemptAt = action.at, queuedAt = action.at),
                 )
             }
 
             is FailureAction.NextMirror -> {
                 next?.let { later += EngineEvent.MovedToMirror(slot.id, it.id) }
-                holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
+                hold(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
             }
 
             is FailureAction.Pause -> {
@@ -1154,7 +1261,7 @@ internal class QueueActor(
 
                     is StepResult.Ok -> {
                         later += EngineEvent.StartedOver(slot.id, "checksum mismatch: starting from zero")
-                        holdIfGlobal(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
+                        hold(job.backToWaiting().copy(attemptCount = 0, nextAttemptAt = null))
                     }
                 }
             }
@@ -1183,6 +1290,7 @@ internal class QueueActor(
     private companion object {
         val FINISHED = setOf(COMPLETED, SEEDING)
         val ACTIVE = setOf(PENDING, QUEUED, DOWNLOADING, MUXING)
+        val RUNNABLE = setOf(PENDING, QUEUED, DOWNLOADING)
         val WAITING = setOf(PENDING, QUEUED)
         val WAKE_CHECK = 1.minutes
     }

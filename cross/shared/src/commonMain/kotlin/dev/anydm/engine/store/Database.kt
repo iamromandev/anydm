@@ -17,6 +17,7 @@ import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.QualityPreset
+import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.core.SponsorBlockMode
 import dev.anydm.engine.core.SubtitleFormat
@@ -35,6 +36,7 @@ import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
 import dev.anydm.engine.store.db.Profile as ProfileRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
+import dev.anydm.engine.store.db.Schedule_rule as ScheduleRuleRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
 import dev.anydm.engine.store.db.Tool as ToolRow
 import dev.anydm.engine.store.db.Torrent as TorrentRow
@@ -74,6 +76,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 queued_atAdapter = InstantAdapter,
                 playlist_indexAdapter = IntAdapter("download.playlist_index"),
                 selection_limitAdapter = IntAdapter("download.selection_limit"),
+                start_atAdapter = InstantAdapter,
             ),
         collection_itemAdapter =
             CollectionItemRow.Adapter(
@@ -120,6 +123,12 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 idAdapter = mirrorId,
                 download_idAdapter = downloadId,
                 positionAdapter = IntAdapter("mirror.position"),
+            ),
+        schedule_ruleAdapter =
+            ScheduleRuleRow.Adapter(
+                idAdapter = IdAdapter(::ScheduleRuleId, ScheduleRuleId::value),
+                start_minuteAdapter = IntAdapter("schedule_rule.start_minute"),
+                end_minuteAdapter = IntAdapter("schedule_rule.end_minute"),
             ),
         request_contextAdapter = RequestContextRow.Adapter(download_idAdapter = downloadId),
         segmentAdapter =

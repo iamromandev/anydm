@@ -14,6 +14,7 @@ import dev.anydm.engine.core.Placement
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.net.RuleEffect
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
@@ -24,6 +25,7 @@ import dev.anydm.engine.store.StoreTestBase
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -31,6 +33,7 @@ import kotlinx.io.files.Path
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 
 /**
  * A queue over [store] with the fakes: by default one [FakeProtocol] for every kind, serving one 64 KiB file at 16 KiB/s
@@ -99,6 +102,7 @@ internal class QueueHarness(
         checksum: Checksum? = null,
         speedLimit: Long? = null,
         folder: Path = stepRoot,
+        startAt: Instant? = null,
     ): DownloadId {
         val added =
             queue.add(
@@ -110,6 +114,7 @@ internal class QueueHarness(
                     priority = priority,
                     checksum = checksum,
                     speedLimit = speedLimit,
+                    startAt = startAt,
                 ),
             )
         return added.shouldBeInstanceOf<CommandResult.Done>().download!!.id
@@ -136,10 +141,14 @@ abstract class QueueTestBase : StoreTestBase() {
 
     internal suspend fun TestScope.started(
         limit: Int? = null,
+        rules: RuleEffect = RuleEffect.None,
         harness: (TestScope) -> QueueHarness = { QueueHarness(it, newStore()) },
     ): QueueHarness =
         harness(this).also { h ->
             if (limit != null) h.store.settings.update { it.copy(concurrencyLimit = limit) }
-            h.queue.start()
+            h.queue.start(rules)
         }
+
+    /** A scope inside the test's background scope that a test can cancel alone, to stop a queue and start another. */
+    internal fun TestScope.childScope() = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
 }

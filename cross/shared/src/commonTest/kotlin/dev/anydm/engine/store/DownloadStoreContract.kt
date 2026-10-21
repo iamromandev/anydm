@@ -237,6 +237,25 @@ abstract class DownloadStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun startAtRoundTripsThroughAddAndUpdate() =
+        runTest {
+            val store = newStore().downloads
+            val at = Instant.fromEpochMilliseconds(1_700_000_000_123)
+            val added = store.add(NewDownload(DownloadKind.DIRECT, startAt = at))
+            added.startAt shouldBe at
+            store.get(added.id)?.startAt shouldBe at
+            driver.longs("SELECT start_at FROM download") shouldBe listOf(1_700_000_000_123L)
+
+            val later = Instant.fromEpochMilliseconds(1_800_000_000_000)
+            store.update(added.copy(startAt = later)) shouldBe true
+            store.get(added.id)?.startAt shouldBe later
+
+            store.update(added.copy(startAt = null)) shouldBe true
+            store.get(added.id)?.startAt shouldBe null
+            store.add(NewDownload(DownloadKind.DIRECT)).startAt shouldBe null
+        }
+
+    @Test
     fun mirrorsComeBackInPositionOrder() =
         runTest {
             val store = newStore().downloads

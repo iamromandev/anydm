@@ -1,0 +1,53 @@
+import dev.anydm.engine.core.ScheduleRuleId;
+
+-- What applies on each network (NET-05, NET-07): `network` is a NetworkIdentity key, and '*' is the default policy. The
+-- allowance columns are all NULL without an allowance. `allowance_period` is DAILY, WEEKLY or MONTHLY; `allowance_reset_day`
+-- is the ISO day 1..7 for WEEKLY and 1..31 for MONTHLY; `allowance_action` is PAUSE or SLOW. They are plain TEXT, read in
+-- SqlRuleStore, so one row this version can't read is skipped instead of failing the whole query.
+CREATE TABLE network_policy (
+    network TEXT NOT NULL PRIMARY KEY,
+    speed_limit INTEGER CHECK (speed_limit > 0),
+    upload_limit INTEGER CHECK (upload_limit > 0),
+    allowance_bytes INTEGER CHECK (allowance_bytes >= 0),
+    allowance_period TEXT,
+    allowance_reset_day INTEGER,
+    allowance_warn_percent INTEGER,
+    allowance_action TEXT
+);
+
+-- Weekly schedule rules (NET-08): `days` are DayOfWeek names, comma-separated, in ISO order; the minutes are of the local
+-- day; `action` is a RuleAction name.
+CREATE TABLE schedule_rule (
+    id INTEGER AS ScheduleRuleId PRIMARY KEY AUTOINCREMENT,
+    days TEXT NOT NULL,
+    start_minute INTEGER AS kotlin.Int NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
+    end_minute INTEGER AS kotlin.Int NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+    action TEXT NOT NULL
+);
+
+selectPolicies:
+SELECT * FROM network_policy ORDER BY network;
+
+upsertPolicy:
+INSERT OR REPLACE INTO network_policy(network, speed_limit, upload_limit, allowance_bytes, allowance_period,
+    allowance_reset_day, allowance_warn_percent, allowance_action)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deletePolicy:
+DELETE FROM network_policy WHERE network = ?;
+
+selectRules:
+SELECT * FROM schedule_rule ORDER BY id;
+
+insertRule:
+INSERT INTO schedule_rule(days, start_minute, end_minute, action) VALUES (?, ?, ?, ?);
+
+-- Only meaningful in the transaction that inserted.
+selectLastRule:
+SELECT * FROM schedule_rule WHERE id = last_insert_rowid();
+
+updateRule:
+UPDATE schedule_rule SET days = ?, start_minute = ?, end_minute = ?, action = ? WHERE id = ?;
+
+deleteRule:
+DELETE FROM schedule_rule WHERE id = ?;

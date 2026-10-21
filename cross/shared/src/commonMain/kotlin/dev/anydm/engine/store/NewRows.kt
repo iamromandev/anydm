@@ -57,6 +57,8 @@ data class NewDownload(
     /** A collection: where its items came from, and what was chosen of them (MED-16, MED-17). */
     val sourceUrl: String? = null,
     val selection: ItemSelection? = null,
+    /** Waits without a slot until then (NET-09). */
+    val startAt: Instant? = null,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

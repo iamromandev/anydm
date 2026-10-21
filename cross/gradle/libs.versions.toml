@@ -28,6 +28,9 @@ mina-sshd = "2.20.0"
 # sshj needs BouncyCastle at run time only; the tests write PEM keys with it, so they need it to compile.
 bouncycastle = "1.84"
 
+# Local days, weeks and zones for network rules (#543); public: DayOfWeek and LocalDate are in the model.
+kotlinx-datetime = "0.8.0"
+
 [libraries]
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
 compose-ui-test = { module = "org.jetbrains.compose.ui:ui-test-junit4", version.ref = "compose" }
@@ -37,6 +40,7 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 # SQLDelight on :shared (#549); its Gradle plugin adds the runtime itself.

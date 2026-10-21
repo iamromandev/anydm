@@ -39,3 +39,8 @@ value class CategoryId(
 value class ProfileId(
     val value: Long,
 )
+
+@JvmInline
+value class ScheduleRuleId(
+    val value: Long,
+)

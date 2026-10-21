@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Pacing
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
+import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.io.files.Path
 
@@ -54,6 +55,10 @@ data class Settings(
     val playlistFile: Boolean = true,
     /** The profile a new download takes when it names none (SET-02). */
     val defaultProfileId: ProfileId? = null,
+    /** Slow mode is on (NET-06): downloads and uploads are capped at [slowModeLimit]. */
+    val slowMode: Boolean = false,
+    /** The most bytes per second each direction takes in slow mode (NET-06). */
+    val slowModeLimit: Long = SlowMode.DEFAULT_LIMIT,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
@@ -68,6 +73,7 @@ data class Settings(
         require(
             globalUploadLimit == null || globalUploadLimit > 0,
         ) { "globalUploadLimit must be > 0, or null for none: $globalUploadLimit" }
+        require(slowModeLimit > 0) { "slowModeLimit must be > 0: $slowModeLimit" }
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }

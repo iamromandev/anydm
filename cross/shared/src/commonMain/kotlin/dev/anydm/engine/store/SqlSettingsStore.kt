@@ -67,6 +67,8 @@ internal class SqlSettingsStore(
             clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
             cookieSource = read(COOKIE_SOURCE, DEFAULTS.cookieSource) { CookieSource.decode(it) },
             pacing = readPacing(::read),
+            slowMode = read(SLOW_MODE, DEFAULTS.slowMode) { it.toBooleanStrictOrNull() },
+            slowModeLimit = read(SLOW_MODE_LIMIT, DEFAULTS.slowModeLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
         )
     }
 
@@ -125,6 +127,8 @@ internal class SqlSettingsStore(
         put(PACING_REQUEST, custom?.requestSleep?.toString())
         put(PACING_MIN, custom?.intervalMin?.toString())
         put(PACING_MAX, custom?.intervalMax?.toString())
+        put(SLOW_MODE, settings.slowMode.takeIf { it != DEFAULTS.slowMode }?.toString())
+        put(SLOW_MODE_LIMIT, settings.slowModeLimit.takeIf { it != DEFAULTS.slowModeLimit }?.toString())
     }
 
     private fun put(
@@ -146,6 +150,8 @@ internal class SqlSettingsStore(
         const val CONNECTIONS = "http.connections"
         const val GLOBAL_SPEED_LIMIT = "net.global_speed_limit"
         const val GLOBAL_UPLOAD_LIMIT = "net.global_upload_limit"
+        const val SLOW_MODE = "net.slow_mode"
+        const val SLOW_MODE_LIMIT = "net.slow_mode_limit"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"

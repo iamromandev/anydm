@@ -45,6 +45,13 @@ interface TrafficStore {
         to: String,
     ): List<DayTraffic>
 
+    /** Bytes received and sent on [network] on the days [from]..[to] (`YYYY-MM-DD`, inclusive), all kinds; 0 when none. */
+    suspend fun networkBytes(
+        network: String,
+        from: String,
+        to: String,
+    ): Long
+
     suspend fun speedDays(
         from: String,
         to: String,

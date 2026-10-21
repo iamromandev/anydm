@@ -23,6 +23,13 @@ data class TrafficBatch(
     val daysUp: Map<Triple<String, String, DownloadKind>, Long> = emptyMap(),
     val downloadsUp: Map<DownloadId, Long> = emptyMap(),
 ) {
+    /** Bytes received and sent on [network] on the local days [from]..[to] (`YYYY-MM-DD`, inclusive). */
+    fun networkBytes(
+        network: String,
+        from: String,
+        to: String,
+    ): Long = networkTotal(days, daysUp, network, from, to)
+
     val isEmpty: Boolean
         get() =
             days.isEmpty() &&
@@ -32,3 +39,15 @@ data class TrafficBatch(
                 daysUp.isEmpty() &&
                 downloadsUp.isEmpty()
 }
+
+/** The sum of both maps' entries for [network] on days [from]..[to]; days compare as `YYYY-MM-DD` text. */
+internal fun networkTotal(
+    days: Map<Triple<String, String, DownloadKind>, Long>,
+    daysUp: Map<Triple<String, String, DownloadKind>, Long>,
+    network: String,
+    from: String,
+    to: String,
+): Long =
+    (days.entries.asSequence() + daysUp.entries.asSequence())
+        .filter { (key, _) -> key.second == network && key.first >= from && key.first <= to }
+        .sumOf { it.value }

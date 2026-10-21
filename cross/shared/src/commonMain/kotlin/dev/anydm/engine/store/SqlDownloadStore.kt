@@ -133,6 +133,7 @@ internal class SqlDownloadStore(
             source_url = new.sourceUrl,
             selection_range = new.selection?.range,
             selection_limit = new.selection?.limit,
+            start_at = new.startAt,
         )
         val download = downloadQueries.selectLastInserted().executeAsOne().toDownload()
         new.mirrors.forEachIndexed { position, url ->
@@ -188,6 +189,7 @@ internal class SqlDownloadStore(
                     source_url = download.sourceUrl,
                     selection_range = download.selection?.range,
                     selection_limit = download.selection?.limit,
+                    start_at = download.startAt,
                     id = download.id,
                 ).value > 0
         }
@@ -436,6 +438,7 @@ internal class SqlDownloadStore(
             playlistIndex = playlist_index,
             sourceUrl = source_url,
             selection = if (selection_range == null && selection_limit == null) null else ItemSelection(selection_range, selection_limit),
+            startAt = start_at,
         )
 
     private fun MirrorRow.toMirror() = Mirror(id = id, downloadId = download_id, url = url, position = position)

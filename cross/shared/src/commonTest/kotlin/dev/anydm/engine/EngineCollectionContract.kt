@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 /** Playlists as collections (MED-16), on a new database from [newDriver] for each test. */
@@ -410,6 +411,41 @@ abstract class EngineCollectionContract : StoreTestBase() {
                         .get(id)!!
                         .speedLimit shouldBe 1000
                 }
+            }
+        }
+
+    @Test
+    fun playlistItemsTakeTheTemplatesStartTime() =
+        runTest {
+            withEngine(source(listing())) { h ->
+                val at = h.clock.now() + 1.hours
+
+                val added = h.engine.addPlaylist(playlistUrl, template = runnable.copy(startAt = at)).added()
+                runCurrent()
+
+                for (child in added.children) {
+                    h.store.downloads
+                        .get(child.id)!!
+                        .startAt shouldBe at
+                    h.stored(child.id) shouldNotBe DownloadStatus.DOWNLOADING
+                }
+            }
+        }
+
+    @Test
+    fun syncedItemsHaveNoStartTime() =
+        runTest {
+            val playlist = source(listing(count = 3))
+            withEngine(playlist) { h ->
+                val added = h.engine.addPlaylist(playlistUrl, template = runnable.copy(startAt = h.clock.now() + 1.hours)).added()
+                runCurrent()
+                playlist.result = StepResult.Ok(PlaylistParse.Ok(listing(count = 4)))
+
+                h.sync(added.collection.id).done().added shouldBe 1
+
+                val items = h.store.downloads.children(added.collection.id)
+                items.map { it.playlistIndex } shouldBe listOf(1, 2, 3, 4)
+                items.last().startAt shouldBe null
             }
         }
 

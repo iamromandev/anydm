@@ -67,6 +67,9 @@ DELETE FROM speed_minute WHERE minute < ?;
 daysBetween:
 SELECT * FROM traffic_day WHERE day BETWEEN ? AND ? ORDER BY day, network, kind;
 
+networkBytesBetween:
+SELECT coalesce(sum(bytes + bytes_up), 0) FROM traffic_day WHERE network = ? AND day BETWEEN ? AND ?;
+
 speedDaysBetween:
 SELECT * FROM speed_day WHERE day BETWEEN ? AND ? ORDER BY day;
 

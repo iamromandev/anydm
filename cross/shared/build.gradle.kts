@@ -44,6 +44,8 @@ kotlin {
             // The SQLDelight plugin adds its runtime here as `api`: Store takes a SqlDriver.
             // Public: the platform interfaces take kotlinx.io.files.Path.
             api(libs.kotlinx.io.core)
+            // Local days, weeks and zones for network rules (#543); public: DayOfWeek and LocalDate are in the model.
+            api(libs.kotlinx.datetime)
             implementation(libs.ktor.client.core)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)

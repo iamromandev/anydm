@@ -5,6 +5,7 @@ import dev.anydm.engine.core.DownloadKind.DIRECT
 import dev.anydm.engine.core.DownloadKind.SITE
 import io.kotest.matchers.shouldBe
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -39,6 +40,47 @@ class TrafficMeterTest {
         batch.daysUp shouldBe mapOf(Triple(day, "en0", DIRECT) to 32L, Triple(day, "en0", SITE) to 5L)
         batch.downloads shouldBe mapOf(a to 100L)
         batch.downloadsUp shouldBe mapOf(a to 32L, b to 5L)
+    }
+
+    @Test
+    fun pendingBytesCountsDownAndUpOfOneNetworkInTheRange() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 30), TrafficMeter.Sample(b, SITE, 50)))
+        meter.second(t0, "wifi", listOf(TrafficMeter.Sample(a, DIRECT, 7)))
+        meter.second(t0 + 24.hours, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 1000)))
+        meter.second(t0 - 24.hours, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 5)))
+
+        meter.pendingBytes("en0", day, day) shouldBe 180L
+        meter.pendingBytes("en0", "2026-10-17", "2026-10-19") shouldBe 1185L
+        meter.pendingBytes("wifi", day, day) shouldBe 7L
+        meter.pendingBytes("none", day, day) shouldBe 0L
+    }
+
+    @Test
+    fun pendingBytesIsEmptyAfterDrainAndBackAfterRestore() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 30)))
+
+        val batch = meter.drain()
+        meter.pendingBytes("en0", day, day) shouldBe 0L
+
+        meter.restore(batch)
+        meter.pendingBytes("en0", day, day) shouldBe 130L
+    }
+
+    @Test
+    fun aBatchsNetworkBytesEqualsPendingBytesBeforeTheDrain() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 30), TrafficMeter.Sample(b, SITE, 50)))
+        meter.second(t0 + 24.hours, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 9)))
+        meter.second(t0, "wifi", listOf(TrafficMeter.Sample(a, DIRECT, 7)))
+        val before = meter.pendingBytes("en0", day, day)
+
+        val batch = meter.drain()
+
+        batch.networkBytes("en0", day, day) shouldBe before
+        batch.networkBytes("en0", "2026-10-18", "2026-10-19") shouldBe 189L
+        batch.networkBytes("wifi", day, day) shouldBe 7L
     }
 
     @Test
