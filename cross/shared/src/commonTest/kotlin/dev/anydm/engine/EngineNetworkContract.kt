@@ -217,6 +217,40 @@ abstract class EngineNetworkContract : StoreTestBase() {
         }
 
     @Test
+    fun aReturnOnAForbiddenNetworkNeverStartsTheJob() =
+        engineTest {
+            val f = fixture()
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE))
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+            f.probe.online = false
+            advance(9.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            val started = f.events.filterIsInstance<EngineEvent.StatusChanged>().count { it.to == DownloadStatus.DOWNLOADING }
+            val transfers = f.h.protocol.transfers.size
+            val rows =
+                f.h.store.downloads
+                    .attempts(id)
+                    .size
+
+            f.net = "en7"
+            f.probe.online = true
+            advance(10.seconds)
+
+            f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+            f.events.filterIsInstance<EngineEvent.StatusChanged>().count { it.to == DownloadStatus.DOWNLOADING } shouldBe started
+            f.h.protocol.transfers.size shouldBe transfers
+            f.h.store.downloads
+                .attempts(id)
+                .size shouldBe rows
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.SCHEDULE)
+            f.h.attempts(id) shouldBe 0
+        }
+
+    @Test
     fun offlineAtStartPausesStoredJobsAndOnlineReleasesThem() =
         engineTest {
             val f = fixture(online = false)

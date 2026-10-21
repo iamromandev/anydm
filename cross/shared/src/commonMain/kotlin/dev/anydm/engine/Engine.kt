@@ -1263,8 +1263,13 @@ class Engine(
 
             NetworkStep.Restored -> {
                 tell(EngineEvent.NetworkRestored)
-                launchQuietly { queue.applyNetwork(false) }
-                checkRules()
+                // The new network's rules reach the queue before the release, or a job would start on a forbidden network.
+                val changed = keeper.check() != null
+                if (changed) armRuleTimer()
+                launchQuietly {
+                    if (changed) pushQuietly()
+                    queue.applyNetwork(false)
+                }
             }
 
             is NetworkStep.Changed -> {
