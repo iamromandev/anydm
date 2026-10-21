@@ -91,4 +91,18 @@ class FakeProcessRunnerTest {
             code.await() shouldBe FakeProcessRunner.STOPPED
             process.shouldBeInstanceOf<RunningProcess>()
         }
+
+    @Test
+    fun stoppedProcessesAreRecorded() =
+        runTest {
+            val runner = FakeProcessRunner(listOf(Scripted(listOf("a"), delay = 60.seconds)))
+            val first = (runner.start(spec("a", "1")) as ProcessOutcome.Ok).value
+            val second = (runner.start(spec("a", "2")) as ProcessOutcome.Ok).value
+            runner.stopped shouldBe emptyList()
+
+            second.stop()
+            first.stop()
+
+            runner.stopped.map { it.command } shouldBe listOf(listOf("a", "2"), listOf("a", "1"))
+        }
 }
