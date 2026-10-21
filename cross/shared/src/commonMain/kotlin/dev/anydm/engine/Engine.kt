@@ -1290,7 +1290,9 @@ class Engine(
                 if (changed) armRuleTimer()
                 launchQuietly {
                     if (changed) pushQuietly()
-                    queue.applyNetwork(false)
+                    // The push may have waited at the queue while the network dropped again: the Lost's offline is already
+                    // there, and a release behind it would undo it. Nothing suspends between this check and the send.
+                    if (monitor.state.value.online) queue.applyNetwork(false)
                 }
             }
 

@@ -383,6 +383,37 @@ abstract class EngineNetworkContract : StoreTestBase() {
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
         }
 
+    @Test
+    fun aDropRightAfterAReturnWhileTheRulesAreStillBeingAppliedKeepsTheJobsPaused() =
+        engineTest {
+            // The first drop's stop takes 30 s, so the return's new rules wait for it at the queue.
+            val f = fixture(protocol = FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20)), stopDelay = 30.seconds))
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE))
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.probe.online = false
+            advance(5.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 1
+
+            f.net = "en7"
+            f.probe.online = true
+            advance(3.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkRestored>().size shouldBe 1
+
+            // Offline again, with the rules of the return still waiting at the queue.
+            f.probe.online = false
+            advance(7.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkLost>().size shouldBe 2
+
+            advance(40.seconds)
+
+            f.h.engine.network.value.online shouldBe false
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id).contains(PauseReason.NETWORK) shouldBe true
+            f.h.protocol.transfers.size shouldBe 1
+        }
+
     // A job in the store before the engine starts, as the last run left it.
     private suspend fun storedJob(
         f: Fixture,
