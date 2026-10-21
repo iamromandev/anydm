@@ -44,6 +44,7 @@ abstract class RuleKeeperContract : StoreTestBase() {
         val events = mutableListOf<EngineEvent>()
         val applied = mutableListOf<RuleEffect>()
         var network = "unknown"
+        var metered = false
         var leftovers = 0L
         var gate: CompletableDeferred<Unit>? = null
         val keeper =
@@ -62,6 +63,7 @@ abstract class RuleKeeperContract : StoreTestBase() {
                     applied += it
                     gate?.await()
                 },
+                detectedMetered = { metered },
             )
 
         suspend fun withAllowance() = store.rules.setNetworkPolicy(null, NetworkPolicy(allowance = allowance))
@@ -346,5 +348,19 @@ abstract class RuleKeeperContract : StoreTestBase() {
             decision.status.action shouldBe RuleAction.PAUSE
             decision.status.because shouldBe setOf(RuleSource.SCHEDULE)
             f.keeper.status.value shouldBe decision.status
+        }
+
+    @Test
+    fun aDetectedMeteredNetworkPausesThroughTheKeeper() =
+        runTest {
+            val f = Fixture(this)
+            f.store.rules.setNetworkPolicy(null, NetworkPolicy(onMetered = MeteredAction.PAUSE))
+            f.metered = true
+
+            val effect = f.keeper.start()
+
+            effect.pause shouldBe true
+            f.keeper.status.value.because shouldBe setOf(RuleSource.METERED)
+            f.sink.lines.count { it.endsWith("net rules: PAUSE (METERED)") } shouldBe 1
         }
 }

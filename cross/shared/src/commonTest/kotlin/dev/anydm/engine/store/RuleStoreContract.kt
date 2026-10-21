@@ -6,6 +6,7 @@ import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.net.Allowance
 import dev.anydm.engine.net.AllowanceAction
 import dev.anydm.engine.net.AllowancePeriod
+import dev.anydm.engine.net.MeteredAction
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
 import dev.anydm.engine.net.NewScheduleRule
@@ -174,6 +175,45 @@ abstract class RuleStoreContract : StoreTestBase() {
             sink.lines.size shouldBe 3
             sink.lines[0] shouldContain "WARN  store schedule rule 1 unreadable, skipped"
             sink.lines.last() shouldContain "schedule rule 3 unreadable, skipped"
+            raw.close()
+        }
+
+    @Test
+    fun meteredAndOnMeteredRoundTripForANetworkAndTheDefault() =
+        runTest {
+            val rules = newStore().rules
+            val wifi = NetworkPolicy(metered = true, onMetered = MeteredAction.SLOW)
+            val default = NetworkPolicy(onMetered = MeteredAction.PAUSE)
+
+            rules.setNetworkPolicy("wifi", wifi)
+            rules.setNetworkPolicy(null, default)
+
+            rules.networkRules() shouldBe NetworkRules(default = default, networks = mapOf("wifi" to wifi))
+        }
+
+    @Test
+    fun aMeteredDefaultKeepsARow() =
+        runTest {
+            val rules = newStore().rules
+
+            rules.setNetworkPolicy(null, NetworkPolicy(metered = true))
+
+            driver.count("network_policy") shouldBe 1
+            rules.networkRules().default shouldBe NetworkPolicy(metered = true)
+        }
+
+    @Test
+    fun anUnreadableOnMeteredIsSkipped() =
+        runTest {
+            val sink = RecordingLogSink()
+            val raw = newDriver()
+            val store = Store(raw, StandardTestDispatcher(testScheduler), Log(sink, virtualClock()))
+            store.rules.setNetworkPolicy("wifi", NetworkPolicy(speedLimit = 5, onMetered = MeteredAction.PAUSE))
+            raw.exec("UPDATE network_policy SET on_metered = 'SOMETIMES'")
+
+            store.rules.networkRules() shouldBe NetworkRules()
+
+            sink.lines.single() shouldContain "WARN  store network policy wifi unreadable, skipped"
             raw.close()
         }
 

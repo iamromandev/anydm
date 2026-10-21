@@ -126,6 +126,9 @@ internal class SnapshotCache {
         return true
     }
 
+    /** The stored row of job [id] as last reported; null when it is not known (or was removed). */
+    fun downloadOf(id: DownloadId): Download? = entries[id.value]?.download
+
     fun contains(id: DownloadId): Boolean = id.value in entries
 
     fun kindOf(id: DownloadId): DownloadKind? = entries[id.value]?.download?.kind

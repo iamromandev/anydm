@@ -246,8 +246,10 @@ abstract class EngineRulesContract : StoreTestBase() {
             runCurrent()
             h.status(id) shouldBe DownloadStatus.PAUSED
 
+            // The monitor sees the switch at its next poll (3 s) and the rules release the job then. A minute is the limit
+            // (the idle check), but by a minute the job has used the whole 500 kB allowance of the new network by itself.
             net = "a"
-            advanceTimeBy(60.seconds)
+            advanceTimeBy(10.seconds)
             runCurrent()
 
             h.status(id) shouldBe DownloadStatus.DOWNLOADING

@@ -237,4 +237,16 @@ class SnapshotCacheTest {
 
         cache.list().map { it.download.id.value } shouldBe listOf(1L, 2L, 3L)
     }
+
+    @Test
+    fun downloadOfIsTheRowAsLastReportedAndNullOnceRemoved() {
+        val cache = SnapshotCache().with(job(1))
+        cache.downloadOf(DownloadId(2)) shouldBe null
+
+        cache.jobChanged(job(1, DownloadStatus.PAUSED))
+        cache.downloadOf(DownloadId(1)) shouldBe job(1, DownloadStatus.PAUSED)
+
+        cache.jobRemoved(DownloadId(1))
+        cache.downloadOf(DownloadId(1)) shouldBe null
+    }
 }

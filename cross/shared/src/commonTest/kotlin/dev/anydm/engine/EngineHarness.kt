@@ -11,7 +11,11 @@ import dev.anydm.engine.ftp.CredentialWriter
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
+import dev.anydm.engine.net.OnlineProbe
 import dev.anydm.engine.platform.FakeFileSystem
+import dev.anydm.engine.platform.KeepAwake
+import dev.anydm.engine.platform.MeteredDetector
+import dev.anydm.engine.platform.PowerActions
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Protocol
@@ -28,6 +32,7 @@ import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * An [Engine] over [store] with the fakes, on the test's virtual time: by default one [FakeProtocol] for every kind,
@@ -50,6 +55,13 @@ internal class EngineHarness(
     torrents: TorrentService? = null,
     credentials: CredentialWriter? = null,
     timeZone: () -> TimeZone = { TimeZone.UTC },
+    onlineProbe: OnlineProbe = OnlineProbe.Always,
+    meteredDetector: MeteredDetector = MeteredDetector.None,
+    keepAwake: KeepAwake = KeepAwake.None,
+    powerActions: PowerActions = PowerActions.None,
+    monotonic: TimeSource = test.testScheduler.timeSource,
+    /** Never wakes by default, so tests that move the wall clock with a ShiftedClock are not disturbed. */
+    wakeGap: Duration = Duration.INFINITE,
 ) {
     val engine =
         Engine(
@@ -63,13 +75,19 @@ internal class EngineHarness(
             checkpointEvery = checkpointEvery,
             retryPolicy = RetryPolicy(random = FixedRandom(0.0)),
             log = log,
-            network = network,
+            identity = network,
             traffic = traffic,
             tools = tools,
             playlists = playlists,
             torrents = torrents,
             credentials = credentials,
             timeZone = timeZone,
+            onlineProbe = onlineProbe,
+            meteredDetector = meteredDetector,
+            keepAwake = keepAwake,
+            powerActions = powerActions,
+            monotonic = monotonic,
+            wakeGap = wakeGap,
         )
 
     private var added = 0

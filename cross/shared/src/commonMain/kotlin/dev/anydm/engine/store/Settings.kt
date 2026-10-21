@@ -5,6 +5,7 @@ import dev.anydm.engine.core.Pacing
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
+import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.io.files.Path
@@ -59,6 +60,10 @@ data class Settings(
     val slowMode: Boolean = false,
     /** The most bytes per second each direction takes in slow mode (NET-06). */
     val slowModeLimit: Long = SlowMode.DEFAULT_LIMIT,
+    /** Keep the machine awake while a download runs (NET-11). */
+    val keepAwake: Boolean = true,
+    /** What to do with the machine once the queue is finished (NET-10). */
+    val afterQueue: AfterQueueAction = AfterQueueAction.NONE,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

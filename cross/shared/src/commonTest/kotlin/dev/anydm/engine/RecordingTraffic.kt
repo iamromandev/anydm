@@ -13,6 +13,9 @@ internal class RecordingTraffic(
     var failAlways = false
     var gate: CompletableDeferred<Unit>? = null
 
+    /** How many of the next reads of a network's stored bytes fail. */
+    var failNetworkReads = 0
+
     /** How many times a network's stored bytes were read. */
     var networkReads = 0
 
@@ -38,6 +41,10 @@ internal class RecordingTraffic(
         to: String,
     ): Long {
         networkReads++
+        if (failNetworkReads > 0) {
+            failNetworkReads--
+            error("disk hiccup")
+        }
         return inner.networkBytes(network, from, to)
     }
 }

@@ -7,7 +7,10 @@ import kotlinx.datetime.DayOfWeek
 enum class RuleAction { ALLOW, SLOW, PAUSE }
 
 /** Where a [RuleAction] came from. */
-enum class RuleSource { SCHEDULE, ALLOWANCE, SLOW_MODE }
+enum class RuleSource { SCHEDULE, ALLOWANCE, SLOW_MODE, METERED }
+
+/** What a metered network does (NET-14), declared in order of strictness: nothing, slow mode's limit, or a rule pause. */
+enum class MeteredAction { NONE, SLOW, PAUSE }
 
 private fun requireMinutes(
     days: Set<DayOfWeek>,
@@ -81,11 +84,18 @@ data class Allowance(
     }
 }
 
-/** What applies on one network (NET-05): limits in bytes per second, and an [allowance]. */
+/**
+ * What applies on one network (NET-05): limits in bytes per second, and an [allowance]. [metered] and [onMetered] are
+ * NET-14's: the user marks the network metered (detection can also make it so), and [onMetered] says what that does.
+ */
 data class NetworkPolicy(
     val speedLimit: Long? = null,
     val uploadLimit: Long? = null,
     val allowance: Allowance? = null,
+    /** The user marks this network metered (NET-14). Detection can also make it metered; either is enough. */
+    val metered: Boolean = false,
+    /** What a metered network does: nothing, slow mode's limit, or a rule pause. */
+    val onMetered: MeteredAction = MeteredAction.NONE,
 ) {
     init {
         require(speedLimit == null || speedLimit > 0) { "speed limit must be > 0: $speedLimit" }

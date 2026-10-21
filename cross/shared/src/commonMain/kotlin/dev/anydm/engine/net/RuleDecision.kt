@@ -14,6 +14,8 @@ internal data class RuleInputs(
     val slowMode: SlowMode,
     /** Bytes on [network] in its allowance period; ignored with no allowance. */
     val used: Long,
+    /** The OS says this network is metered (NET-14); false when it can't tell. */
+    val detectedMetered: Boolean = false,
 )
 
 /** What the queue is told: pause everything that can pause, and cap the speed in each direction. */
@@ -70,7 +72,22 @@ internal fun decide(inputs: RuleInputs): RuleDecision {
         }
     val slowAction = if (inputs.slowMode.on) RuleAction.SLOW else RuleAction.ALLOW
 
-    val sources = listOf(RuleSource.SCHEDULE to scheduleAction, RuleSource.ALLOWANCE to allowanceAction, RuleSource.SLOW_MODE to slowAction)
+    val meteredNow = policy.metered || inputs.detectedMetered
+    val meteredAction =
+        when {
+            !meteredNow -> RuleAction.ALLOW
+            policy.onMetered == MeteredAction.SLOW -> RuleAction.SLOW
+            policy.onMetered == MeteredAction.PAUSE -> RuleAction.PAUSE
+            else -> RuleAction.ALLOW
+        }
+
+    val sources =
+        listOf(
+            RuleSource.SCHEDULE to scheduleAction,
+            RuleSource.ALLOWANCE to allowanceAction,
+            RuleSource.SLOW_MODE to slowAction,
+            RuleSource.METERED to meteredAction,
+        )
     val action = sources.maxOf { it.second }
     val because = if (action == RuleAction.ALLOW) emptySet() else sources.filter { it.second == action }.map { it.first }.toSet()
 
@@ -105,6 +122,6 @@ internal fun decide(inputs: RuleInputs): RuleDecision {
             )
         }
     val status =
-        RuleStatus(inputs.network, action, because, inputs.slowMode, downloadCap, uploadCap, allowanceStatus, nextChange)
+        RuleStatus(inputs.network, action, because, inputs.slowMode, downloadCap, uploadCap, allowanceStatus, nextChange, meteredNow)
     return RuleDecision(status, RuleEffect(action == RuleAction.PAUSE, downloadCap, uploadCap))
 }

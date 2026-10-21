@@ -38,7 +38,7 @@ object EngineProcess {
                         protocols = mapOf(DownloadKind.DIRECT to HttpProtocol(OkHttpTransport(), connections = { 4 })),
                         defaultFolder = Path(folder),
                         checkpointEvery = 100.milliseconds,
-                        network = DefaultRouteNetwork(),
+                        identity = DefaultRouteNetwork(),
                     )
                 if (store.downloads.list().isEmpty()) {
                     store.downloads.add(NewDownload(DownloadKind.DIRECT, mirrors = listOf(url), saveFolder = folder))

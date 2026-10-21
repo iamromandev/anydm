@@ -7,6 +7,7 @@ import dev.anydm.engine.core.PacingValues
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.store.db.AnydmDb
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -69,6 +70,8 @@ internal class SqlSettingsStore(
             pacing = readPacing(::read),
             slowMode = read(SLOW_MODE, DEFAULTS.slowMode) { it.toBooleanStrictOrNull() },
             slowModeLimit = read(SLOW_MODE_LIMIT, DEFAULTS.slowModeLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
+            keepAwake = read(KEEP_AWAKE, DEFAULTS.keepAwake) { it.toBooleanStrictOrNull() },
+            afterQueue = read(AFTER_QUEUE, DEFAULTS.afterQueue) { name -> AfterQueueAction.entries.firstOrNull { it.name == name } },
         )
     }
 
@@ -129,6 +132,8 @@ internal class SqlSettingsStore(
         put(PACING_MAX, custom?.intervalMax?.toString())
         put(SLOW_MODE, settings.slowMode.takeIf { it != DEFAULTS.slowMode }?.toString())
         put(SLOW_MODE_LIMIT, settings.slowModeLimit.takeIf { it != DEFAULTS.slowModeLimit }?.toString())
+        put(KEEP_AWAKE, settings.keepAwake.takeIf { it != DEFAULTS.keepAwake }?.toString())
+        put(AFTER_QUEUE, settings.afterQueue.takeIf { it != DEFAULTS.afterQueue }?.name)
     }
 
     private fun put(
@@ -152,6 +157,8 @@ internal class SqlSettingsStore(
         const val GLOBAL_UPLOAD_LIMIT = "net.global_upload_limit"
         const val SLOW_MODE = "net.slow_mode"
         const val SLOW_MODE_LIMIT = "net.slow_mode_limit"
+        const val KEEP_AWAKE = "net.keep_awake"
+        const val AFTER_QUEUE = "net.after_queue"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"

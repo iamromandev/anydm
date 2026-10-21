@@ -53,18 +53,29 @@ class Queue internal constructor(
     duplicates: DuplicateCheck = DuplicateCheck.None,
     /** A job's profile (SET-02); null if it is gone. */
     profiles: suspend (ProfileId) -> Profile? = { null },
+    /** Whether the network is up right now (#543), asked when a transient failure comes while the queue thinks it is online. */
+    networkCheck: suspend () -> Boolean = { true },
 ) {
     private val actor =
-        QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates, profiles)
+        QueueActor(store, runner, protocols, fileSystem, clock, retryPolicy, observer, log, timeSource, duplicates, profiles, networkCheck)
 
     /** Loads the stored jobs and starts running them. Call once. */
     suspend fun start() = start(RuleEffect.None)
 
-    /** Starts with the network rules already in force, so no job starts against them (#543). */
-    internal suspend fun start(initialRules: RuleEffect) = actor.start(scope, initialRules)
+    /** Starts with the network rules and the network state already in force, so no job starts against them (#543). */
+    internal suspend fun start(
+        initialRules: RuleEffect,
+        offline: Boolean = false,
+    ) = actor.start(scope, initialRules, offline)
 
     /** The network rules changed: pause, release and cap (#543). Returns once the stopped jobs have ended. */
     internal suspend fun applyRules(effect: RuleEffect): CommandResult = actor.callLater { applyRules(effect, it) }
+
+    /** The network dropped or came back (NET-13): pause for it or release it. Returns once the stopped jobs have ended. */
+    internal suspend fun applyNetwork(offline: Boolean): CommandResult = actor.callLater { applyNetwork(offline, it) }
+
+    /** The network changed or the machine woke (NET-12): running connections start again, uncounted. */
+    internal suspend fun restartConnections(): CommandResult = actor.callLater { restartConnections(it) }
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }

@@ -91,6 +91,8 @@ internal class QueueActor(
     private val duplicates: DuplicateCheck,
     /** A job's profile (SET-02), read when it starts and when its limit changes; null if it is gone. */
     private val profiles: suspend (ProfileId) -> Profile? = { null },
+    /** Whether the network is up right now (#543): asked once when a run fails TRANSIENT while the queue thinks it is online. */
+    private val networkCheck: suspend () -> Boolean = { true },
 ) {
     /** Every running job's speed limits (NET-01..03), shared by all of them. */
     private val bandwidth = Bandwidth(timeSource)
@@ -141,6 +143,9 @@ internal class QueueActor(
 
     // What the network rules say now (NET-05..08); set before the first job can start.
     private var rules: RuleEffect = RuleEffect.None
+
+    // Whether the network is gone (NET-13); like the rules, set before the first job can start. Nothing runs while it is on.
+    private var offline = false
     private lateinit var slotScope: CoroutineScope
     private var launched = false
 
@@ -151,6 +156,7 @@ internal class QueueActor(
     suspend fun start(
         scope: CoroutineScope,
         initialRules: RuleEffect,
+        initialOffline: Boolean,
     ) {
         check(!launched) { "the queue is already started" }
         launched = true
@@ -164,6 +170,7 @@ internal class QueueActor(
                 try {
                     settings = store.settings.load()
                     rules = initialRules
+                    offline = initialOffline
                     for (job in downloads.list()) lastStatus[job.id] = job.status
                     reconcile()
                     applyLimits()
@@ -600,7 +607,7 @@ internal class QueueActor(
                 when {
                     slot != null -> {
                         if (slot.download.status in RUNNABLE) {
-                            stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterRuleStop, it) }
+                            stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterHoldStop, it) }
                         }
                     }
 
@@ -616,9 +623,75 @@ internal class QueueActor(
         if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
     }
 
-    // A slot stopped by a rule pause: paused SCHEDULE, unless the rules relaxed while it stopped.
-    private suspend fun afterRuleStop(job: Download): CommandResult =
-        if (rules.pause) change(job.pause(PauseReason.SCHEDULE)) else requeue(job)
+    // A slot stopped by a rule pause or a network drop: paused for each of them that still applies when it has stopped
+    // (so a stop that both asked for ends paused for both), and waiting again if neither does any more.
+    private suspend fun afterHoldStop(job: Download): CommandResult {
+        if (!rules.pause && !offline) return requeue(job)
+        var held = job
+        for (reason in listOfNotNull(PauseReason.SCHEDULE.takeIf { rules.pause }, PauseReason.NETWORK.takeIf { offline })) {
+            when (val paused = held.pause(reason)) {
+                is TransitionResult.Moved -> held = paused.download
+                is TransitionResult.Rejected -> return CommandResult.Rejected(paused)
+            }
+        }
+        return CommandResult.Done(save(held))
+    }
+
+    /**
+     * The network dropped or came back (NET-13). Offline stops every running job that isn't MUXING and holds the waiting
+     * ones, paused for NETWORK; SEEDING is left alone. Online releases only that reason. A pending retry keeps its time
+     * and its attempt count: nothing is counted for the time offline. Idempotent, so the engine can send the state on
+     * every change. The reply comes once every stopped slot has ended.
+     */
+    suspend fun applyNetwork(
+        offline: Boolean,
+        reply: CompletableDeferred<CommandResult>,
+    ) {
+        this.offline = offline
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (job in downloads.list().filterNot { it.isCollection }) {
+            val slot = slots[job.id]
+            if (offline) {
+                when {
+                    slot != null -> {
+                        if (slot.download.status in RUNNABLE) {
+                            stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::afterHoldStop, it) }
+                        }
+                    }
+
+                    job.status in WAITING || job.status == PAUSED -> {
+                        val paused = (job.pause(PauseReason.NETWORK) as TransitionResult.Moved).download
+                        if (paused != job) save(paused)
+                    }
+                }
+            } else if (slot == null && job.status == PAUSED && PauseReason.NETWORK in job.pauseReasons) {
+                release(job, PauseReason.NETWORK)
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    /**
+     * Every running connection starts again (NET-12): the network changed or the machine woke, and a socket on the old
+     * route would only time out. Each slot that isn't MUXING and isn't already stopping is stopped and queued again in
+     * its place (the same `queuedAt`), so the jobs that ran start again and the ones that waited keep waiting. Nothing
+     * is counted: a stop has no error class. The reply comes once every stopped slot has ended.
+     */
+    suspend fun restartConnections(reply: CompletableDeferred<CommandResult>) {
+        val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
+        for (slot in slots.values.toList()) {
+            if (slot.download.status in RUNNABLE && !slot.stopping) {
+                stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::restartOp, it) }
+            }
+        }
+        if (stopping.isEmpty()) reply.complete(CommandResult.Done(null)) else replyWhenStopped(stopping, reply)
+    }
+
+    // Like requeue, but the job keeps its place in line: a waiting job of the same priority must not take its slot.
+    private suspend fun restartOp(job: Download): CommandResult {
+        val waiting = if (job.status == DOWNLOADING || job.status == MUXING) job.moved(QUEUED) else job
+        return CommandResult.Done(if (waiting.status in WAITING) save(waiting) else waiting)
+    }
 
     /**
      * Every job the last run left SEEDING is taken up again by its protocol, each in a coroutine of its own so the start
@@ -760,12 +833,13 @@ internal class QueueActor(
         if (released != job) save(if (released.status == QUEUED) released.copy(queuedAt = clock.now()) else released)
     }
 
-    /** While global pause or a rule pause is on, a job that starts waiting waits paused instead (GLOBAL, SCHEDULE). */
+    /** While global pause, a rule pause or the network drop is on, a job that starts waiting waits paused instead (GLOBAL, SCHEDULE, NETWORK). */
     private fun hold(job: Download): Download {
         if (job.status !in WAITING || job.isCollection) return job
         var held = job
         if (settings.globalPause) held = (held.pause(PauseReason.GLOBAL) as TransitionResult.Moved).download
         if (rules.pause) held = (held.pause(PauseReason.SCHEDULE) as TransitionResult.Moved).download
+        if (offline) held = (held.pause(PauseReason.NETWORK) as TransitionResult.Moved).download
         return held
     }
 
@@ -788,6 +862,7 @@ internal class QueueActor(
             if (fixed.status in WAITING && fixed.queuedAt == null) fixed = fixed.copy(queuedAt = now)
             fixed = reconciled(fixed, PauseReason.GLOBAL, settings.globalPause, now)
             fixed = reconciled(fixed, PauseReason.SCHEDULE, rules.pause, now)
+            fixed = reconciled(fixed, PauseReason.NETWORK, offline, now)
             if (fixed != job) save(fixed)
         }
     }
@@ -991,9 +1066,10 @@ internal class QueueActor(
     private suspend fun reschedule() {
         val now = clock.now()
         val waiting = (downloads.list(PENDING) + downloads.list(QUEUED)).filter { it.id !in slots && !it.isCollection }
-        if (rules.pause) {
-            // Nothing starts under a rule pause. Whatever got back to waiting without passing through hold (a requeue after
-            // a stop, a release of LOW_DISK or TOOLS from a job paused after the pause took hold) is held again here.
+        if (rules.pause || offline) {
+            // Nothing starts under a rule pause or while offline. Whatever got back to waiting without passing through hold
+            // (a requeue after a stop, a release of LOW_DISK or TOOLS from a job paused after the pause took hold) is held
+            // again here. This is the one place that guarantees it.
             for (job in waiting) hold(job).let { if (it != job) save(it) }
             armWake(null, now)
             return
@@ -1232,7 +1308,8 @@ internal class QueueActor(
         val attempts = downloads.attempts(slot.id)
         val next = nextMirror(downloads.mirrors(slot.id), attempts)
         val integrityBefore = attempts.any { it.id != slot.attempt.id && it.errorClass == ErrorClass.INTEGRITY }
-        val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now(), integrityBefore)
+        val offlineNow = if (end.failure.errorClass == ErrorClass.TRANSIENT) offlineAfterTransient() else offline
+        val action = retryPolicy.decide(job, end.failure, madeProgress, next, settings.maxRetries, clock.now(), integrityBefore, offlineNow)
         return when (action) {
             is FailureAction.Retry -> {
                 later += EngineEvent.RetryScheduled(slot.id, action.at, action.attemptCount)
@@ -1249,7 +1326,14 @@ internal class QueueActor(
             is FailureAction.Pause -> {
                 if (action.reason == PauseReason.LOW_DISK) later += EngineEvent.PausedForDisk(slot.id)
                 if (action.reason == PauseReason.TOOLS) later += EngineEvent.PausedForTool(slot.id, end.failure.message)
-                (job.pause(action.reason) as TransitionResult.Moved).download.copy(nextAttemptAt = null)
+                var paused = (job.pause(action.reason) as TransitionResult.Moved).download
+                // A drop that a rule pause overlaps ends paused for both, as a stop that both asked for would.
+                if (action.reason == PauseReason.NETWORK &&
+                    rules.pause
+                ) {
+                    paused = (paused.pause(PauseReason.SCHEDULE) as TransitionResult.Moved).download
+                }
+                paused.copy(nextAttemptAt = null)
             }
 
             FailureAction.StartOver -> {
@@ -1270,6 +1354,24 @@ internal class QueueActor(
                 job.toFailed().copy(nextAttemptAt = null)
             }
         }
+    }
+
+    // A TRANSIENT failure may be the network dropping before the monitor noticed: ask once. A failed check also makes the
+    // queue offline, so hold() agrees until the engine's own applyNetwork arrives, which then changes nothing for this
+    // job. A check that throws is no answer: the failure counts as today.
+    private suspend fun offlineAfterTransient(): Boolean {
+        if (offline) return true
+        val online =
+            try {
+                networkCheck()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                log.warn("queue") { "network check failed: ${e.message}" }
+                true
+            }
+        if (!online) offline = true
+        return !online
     }
 
     // A throw after COMPLETED or SEEDING was reported is a finished job (FinishHook); anything earlier fails it.

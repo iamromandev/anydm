@@ -24,6 +24,9 @@ internal class FakeProcessRunner(
 
     val started = mutableListOf<ProcessSpec>()
 
+    /** The spec of every started process that was [RunningProcess.stop]ped, one entry per stop call. */
+    val stopped = mutableListOf<ProcessSpec>()
+
     private fun scriptFor(spec: ProcessSpec) = script.firstOrNull { spec.command.take(it.prefix.size) == it.prefix }
 
     override suspend fun run(spec: ProcessSpec): ProcessOutcome<ProcessResult> {
@@ -46,11 +49,12 @@ internal class FakeProcessRunner(
     override suspend fun start(spec: ProcessSpec): ProcessOutcome<RunningProcess> {
         started += spec
         val scripted = scriptFor(spec) ?: return ProcessOutcome.Failed(ProcessFailure.NotFound(spec.command.first()))
-        return ProcessOutcome.Ok(Running(scripted))
+        return ProcessOutcome.Ok(Running(scripted) { stopped += spec })
     }
 
     private class Running(
         private val scripted: Scripted,
+        private val onStop: () -> Unit,
     ) : RunningProcess {
         private val stopped = CompletableDeferred<Unit>()
 
@@ -68,6 +72,7 @@ internal class FakeProcessRunner(
         }
 
         override suspend fun stop() {
+            onStop()
             stopped.complete(Unit)
         }
     }
