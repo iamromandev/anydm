@@ -81,7 +81,8 @@ internal class NetworkMonitor(
                 apply(true, counted = true)
             } else {
                 misses++
-                apply(if (misses >= 2) false else current.value.online, counted = true)
+                // The first miss changes nothing: the key may be unreadable too, and the rules must not lose the network.
+                if (misses >= 2) apply(false, counted = true) else current.value
             }
         }
 

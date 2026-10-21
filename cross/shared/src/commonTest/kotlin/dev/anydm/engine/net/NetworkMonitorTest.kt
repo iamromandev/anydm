@@ -71,6 +71,33 @@ class NetworkMonitorTest {
         }
 
     @Test
+    fun aFirstMissKeepsTheStateAsItWas() =
+        runTest {
+            val f = Fixture(this, t0)
+            f.monitor.first()
+            f.monitor.setMetered("en0", true)
+            val before = f.monitor.state.value
+            val watch = NetworkWatch(f.monitor.observed.value)
+            f.probe.online = false
+            f.key = "unknown"
+            advanceTimeBy(3.seconds)
+
+            val state = f.monitor.tick()
+
+            state shouldBe before
+            state.key shouldBe "en0"
+            state.metered shouldBe true
+            state.since shouldBe t0
+            watch.next(f.monitor.observed.value) shouldBe emptyList()
+
+            advanceTimeBy(3.seconds)
+            val gone = f.monitor.tick()
+            gone.online shouldBe false
+            gone.since shouldBe t0 + 6.seconds
+            watch.next(f.monitor.observed.value) shouldBe listOf(NetworkStep.Lost)
+        }
+
+    @Test
     fun oneGoodPollReturns() =
         runTest {
             val f = Fixture(this, t0)
