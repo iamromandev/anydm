@@ -244,6 +244,92 @@ class MeteredRefreshTest {
         }
 
     @Test
+    fun anAlwaysNullDetectorIsAskedLessAndLessOften() =
+        runTest {
+            val f = Fixture(this, t0)
+            f.fake.answers.remove("en0")
+            f.refresh.first(f.monitor.first())
+
+            val at = mutableListOf(0)
+            repeat(600) { second ->
+                advanceTimeBy(1.seconds)
+                f.refresh.refresh(f.monitor.state.value)
+                runCurrent()
+                if (f.fake.calls.size > at.size) at += second + 1
+            }
+
+            // 30 s, then 1 min, 2 min, 4 min between the questions (the delay doubles up to the normal 5 min).
+            at shouldBe listOf(0, 30, 90, 210, 450)
+        }
+
+    /** Three nulls in: 0, 30 s and 90 s; the next question would come at 210 s. */
+    private suspend fun TestScope.threeNulls(f: Fixture) {
+        f.fake.answers.remove("en0")
+        f.refresh.first(f.monitor.first())
+        advanceTimeBy(30.seconds)
+        f.refresh.refresh(f.monitor.state.value)
+        runCurrent()
+        advanceTimeBy(1.minutes)
+        f.refresh.refresh(f.monitor.state.value)
+        runCurrent()
+        f.fake.calls.size shouldBe 3
+    }
+
+    @Test
+    fun aRealAnswerStartsTheBackOffAgain() =
+        runTest {
+            val f = Fixture(this, t0)
+            threeNulls(f)
+            advanceTimeBy(2.minutes)
+            f.fake.answers["en0"] = true
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 4
+
+            f.fake.answers.remove("en0")
+            advanceTimeBy(5.minutes)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 5
+            advanceTimeBy(30.seconds)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 6
+        }
+
+    @Test
+    fun anInvalidateStartsTheBackOffAgain() =
+        runTest {
+            val f = Fixture(this, t0)
+            threeNulls(f)
+
+            f.refresh.invalidate()
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 4
+            advanceTimeBy(30.seconds)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 5
+        }
+
+    @Test
+    fun aNewKeyStartsTheBackOffAgain() =
+        runTest {
+            val f = Fixture(this, t0)
+            threeNulls(f)
+
+            f.key = "en9"
+            f.refresh.refresh(f.monitor.tick())
+            runCurrent()
+            f.fake.calls.size shouldBe 4
+            advanceTimeBy(30.seconds)
+            f.refresh.refresh(f.monitor.state.value)
+            runCurrent()
+            f.fake.calls.size shouldBe 5
+        }
+
+    @Test
     fun aThrowingDetectorIsNoAnswer() =
         runTest {
             val f = Fixture(this, t0, MeteredDetector { error("no nmcli") })

@@ -222,6 +222,7 @@ internal class MeteredRefresh(
 ) {
     private companion object {
         val RETRY_AFTER_NO_ANSWER = 30.seconds
+        const val MAX_BACK_OFF_STEPS = 10
     }
 
     private val cache = mutableMapOf<String, Boolean>()
@@ -230,6 +231,7 @@ internal class MeteredRefresh(
     private var lastAt: Instant? = null
     private var inFlight: Job? = null
     private var forced = false
+    private var noAnswers = 0
 
     /** Detects for [state] and waits for the answer (startup). */
     suspend fun first(state: NetworkState) {
@@ -246,6 +248,7 @@ internal class MeteredRefresh(
      */
     fun invalidate() {
         forced = true
+        noAnswers = 0
     }
 
     /** Launches one detection when due; none while one for this network is in flight. */
@@ -259,6 +262,7 @@ internal class MeteredRefresh(
         if (!due) return
         if (!keyChanged && !forced && inFlight?.isActive == true) return
         forced = false
+        if (keyChanged) noAnswers = 0
         inFlight?.cancel()
         lastKey = state.key
         lastAt = clock.now()
@@ -284,9 +288,13 @@ internal class MeteredRefresh(
             }
         if (answer == null) {
             log.debug("net") { "metered detection gave no answer for $key" }
-            // No answer (a cold PowerShell, an nmcli hiccup): ask again soon, not after the full period.
-            lastAt = clock.now() - every + RETRY_AFTER_NO_ANSWER
+            // No answer (a cold PowerShell, an nmcli hiccup): ask again soon, then less and less often (30 s, 1 min, 2 min,
+            // ... up to the normal period), so a detector that never answers is not spawned every 30 s for good.
+            val wait = minOf(every, RETRY_AFTER_NO_ANSWER * (1 shl noAnswers.coerceAtMost(MAX_BACK_OFF_STEPS)))
+            noAnswers++
+            lastAt = clock.now() - every + wait
         } else {
+            noAnswers = 0
             cache[key] = answer
         }
         monitor.setMetered(key, answer ?: cache[key])
