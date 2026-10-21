@@ -6,6 +6,8 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.net.Allowance
+import dev.anydm.engine.net.AllowancePeriod
 import dev.anydm.engine.net.MeteredAction
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkState
@@ -17,7 +19,9 @@ import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.StoreTestBase
+import dev.anydm.engine.store.TrafficStore
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineStart
@@ -68,14 +72,17 @@ abstract class EngineNetworkContract : StoreTestBase() {
         online: Boolean = true,
         detector: FakeMeteredDetector = FakeMeteredDetector(),
         protocol: FakeProtocol = FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20))),
+        traffic: (Store) -> TrafficStore = { it.traffic },
     ): Fixture {
         val probe = FakeOnlineProbe(online)
         val key = arrayOf("en0")
+        val store = newStore()
         val h =
             EngineHarness(
                 this,
-                newStore(),
+                store,
                 protocol,
+                traffic = traffic(store),
                 clock = virtualClock(),
                 network = { key[0] },
                 onlineProbe = probe,
@@ -311,6 +318,69 @@ abstract class EngineNetworkContract : StoreTestBase() {
 
             f.h.status(id) shouldBe DownloadStatus.PAUSED
             f.h.reasons(id) shouldBe setOf(PauseReason.GLOBAL)
+        }
+
+    @Test
+    fun aFailingRuleCheckOnTheReturnStillReleasesTheJobsAndTheNextStepsAreSeen() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(allowance = Allowance(1L shl 40, AllowancePeriod.Daily)))
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.probe.online = false
+            advance(9.seconds)
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+            // The new network's usage cannot be read, once, when the connection returns.
+            traffic.failNetworkReads = 1
+            f.net = "en7"
+            f.probe.online = true
+            advance(3.seconds)
+
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            // The collector lives: a later drop pauses and the return after it resumes.
+            f.probe.online = false
+            advance(9.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+            f.probe.online = true
+            advance(3.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+        }
+
+    @Test
+    fun aFailingRuleCheckOnAChangeDoesNotEndTheWatchOfTheNetwork() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(allowance = Allowance(1L shl 40, AllowancePeriod.Daily)))
+            advance(2.seconds)
+
+            // No job yet, so nothing but the change reads the new network's usage.
+            traffic.failNetworkReads = 1
+            f.net = "en7"
+            advance(4.seconds)
+            f.events.filterIsInstance<EngineEvent.NetworkChanged>().size shouldBe 1
+            traffic.failNetworkReads shouldBe 0
+            val id = f.h.addJob()
+            advance(2.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            f.probe.online = false
+            advance(9.seconds)
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+            f.h.reasons(id) shouldBe setOf(PauseReason.NETWORK)
+
+            f.probe.online = true
+            advance(3.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
         }
 
     // A job in the store before the engine starts, as the last run left it.

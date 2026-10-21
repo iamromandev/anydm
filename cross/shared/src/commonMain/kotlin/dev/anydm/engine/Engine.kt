@@ -508,7 +508,7 @@ class Engine(
                     }
                 }
                 withContext(publisher) { armRuleTimer() }
-                scope.launch(publisher) { monitor.observed.collect { seen -> watch.next(seen).forEach { onNetworkStep(it) } } }
+                scope.launch(publisher) { monitor.observed.collect { seen -> watch.next(seen).forEach { onNetworkStepQuietly(it) } } }
                 scope.launch(publisher) { every(NET_POLL) { networkTick() } }
                 scope.launch(publisher) { every(WAKE_TICK) { wakeTick() } }
                 scope.launch {
@@ -1253,6 +1253,17 @@ class Engine(
         meteredRefresh.refresh(monitor.tick())
     }
 
+    // One step failing (a store that cannot be read) must never end the collection, or the jobs would stay as they are for good.
+    private suspend fun onNetworkStepQuietly(step: NetworkStep) {
+        try {
+            onNetworkStep(step)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("net") { "network step $step failed: ${e.message}" }
+        }
+    }
+
     // What the engine does when the network drops, returns, changes, or learns it is metered (NET-12, NET-13, NET-14).
     private suspend fun onNetworkStep(step: NetworkStep) {
         when (step) {
@@ -1266,7 +1277,16 @@ class Engine(
                 tell(EngineEvent.NetworkRestored)
                 meteredRefresh.invalidate()
                 // The new network's rules reach the queue before the release, or a job would start on a forbidden network.
-                val changed = keeper.check() != null
+                val changed =
+                    try {
+                        keeper.check() != null
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // The rules cannot be read now: the release must not wait for them, and what the queue has is pushed.
+                        log.warn("net") { "rules not checked on the return: ${e.message}" }
+                        true
+                    }
                 if (changed) armRuleTimer()
                 launchQuietly {
                     if (changed) pushQuietly()
@@ -1318,6 +1338,9 @@ class Engine(
             throw e
         } catch (e: IllegalStateException) {
             log.debug("net") { "rules not applied: ${e.message}" }
+        } catch (e: Exception) {
+            // A store that fails inside the queue must not skip what comes after the push (the release on a return).
+            log.warn("net") { "rules not applied: ${e.message}" }
         }
     }
 
