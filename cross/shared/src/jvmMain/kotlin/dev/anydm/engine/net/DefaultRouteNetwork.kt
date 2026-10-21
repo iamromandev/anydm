@@ -31,6 +31,14 @@ class DefaultRouteNetwork internal constructor(
         return cached ?: UNKNOWN
     }
 
+    /** A reading that skips the cache and becomes the cached value (NET-13). */
+    @Synchronized
+    override fun fresh(): String {
+        cached = runCatching(lookup).getOrNull()?.takeIf { it.isNotBlank() } ?: UNKNOWN
+        lookedAt = clock.now()
+        return cached ?: UNKNOWN
+    }
+
     private companion object {
         const val UNKNOWN = "unknown"
     }
@@ -39,9 +47,17 @@ class DefaultRouteNetwork internal constructor(
 /** A UDP "connect" picks the default route's local address and sends nothing; its interface's name, or null. */
 internal fun defaultRouteInterface(): String? =
     try {
+        defaultRouteAddress("1.1.1.1")?.let { NetworkInterface.getByInetAddress(it)?.name }
+    } catch (_: Exception) {
+        null
+    }
+
+/** The local address the default route would use to reach [target]; null when there is no route or on any failure. */
+internal fun defaultRouteAddress(target: String): InetAddress? =
+    try {
         DatagramSocket().use { socket ->
-            socket.connect(InetAddress.getByName("1.1.1.1"), 53)
-            socket.localAddress?.let { NetworkInterface.getByInetAddress(it)?.name }
+            socket.connect(InetAddress.getByName(target), 53)
+            socket.localAddress
         }
     } catch (_: Exception) {
         null

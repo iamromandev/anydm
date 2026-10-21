@@ -43,4 +43,23 @@ class DefaultRouteNetworkTest {
     fun theRealLookupNeverThrows() {
         DefaultRouteNetwork().current().shouldNotBeBlank()
     }
+
+    @Test
+    fun freshIgnoresTheCacheAndUpdatesIt() {
+        val clock = SetClock()
+        var lookups = 0
+        val network =
+            DefaultRouteNetwork(clock) {
+                lookups++
+                "if$lookups"
+            }
+
+        network.current() shouldBe "if1"
+        network.fresh() shouldBe "if2"
+        lookups shouldBe 2
+
+        clock.now += 9.seconds
+        network.current() shouldBe "if2"
+        lookups shouldBe 2
+    }
 }
