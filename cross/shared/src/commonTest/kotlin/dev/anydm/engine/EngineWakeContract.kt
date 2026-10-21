@@ -4,6 +4,9 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.net.Allowance
+import dev.anydm.engine.net.AllowancePeriod
+import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NewScheduleRule
 import dev.anydm.engine.net.RuleAction
 import dev.anydm.engine.platform.FakeOnlineProbe
@@ -13,7 +16,9 @@ import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.FakeFile
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.StepResult
+import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.StoreTestBase
+import dev.anydm.engine.store.TrafficStore
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.comparables.shouldBeGreaterThanOrEqualTo
 import io.kotest.matchers.shouldBe
@@ -63,14 +68,17 @@ abstract class EngineWakeContract : StoreTestBase() {
     private fun TestScope.fixture(
         origin: Instant = noon,
         wakeGap: Duration = 30.seconds,
+        traffic: (Store) -> TrafficStore = { it.traffic },
     ): Fixture {
         val clock = ShiftedClock(virtualClock(origin))
         val probe = FakeOnlineProbe()
+        val store = newStore()
         val h =
             EngineHarness(
                 this,
-                newStore(),
+                store,
                 FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20))),
+                traffic = traffic(store),
                 clock = clock,
                 onlineProbe = probe,
                 wakeGap = wakeGap,
@@ -197,5 +205,42 @@ abstract class EngineWakeContract : StoreTestBase() {
             advance(10.seconds)
 
             f.events.filterIsInstance<EngineEvent.SystemWoke>().shouldBeEmpty()
+        }
+
+    // The store cannot be read when the day turns over under the jump: the wake's rule check fails.
+    @Test
+    fun aWakeWhoseRuleCheckFailsKeepsTheEngineAndTheWakeLoopAndRestartsTheConnections() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val f =
+                fixture(
+                    origin = Instant.parse("2026-10-21T23:55:00Z"),
+                    traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } },
+                )
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(1L shl 40, AllowancePeriod.Daily)))
+            val id = f.h.addJob()
+            advance(6.seconds)
+            f.h.protocol.transfers.size shouldBe 1
+
+            traffic.failNetworkReads = 1_000
+            f.clock.offset += 10.minutes
+            advance(5.seconds)
+
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.events.filterIsInstance<EngineEvent.EngineFailed>().shouldBeEmpty()
+            f.events.filterIsInstance<EngineEvent.SystemWoke>().size shouldBe 1
+            f.h.protocol.transfers.size shouldBe 2
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            // The loop still ticks: a second wake is seen and restarts the connection again.
+            traffic.failNetworkReads = 0
+            f.clock.offset += 10.minutes
+            advance(5.seconds)
+
+            f.events.filterIsInstance<EngineEvent.SystemWoke>().size shouldBe 2
+            f.h.protocol.transfers.size shouldBe 3
+            f.h.engine.state.value shouldBe EngineState.Running
         }
 }

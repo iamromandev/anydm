@@ -6,6 +6,8 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.log.Log
+import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.net.Allowance
 import dev.anydm.engine.net.AllowancePeriod
 import dev.anydm.engine.net.MeteredAction
@@ -74,6 +76,7 @@ abstract class EngineNetworkContract : StoreTestBase() {
         detector: FakeMeteredDetector = FakeMeteredDetector(),
         protocol: FakeProtocol = FakeProtocol(files = listOf(FakeFile("file.zip", 1L shl 20))),
         traffic: (Store) -> TrafficStore = { it.traffic },
+        log: Log = Log.None,
     ): Fixture {
         val probe = FakeOnlineProbe(online)
         val key = arrayOf("en0")
@@ -88,6 +91,7 @@ abstract class EngineNetworkContract : StoreTestBase() {
                 network = { key[0] },
                 onlineProbe = probe,
                 meteredDetector = detector,
+                log = log,
             ).also { harnesses += it }
         val events = mutableListOf<EngineEvent>()
         backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { h.engine.events.collect { events += it } }
@@ -489,7 +493,11 @@ abstract class EngineNetworkContract : StoreTestBase() {
     fun aFailingRuleCheckOfTheBytesDoesNotEndTheEngine() =
         engineTest {
             var recording: RecordingTraffic? = null
-            val f = fixture(traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } })
+            val f =
+                fixture(
+                    protocol = FakeProtocol(files = listOf(FakeFile("file.zip", 16L shl 20))),
+                    traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } },
+                )
             val traffic = recording!!
             f.h.engine.start()
             f.h.engine.setNetworkPolicy(
@@ -505,18 +513,63 @@ abstract class EngineNetworkContract : StoreTestBase() {
             advance(3.seconds)
             f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
 
-            // The change fails to read, and the check that the bytes trigger a moment later fails too.
-            traffic.failNetworkReads = 2
+            // The change and the check of the bytes of that second both fail to read. After that a check the bytes trigger
+            // cannot succeed where the read failed: it waits for the timer, which fails once more.
+            traffic.failNetworkReads = 3
             f.net = "en7"
             advance(4.seconds)
 
             f.h.engine.state.value shouldBe EngineState.Running
             f.events.filterIsInstance<EngineEvent.EngineFailed>().shouldBeEmpty()
-            traffic.failNetworkReads shouldBe 0
-
-            // The next check that succeeds applies the rules of the new network.
+            traffic.failNetworkReads shouldBe 1
             advance(3.seconds)
+            traffic.failNetworkReads shouldBe 1
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            // The timer's check fails once more, then the next one succeeds and applies the rules of the new network.
+            advance(60.seconds)
+            traffic.failNetworkReads shouldBe 0
             f.h.engine.state.value shouldBe EngineState.Running
+            advance(60.seconds)
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.h.status(id) shouldBe DownloadStatus.PAUSED
+        }
+
+    @Test
+    fun aStoreThatStaysBrokenWhileAJobDownloadsLogsOneWarningAndIsReadOnceAMinute() =
+        engineTest {
+            var recording: RecordingTraffic? = null
+            val sink = RecordingLogSink()
+            val f =
+                fixture(
+                    protocol = FakeProtocol(files = listOf(FakeFile("file.zip", 16L shl 20))),
+                    traffic = { RecordingTraffic(it.traffic).also { r -> recording = r } },
+                    log = Log(sink, virtualClock()),
+                )
+            val traffic = recording!!
+            f.h.engine.start()
+            f.h.engine.setNetworkPolicy("en7", NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE, allowance = huge))
+            val id = f.h.addJob()
+            advance(3.seconds)
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+
+            traffic.failNetworkReads = 1_000_000
+            f.net = "en7"
+            advance(4.seconds)
+            val before = traffic.networkReads
+            advance(3.minutes)
+
+            f.h.engine.state.value shouldBe EngineState.Running
+            f.h.status(id) shouldBe DownloadStatus.DOWNLOADING
+            (traffic.networkReads - before) shouldBe 3
+            sink.lines.count { it.contains(" WARN ") && it.contains("rules not checked") } shouldBe 1
+            sink.lines.count { it.contains("rules checked again") } shouldBe 0
+
+            // The store is back: the next attempt logs one line, and the rules of the new network apply.
+            traffic.failNetworkReads = 0
+            advance(1.minutes)
+            sink.lines.count { it.contains("rules checked again") } shouldBe 1
+            sink.lines.count { it.contains(" WARN ") && it.contains("rules not checked") } shouldBe 1
             f.h.status(id) shouldBe DownloadStatus.PAUSED
         }
 
