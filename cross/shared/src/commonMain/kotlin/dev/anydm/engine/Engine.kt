@@ -14,6 +14,7 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RetryPolicy
+import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.files.CollectionFinishHook
@@ -40,6 +41,13 @@ import dev.anydm.engine.media.PlaylistListing
 import dev.anydm.engine.media.PlaylistParse
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
+import dev.anydm.engine.net.NetworkPolicy
+import dev.anydm.engine.net.NetworkRules
+import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.RuleKeeper
+import dev.anydm.engine.net.RuleStatus
+import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.net.TrafficMeter
 import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.platform.FileSystem
@@ -90,12 +98,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.files.Path
 import kotlin.concurrent.Volatile
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -138,6 +149,8 @@ class Engine(
     private val torrents: TorrentService? = null,
     /** Takes in the logins found in FTP and HTTP URLs when a job is added (FTP-06); without one, URLs keep their logins. */
     private val credentials: CredentialWriter? = null,
+    /** The zone days, weeks and schedule rules are read in (NET-05..08), asked at every use; the desktop passes the system's. */
+    private val timeZone: () -> TimeZone = TimeZone.Companion::currentSystemDefault,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
@@ -181,7 +194,7 @@ class Engine(
     }
 
     // Traffic (NET-04): counted once a second on the publisher; bytes a run got after its last second wait in leftovers.
-    private val meter = TrafficMeter()
+    private val meter = TrafficMeter { it.toLocalDateTime(timeZone()).date.toString() }
     private val leftovers = MutableStateFlow<List<TrafficMeter.Sample>>(emptyList())
 
     private val live = MutableStateFlow<Map<DownloadId, Live>>(emptyMap())
@@ -242,6 +255,30 @@ class Engine(
             duplicates = duplicates,
             profiles = { store.profiles.get(it) },
         )
+
+    // Network rules (#543): evaluated on the publisher, pushed to the queue.
+    private val keeper =
+        RuleKeeper(
+            store.rules,
+            store.settings,
+            traffic,
+            meter,
+            network,
+            clock,
+            timeZone,
+            log,
+            leftovers = { leftovers.value.sumOf { it.bytes + it.bytesUp } },
+            emit = {
+                logEvent(it)
+                eventFlow.tryEmit(it)
+            },
+            apply = { queue.applyRules(it) },
+        )
+    private var ruleTimer: Job? = null
+    private var ruleTimerAt: Instant? = null
+
+    /** What the network rules decide now: the action, its causes, caps, allowance and next change; [RuleStatus.None] until [start]. */
+    val rules: StateFlow<RuleStatus> = keeper.status
 
     private sealed interface Fact {
         data class Changed(
@@ -343,6 +380,8 @@ class Engine(
         val startup =
             scope.async {
                 if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
+                // Rules are loaded and decided before any job can start: the queue starts with their effect.
+                val initial = withContext(publisher) { keeper.start() }
                 torrents?.let { service ->
                     // Subscribed before the queue starts: a seed taken up again may end at once.
                     scope.launch(start = CoroutineStart.UNDISPATCHED) { service.seedEnds.collect { finishSeed(it) } }
@@ -354,7 +393,7 @@ class Engine(
                         }
                     }
                 }
-                queue.start()
+                queue.start(initial)
                 val jobs = store.downloads.list()
                 log.info("engine") { "engine started (${jobs.size} jobs)" }
                 val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
@@ -385,6 +424,7 @@ class Engine(
                         flushTraffic()
                     }
                 }
+                withContext(publisher) { armRuleTimer() }
                 scope.launch {
                     while (true) {
                         delay(DISK_CHECK_EVERY)
@@ -926,6 +966,69 @@ class Engine(
         at: Instant?,
     ): CommandResult = command { queue.setStartTime(id, at) }
 
+    /** Slow mode (NET-06): whether it is on and the limit it caps at, both directions. */
+    suspend fun slowMode(): SlowMode = command { store.settings.load().let { SlowMode(it.slowMode, it.slowModeLimit) } }
+
+    /** Switches slow mode on or off; running jobs are slowed or sped up before this returns. The user's own limits stay. */
+    suspend fun setSlowMode(on: Boolean): CommandResult =
+        command {
+            store.settings.update { it.copy(slowMode = on) }
+            rulesChanged()
+            CommandResult.Done(null)
+        }
+
+    /** The limit slow mode caps at, in bytes per second for each direction. */
+    suspend fun setSlowModeLimit(bytesPerSecond: Long): CommandResult =
+        command {
+            if (bytesPerSecond < 1) return@command CommandResult.Invalid("slow-mode limit must be >= 1: $bytesPerSecond")
+            store.settings.update { it.copy(slowModeLimit = bytesPerSecond) }
+            rulesChanged()
+            CommandResult.Done(null)
+        }
+
+    /** The limits and data allowances of the default policy and of each network (NET-05, NET-07). */
+    suspend fun networkRules(): NetworkRules = command { store.rules.networkRules() }
+
+    /** Sets the policy of [network], null for the default; a null [policy] removes the entry. */
+    suspend fun setNetworkPolicy(
+        network: String?,
+        policy: NetworkPolicy?,
+    ): CommandResult =
+        command {
+            if (network != null && (network.isBlank() || network == "*")) {
+                return@command CommandResult.Invalid("network key must not be blank or *: $network")
+            }
+            store.rules.setNetworkPolicy(network, policy)
+            rulesChanged()
+            CommandResult.Done(null)
+        }
+
+    /** The weekly schedule rules (NET-08), by id. */
+    suspend fun scheduleRules(): List<ScheduleRule> = command { store.rules.scheduleRules() }
+
+    suspend fun addScheduleRule(new: NewScheduleRule): ScheduleRule =
+        command {
+            val rule = store.rules.addScheduleRule(new)
+            rulesChanged()
+            rule
+        }
+
+    /** False if the rule is gone. */
+    suspend fun updateScheduleRule(rule: ScheduleRule): Boolean =
+        command {
+            val updated = store.rules.updateScheduleRule(rule)
+            rulesChanged()
+            updated
+        }
+
+    /** False if the rule is gone. */
+    suspend fun removeScheduleRule(id: ScheduleRuleId): Boolean =
+        command {
+            val removed = store.rules.removeScheduleRule(id)
+            rulesChanged()
+            removed
+        }
+
     /** Torrent job [id]'s own seeding limits (TOR-05); a rule applies at the next check of the seed. */
     suspend fun setSeedRules(
         id: DownloadId,
@@ -967,6 +1070,52 @@ class Engine(
             else -> Unit
         }
         return block()
+    }
+
+    // After a rule or slow-mode command: the rules are read again and the queue has the result before the command returns.
+    // Before start() the store alone holds them, and start() reads it.
+    private suspend fun rulesChanged() =
+        withContext(publisher) {
+            if (keeper.refresh() != null) {
+                armRuleTimer()
+                keeper.push()
+            }
+        }
+
+    // On the publisher: decides again, re-arms the timer and sends a changed effect to the queue.
+    private suspend fun checkRules() {
+        keeper.check() ?: return
+        armRuleTimer()
+        scope.launch(publisher) { pushQuietly() }
+    }
+
+    // A queue that has stopped has nothing to apply the rules to.
+    private suspend fun pushQuietly() {
+        try {
+            keeper.push()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalStateException) {
+            log.debug("net") { "rules not applied: ${e.message}" }
+        }
+    }
+
+    // On the publisher: one timer for the next schedule boundary or allowance reset, at most RULES_IDLE_CHECK away, so a
+    // wall clock that jumped or a network that changed is seen while nothing transfers. Re-armed when the instant changes.
+    private fun armRuleTimer() {
+        val target = keeper.status.value.nextChange
+        if (ruleTimer?.isActive == true && target == ruleTimerAt) return
+        ruleTimer?.cancel()
+        ruleTimerAt = target
+        ruleTimer =
+            scope.launch(publisher) {
+                val wait = if (target == null) RULES_IDLE_CHECK else minOf(target - clock.now(), RULES_IDLE_CHECK)
+                delay(wait.coerceAtLeast(Duration.ZERO))
+                // This timer is done: the check below may arm the next one.
+                ruleTimer = null
+                ruleTimerAt = null
+                checkRules()
+            }
     }
 
     // Applies one fact to the cache; the event it carries, if any, is returned to be told once the snapshots are out.
@@ -1167,7 +1316,7 @@ class Engine(
 
     private suspend fun every(
         period: Duration,
-        block: () -> Unit,
+        block: suspend () -> Unit,
     ) {
         while (true) {
             delay(period)
@@ -1188,7 +1337,7 @@ class Engine(
         if (changed) publish()
     }
 
-    private fun sampleSpeed() {
+    private suspend fun sampleSpeed() {
         var total = 0L
         val samples = mutableListOf<TrafficMeter.Sample>()
         for (id in running) {
@@ -1207,6 +1356,7 @@ class Engine(
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
         speedFlow.value = SpeedWindow(total, totalSamples.toList())
         publish()
+        checkRules()
     }
 
     /** Jobs being removed while their seed is stopped: that end finishes nothing. */
@@ -1262,6 +1412,7 @@ class Engine(
             }
         if (moved.isEmpty()) return
         meter.bytes(clock.now(), network.current(), moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) })
+        checkRules()
     }
 
     /** How many snapshot lists were built, for tests of the batching. */
@@ -1342,16 +1493,21 @@ class Engine(
      * A save cut short by cancellation isn't: the store finishes a write that was asked for, so it would count twice.
      */
     private suspend fun flushTraffic() {
-        takeLeftovers(clock.now())
-        val batch = meter.drain()
-        if (batch.isEmpty) return
-        try {
-            traffic.add(batch, epochMinute(clock.now() - 24.hours))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            log.error("engine", e) { "traffic not saved; it is kept for the next save" }
-            meter.restore(batch)
+        // Under the keeper's lock, so a rule check never finds the drained bytes in neither the meter nor its count.
+        keeper.saveTraffic {
+            takeLeftovers(clock.now())
+            val batch = meter.drain()
+            if (batch.isEmpty) return@saveTraffic null
+            try {
+                traffic.add(batch, epochMinute(clock.now() - 24.hours))
+                batch
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                log.error("engine", e) { "traffic not saved; it is kept for the next save" }
+                meter.restore(batch)
+                null
+            }
         }
     }
 
@@ -1380,6 +1536,9 @@ class Engine(
         val SPEED_EVERY = 1.seconds
         val DISK_CHECK_EVERY = 30.seconds
         val TOOL_RELEASE_DELAY = 2.seconds
+
+        /** The longest the rules go unchecked while nothing transfers (NET-08): a wall clock jump or a network change shows by then. */
+        val RULES_IDLE_CHECK = 1.minutes
 
         /** A seed that ends before its job has stored SEEDING is asked again, this often, this many times. */
         val SEED_FINISH_WAIT = 100.milliseconds

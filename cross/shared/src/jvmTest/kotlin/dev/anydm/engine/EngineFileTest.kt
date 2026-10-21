@@ -5,7 +5,6 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.stepRoot
-import dev.anydm.engine.net.localDayOf
 import dev.anydm.engine.platform.deleteRecursively
 import dev.anydm.engine.platform.newTempFolder
 import dev.anydm.engine.protocol.FakeProtocol
@@ -24,6 +23,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.files.Path
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -52,7 +53,12 @@ class EngineFileTest {
             first.addJob()
             advanceTimeBy(5.seconds)
             first.engine.stop()
-            val day = localDayOf(first.clock.now())
+            val day =
+                first.clock
+                    .now()
+                    .toLocalDateTime(TimeZone.UTC)
+                    .date
+                    .toString()
 
             val second = EngineHarness(this, open(), clock = first.clock)
             second.store.traffic
