@@ -27,7 +27,8 @@ class RuleDecisionTest {
         used: Long = 0,
         network: String = "unknown",
         at: Instant = now,
-    ) = RuleInputs(at, TimeZone.UTC, network, networks, schedule, SlowMode(slowOn, slowLimit), used)
+        detectedMetered: Boolean = false,
+    ) = RuleInputs(at, TimeZone.UTC, network, networks, schedule, SlowMode(slowOn, slowLimit), used, detectedMetered)
 
     private fun allowance(
         bytes: Long = 1000,
@@ -165,5 +166,92 @@ class RuleDecisionTest {
         d.status.action shouldBe RuleAction.ALLOW
         d.status.allowance shouldBe null
         allowancePeriod(NetworkRules(), "unknown", now, TimeZone.UTC) shouldBe null
+    }
+
+    private fun meteredRules(
+        onMetered: MeteredAction,
+        metered: Boolean = false,
+    ) = NetworkRules(NetworkPolicy(metered = metered, onMetered = onMetered))
+
+    @Test
+    fun meteredByTheUsersFlag() {
+        val d = decide(inputs(meteredRules(MeteredAction.PAUSE, metered = true)))
+        d.status.action shouldBe RuleAction.PAUSE
+        d.status.because shouldBe setOf(RuleSource.METERED)
+        d.status.metered shouldBe true
+        d.effect.pause shouldBe true
+    }
+
+    @Test
+    fun meteredByDetection() {
+        val d = decide(inputs(meteredRules(MeteredAction.PAUSE), detectedMetered = true))
+        d.status.action shouldBe RuleAction.PAUSE
+        d.status.because shouldBe setOf(RuleSource.METERED)
+        d.status.metered shouldBe true
+    }
+
+    @Test
+    fun meteredByBoth() {
+        val d = decide(inputs(meteredRules(MeteredAction.PAUSE, metered = true), detectedMetered = true))
+        d.status.action shouldBe RuleAction.PAUSE
+        d.status.because shouldBe setOf(RuleSource.METERED)
+        d.status.metered shouldBe true
+    }
+
+    @Test
+    fun onMeteredNoneSlowAndPause() {
+        val none = decide(inputs(meteredRules(MeteredAction.NONE), detectedMetered = true))
+        none.status.action shouldBe RuleAction.ALLOW
+        none.status.because shouldBe emptySet()
+        none.status.metered shouldBe true
+
+        val slow = decide(inputs(meteredRules(MeteredAction.SLOW), detectedMetered = true))
+        slow.status.action shouldBe RuleAction.SLOW
+        slow.status.because shouldBe setOf(RuleSource.METERED)
+        slow.status.downloadCap shouldBe 1_048_576L
+        slow.status.uploadCap shouldBe 1_048_576L
+
+        val pause = decide(inputs(meteredRules(MeteredAction.PAUSE), detectedMetered = true))
+        pause.status.action shouldBe RuleAction.PAUSE
+        pause.status.because shouldBe setOf(RuleSource.METERED)
+    }
+
+    @Test
+    fun notMeteredIgnoresOnMetered() {
+        val d = decide(inputs(meteredRules(MeteredAction.PAUSE)))
+        d.status.action shouldBe RuleAction.ALLOW
+        d.status.metered shouldBe false
+    }
+
+    @Test
+    fun aMeteredPauseAndAnAllowancePauseNameBoth() {
+        val rules =
+            NetworkRules(
+                NetworkPolicy(
+                    allowance = Allowance(1000, AllowancePeriod.Daily),
+                    metered = true,
+                    onMetered = MeteredAction.PAUSE,
+                ),
+            )
+        val d = decide(inputs(rules, used = 1000))
+        d.status.action shouldBe RuleAction.PAUSE
+        d.status.because shouldBe setOf(RuleSource.ALLOWANCE, RuleSource.METERED)
+    }
+
+    @Test
+    fun anEntryWithoutMeteredReplacesAMeteredDefault() {
+        val rules =
+            NetworkRules(
+                default = NetworkPolicy(metered = true, onMetered = MeteredAction.PAUSE),
+                networks = mapOf("wifi" to NetworkPolicy()),
+            )
+        val d = decide(inputs(rules, network = "wifi"))
+        d.status.action shouldBe RuleAction.ALLOW
+        d.status.metered shouldBe false
+    }
+
+    @Test
+    fun noneIsNotMetered() {
+        RuleStatus.None.metered shouldBe false
     }
 }

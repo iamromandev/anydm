@@ -36,6 +36,8 @@ internal class RuleKeeper(
     private val emit: (EngineEvent) -> Unit,
     /** Hands the queue an effect (`Queue.applyRules`). */
     private val apply: suspend (RuleEffect) -> Unit,
+    /** The OS says the current network is metered (NET-14); read on each decision. */
+    private val detectedMetered: () -> Boolean = { false },
 ) {
     private val lock = Mutex()
     private val pushing = Mutex()
@@ -139,7 +141,7 @@ internal class RuleKeeper(
                 }
                 cachedBytes + meter.pendingBytes(name, period.from.toString(), period.to.toString()) + leftovers()
             }
-        val decision = decide(RuleInputs(now, zone, name, networks, schedule, slowMode, used))
+        val decision = decide(RuleInputs(now, zone, name, networks, schedule, slowMode, used, detectedMetered()))
         published.value = decision.status
         decided = decision.effect
         note(decision.status)

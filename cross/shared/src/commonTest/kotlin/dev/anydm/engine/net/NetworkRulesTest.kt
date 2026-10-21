@@ -17,6 +17,18 @@ class NetworkRulesTest {
     }
 
     @Test
+    fun meteredActionsAreDeclaredInOrderOfStrictness() {
+        (MeteredAction.NONE < MeteredAction.SLOW) shouldBe true
+        (MeteredAction.SLOW < MeteredAction.PAUSE) shouldBe true
+    }
+
+    @Test
+    fun aPolicyIsNotMeteredByDefault() {
+        NetworkPolicy().metered shouldBe false
+        NetworkPolicy().onMetered shouldBe MeteredAction.NONE
+    }
+
+    @Test
     fun aScheduleRuleNeedsDaysAndMinutesIn0To1439() {
         ScheduleRule(ScheduleRuleId(1), monday, 0, 1439, RuleAction.PAUSE)
         shouldThrow<IllegalArgumentException> { ScheduleRule(ScheduleRuleId(1), emptySet(), 0, 10, RuleAction.PAUSE) }

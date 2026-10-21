@@ -21,6 +21,6 @@ enum class PauseReason {
     /** A runtime tool it needs is being installed (BIN-01). */
     TOOLS,
 
-    /** Outside the allowed hours or over the allowance (NET-07, NET-08). */
+    /** A network rule pauses: a schedule, an allowance or a metered network (NET-07, NET-08, NET-14). */
     SCHEDULE,
 }

@@ -30,6 +30,8 @@ data class RuleStatus(
     val allowance: AllowanceStatus?,
     /** The next schedule boundary or allowance reset, null for none. */
     val nextChange: Instant?,
+    /** The network is metered, by the user's flag or by detection (NET-14). */
+    val metered: Boolean = false,
 ) {
     companion object {
         val None =

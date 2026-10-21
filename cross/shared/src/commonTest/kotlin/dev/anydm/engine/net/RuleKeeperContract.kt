@@ -44,6 +44,7 @@ abstract class RuleKeeperContract : StoreTestBase() {
         val events = mutableListOf<EngineEvent>()
         val applied = mutableListOf<RuleEffect>()
         var network = "unknown"
+        var metered = false
         var leftovers = 0L
         var gate: CompletableDeferred<Unit>? = null
         val keeper =
@@ -62,6 +63,7 @@ abstract class RuleKeeperContract : StoreTestBase() {
                     applied += it
                     gate?.await()
                 },
+                detectedMetered = { metered },
             )
 
         suspend fun withAllowance() = store.rules.setNetworkPolicy(null, NetworkPolicy(allowance = allowance))
