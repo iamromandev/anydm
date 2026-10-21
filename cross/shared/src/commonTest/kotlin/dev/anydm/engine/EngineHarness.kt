@@ -11,7 +11,9 @@ import dev.anydm.engine.ftp.CredentialWriter
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
+import dev.anydm.engine.net.OnlineProbe
 import dev.anydm.engine.platform.FakeFileSystem
+import dev.anydm.engine.platform.MeteredDetector
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
 import dev.anydm.engine.protocol.Protocol
@@ -50,6 +52,8 @@ internal class EngineHarness(
     torrents: TorrentService? = null,
     credentials: CredentialWriter? = null,
     timeZone: () -> TimeZone = { TimeZone.UTC },
+    onlineProbe: OnlineProbe = OnlineProbe.Always,
+    meteredDetector: MeteredDetector = MeteredDetector.None,
 ) {
     val engine =
         Engine(
@@ -63,13 +67,15 @@ internal class EngineHarness(
             checkpointEvery = checkpointEvery,
             retryPolicy = RetryPolicy(random = FixedRandom(0.0)),
             log = log,
-            network = network,
+            identity = network,
             traffic = traffic,
             tools = tools,
             playlists = playlists,
             torrents = torrents,
             credentials = credentials,
             timeZone = timeZone,
+            onlineProbe = onlineProbe,
+            meteredDetector = meteredDetector,
         )
 
     private var added = 0

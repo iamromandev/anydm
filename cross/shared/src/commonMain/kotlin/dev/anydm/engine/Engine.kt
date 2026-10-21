@@ -41,10 +41,16 @@ import dev.anydm.engine.media.PlaylistListing
 import dev.anydm.engine.media.PlaylistParse
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.AfterQueueKeeper
+import dev.anydm.engine.net.MeteredRefresh
 import dev.anydm.engine.net.NetworkIdentity
+import dev.anydm.engine.net.NetworkMonitor
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
+import dev.anydm.engine.net.NetworkState
+import dev.anydm.engine.net.NetworkStep
+import dev.anydm.engine.net.NetworkWatch
 import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.OnlineProbe
 import dev.anydm.engine.net.RuleKeeper
 import dev.anydm.engine.net.RuleStatus
 import dev.anydm.engine.net.ScheduleRule
@@ -52,6 +58,7 @@ import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.net.TrafficMeter
 import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.platform.FileSystem
+import dev.anydm.engine.platform.MeteredDetector
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
@@ -133,7 +140,7 @@ class Engine(
     retryPolicy: RetryPolicy = RetryPolicy(),
     private val log: Log = Log.None,
     /** Which network bytes arrive on (NET-04); the desktop passes DefaultRouteNetwork. */
-    private val network: NetworkIdentity = NetworkIdentity.Unknown,
+    private val identity: NetworkIdentity = NetworkIdentity.Unknown,
     /** Where traffic is saved; the store's, replaceable in tests. */
     private val traffic: TrafficStore = store.traffic,
     /** Whose file-name rules names follow (FIL-03); the desktop passes OsProfile.current(). Windows' are the strictest. */
@@ -152,6 +159,10 @@ class Engine(
     private val credentials: CredentialWriter? = null,
     /** The zone days, weeks and schedule rules are read in (NET-05..08), asked at every use; the desktop passes the system's. */
     private val timeZone: () -> TimeZone = TimeZone.Companion::currentSystemDefault,
+    /** Whether this machine has a route to the internet (NET-13), polled every few seconds; the desktop passes DefaultRouteProbe. */
+    onlineProbe: OnlineProbe = OnlineProbe.Always,
+    /** Whether the current network is metered (NET-14); without one only the user's own flag counts. */
+    meteredDetector: MeteredDetector = MeteredDetector.None,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
@@ -242,6 +253,13 @@ class Engine(
     /** What the queue reports to; internal so tests can play orders the queue only produces under load. */
     internal val observer: QueueObserver = Observer()
 
+    // The network (NET-13): polled on the publisher; the queue asks it for an immediate answer after a connection error.
+    private val monitor = NetworkMonitor(onlineProbe, identity, clock, log)
+
+    // On the publisher: the keepers and refreshes that are not thread-safe on their own.
+    private val publisherScope = CoroutineScope(scope.coroutineContext + publisher)
+    private val meteredRefresh = MeteredRefresh(meteredDetector, monitor, clock, log, publisherScope)
+
     private val queue =
         Queue(
             CoroutineScope(scope.coroutineContext + queueJob),
@@ -255,6 +273,7 @@ class Engine(
             log,
             duplicates = duplicates,
             profiles = { store.profiles.get(it) },
+            networkCheck = { monitor.pollNow().online },
         )
 
     // Network rules (#543): evaluated on the publisher, pushed to the queue.
@@ -264,22 +283,29 @@ class Engine(
             store.settings,
             traffic,
             meter,
-            network,
+            identity,
             clock,
             timeZone,
             log,
             leftovers = { leftovers.value.sumOf { it.bytes + it.bytesUp } },
-            emit = {
-                logEvent(it)
-                eventFlow.tryEmit(it)
-            },
+            emit = ::tell,
             apply = { queue.applyRules(it) },
+            detectedMetered = { monitor.state.value.metered == true },
         )
     private var ruleTimer: Job? = null
     private var ruleTimerAt: Instant? = null
 
     /** What the network rules decide now: the action, its causes, caps, allowance and next change; [RuleStatus.None] until [start]. */
     val rules: StateFlow<RuleStatus> = keeper.status
+
+    /** The network now (NET-13, NET-14): online, its key, what the detector says of it; [NetworkState.Unknown] until [start]. */
+    val network: StateFlow<NetworkState> = monitor.state
+
+    // Logs an event and tells it at once.
+    private fun tell(event: EngineEvent) {
+        logEvent(event)
+        eventFlow.tryEmit(event)
+    }
 
     private sealed interface Fact {
         data class Changed(
@@ -381,7 +407,14 @@ class Engine(
         val startup =
             scope.async {
                 if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
-                // Rules are loaded and decided before any job can start: the queue starts with their effect.
+                // The network and the rules are known before any job can start: the queue starts with their effect, and
+                // offline it starts with every job held (NET-13). The watch starts from the same reading as the queue.
+                val (watch, offline) =
+                    withContext(publisher) {
+                        meteredRefresh.first(monitor.first())
+                        val seen = monitor.observed.value
+                        NetworkWatch(seen) to !seen.state.online
+                    }
                 val initial = withContext(publisher) { keeper.start() }
                 torrents?.let { service ->
                     // Subscribed before the queue starts: a seed taken up again may end at once.
@@ -394,7 +427,7 @@ class Engine(
                         }
                     }
                 }
-                queue.start(initial)
+                queue.start(initial, offline)
                 val jobs = store.downloads.list()
                 log.info("engine") { "engine started (${jobs.size} jobs)" }
                 val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
@@ -426,6 +459,8 @@ class Engine(
                     }
                 }
                 withContext(publisher) { armRuleTimer() }
+                scope.launch(publisher) { monitor.observed.collect { seen -> watch.next(seen).forEach { onNetworkStep(it) } } }
+                scope.launch(publisher) { every(NET_POLL) { networkTick() } }
                 scope.launch {
                     while (true) {
                         delay(DISK_CHECK_EVERY)
@@ -1090,6 +1125,61 @@ class Engine(
         scope.launch(publisher) { pushQuietly() }
     }
 
+    // On the publisher: one poll of the network, then the metered answer for it when one is due.
+    private suspend fun networkTick() {
+        meteredRefresh.refresh(monitor.tick())
+    }
+
+    // What the engine does when the network drops, returns, changes, or learns it is metered (NET-12, NET-13, NET-14).
+    private suspend fun onNetworkStep(step: NetworkStep) {
+        when (step) {
+            NetworkStep.Lost -> {
+                tell(EngineEvent.NetworkLost)
+                launchQuietly { queue.applyNetwork(true) }
+                checkRules()
+            }
+
+            NetworkStep.Restored -> {
+                tell(EngineEvent.NetworkRestored)
+                launchQuietly { queue.applyNetwork(false) }
+                checkRules()
+            }
+
+            is NetworkStep.Changed -> {
+                tell(EngineEvent.NetworkChanged(step.from, step.to))
+                checkRulesThenRestart()
+            }
+
+            NetworkStep.MeteredChanged -> {
+                checkRules()
+            }
+        }
+    }
+
+    // On the publisher: the new network's rules first (they may pause the jobs), then the connections that still run start
+    // again; both after the check's push has reached the queue.
+    private suspend fun checkRulesThenRestart() {
+        keeper.check() ?: return
+        armRuleTimer()
+        launchQuietly {
+            pushQuietly()
+            queue.restartConnections()
+        }
+    }
+
+    // On the publisher; a queue that has stopped has nothing to tell.
+    private fun launchQuietly(block: suspend () -> Unit) {
+        scope.launch(publisher) {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IllegalStateException) {
+                log.debug("net") { "not applied: ${e.message}" }
+            }
+        }
+    }
+
     // A queue that has stopped has nothing to apply the rules to.
     private suspend fun pushQuietly() {
         try {
@@ -1281,6 +1371,11 @@ class Engine(
                 log.info("net") { "allowance on ${event.network} reached: ${event.action} until ${event.resetsAt}" }
             }
 
+            // The monitor logs these with the interface it knows.
+            is EngineEvent.NetworkLost, is EngineEvent.NetworkRestored, is EngineEvent.NetworkChanged -> {
+                Unit
+            }
+
             is EngineEvent.SystemWoke -> {
                 log.info("net") { "woke after ${event.slept.inWholeSeconds.seconds}" }
             }
@@ -1371,7 +1466,7 @@ class Engine(
             if (kind != null && (sample > 0 || sentSample > 0)) samples += TrafficMeter.Sample(id, kind, sample, sentSample)
         }
         val now = clock.now()
-        meter.second(now, network.current(), samples)
+        meter.second(now, identity.current(), samples)
         takeLeftovers(now)
         totalSamples.addLast(total)
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
@@ -1432,7 +1527,7 @@ class Engine(
                 return
             }
         if (moved.isEmpty()) return
-        meter.bytes(clock.now(), network.current(), moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) })
+        meter.bytes(clock.now(), identity.current(), moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) })
         checkRules()
     }
 
@@ -1506,7 +1601,7 @@ class Engine(
 
     private fun takeLeftovers(now: Instant) {
         val left = leftovers.getAndUpdate { emptyList() }
-        if (left.isNotEmpty()) meter.bytes(now, network.current(), left)
+        if (left.isNotEmpty()) meter.bytes(now, identity.current(), left)
     }
 
     /**
@@ -1557,6 +1652,9 @@ class Engine(
         val SPEED_EVERY = 1.seconds
         val DISK_CHECK_EVERY = 30.seconds
         val TOOL_RELEASE_DELAY = 2.seconds
+
+        /** How often the network is polled (NET-13). */
+        val NET_POLL = 3.seconds
 
         /** The longest the rules go unchecked while nothing transfers (NET-08): a wall clock jump or a network change shows by then. */
         val RULES_IDLE_CHECK = 1.minutes

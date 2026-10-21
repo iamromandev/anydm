@@ -108,6 +108,18 @@ sealed interface EngineEvent {
         val resetsAt: Instant,
     ) : EngineEvent
 
+    /** The network went away (NET-13): running and waiting jobs pause for it and come back with it. */
+    data object NetworkLost : EngineEvent
+
+    /** The network is back (NET-13): the jobs it paused resume. */
+    data object NetworkRestored : EngineEvent
+
+    /** The machine moved from network [from] to [to] while online (NET-12); the running connections start again. */
+    data class NetworkChanged(
+        val from: String,
+        val to: String,
+    ) : EngineEvent
+
     /** The machine woke after about [slept] asleep or frozen (NET-12); the connections start again. */
     data class SystemWoke(
         val slept: Duration,
