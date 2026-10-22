@@ -322,7 +322,14 @@ class SiteProtocol(
                     }
                 }
             }
-        return RequestContext(inherited + own, base?.referrer, base?.userAgent, if (samePlace) base?.cookies else null)
+        return RequestContext(
+            inherited + own,
+            base?.referrer,
+            base?.userAgent,
+            if (samePlace) base?.cookies else null,
+            cookiesLost = samePlace && base?.cookiesLost == true,
+            cookiesUnreachable = samePlace && base?.cookiesUnreachable == true,
+        )
     }
 
     override fun plan(

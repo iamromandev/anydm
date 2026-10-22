@@ -5,6 +5,8 @@ import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.protocol.FinalizeResult
+import dev.anydm.engine.protocol.LinkProbe
+import dev.anydm.engine.protocol.LinkProbing
 import dev.anydm.engine.protocol.PlanContext
 import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
@@ -63,7 +65,8 @@ class HttpProtocol(
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
     private val clock: Clock = Clock.System,
     credentials: CredentialStore = InMemoryCredentials(),
-) : Protocol {
+) : Protocol,
+    LinkProbing {
     /** Every request goes through it, so the probe and each block worker log in (HTTP-11). */
     private val auth = AuthTransport(transport, credentials)
 
@@ -73,12 +76,28 @@ class HttpProtocol(
     override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> =
         probeUrl(request.mirror.url, request.context, credentials = true)
 
+    override suspend fun probeLink(
+        url: String,
+        context: RequestContext?,
+    ): StepResult<LinkProbe> =
+        when (val probed = probeUrl(url, context, credentials = true)) {
+            is StepResult.Failed -> probed
+            is StepResult.Ok -> StepResult.Ok(LinkProbe(probed.value.name, probed.value.size, probed.value.rangesSupported))
+        }
+
     /** The probe of [url]; without [credentials] the context's Authorization, Proxy-Authorization and Cookie stay home. */
     internal suspend fun probeUrl(
         url: String,
         context: RequestContext?,
         credentials: Boolean = true,
     ): StepResult<HttpProbe> {
+        // Its cookies were sealed in a keychain that has lost them (OSI-03): going without would ask for the page as a stranger.
+        if (context?.cookiesLost == true) {
+            return StepResult.Failed(ErrorClass.AUTH, "the cookies this download was added with are gone; add it again from the browser")
+        }
+        if (context?.cookiesUnreachable == true) {
+            return StepResult.Failed(ErrorClass.TRANSIENT, "the keychain holding this download's cookies can't be reached right now")
+        }
         val sent =
             requestHeaders(context).let { all ->
                 if (credentials) all else all.filterNot { it.first.lowercase() in credentialHeaders }

@@ -38,6 +38,28 @@ class HttpProbeTest {
     ): HttpProbe = probe(response, context).shouldBeInstanceOf<StepResult.Ok<HttpProbe>>().value
 
     @Test
+    fun aDownloadWhoseCookiesAreGoneFailsAsNeedingALoginAndAsksNothing() =
+        runTest {
+            val transport = FakeTransport { response(206, "Content-Range" to "bytes 0-1023/5000") }
+
+            val result = HttpProtocol(transport).probe(request(context = RequestContext(cookiesLost = true)))
+
+            result.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.AUTH
+            transport.requests shouldBe emptyList()
+        }
+
+    @Test
+    fun aKeychainThatCannotBeReachedIsARetryNotAGoneLogin() =
+        runTest {
+            val transport = FakeTransport { response(206, "Content-Range" to "bytes 0-1023/5000") }
+
+            val result = HttpProtocol(transport).probe(request(context = RequestContext(cookiesUnreachable = true)))
+
+            result.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.TRANSIENT
+            transport.requests shouldBe emptyList()
+        }
+
+    @Test
     fun aRangedReplyGivesSizeAndRanges() =
         runTest {
             val transport = FakeTransport { response(206, "Content-Range" to "bytes 0-1023/5000") }

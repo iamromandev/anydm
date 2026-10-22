@@ -1,11 +1,13 @@
 package dev.anydm.engine
 
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.AllowanceAction
+import dev.anydm.engine.os.EntryPoint
 import kotlinx.io.files.Path
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -89,6 +91,23 @@ sealed interface EngineEvent {
      */
     data class CredentialsNotSaved(
         val origin: String,
+    ) : EngineEvent
+
+    /**
+     * The cookies of a download could not be saved in the OS keychain (OSI-03): it runs with them for this run only, and after a
+     * restart it fails as needing a login. The cookies themselves are never in an event.
+     */
+    data object CookiesNotSaved : EngineEvent
+
+    /**
+     * A link reached the app from [entry] and was added as download [id] of kind [kind] (OSI-07). [link] has no login and no
+     * cookies in it; a UI can offer to change the files or the folder.
+     */
+    data class IncomingLink(
+        val link: String,
+        val kind: DownloadKind,
+        val id: DownloadId,
+        val entry: EntryPoint,
     ) : EngineEvent
 
     /** [network] used its warning share of the allowance ([used] of [limit] bytes); the period resets at [resetsAt] (NET-07). */

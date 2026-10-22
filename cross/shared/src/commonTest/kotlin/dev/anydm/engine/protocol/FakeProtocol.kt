@@ -4,6 +4,7 @@ import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.net.currentBond
 import dev.anydm.engine.net.currentBoundNetwork
@@ -114,7 +115,20 @@ internal class FakeProtocol(
     /** The network the transfer reports its bytes under (a bound connection, #544); null for the default route. */
     var network: String? = null,
     private val journal: MutableList<String>? = null,
-) : Protocol {
+) : Protocol,
+    LinkProbing {
+    /** What [probeLink] answers, and what it was asked. */
+    var linkProbe: StepResult<LinkProbe> = StepResult.Ok(LinkProbe("fake.bin", 65536, true))
+    val probedLinks = mutableListOf<Pair<String, RequestContext?>>()
+
+    override suspend fun probeLink(
+        url: String,
+        context: RequestContext?,
+    ): StepResult<LinkProbe> {
+        probedLinks += url to context
+        return linkProbe
+    }
+
     /** How many times [close] was called. */
     var closed = 0
 

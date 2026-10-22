@@ -85,6 +85,14 @@ internal class SqlSettingsStore(
                         .toSet()
                         .takeIf { it.isNotEmpty() }
                 },
+            notifications = read(NOTIFICATIONS, DEFAULTS.notifications) { it.toBooleanStrictOrNull() },
+            bridgeOrigins =
+                read(BRIDGE_ORIGINS, DEFAULTS.bridgeOrigins) { data ->
+                    val valid = data.lines().filter { it.matches(Settings.EXTENSION_ORIGIN) }.toSet()
+                    // The list is a restriction: one that can't be read must not turn into "any extension". What is readable stays;
+                    // with none readable the list names an origin no extension has, so nothing is answered until it is set again.
+                    valid.ifEmpty { setOf(Settings.NO_EXTENSION) }
+                },
         )
     }
 
@@ -155,6 +163,14 @@ internal class SqlSettingsStore(
                 ?.sorted()
                 ?.joinToString("\n"),
         )
+        put(NOTIFICATIONS, settings.notifications.takeIf { it != DEFAULTS.notifications }?.toString())
+        put(
+            BRIDGE_ORIGINS,
+            settings.bridgeOrigins
+                .takeIf { it.isNotEmpty() }
+                ?.sorted()
+                ?.joinToString("\n"),
+        )
     }
 
     private fun put(
@@ -182,6 +198,8 @@ internal class SqlSettingsStore(
         const val AFTER_QUEUE = "net.after_queue"
         const val PROXY = GLOBAL_PROXY
         const val BONDED = "net.bonded"
+        const val NOTIFICATIONS = "os.notifications"
+        const val BRIDGE_ORIGINS = "os.bridge_origins"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"

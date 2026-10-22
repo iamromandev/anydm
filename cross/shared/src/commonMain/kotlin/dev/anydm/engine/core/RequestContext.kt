@@ -11,6 +11,10 @@ data class RequestContext(
     val referrer: String? = null,
     val userAgent: String? = null,
     val cookies: String? = null,
+    /** The cookies this download was added with were sealed in the keychain and are gone (OSI-03): it must not run without them. */
+    val cookiesLost: Boolean = false,
+    /** The keychain holding this download's cookies can't be reached now (it is locked, or not up yet): try again later (OSI-03). */
+    val cookiesUnreachable: Boolean = false,
 ) {
     init {
         for ((name, value) in headers) {

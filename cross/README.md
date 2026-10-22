@@ -50,6 +50,20 @@ own, with the engine in `shared/`; no server is needed.
     routes by source address, so such a network is reported as `BEST_EFFORT`. DNS lookups are not bound. Media (`SITE`) downloads
     are not bonded: the URLs yt-dlp extracts are tied to the address that asked. `-Pbonding.live` runs the opt-in test against
     real networks (needs two).
+  - OS integration (#545, part 1; the clipboard watch and the global hotkey are part 2) is the services any UI uses, in
+    `dev.anydm.engine.os`. `Engine.addLink` is the one intake: a web, FTP or torrent address, a `magnet:` link, a `.torrent`
+    file or an `anydm://add?url=` link goes into the queue at once with the default profile, and an `IncomingLink` event says
+    so; `StartupArgs` sends program arguments through it. `BridgeServer` (the JDK's own HTTP server, so the packaged runtime
+    adds `jdk.httpserver`) is the browser extension's door: `127.0.0.1` only, on the first free port of 18400-18409
+    (`GET /ping` tells which is anydm), `Host` and `Origin` checked (an extension origin, narrowed by
+    `Engine.setBridgeOrigins`), JSON only, 64 KB at most. `POST /add` reads the link with `Engine.probeLink` and answers
+    with a token valid 15 s; `POST /confirm` redeems it once. A browser's cookies are sealed: the keychain holds the text
+    (`CookieVault`, via `openStore(keychain = ...)`) and the row holds a `sealed:` marker, so the database has no cookies; old
+    rows are moved at the next start; with no keychain they live in memory for the run, and after a restart the download
+    fails as needing a login. `FileSingleInstance` keeps one app per user: a lock file plus a loopback socket with a secret in
+    the data folder, and a second launch hands its arguments over and exits. `NotificationRelay` turns finished, failed and
+    allowance-reached events into notifications through a `Notifier` (`notifierForCurrentOs`); `Engine.setNotifications`
+    switches them. Nothing here registers `magnet:` or `anydm://` with the OS; that is packaging.
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in
