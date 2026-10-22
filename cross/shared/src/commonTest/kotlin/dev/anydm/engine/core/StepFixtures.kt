@@ -79,11 +79,20 @@ internal class RecordingMeter : Meter {
     var bytes = 0L
     var bytesUp = 0L
 
+    /** Bytes received by the bound network they were recorded under (#544); the default route is the null key. */
+    val byNetwork = mutableMapOf<String?, Long>()
+
     override fun record(
         bytes: Long,
         direction: Direction,
+        network: String?,
     ) {
-        if (direction == Direction.UP) bytesUp += bytes else this.bytes += bytes
+        if (direction == Direction.UP) {
+            bytesUp += bytes
+        } else {
+            this.bytes += bytes
+            byNetwork[network] = (byNetwork[network] ?: 0L) + bytes
+        }
     }
 }
 

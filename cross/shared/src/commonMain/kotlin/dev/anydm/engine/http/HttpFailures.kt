@@ -24,7 +24,7 @@ internal fun classOf(kind: HttpIoKind): ErrorClass? =
     when (kind) {
         HttpIoKind.TLS, HttpIoKind.TOO_MANY_REDIRECTS, HttpIoKind.BAD_URL -> null
         HttpIoKind.PROXY -> ErrorClass.PROXY
-        HttpIoKind.CONNECT, HttpIoKind.TIMEOUT, HttpIoKind.RESET, HttpIoKind.OTHER -> ErrorClass.TRANSIENT
+        HttpIoKind.CONNECT, HttpIoKind.TIMEOUT, HttpIoKind.RESET, HttpIoKind.BIND, HttpIoKind.OTHER -> ErrorClass.TRANSIENT
     }
 
 /** [response]'s status as a failure naming only the host; 408, 429 and 5xx carry the server's `Retry-After` if > 0. */

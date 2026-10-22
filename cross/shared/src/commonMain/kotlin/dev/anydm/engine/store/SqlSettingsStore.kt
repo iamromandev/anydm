@@ -74,6 +74,17 @@ internal class SqlSettingsStore(
             keepAwake = read(KEEP_AWAKE, DEFAULTS.keepAwake) { it.toBooleanStrictOrNull() },
             afterQueue = read(AFTER_QUEUE, DEFAULTS.afterQueue) { name -> AfterQueueAction.entries.firstOrNull { it.name == name } },
             proxy = read(PROXY, DEFAULTS.proxy) { ProxyChoice.decode(it)?.takeIf { choice -> choice != ProxyChoice.Inherit } },
+            bondedNetworks =
+                read(
+                    BONDED,
+                    DEFAULTS.bondedNetworks,
+                ) { data ->
+                    data
+                        .lines()
+                        .filter { it.isNotBlank() }
+                        .toSet()
+                        .takeIf { it.isNotEmpty() }
+                },
         )
     }
 
@@ -137,6 +148,13 @@ internal class SqlSettingsStore(
         put(KEEP_AWAKE, settings.keepAwake.takeIf { it != DEFAULTS.keepAwake }?.toString())
         put(AFTER_QUEUE, settings.afterQueue.takeIf { it != DEFAULTS.afterQueue }?.name)
         put(PROXY, settings.proxy.takeIf { it != DEFAULTS.proxy }?.encode())
+        put(
+            BONDED,
+            settings.bondedNetworks
+                .takeIf { it.isNotEmpty() }
+                ?.sorted()
+                ?.joinToString("\n"),
+        )
     }
 
     private fun put(
@@ -163,6 +181,7 @@ internal class SqlSettingsStore(
         const val KEEP_AWAKE = "net.keep_awake"
         const val AFTER_QUEUE = "net.after_queue"
         const val PROXY = GLOBAL_PROXY
+        const val BONDED = "net.bonded"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"

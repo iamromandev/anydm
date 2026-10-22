@@ -54,6 +54,9 @@ enum class RemoteFailure {
 
     /** The proxy can't be used, or refused (NET-15). Nothing was sent to the server. */
     PROXY,
+
+    /** The network the connection was meant to leave by (#544) can't be used. Nothing was sent, and the default route was not tried. */
+    BIND,
 }
 
 /** A [RemoteClient] call failed. The message never holds a password or a passphrase. */

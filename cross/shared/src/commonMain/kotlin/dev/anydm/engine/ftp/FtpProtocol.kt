@@ -125,9 +125,16 @@ internal fun RemoteException.asFailed(): StepResult.Failed {
     val errorClass =
         when (failure) {
             RemoteFailure.AUTH, RemoteFailure.CERTIFICATE, RemoteFailure.HOST_KEY_CHANGED -> ErrorClass.AUTH
+
             RemoteFailure.GONE -> ErrorClass.GONE
+
             RemoteFailure.PROXY -> ErrorClass.PROXY
-            RemoteFailure.TRANSIENT, RemoteFailure.TOO_MANY_CONNECTIONS, RemoteFailure.REST_UNSUPPORTED -> ErrorClass.TRANSIENT
+
+            RemoteFailure.TRANSIENT,
+            RemoteFailure.TOO_MANY_CONNECTIONS,
+            RemoteFailure.REST_UNSUPPORTED,
+            RemoteFailure.BIND,
+            -> ErrorClass.TRANSIENT
         }
     return StepResult.Failed(errorClass, message?.takeIf { it.isNotBlank() } ?: failure.name.lowercase())
 }

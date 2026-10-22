@@ -38,7 +38,8 @@ class HttpResponse(
     val body: HttpBody,
 )
 
-enum class HttpIoKind { CONNECT, TIMEOUT, RESET, TLS, TOO_MANY_REDIRECTS, BAD_URL, PROXY, OTHER }
+/** [BIND]: the network the connection was meant to leave by (#544) can't be used; nothing was sent. */
+enum class HttpIoKind { CONNECT, TIMEOUT, RESET, TLS, TOO_MANY_REDIRECTS, BAD_URL, PROXY, BIND, OTHER }
 
 /**
  * A request that got no HTTP answer. The message names only the [kind] and [host] (no user, password, path, query or
@@ -48,7 +49,7 @@ class HttpIoException(
     val kind: HttpIoKind,
     val host: String,
     cause: Throwable? = null,
-    /** Why, for a [HttpIoKind.PROXY] failure: the proxy's own reason, never a password. */
+    /** Why, for a [HttpIoKind.PROXY] or [HttpIoKind.BIND] failure: the proxy's or the network's own reason, never a password. */
     val detail: String? = null,
 ) : Exception(messageOf(kind, host, detail), cause)
 
@@ -66,6 +67,7 @@ private fun messageOf(
             HttpIoKind.TOO_MANY_REDIRECTS -> "more than 5 redirects"
             HttpIoKind.BAD_URL -> "not an HTTP URL"
             HttpIoKind.PROXY -> "proxy failed" + (detail?.let { ": $it" } ?: "")
+            HttpIoKind.BIND -> "network unusable" + (detail?.let { ": $it" } ?: "")
             HttpIoKind.OTHER -> "network error"
         }
     return "$what ($host)"

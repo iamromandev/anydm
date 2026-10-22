@@ -1,9 +1,12 @@
 package dev.anydm.engine.ftp
 
+import dev.anydm.engine.net.BoundSocketFactories
 import dev.anydm.engine.net.DirectSocketFactory
 import dev.anydm.engine.net.ProxyRoute
 import dev.anydm.engine.net.ProxySocketFactory
 import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.bindFailureOf
+import dev.anydm.engine.net.currentBoundNetwork
 import dev.anydm.engine.net.currentProxyRoute
 import dev.anydm.engine.net.namedAddress
 import dev.anydm.engine.net.proxyFailureOf
@@ -38,6 +41,8 @@ import java.util.Base64
  */
 class SshjClient(
     private val hostKeys: HostKeyStore,
+    /** Sockets tied to a network (BND-02); without it a connection made inside a bound network fails. */
+    private val bound: BoundSocketFactories? = null,
 ) : RemoteClient {
     private var ssh: SSHClient? = null
     private var sftp: SFTPClient? = null
@@ -62,7 +67,18 @@ class SshjClient(
                 client.socketFactory = ProxySocketFactory(route.endpoint)
                 client.connect(namedAddress(host), target.port)
             } else {
-                client.socketFactory = DirectSocketFactory
+                val network = currentBoundNetwork()
+                client.socketFactory =
+                    if (network == null) {
+                        DirectSocketFactory
+                    } else {
+                        (
+                            bound ?: throw RemoteException(
+                                RemoteFailure.BIND,
+                                "this machine can't bind a connection to a network",
+                            )
+                        ).factoryFor(network)
+                    }
                 client.connect(host, target.port)
             }
             authenticate(client, login)
@@ -220,6 +236,7 @@ class SshjClient(
             )
         }
         proxyFailureOf(e)?.let { return RemoteException(RemoteFailure.PROXY, it.message ?: "the proxy refused", e) }
+        bindFailureOf(e)?.let { return RemoteException(RemoteFailure.BIND, it.message ?: "the network can't be used", e) }
         return when {
             e is UserAuthException -> {
                 RemoteException(RemoteFailure.AUTH, "the SSH login was refused", e)

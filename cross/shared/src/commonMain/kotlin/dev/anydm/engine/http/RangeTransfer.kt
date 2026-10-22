@@ -2,6 +2,16 @@ package dev.anydm.engine.http
 
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.net.Bond
+import dev.anydm.engine.net.BoundTo
+import dev.anydm.engine.net.NetworkInfo
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.apportion
+import dev.anydm.engine.net.currentBond
+import dev.anydm.engine.net.currentBoundNetwork
+import dev.anydm.engine.net.currentProxyRoute
+import dev.anydm.engine.net.deficitPick
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
@@ -20,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Clock
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
@@ -37,6 +48,15 @@ internal const val RACE_MIN_LEFT = 256L * 1024
 
 /** A block is raced when its speed is less than 1 / this of the run's speed per connection. */
 internal const val RACE_SLOWER = 2.0
+
+/** How often a bonded run may move a connection from a network that has more than its share to one that has less (BND-03). */
+private val REWEIGH_EVERY = 5.seconds
+
+/**
+ * How long a worker whose network failed waits for the restart that follows a change of the networks in use, before it ends
+ * the run itself.
+ */
+private val RESTART_GRACE = 15.seconds
 
 /** How many finished block attempts give the run's speed per connection. */
 private const val RECENT = 4
@@ -68,6 +88,13 @@ internal data class Source(
  * origin's slot it holds, and takes blocks from the shared queue, so a faster mirror takes more of them. A source that
  * joins while blocks wait gets a worker at once if its origin has a free slot; the ramp adds each new worker to the
  * source with the fewest. Every source follows the same failure rules. Plain streams use the primary only.
+ *
+ * A run that is bonded (BND-03: a [Bond] in scope with two or more networks in use, and no proxy on the primary) gives each
+ * worker a network, whose connections it makes inside a [BoundTo]. The network of a new worker is the one furthest below
+ * its share of the workers, the shares following the networks' measured speeds; blocks are still pulled from one queue, so
+ * a faster network simply finishes more of them. Every [REWEIGH_EVERY] a worker that finishes a block on a network over its
+ * share gives its place, and the ramp starts another where there is a shortfall. A worker whose network is no longer in use
+ * does the same. A connection that cannot be bound faults its network and never falls back to the default route.
  */
 internal class RangeTransfer(
     private val transport: HttpTransport,
@@ -101,6 +128,9 @@ internal class RangeTransfer(
 
         /** Raced once in this attempt already; reset by the next attempt only while no racer runs. */
         @Volatile var raced = false
+
+        /** The network its original runs on (BND-03), so a racer can take another. */
+        @Volatile var network: NetworkInfo? = null
     }
 
     /** A source in this run, with its workers (under [takeLock]); [order] breaks ties, the primary first. */
@@ -114,9 +144,15 @@ internal class RangeTransfer(
     private sealed interface Attempt {
         data object Done : Attempt
 
-        /** Worth another try (a network error, a short body, a wrong Content-Range, 408, 5xx). */
+        /**
+         * Worth another try (a network error, a short body, a wrong Content-Range, 408, 5xx). [bind]: the network can't be
+         * bound. [reach]: the connection didn't connect or timed out, which on a bound network may be the network and not the
+         * server (a slow server's read timeout counts too, so it takes the last try to blame a network).
+         */
         data class Retry(
             val failed: StepResult.Failed,
+            val bind: Boolean = false,
+            val reach: Boolean = false,
         ) : Attempt
 
         /** Ends the run: an HTTP error retrying can't fix, or a failed write. */
@@ -151,6 +187,16 @@ internal class RangeTransfer(
     private val inFlight = mutableSetOf<Block>()
     private val live = mutableListOf(Live(primary, 0))
 
+    /** The bonding this run follows; null when it is not bonded (see the class doc). Set once, at the start of the run. */
+    private var bond: Bond? = null
+
+    /** Workers on each network (BND-03), and how many the ramp wants in all; under [takeLock]. */
+    private val networkWorkers = mutableMapOf<String, Int>()
+    private var wanted = 1
+
+    /** When a worker last gave its place to rebalance; set at the start of the run and by each rebalance. */
+    private var lastReweigh: ComparableTimeMark? = null
+
     /** Sources added by [addSource], taken in by the run; closed when the run ends, so later ones are dropped. */
     private val joining = Channel<Source>(Channel.UNLIMITED)
 
@@ -177,8 +223,10 @@ internal class RangeTransfer(
         }
 
     private suspend fun runBlocks(file: TransferFile): StepResult<Unit> {
+        bond = currentBond()?.takeIf { it.active().size >= 2 && currentProxyRoute(primary.url, ProxyUse.HTTP) == ProxyRoute.Direct }
+        lastReweigh = timeSource.markNow()
         val size = file.file.size
-        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else withSlot { stream(file, size, emptyList(), null) }
+        if (file.segments.isEmpty()) return if (size == 0L) StepResult.Ok(Unit) else streamed(file, size, emptyList(), null)
         requireNotNull(size) { "a file in blocks has a size" }
         downloaded = file.segments.sumOf { it.written }
         val blocks = file.segments.map { Block(it, it.watermark) }
@@ -188,6 +236,7 @@ internal class RangeTransfer(
         incomplete.forEach { queue.trySend(it) }
         queue.close()
         waiting = incomplete.size
+        val first = if (bond == null) null else pickNetwork() ?: return noNetwork()
         try {
             coroutineScope {
                 slots.acquire(primary.origin, this@RangeTransfer)
@@ -200,14 +249,14 @@ internal class RangeTransfer(
                 }
                 controller = launch { ramp(file, size, queue, lastOut) }
                 joiner = launch { join(file, size, queue, lastOut) }
-                worker(file, size, queue, live.first(), lastOut)
+                worker(file, size, queue, live.first(), first, lastOut)
             }
         } catch (_: RunEnded) {
             return checkNotNull(ended)
         } catch (_: RangesIgnored) {
             val whole = checkNotNull(switched)
             switched = null
-            return withSlot { stream(file, size, blocks, whole) }
+            return streamed(file, size, blocks, whole)
         } finally {
             // A 200 a worker got while the run was ending or being cancelled.
             switched?.body?.close()
@@ -225,14 +274,16 @@ internal class RangeTransfer(
         size: Long,
         queue: Channel<Block>,
         from: Live,
+        network: NetworkInfo?,
         lastOut: () -> Unit,
-    ) = launch(start = CoroutineStart.UNDISPATCHED) {
+    ) = launch(network?.let { BoundTo(it) } ?: EmptyCoroutineContext, start = CoroutineStart.UNDISPATCHED) {
         var yielded = false
         val source = from.source
         try {
             takeLock.withLock {
                 workers++
                 from.workers++
+                if (network != null) networkWorkers[network.key] = (networkWorkers[network.key] ?: 0) + 1
             }
             while (true) {
                 val block = takeLock.withLock { queue.tryReceive().getOrNull()?.also { waiting-- } }
@@ -254,6 +305,7 @@ internal class RangeTransfer(
                     continue
                 }
                 original(file, size, block, source)
+                if (retires(network)) break
                 if (slots.tryYield(source.origin, this@RangeTransfer)) {
                     yielded = true
                     break
@@ -265,6 +317,7 @@ internal class RangeTransfer(
                 val last =
                     takeLock.withLock {
                         from.workers--
+                        if (network != null) networkWorkers[network.key] = (networkWorkers[network.key] ?: 1) - 1
                         --workers == 0 && waiting == 0
                     }
                 if (last) lastOut()
@@ -294,11 +347,18 @@ internal class RangeTransfer(
             before?.let { if (speed < it * 1.1) stopped = true }
             before = null
             // Keeps ticking after the ramp stops: idle workers wake on each tick. The last worker out cancels this.
-            if (stopped || takeLock.withLock { waiting } == 0) continue
+            if (takeLock.withLock { waiting } == 0) continue
+            // A bonded run that lost workers (a network left, or gave its place to another) fills them again, stopped or not.
+            val refill = bond != null && takeLock.withLock { workers < wanted }
+            if (stopped && !refill) continue
+            val network = if (bond == null) null else pickNetwork() ?: continue
             val candidates = takeLock.withLock { live.sortedWith(compareBy({ it.workers }, { it.order })) }
             val chosen = candidates.firstOrNull { slots.tryAcquire(it.source.origin, this@RangeTransfer) } ?: continue
-            worker(file, size, queue, chosen, lastOut)
-            before = speed
+            worker(file, size, queue, chosen, network, lastOut)
+            if (!refill) {
+                takeLock.withLock { wanted = workers }
+                before = speed
+            }
         }
     }
 
@@ -311,7 +371,9 @@ internal class RangeTransfer(
     ) {
         for (source in joining) {
             val (joined, blocksWait) = takeLock.withLock { Live(source, live.size).also { live += it } to (waiting > 0) }
-            if (blocksWait && slots.tryAcquire(source.origin, this@RangeTransfer)) worker(file, size, queue, joined, lastOut)
+            if (!blocksWait) continue
+            val network = if (bond == null) null else pickNetwork() ?: continue
+            if (slots.tryAcquire(source.origin, this@RangeTransfer)) worker(file, size, queue, joined, network, lastOut)
         }
     }
 
@@ -322,6 +384,7 @@ internal class RangeTransfer(
         block: Block,
         source: Source,
     ) = coroutineScope {
+        block.network = currentBoundNetwork()
         val attempts =
             launch(start = CoroutineStart.LAZY) {
                 while (!block.done) {
@@ -331,10 +394,22 @@ internal class RangeTransfer(
                         if (block.racer == null) block.raced = false
                     }
                     when (val attempt = fetch(file, size, block, source)) {
-                        Attempt.Done -> break
-                        is Attempt.Retry -> if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
-                        is Attempt.End -> end(attempt.failed.from(source))
-                        is Attempt.Ignored -> switchTo(attempt.response)
+                        Attempt.Done -> {
+                            break
+                        }
+
+                        is Attempt.Retry -> {
+                            if (!block.done) unusableNetwork(attempt, lastTry = block.attempts + 1 >= ATTEMPTS)
+                            if (!block.done && ++block.attempts >= ATTEMPTS) end(attempt.failed)
+                        }
+
+                        is Attempt.End -> {
+                            end(attempt.failed.from(source))
+                        }
+
+                        is Attempt.Ignored -> {
+                            switchTo(attempt.response)
+                        }
                     }
                 }
             }
@@ -396,10 +471,15 @@ internal class RangeTransfer(
         source: Source,
     ) = coroutineScope {
         // Claimed under the lock, and the job made only after: a LAZY child never started would hang this scope.
+        val other = otherNetwork(block)
         val job =
             block.lock.withLock {
                 if (block.done || block.racer != null) return@coroutineScope
-                launch(start = CoroutineStart.LAZY) { racer(file, size, block, source) }.also { block.racer = it }
+                launch(
+                    other?.let { BoundTo(it) } ?: EmptyCoroutineContext,
+                    start = CoroutineStart.LAZY,
+                ) { racer(file, size, block, source) }
+                    .also { block.racer = it }
             }
         try {
             job.start()
@@ -443,7 +523,7 @@ internal class RangeTransfer(
                 if (n < 0) return
                 if (n == 0) continue
                 io.limiter.acquire(n)
-                io.meter.record(n.toLong())
+                io.meter.record(n.toLong(), network = currentBoundNetwork()?.key)
                 progressLock.withLock { received += n }
                 got += n
             }
@@ -506,12 +586,24 @@ internal class RangeTransfer(
     ): StepResult<Unit> {
         var next = first
         var last: StepResult.Failed? = null
-        repeat(ATTEMPTS) {
+        repeat(ATTEMPTS) { attemptNo ->
             val response =
                 next ?: try {
                     transport.open(HttpRequest(primary.url, headers = primary.headers))
                 } catch (e: HttpIoException) {
                     val failed = failedOf(e)
+                    val network = currentBoundNetwork()
+                    val bond = bond
+                    if (network != null && bond != null) {
+                        // The network can't be bound: no try on it is worth making; the engine's restart takes it out of the next run.
+                        if (e.kind == HttpIoKind.BIND) {
+                            bond.fault(network.key)
+                            return failed
+                        }
+                        // Out of tries to reach anything over it while another network is in use: it, not the server, is the likely fault.
+                        val unreachable = e.kind == HttpIoKind.CONNECT || e.kind == HttpIoKind.TIMEOUT
+                        if (unreachable && attemptNo == ATTEMPTS - 1 && bond.active().size >= 2) bond.fault(network.key)
+                    }
                     if (failed.errorClass != ErrorClass.TRANSIENT) return failed
                     last = failed
                     return@repeat
@@ -566,7 +658,7 @@ internal class RangeTransfer(
             }
             if (n == 0) continue
             io.limiter.acquire(n)
-            io.meter.record(n.toLong())
+            io.meter.record(n.toLong(), network = currentBoundNetwork()?.key)
             val failed = if (blocks.isEmpty()) writeAll(file, offset, buffer, n) else writeBlocks(file, offset, buffer, n, blocks)
             if (failed != null) return Attempt.End(failed)
             offset += n
@@ -694,7 +786,7 @@ internal class RangeTransfer(
             if (n < 0) return Attempt.Retry(StepResult.Failed(ErrorClass.TRANSIENT, "short body from $host"))
             if (n == 0) continue
             io.limiter.acquire(n)
-            io.meter.record(n.toLong())
+            io.meter.record(n.toLong(), network = currentBoundNetwork()?.key)
             progressLock.withLock { received += n }
             val failed =
                 block.lock.withLock {
@@ -731,7 +823,96 @@ internal class RangeTransfer(
     /** A network failure is retried in place only if it is TRANSIENT; TLS, redirect loops and bad URLs end the run. */
     private fun ioAttempt(e: HttpIoException): Attempt {
         val failed = failedOf(e)
-        return if (failed.errorClass == ErrorClass.TRANSIENT) Attempt.Retry(failed) else Attempt.End(failed)
+        return if (failed.errorClass ==
+            ErrorClass.TRANSIENT
+        ) {
+            Attempt.Retry(
+                failed,
+                bind = e.kind == HttpIoKind.BIND,
+                reach = e.kind == HttpIoKind.CONNECT || e.kind == HttpIoKind.TIMEOUT,
+            )
+        } else {
+            Attempt.End(failed)
+        }
+    }
+
+    /**
+     * After a failed attempt of a bonded worker: if its network can't be bound (it is faulted) or is no longer in use, the
+     * connections on it are pointless. The engine restarts the connections when the set of networks changes, which ends
+     * this run; until then the worker waits, and if no restart comes it ends the run (TRANSIENT) itself. Never retries
+     * the network, and never tries the default route.
+     */
+    private suspend fun unusableNetwork(
+        retry: Attempt.Retry,
+        lastTry: Boolean,
+    ) {
+        val bond = bond ?: return
+        val network = currentBoundNetwork() ?: return
+        // Out of tries to reach anything over this network while another one is in use: the network is the likely fault, not
+        // the server, so it is left out for a while instead of ending the run again on every restart.
+        val dead = retry.bind || (lastTry && retry.reach && bond.active().size >= 2)
+        if (dead) bond.fault(network.key)
+        if (!dead && bond.isActive(network.key)) return
+        delay(RESTART_GRACE)
+        end(StepResult.Failed(ErrorClass.TRANSIENT, "network ${network.key} can't be used"))
+    }
+
+    /**
+     * The network for the next worker (BND-03): the one furthest below its share of the workers there will be with this one,
+     * shares by the networks' measured speed; null in a run that is not bonded, or when no network is in use.
+     */
+    private suspend fun pickNetwork(): NetworkInfo? {
+        val bond = bond ?: return null
+        return takeLock.withLock {
+            val active = bond.active()
+            if (active.isEmpty()) return@withLock null
+            val speeds = bond.speeds()
+            val targets = apportion(workers + 1, active.associate { it.key to (speeds[it.key] ?: 0.0) })
+            val key = deficitPick(networkWorkers, targets, speeds) ?: active.maxBy { speeds[it.key] ?: 0.0 }.key
+            active.first { it.key == key }
+        }
+    }
+
+    private fun noNetwork() = StepResult.Failed(ErrorClass.TRANSIENT, "no network is in use to bond to")
+
+    /**
+     * Whether a worker on [network] gives its place after a block: its network is no longer in use, or, at most every
+     * [REWEIGH_EVERY], it has more workers than its share while blocks wait.
+     */
+    private suspend fun retires(network: NetworkInfo?): Boolean {
+        val bond = bond ?: return false
+        network ?: return false
+        if (!bond.isActive(network.key)) return true
+        // The time check, the share and the mark are one step: two workers finishing together must not both give their place.
+        return takeLock.withLock {
+            val mark = lastReweigh ?: return@withLock false
+            if (mark.elapsedNow() < REWEIGH_EVERY || waiting == 0) return@withLock false
+            val active = bond.active()
+            val speeds = bond.speeds()
+            val targets = apportion(workers, active.associate { it.key to (speeds[it.key] ?: 0.0) })
+            val over = (networkWorkers[network.key] ?: 0) > (targets[network.key] ?: 0)
+            if (over) lastReweigh = timeSource.markNow()
+            over
+        }
+    }
+
+    /** The network a racer for [block] should use: the fastest in use that is not the one its original is on. */
+    private fun otherNetwork(block: Block): NetworkInfo? {
+        val bond = bond ?: return null
+        val original = block.network ?: return null
+        val speeds = bond.speeds()
+        return bond.active().filter { it.key != original.key }.maxByOrNull { speeds[it.key] ?: 0.0 }
+    }
+
+    /** [stream] on a network of its own in a bonded run (the fastest one), inside a slot. */
+    private suspend fun streamed(
+        file: TransferFile,
+        size: Long?,
+        blocks: List<Block>,
+        first: HttpResponse?,
+    ): StepResult<Unit> {
+        val network = if (bond == null) null else pickNetwork() ?: return noNetwork()
+        return withContext(network?.let { BoundTo(it) } ?: EmptyCoroutineContext) { withSlot { stream(file, size, blocks, first) } }
     }
 
     private companion object {

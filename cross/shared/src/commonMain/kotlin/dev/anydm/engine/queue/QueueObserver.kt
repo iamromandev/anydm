@@ -41,6 +41,13 @@ internal interface QueueObserver {
         bytes: Long,
     ) {}
 
+    /** From a slot: [bytes] just came in on the bound network [network] (#544). */
+    fun receivedOn(
+        id: DownloadId,
+        bytes: Long,
+        network: String,
+    ) = received(id, bytes)
+
     /** From a slot: [bytes] just went out (a torrent uploading, TOR-09). */
     fun sent(
         id: DownloadId,

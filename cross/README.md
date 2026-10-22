@@ -37,6 +37,19 @@ own, with the engine in `shared/`; no server is needed.
     equals the stored one, and then only the files whose ranges and partial still match; anything else starts over.
     A QUEUED job without the in-memory `Ready` from `prepare` must go back through PENDING. Tests script jobs with
     `FakeProtocol`, `FakeFileSystem` and `InMemoryPlanStore` from `commonTest`.
+  - Bonding (#544) splits one download across networks. `Bonding` keeps the networks (`NetworkLister`), which the user turned
+    on (`Engine.setNetworkEnabled`, saved in the settings) and whether a connection can be tied to each (`NetworkBinder`); it is
+    on with two or more in use, and with fewer nothing is bound. HTTP workers each take a network, the next one going to the
+    network furthest below its share of the workers, the shares following the measured speed; FTP and SFTP downloads are bound
+    whole to one network; a torrent session sends from the bonded interfaces (`outgoing_interfaces`, one list for all its
+    torrents). A download through a proxy is never bonded, and a connection that cannot be bound fails: it is never made on the
+    default route. When the networks in use change, running connections start again. The desktop ties sockets with `IP_BOUND_IF`
+    (macOS), `IP_UNICAST_IF` (Windows) or `SO_BINDTODEVICE` (Linux) through JNA, on the socket's native handle, which JDK 21 gives
+    only by reflection: the app and the tests start with `--add-opens java.base/java.net` and `java.base/java.io`. Without the
+    right to bind a device, Linux binds the network's address instead; that keeps the traffic on the network only if the host
+    routes by source address, so such a network is reported as `BEST_EFFORT`. DNS lookups are not bound. Media (`SITE`) downloads
+    are not bonded: the URLs yt-dlp extracts are tied to the address that asked. `-Pbonding.live` runs the opt-in test against
+    real networks (needs two).
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in

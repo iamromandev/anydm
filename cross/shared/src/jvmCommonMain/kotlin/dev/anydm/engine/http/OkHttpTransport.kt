@@ -1,12 +1,16 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.net.BindFailure
+import dev.anydm.engine.net.BoundSocketFactories
 import dev.anydm.engine.net.DirectSocketFactory
+import dev.anydm.engine.net.NetworkInfo
 import dev.anydm.engine.net.ProxyEndpoint
 import dev.anydm.engine.net.ProxyFailure
 import dev.anydm.engine.net.ProxyRoute
 import dev.anydm.engine.net.ProxySocketFactory
 import dev.anydm.engine.net.ProxyType
 import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.currentBoundNetwork
 import dev.anydm.engine.net.currentProxyRoute
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -66,11 +70,51 @@ fun defaultClient(): OkHttpClient =
  * count, and drops credentials when a redirect leaves the origin. Cancelling the coroutine cancels the call, also
  * while a body read is blocked. Each hop asks for its proxy route (NET-15, see ProxyScope): direct on [client], through
  * a proxy on a client of its own (its own connection pool, so no connection is shared between proxies), and never at
- * all when the route is blocked.
+ * all when the route is blocked. A direct hop made inside a bound network (BND-02, see BoundTo) goes on a client of that
+ * network, with its own connection pool and sockets from [bound], so no connection is shared between networks; a network
+ * that can't be bound fails the request with [HttpIoKind.BIND] and never falls back to the default route.
  */
 class OkHttpTransport(
     private val client: OkHttpClient = defaultClient(),
+    private val bound: BoundSocketFactories? = null,
 ) : HttpTransport {
+    // A client and a connection pool for each network in use, the least recently used going first.
+    private data class NetworkKey(
+        val key: String,
+        val index: Int,
+        val addresses: Set<String>,
+    )
+
+    private val onNetwork =
+        object : LinkedHashMap<NetworkKey, OkHttpClient>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<NetworkKey, OkHttpClient>): Boolean {
+                val full = size > MAX_BOUND
+                if (full) eldest.value.connectionPool.evictAll()
+                return full
+            }
+        }
+
+    private fun clientOn(
+        network: NetworkInfo,
+        host: String,
+    ): OkHttpClient {
+        val sockets = bound ?: throw HttpIoException(HttpIoKind.BIND, host, detail = "this machine can't bind a connection to a network")
+        // One client per interface number and set of addresses: workers that started before a change keep theirs, so the two
+        // never evict each other's connections, and a network that came back changed gets a client that binds to what it is now.
+        val key = NetworkKey(network.key, network.index, network.addresses.toSet())
+        return synchronized(onNetwork) {
+            onNetwork.getOrPut(key) {
+                client
+                    .newBuilder()
+                    .connectionPool(ConnectionPool())
+                    // Whatever the base client says, a bound connection never asks the JVM's proxy selector: that path ignores the socket factory.
+                    .proxy(Proxy.NO_PROXY)
+                    .socketFactory(sockets.factoryFor(network))
+                    .build()
+            }
+        }
+    }
+
     // A client and a connection pool for each proxy in use, the least recently used going first, so old logins don't pile up.
     private val proxied =
         object : LinkedHashMap<ProxyEndpoint, OkHttpClient>(8, 0.75f, true) {
@@ -93,9 +137,10 @@ class OkHttpTransport(
         var redirects = 0
         while (true) {
             val route = currentProxyRoute(url.toString(), ProxyUse.HTTP)
+            val network = currentBoundNetwork()
             val chosen =
                 when (route) {
-                    ProxyRoute.Direct -> client
+                    ProxyRoute.Direct -> if (network == null) client else clientOn(network, hostOf(url.toString()))
                     is ProxyRoute.Via -> clientVia(route.endpoint)
                     is ProxyRoute.Blocked -> throw HttpIoException(HttpIoKind.PROXY, hostOf(url.toString()), detail = route.reason)
                 }
@@ -259,6 +304,7 @@ class OkHttpTransport(
         const val MAX_REDIRECTS = 5
         const val PROXY_AUTH_REQUIRED = 407
         const val MAX_PROXIED = 16
+        const val MAX_BOUND = 16
         val redirectCodes = setOf(301, 302, 303, 307, 308)
         val credentialHeaders = setOf("authorization", "proxy-authorization", "cookie")
 
@@ -279,6 +325,8 @@ internal fun httpIoExceptionOf(
 ): HttpIoException {
     val refusal = (sequenceOf(e) + e.causes()).filterIsInstance<ProxyFailure>().firstOrNull()
     if (refusal != null) return HttpIoException(HttpIoKind.PROXY, host, e, refusal.message)
+    val unbound = (sequenceOf(e) + e.causes()).filterIsInstance<BindFailure>().firstOrNull()
+    if (unbound != null) return HttpIoException(HttpIoKind.BIND, host, e, unbound.message)
     if (e.message == "Failed to authenticate with proxy") return HttpIoException(HttpIoKind.PROXY, host, e, "the proxy refused the login")
     val kind =
         when (e) {

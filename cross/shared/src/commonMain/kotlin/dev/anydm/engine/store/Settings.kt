@@ -67,12 +67,17 @@ data class Settings(
     val afterQueue: AfterQueueAction = AfterQueueAction.NONE,
     /** Which proxy downloads go through when neither the download nor its profile says (NET-15); never [ProxyChoice.Inherit]. */
     val proxy: ProxyChoice = ProxyChoice.System,
+    /** The networks (interface names) the user turned on for bonding (BND-01); none by default. One that is not present now keeps its place. */
+    val bondedNetworks: Set<String> = emptySet(),
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
         require(proxy != ProxyChoice.Inherit) { "the global proxy has no level to inherit from" }
         require(historyLimit >= 1) { "historyLimit must be >= 1: $historyLimit" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
+        require(
+            bondedNetworks.all { it.isNotBlank() && it.none { c -> c == '\n' || c == '\r' } },
+        ) { "a bonded network needs a name without line breaks: $bondedNetworks" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(torrentPort in 0..65535) { "torrentPort must be in 0..65535: $torrentPort" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }

@@ -122,10 +122,16 @@ tasks.withType<app.cash.sqldelight.gradle.VerifyMigrationTask>().configureEach {
     mustRunAfter(tasks.withType<app.cash.sqldelight.gradle.GenerateSchemaTask>())
 }
 
+// Binding a socket to one network (#544) reads the socket's native handle by reflection; every JVM that does needs these.
+val socketHandleOpens = listOf("--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
+
 // The upgrade test opens the committed schema snapshots.
 tasks.named<Test>("jvmTest") {
+    jvmArgs(socketHandleOpens)
     inputs.dir(schemaSnapshots).withPropertyName("schemaSnapshots").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("anydm.schemaDir", schemaSnapshots.asFile.absolutePath)
+    // BondingLiveTest runs only with -Pbonding.live[=url]: it needs two real networks.
+    providers.gradleProperty("bonding.live").orNull?.let { systemProperty("bonding.live", it) }
     // The end-to-end tests run in real time against a child engine process: e2eTest runs them, check runs e2eTest.
     filter { excludeTestsMatching("dev.anydm.engine.e2e.*") }
 }
@@ -140,6 +146,7 @@ val e2eTest =
         testClassesDirs = jvmTest.testClassesDirs
         classpath = jvmTest.classpath
         useJUnit() // kotlin-test-junit, as jvmTest
+        jvmArgs(socketHandleOpens)
         filter { includeTestsMatching("dev.anydm.engine.e2e.*") }
         systemProperty("anydm.schemaDir", schemaSnapshots.asFile.absolutePath)
         systemProperty("e2e.cases", providers.gradleProperty("e2e.cases").orElse("12").get())

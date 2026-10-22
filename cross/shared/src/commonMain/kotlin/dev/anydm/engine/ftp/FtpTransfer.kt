@@ -2,6 +2,8 @@ package dev.anydm.engine.ftp
 
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.net.currentBond
+import dev.anydm.engine.net.currentBoundNetwork
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.protocol.TransferFile
 import dev.anydm.engine.protocol.TransferIo
@@ -91,10 +93,27 @@ internal class FtpTransfer(
                 if (block.watermark < block.segment.end) failures = another(failures, before, block.watermark, "the file ended early")
             } catch (e: RemoteException) {
                 when (e.failure) {
-                    RemoteFailure.TOO_MANY_CONNECTIONS -> return Fetched.REFUSED
-                    RemoteFailure.REST_UNSUPPORTED -> throw RestUnsupported()
-                    RemoteFailure.TRANSIENT -> failures = another(failures, before, block.watermark, e.message)
-                    else -> throw Ended(e.asFailed())
+                    RemoteFailure.TOO_MANY_CONNECTIONS -> {
+                        return Fetched.REFUSED
+                    }
+
+                    RemoteFailure.REST_UNSUPPORTED -> {
+                        throw RestUnsupported()
+                    }
+
+                    RemoteFailure.TRANSIENT -> {
+                        failures = another(failures, before, block.watermark, e.message)
+                    }
+
+                    // The network this download is bound to can't be used (#544): left out for a while, so the retry leases another.
+                    RemoteFailure.BIND -> {
+                        currentBoundNetwork()?.let { currentBond()?.fault(it.key) }
+                        throw Ended(e.asFailed())
+                    }
+
+                    else -> {
+                        throw Ended(e.asFailed())
+                    }
                 }
             } finally {
                 withContext(NonCancellable) { client.close() }
@@ -123,7 +142,7 @@ internal class FtpTransfer(
         val take = minOf(n.toLong(), block.segment.end - block.watermark).toInt()
         if (take <= 0) return
         io.limiter.acquire(take)
-        io.meter.record(take.toLong())
+        io.meter.record(take.toLong(), network = currentBoundNetwork()?.key)
         val written = io.write(file.file.id, block.watermark, bytes, 0, take)
         if (written is StepResult.Failed) throw Ended(written)
         block.watermark += take
@@ -144,7 +163,7 @@ internal class FtpTransfer(
                 client.connect(target, login)
                 client.read(target.path, 0, null) { bytes, n ->
                     io.limiter.acquire(n)
-                    io.meter.record(n.toLong())
+                    io.meter.record(n.toLong(), network = currentBoundNetwork()?.key)
                     val written = io.write(file.file.id, at, bytes, 0, n)
                     if (written is StepResult.Failed) throw Ended(written)
                     at += n
@@ -161,6 +180,8 @@ internal class FtpTransfer(
                 return e.failed
             } catch (e: RemoteException) {
                 val again = e.failure == RemoteFailure.TRANSIENT || e.failure == RemoteFailure.TOO_MANY_CONNECTIONS
+                // The network this download is bound to can't be used (#544): left out, so the retry leases another.
+                if (e.failure == RemoteFailure.BIND) currentBoundNetwork()?.let { currentBond()?.fault(it.key) }
                 if (!again || ++failures > RETRIES) return e.asFailed()
             } finally {
                 withContext(NonCancellable) { client.close() }

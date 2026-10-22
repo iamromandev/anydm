@@ -164,6 +164,57 @@ abstract class EngineTrafficContract : StoreTestBase() {
         }
 
     @Test
+    fun bytesOnABoundNetworkAreCountedUnderIt() =
+        runTest {
+            val (h, traffic) = started(network = { "en0" })
+            h.protocol.network = "en5"
+            h.addJob()
+            advanceTimeBy(11.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            batch.days.keys
+                .map { it.second }
+                .toSet() shouldBe setOf("en5")
+            batch.days.values.sum() shouldBe whole
+            h.engine.stop()
+        }
+
+    @Test
+    fun bytesOnTwoNetworksAreCountedEachUnderItsOwnKeyAndNothingTwice() =
+        runTest {
+            val (h, traffic) = started(network = { "en0" })
+            h.protocol.network = "en5"
+            h.addJob()
+            advanceTimeBy(2.seconds)
+            h.protocol.network = null // the rest of the run goes by the default route
+            advanceTimeBy(9.seconds)
+            runCurrent()
+
+            val batch = traffic.adds.single()
+            val byNetwork =
+                batch.days.entries
+                    .groupBy({ it.key.second }, { it.value })
+                    .mapValues { it.value.sum() }
+            byNetwork.keys shouldBe setOf("en5", "en0")
+            byNetwork.values.sum() shouldBe whole
+            h.engine.stop()
+        }
+
+    @Test
+    fun theLastBytesOfARunAreCountedUnderTheirNetworkToo() =
+        runTest {
+            val (h, traffic) = started(network = { "en0" })
+            h.protocol.network = "en5"
+            h.addJob()
+            advanceTimeBy(5.seconds)
+            h.engine.stop()
+
+            traffic.adds.flatMap { it.days.keys.map { key -> key.second } }.toSet() shouldBe setOf("en5")
+            traffic.bytes shouldBe whole
+        }
+
+    @Test
     fun aFailedSaveIsRetried() =
         runTest {
             val (h, traffic) = started()
