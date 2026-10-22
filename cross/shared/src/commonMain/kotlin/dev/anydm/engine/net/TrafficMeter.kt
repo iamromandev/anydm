@@ -23,6 +23,8 @@ internal class TrafficMeter(
         val kind: DownloadKind,
         val bytes: Long,
         val bytesUp: Long = 0,
+        /** The bound network the bytes came by (#544); null counts them under the network the call names. */
+        val network: String? = null,
     )
 
     private val days = mutableMapOf<Triple<String, String, DownloadKind>, Long>()
@@ -70,11 +72,11 @@ internal class TrafficMeter(
     ) {
         for (sample in samples) {
             if (sample.bytes > 0) {
-                days.mergeWith(Triple(day, network, sample.kind), sample.bytes, Long::plus)
+                days.mergeWith(Triple(day, sample.network ?: network, sample.kind), sample.bytes, Long::plus)
                 downloads.mergeWith(sample.id, sample.bytes, Long::plus)
             }
             if (sample.bytesUp > 0) {
-                daysUp.mergeWith(Triple(day, network, sample.kind), sample.bytesUp, Long::plus)
+                daysUp.mergeWith(Triple(day, sample.network ?: network, sample.kind), sample.bytesUp, Long::plus)
                 downloadsUp.mergeWith(sample.id, sample.bytesUp, Long::plus)
             }
         }

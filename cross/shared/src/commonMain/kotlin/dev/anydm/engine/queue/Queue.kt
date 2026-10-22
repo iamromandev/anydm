@@ -75,8 +75,12 @@ class Queue internal constructor(
     /** The network dropped or came back (NET-13): pause for it or release it. Returns once the stopped jobs have ended. */
     internal suspend fun applyNetwork(offline: Boolean): CommandResult = actor.callLater { applyNetwork(offline, it) }
 
-    /** The network changed or the machine woke (NET-12): running connections start again, uncounted. */
-    internal suspend fun restartConnections(): CommandResult = actor.callLater { restartConnections(it) }
+    /**
+     * The network changed or the machine woke (NET-12): running connections start again, uncounted. With [kinds], only the
+     * jobs of those kinds: bonding (#544) has nothing to change for the others.
+     */
+    internal suspend fun restartConnections(kinds: Set<DownloadKind>? = null): CommandResult =
+        actor.callLater { restartConnections(it, kinds) }
 
     /** Stores a new PENDING job; it runs when a slot is free. */
     suspend fun add(new: NewDownload): CommandResult = actor.call { add(new) }

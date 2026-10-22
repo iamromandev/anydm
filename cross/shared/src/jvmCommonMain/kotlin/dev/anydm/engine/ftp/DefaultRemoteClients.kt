@@ -1,11 +1,14 @@
 package dev.anydm.engine.ftp
 
+import dev.anydm.engine.net.BoundSocketFactories
 import dev.anydm.engine.store.HostKeyStore
 
 /** Makes the client for a scheme once it connects: Commons Net for FTP, FTPS and FTPES, sshj for SFTP. */
 class DefaultRemoteClients(
     private val hostKeys: HostKeyStore,
     private val trust: TrustConfig = TrustConfig.Jvm,
+    /** Sockets tied to a network, for a connection made inside one (BND-02); without it such a connection fails. */
+    private val bound: BoundSocketFactories? = null,
 ) : RemoteClientFactory {
     override fun create(): RemoteClient = ByScheme()
 
@@ -16,7 +19,7 @@ class DefaultRemoteClients(
             target: RemoteTarget,
             login: RemoteLogin,
         ) {
-            val client = if (target.scheme == FtpScheme.SFTP) SshjClient(hostKeys) else CommonsNetClient(trust)
+            val client = if (target.scheme == FtpScheme.SFTP) SshjClient(hostKeys, bound) else CommonsNetClient(trust, bound)
             inner = client
             client.connect(target, login)
         }

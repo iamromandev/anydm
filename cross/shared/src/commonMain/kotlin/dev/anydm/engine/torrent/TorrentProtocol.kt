@@ -119,6 +119,8 @@ class TorrentProtocol(
 
     override suspend fun reroute() = backend.reroute()
 
+    override suspend fun rebind(interfaces: List<String>) = backend.rebind(interfaces)
+
     /** The latest live values of each torrent the protocol holds, by job (TOR-07): written by the polls, read by [live]. */
     private val latest = mutableMapOf<DownloadId, TorrentLive>()
     private val latestLock = Mutex()

@@ -17,6 +17,8 @@ import dev.anydm.engine.net.ProxyRouter
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
+import dev.anydm.engine.platform.NetworkBinder
+import dev.anydm.engine.platform.NetworkLister
 import dev.anydm.engine.platform.PowerActions
 import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeProtocol
@@ -66,6 +68,8 @@ internal class EngineHarness(
     wakeGap: Duration = Duration.INFINITE,
     proxyRouter: ProxyRouter = ProxyRouter.Direct,
     proxyKeychain: Keychain? = null,
+    networkLister: NetworkLister = NetworkLister.None,
+    networkBinder: NetworkBinder = NetworkBinder.None,
 ) {
     val engine =
         Engine(
@@ -94,6 +98,8 @@ internal class EngineHarness(
             wakeGap = wakeGap,
             proxyRouter = proxyRouter,
             proxyKeychain = proxyKeychain,
+            networkLister = networkLister,
+            networkBinder = networkBinder,
         )
 
     private var added = 0

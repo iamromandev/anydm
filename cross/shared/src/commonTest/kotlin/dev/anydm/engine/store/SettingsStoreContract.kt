@@ -506,4 +506,33 @@ abstract class SettingsStoreContract : StoreTestBase() {
 
             store.settings.load().torrentPort shouldBe 6881
         }
+
+    @Test
+    fun bondedNetworksRoundTripAndNoneIsNoRow() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().bondedNetworks shouldBe emptySet()
+
+            settings.update { it.copy(bondedNetworks = setOf("en0", "en5")) }
+            settings.load().bondedNetworks shouldBe setOf("en0", "en5")
+            rows() shouldContain "net.bonded=en0\nen5"
+
+            settings.update { it.copy(bondedNetworks = emptySet()) }
+            settings.load().bondedNetworks shouldBe emptySet()
+            rows().none { it?.startsWith("net.bonded=") == true } shouldBe true
+        }
+
+    @Test
+    fun aBlankNetworkNameIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(bondedNetworks = setOf("")) }
+    }
+
+    @Test
+    fun anUnreadableBondedNetworkListFallsBack() =
+        runTest {
+            val store = newStore()
+            driver.exec("INSERT INTO setting(name, data) VALUES ('net.bonded', '')")
+
+            store.settings.load().bondedNetworks shouldBe emptySet()
+        }
 }

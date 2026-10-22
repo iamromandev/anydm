@@ -5,6 +5,8 @@ import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.net.currentBond
+import dev.anydm.engine.net.currentBoundNetwork
 import dev.anydm.engine.store.NewSegment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -109,6 +111,8 @@ internal class FakeProtocol(
     var closeFailure: Throwable? = null,
     /** Bytes the transfer reports as sent (the meter's upload), once per run. */
     var uploadPerJob: Long = 0,
+    /** The network the transfer reports its bytes under (a bound connection, #544); null for the default route. */
+    var network: String? = null,
     private val journal: MutableList<String>? = null,
 ) : Protocol {
     /** How many times [close] was called. */
@@ -146,6 +150,9 @@ internal class FakeProtocol(
 
     /** Every transfer, to check what the runner passed (its other mirrors, #572). */
     val transfers = mutableListOf<Transfer>()
+
+    /** Per transfer: whether it ran in a bonding scope, and the bound network it ran in (#544). */
+    val bondings = mutableListOf<Pair<Boolean, String?>>()
 
     /** Every probe request, to check what the runner passed (its request context, #567). */
     val requests = mutableListOf<ProbeRequest>()
@@ -221,6 +228,7 @@ internal class FakeProtocol(
         log("transfer")
         onTransfer?.invoke(io)
         transfers += transfer
+        bondings += (currentBond() != null) to currentBoundNetwork()?.key
         val stop = failure as? FakeFailure.AtTransfer
         if (ownsFiles) {
             stop?.let { return it.failure }
@@ -247,7 +255,7 @@ internal class FakeProtocol(
                     val n = minOf(chunk.toLong(), to - at, if (stop != null) stop.afterBytes - sent else Long.MAX_VALUE).toInt()
                     io.limiter.acquire(n)
                     delay((n * 1000L / bytesPerSecond).milliseconds)
-                    io.meter.record(n.toLong())
+                    io.meter.record(n.toLong(), network = network)
                     val written = io.write(part.file.id, at, fakeContent(index, at, n))
                     if (written is StepResult.Failed) return written
                     fetched += Fetched(index, at, at + n)

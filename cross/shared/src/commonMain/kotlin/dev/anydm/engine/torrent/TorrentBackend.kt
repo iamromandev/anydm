@@ -89,6 +89,12 @@ interface TorrentBackend {
      */
     suspend fun reroute() = Unit
 
+    /**
+     * The networks bonding uses changed (BND-04): the session sends its connections from these interfaces only, none for
+     * its usual route. A session has one list, for all its torrents. Through a proxy nothing is bound (BND-05).
+     */
+    suspend fun rebind(interfaces: List<String>) = Unit
+
     /** The metadata of a magnet link, waited for up to [timeout]; TRANSIENT when it doesn't come. */
     suspend fun metadataOfMagnet(
         uri: String,

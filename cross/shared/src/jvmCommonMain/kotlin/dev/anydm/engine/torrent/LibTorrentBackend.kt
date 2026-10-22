@@ -78,6 +78,9 @@ class LibTorrentBackend(
 
     @Volatile private var sessionRoute: ProxyRoute = ProxyRoute.Direct
 
+    // The interfaces bonding asks the session to send from (BND-04); kept so a session that starts later has them too.
+    @Volatile private var bonded: List<String> = emptyList()
+
     // Everyone using the session (a magnet fetch, an added torrent, a seed), each with the route its job asks for as of now. The
     // session has one proxy, so it changes only when all of them ask for the same.
     private val users = ConcurrentHashMap<String, suspend () -> ProxyRoute>()
@@ -179,7 +182,17 @@ class LibTorrentBackend(
             pack.setInteger(settings_pack.int_types.min_reconnect_time.swigValue(), 1)
         }
         pack.setProxy(route)
+        pack.setOutgoing(route)
         return pack
+    }
+
+    /**
+     * The interfaces the session sends from (BND-04): the bonded networks, or none, which is the usual route. Through a
+     * proxy none (BND-05): its connections are the proxy's, not a network's.
+     */
+    private fun SettingsPack.setOutgoing(route: ProxyRoute) {
+        val names = if (route is ProxyRoute.Direct) bonded else emptyList()
+        setString(settings_pack.string_types.outgoing_interfaces.swigValue(), names.joinToString(","))
     }
 
     /**
@@ -285,8 +298,18 @@ class LibTorrentBackend(
     ) {
         // libtorrent drops the peers it has when the proxy settings change (the test for it is in LibTorrentBackendTest), so
         // they come back through the new route.
-        withContext(Dispatchers.IO) { live({}) { manager.applySettings(SettingsPack().also { it.setProxy(route) }) } }
+        withContext(Dispatchers.IO) {
+            live({}) { manager.applySettings(SettingsPack().also { it.setProxy(route) }.also { it.setOutgoing(route) }) }
+        }
         sessionRoute = route
+    }
+
+    override suspend fun rebind(interfaces: List<String>) {
+        bonded = interfaces
+        val session = manager ?: return
+        proxyLock.withLock {
+            withContext(Dispatchers.IO) { live({}) { session.applySettings(SettingsPack().also { it.setOutgoing(sessionRoute) }) } }
+        }
     }
 
     override suspend fun reroute() {
@@ -543,6 +566,10 @@ class LibTorrentBackend(
 
     /** For tests: how many magnet fetches, torrents and seeds are registered as users of the session. */
     internal fun userCount(): Int = users.size
+
+    /** For tests: the interfaces the session sends from, as libtorrent has them. */
+    internal fun outgoingInterfaces(): String? =
+        manager?.let { m -> live({ null }) { m.settings().getString(settings_pack.string_types.outgoing_interfaces.swigValue()) } }
 
     /** For tests: the proxy route the session is set to. */
     internal fun sessionRoute(): ProxyRoute = sessionRoute

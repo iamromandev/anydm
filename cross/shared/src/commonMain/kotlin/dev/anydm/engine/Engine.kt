@@ -47,6 +47,8 @@ import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.AfterQueueKeeper
 import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.AwakeKeeper
+import dev.anydm.engine.net.Bonding
+import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.MeteredRefresh
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.NetworkMonitor
@@ -68,6 +70,7 @@ import dev.anydm.engine.net.QueueActivity
 import dev.anydm.engine.net.RuleKeeper
 import dev.anydm.engine.net.RuleStatus
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.net.SettingsBondChoices
 import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.net.StoreProxyRouter
 import dev.anydm.engine.net.TrafficMeter
@@ -78,8 +81,12 @@ import dev.anydm.engine.net.withProxyForNew
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
+import dev.anydm.engine.platform.NetworkBinder
+import dev.anydm.engine.platform.NetworkLister
 import dev.anydm.engine.platform.PowerActions
 import dev.anydm.engine.platform.ProxySource
+import dev.anydm.engine.protocol.BondMode
+import dev.anydm.engine.protocol.BondedProtocol
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.ProxiedProtocol
 import dev.anydm.engine.protocol.StepResult
@@ -205,17 +212,38 @@ class Engine(
      * passwords and [proxySource] for the System choice.
      */
     private val proxyRouter: ProxyRouter = StoreProxyRouter(store, proxyKeychain ?: NoKeychain, proxySource),
+    /** The machine's networks (BND-01); the desktop passes DesktopNetworks. Without one, bonding has nothing to bond. */
+    networkLister: NetworkLister = NetworkLister.None,
+    /** Tells whether a connection can be tied to a network (BND-02); the desktop passes DesktopNetworks. Without one, none can. */
+    networkBinder: NetworkBinder = NetworkBinder.None,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
+
+    // The networks and which of them downloads are bound to (BND-01, BND-03).
+    private val bonding = Bonding(networkLister, networkBinder, SettingsBondChoices(store.settings), clock, log)
+
+    // The networks now in use; set on the publisher, to tell a change from a poll that found the same.
+    private var bondedKeys: Set<String> = emptySet()
 
     // Each protocol once, however many kinds share it.
     private val protocolList = protocols.values.distinct()
 
     // Each step of a protocol runs in its download's proxy scope (NET-15); a protocol shared by several kinds is wrapped once.
+    // Inside it, the transfer of a protocol is bound to the networks (BND-03): HTTP by worker, FTP and SFTP by download.
     private val scoped: Map<DownloadKind, Protocol> =
-        protocolList.associateWith<Protocol, Protocol> { ProxiedProtocol(it, proxyRouter) }.let { wrapped ->
-            protocols.mapValues { wrapped.getValue(it.value) }
-        }
+        protocolList
+            .associateWith<Protocol, Protocol> { protocol ->
+                val kinds = protocols.filterValues { it === protocol }.keys
+                val mode =
+                    when {
+                        DownloadKind.FTP in kinds -> BondMode.WHOLE
+                        DownloadKind.DIRECT in kinds -> BondMode.WORKERS
+                        else -> BondMode.NONE
+                    }
+                ProxiedProtocol(BondedProtocol(protocol, bonding, mode), proxyRouter)
+            }.let { wrapped ->
+                protocols.mapValues { wrapped.getValue(it.value) }
+            }
 
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -226,6 +254,9 @@ class Engine(
     val downloads: StateFlow<List<DownloadSnapshot>> = snapshots.asStateFlow()
     val totalSpeed: StateFlow<SpeedWindow> = speedFlow.asStateFlow()
     val events: SharedFlow<EngineEvent> = eventFlow.asSharedFlow()
+
+    /** The machine's networks, which of them are on, and which are in use (BND-01); the list fills at start and follows the network. */
+    val networks: StateFlow<BondingState> = bonding.state
 
     private val engineJob = SupervisorJob()
     private val scope = CoroutineScope(dispatcher + engineJob + CoroutineExceptionHandler { _, e -> failed(e) })
@@ -244,7 +275,9 @@ class Engine(
     // What each running job's slot reports, written from slots and read by the publisher: no lock needed.
     private class Live {
         val progress = MutableStateFlow<Pair<Long, Long?>?>(null)
-        val bytes = MutableStateFlow(0L)
+
+        /** Bytes received since the last sampled second, by the bound network they came by; the default route is the null key (#544). */
+        val bytes = MutableStateFlow<Map<String?, Long>>(emptyMap())
 
         /** Bytes the run sent since the last sampled second (TOR-09). */
         val bytesUp = MutableStateFlow(0L)
@@ -456,8 +489,20 @@ class Engine(
         override fun received(
             id: DownloadId,
             bytes: Long,
+        ) = count(id, bytes, null)
+
+        override fun receivedOn(
+            id: DownloadId,
+            bytes: Long,
+            network: String,
+        ) = count(id, bytes, network)
+
+        private fun count(
+            id: DownloadId,
+            bytes: Long,
+            network: String?,
         ) {
-            live.value[id]?.bytes?.update { it + bytes }
+            live.value[id]?.bytes?.update { it + (network to ((it[network] ?: 0L) + bytes)) }
         }
 
         override fun sent(
@@ -499,6 +544,12 @@ class Engine(
                 val (watch, offline) =
                     withContext(publisher) {
                         meteredRefresh.first(monitor.first())
+                        bonding.refresh()
+                        bondedKeys =
+                            bonding.state.value.active
+                                .map { it.info.key }
+                                .toSet()
+                        torrents?.rebind(interfacesOf(bondedKeys))
                         val seen = monitor.observed.value
                         NetworkWatch(seen) to !seen.state.online
                     }
@@ -1145,6 +1196,21 @@ class Engine(
         at: Instant?,
     ): CommandResult = command { queue.setStartTime(id, at) }
 
+    /**
+     * Turns the network [key] on or off for bonding (BND-01). The choice is kept even for a network that is not there now, and
+     * downloads that run start again when it changes which networks are in use.
+     */
+    suspend fun setNetworkEnabled(
+        key: String,
+        enabled: Boolean,
+    ): CommandResult =
+        command {
+            if (key.isBlank() || key.any { it == '\n' || it == '\r' }) return@command CommandResult.Invalid("not a network name: $key")
+            bonding.setEnabled(key, enabled)
+            if (keepersStarted) withContext(publisher) { bondingChanged() }
+            CommandResult.Done(null)
+        }
+
     /** Slow mode (NET-06): whether it is on and the limit it caps at, both directions. */
     suspend fun slowMode(): SlowMode = command { store.settings.load().let { SlowMode(it.slowMode, it.slowModeLimit) } }
 
@@ -1555,6 +1621,48 @@ class Engine(
     // On the publisher: one poll of the network, then the metered answer for it when one is due.
     private suspend fun networkTick() {
         meteredRefresh.refresh(monitor.tick())
+        // A store that cannot be read, or a torrent session that is going away, must not end the engine from its poll.
+        try {
+            bonding.refresh()
+            bondingChanged()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("net", e) { "the networks could not be followed this time: ${e.message}" }
+        }
+    }
+
+    // The interfaces torrents send from (BND-04): the networks in use when there are two or more, else the usual route.
+    private fun interfacesOf(keys: Set<String>): List<String> = if (keys.size >= 2) keys.sorted() else emptyList()
+
+    // On the publisher: the networks in use may have changed. Connections that run start again, so downloads take up the new
+    // set: bound to a network that joined, off one that left, and unbound when fewer than two are left (BND-03). Nothing
+    // changes for a download while bonding is off before and after, and nothing is counted: a stop has no error class.
+    private suspend fun bondingChanged() {
+        val keys =
+            bonding.state.value.active
+                .map { it.info.key }
+                .toSet()
+        if (keys == bondedKeys) return
+        val was = bondedKeys.size >= 2
+        log.info("net") { "networks in use: ${keys.sorted()}" }
+        if (!was && keys.size < 2) {
+            bondedKeys = keys
+            return
+        }
+        try {
+            torrents?.rebind(interfacesOf(keys))
+        } catch (e: IllegalStateException) {
+            log.debug("net") { "torrents not rebound: ${e.message}" }
+        }
+        try {
+            // Only the kinds bonding binds: a media download would be extracted again for nothing, and a torrent was just rebound live.
+            queue.restartConnections(setOf(DownloadKind.DIRECT, DownloadKind.FTP))
+        } catch (e: IllegalStateException) {
+            log.debug("net") { "not restarted: ${e.message}" }
+        }
+        // After the calls: one that throws leaves the change to be found again on the next poll.
+        bondedKeys = keys
     }
 
     // One step failing (a store that cannot be read) must never end the collection, or the jobs would stay as they are for good.
@@ -1908,14 +2016,18 @@ class Engine(
         val samples = mutableListOf<TrafficMeter.Sample>()
         for (id in running) {
             val holder = live.value[id]
-            val sample = holder?.bytes?.getAndUpdate { 0L } ?: 0L
+            val taken = holder?.bytes?.getAndUpdate { emptyMap() } ?: emptyMap()
+            val sample = taken.values.sum()
             val sentSample = holder?.bytesUp?.getAndUpdate { 0L } ?: 0L
             cache.speed(id, sample)
             total += sample
             val kind = holder?.kind ?: cache.kindOf(id)?.also { holder?.kind = it }
-            if (kind != null && (sample > 0 || sentSample > 0)) samples += TrafficMeter.Sample(id, kind, sample, sentSample)
+            if (kind != null) samples += samplesOf(id, kind, taken, sentSample)
         }
         val now = clock.now()
+        bonding.observe(
+            samples.filter { it.network != null }.groupBy({ checkNotNull(it.network) }, { it.bytes }).mapValues { it.value.sum() },
+        )
         meter.second(now, identity.current(), samples)
         takeLeftovers(now)
         totalSamples.addLast(total)
@@ -2036,9 +2148,9 @@ class Engine(
 
     /** A run that ended: the bytes it got since its last sampled second, to count with the next save. */
     private fun keepLeftover(holder: Live) {
-        val left = holder.bytes.getAndUpdate { 0L }
+        val left = holder.bytes.getAndUpdate { emptyMap() }
         val leftUp = holder.bytesUp.getAndUpdate { 0L }
-        if (left <= 0 && leftUp <= 0) return
+        if (left.values.sum() <= 0 && leftUp <= 0) return
         val id =
             live.value.entries
                 .firstOrNull { it.value === holder }
@@ -2048,7 +2160,19 @@ class Engine(
                 .find { it.download.id == id }
                 ?.download
                 ?.kind ?: return
-        leftovers.update { it + TrafficMeter.Sample(id, kind, left, leftUp) }
+        leftovers.update { it + samplesOf(id, kind, left, leftUp) }
+    }
+
+    // One sample for the default route (with what was sent) and one for each bound network that carried bytes (#544).
+    private fun samplesOf(
+        id: DownloadId,
+        kind: DownloadKind,
+        received: Map<String?, Long>,
+        sent: Long,
+    ): List<TrafficMeter.Sample> {
+        val bound = received.filterKeys { it != null }.filterValues { it > 0 }.map { (net, n) -> TrafficMeter.Sample(id, kind, n, 0, net) }
+        val plain = received[null] ?: 0L
+        return (if (plain > 0 || sent > 0) listOf(TrafficMeter.Sample(id, kind, plain, sent)) else emptyList()) + bound
     }
 
     private fun takeLeftovers(now: Instant) {

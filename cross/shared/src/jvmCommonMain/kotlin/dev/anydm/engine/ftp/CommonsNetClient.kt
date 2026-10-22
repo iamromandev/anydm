@@ -1,9 +1,12 @@
 package dev.anydm.engine.ftp
 
+import dev.anydm.engine.net.BoundSocketFactories
 import dev.anydm.engine.net.DirectSocketFactory
 import dev.anydm.engine.net.ProxyRoute
 import dev.anydm.engine.net.ProxySocketFactory
 import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.bindFailureOf
+import dev.anydm.engine.net.currentBoundNetwork
 import dev.anydm.engine.net.currentProxyRoute
 import dev.anydm.engine.net.namedAddress
 import dev.anydm.engine.net.proxyFailureOf
@@ -132,6 +135,8 @@ internal class NamedFtpsClient(
  */
 class CommonsNetClient(
     private val trust: TrustConfig = TrustConfig.Jvm,
+    /** Sockets tied to a network (BND-02); without it a connection made inside a bound network fails. */
+    private val bound: BoundSocketFactories? = null,
 ) : RemoteClient {
     private var ftp: FTPClient? = null
 
@@ -158,8 +163,20 @@ class CommonsNetClient(
                 (client as? NamedFtpsClient)?.named = host
                 client.connect(namedAddress(host), target.port)
             } else {
-                // Not the JVM's default sockets: they ask its proxy selector, and Direct has to mean direct.
-                plain = DirectSocketFactory
+                // Not the JVM's default sockets: they ask its proxy selector, and Direct has to mean direct. Inside a bound
+                // network the control and every data connection leave by that network.
+                val network = currentBoundNetwork()
+                plain =
+                    if (network == null) {
+                        DirectSocketFactory
+                    } else {
+                        (
+                            bound ?: throw RemoteException(
+                                RemoteFailure.BIND,
+                                "this machine can't bind a connection to a network",
+                            )
+                        ).factoryFor(network)
+                    }
                 client.setSocketFactory(plain)
                 client.connect(host, target.port)
             }
@@ -277,6 +294,8 @@ class CommonsNetClient(
         } catch (e: IOException) {
             val refusal = proxyFailureOf(e)
             if (refusal != null) throw RemoteException(RemoteFailure.PROXY, refusal.message ?: "the proxy refused", e)
+            val unbound = bindFailureOf(e)
+            if (unbound != null) throw RemoteException(RemoteFailure.BIND, unbound.message ?: "the network can't be used", e)
             throw RemoteException(RemoteFailure.TRANSIENT, "connection failed: ${e.message?.take(160)}", e)
         }
 

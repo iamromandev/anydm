@@ -204,6 +204,69 @@ class LibTorrentBackendTest {
             running.remove()
         }
 
+    private fun loopbackName(): String =
+        java.net.NetworkInterface
+            .networkInterfaces()
+            .filter { it.isLoopback && it.isUp }
+            .findFirst()
+            .get()
+            .name
+
+    @Test
+    fun theSessionSendsFromTheBondedNetworksAndFromNowhereElseWhenNoneAreBonded() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 31)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val running = withProxy(routed(ProxyRoute.Direct), DownloadId(1)) { ok(leecher.add(addRequest(info))) }
+            leecher.outgoingInterfaces() shouldBe ""
+
+            val lo = loopbackName()
+            leecher.rebind(listOf(lo, "en9"))
+            leecher.outgoingInterfaces() shouldBe "$lo,en9"
+
+            leecher.rebind(emptyList())
+            leecher.outgoingInterfaces() shouldBe ""
+            running.remove()
+        }
+
+    @Test
+    fun theBondedNetworksAreKeptForASessionThatStartsLater() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 32)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val lo = loopbackName()
+            leecher.rebind(listOf(lo)) // no session yet
+
+            val running = withProxy(routed(ProxyRoute.Direct), DownloadId(1)) { ok(leecher.add(addRequest(info))) }
+
+            leecher.outgoingInterfaces() shouldBe lo
+            running.remove()
+        }
+
+    @Test
+    fun aProxyKeepsTheNetworksOutAndGoingDirectBringsThemBack() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 33)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val lo = loopbackName()
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var current: ProxyRoute = silent
+            leecher.rebind(listOf(lo))
+            val running = withProxy(ProxyRouter { _, _ -> current }, DownloadId(1)) { ok(leecher.add(addRequest(info))) }
+
+            leecher.outgoingInterfaces() shouldBe ""
+            leecher.rebind(listOf(lo))
+            leecher.outgoingInterfaces() shouldBe ""
+
+            current = ProxyRoute.Direct
+            leecher.reroute()
+            leecher.outgoingInterfaces() shouldBe lo
+            running.remove()
+        }
+
     @Test
     fun aBlockedUserClosesTheSession() =
         runBlocking<Unit> {

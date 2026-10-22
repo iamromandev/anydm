@@ -12,6 +12,9 @@ interface TorrentService {
     /** A proxy setting changed (NET-15): the torrents in the session go through the proxy their jobs now ask for. */
     suspend fun reroute() = Unit
 
+    /** The networks bonding uses changed (BND-04): the session sends from these interfaces only; none means its usual route. */
+    suspend fun rebind(interfaces: List<String>) = Unit
+
     /** The torrent's name, files and metadata, read from a magnet link, an address or a file, as a probe would. No job is made. */
     suspend fun inspect(source: String): StepResult<TorrentInfo>
 

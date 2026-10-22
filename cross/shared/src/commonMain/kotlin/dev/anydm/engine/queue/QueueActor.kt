@@ -678,10 +678,13 @@ internal class QueueActor(
      * its place (the same `queuedAt`), so the jobs that ran start again and the ones that waited keep waiting. Nothing
      * is counted: a stop has no error class. The reply comes once every stopped slot has ended.
      */
-    suspend fun restartConnections(reply: CompletableDeferred<CommandResult>) {
+    suspend fun restartConnections(
+        reply: CompletableDeferred<CommandResult>,
+        kinds: Set<DownloadKind>? = null,
+    ) {
         val stopping = mutableListOf<CompletableDeferred<CommandResult>>()
         for (slot in slots.values.toList()) {
-            if (slot.download.status in RUNNABLE && !slot.stopping) {
+            if (slot.download.status in RUNNABLE && !slot.stopping && (kinds == null || slot.download.kind in kinds)) {
                 stopping += CompletableDeferred<CommandResult>().also { stop(slot, ::restartOp, it) }
             }
         }
@@ -1198,7 +1201,12 @@ internal class QueueActor(
                 override fun record(
                     bytes: Long,
                     direction: Direction,
-                ) = if (direction == Direction.UP) observer.sent(slot.id, bytes) else observer.received(slot.id, bytes)
+                    network: String?,
+                ) = when {
+                    direction == Direction.UP -> observer.sent(slot.id, bytes)
+                    network != null -> observer.receivedOn(slot.id, bytes, network)
+                    else -> observer.received(slot.id, bytes)
+                }
             }
         return when (val ran = runner.run(ready, listener, slot.limiter, meter) { bandwidth.shareOf(slot.id) }) {
             is RunOutcome.Failed -> SlotEnd.Failed(ran.download, ran.failure)

@@ -79,6 +79,8 @@ tasks.named("check") { dependsOn(checkDesktopNatives) }
 compose.desktop {
     application {
         mainClass = "dev.anydm.desktop.MainKt"
+        // Binding a connection to one network (#544) reads the socket's native handle by reflection.
+        jvmArgs += listOf("--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "anydm"
