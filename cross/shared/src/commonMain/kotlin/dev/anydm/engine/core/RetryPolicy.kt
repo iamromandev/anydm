@@ -18,7 +18,7 @@ import kotlin.time.Instant
  * | DISK_FULL                              | [FailureAction.Pause] for LOW_DISK            |
  * | TOOL_MISSING                           | [FailureAction.Pause] for TOOLS               |
  * | INTEGRITY                              | [FailureAction.StartOver] the first time      |
- * | AUTH, FORMAT_WITHHELD, INTEGRITY, none | [FailureAction.Fail]                          |
+ * | AUTH, FORMAT_WITHHELD, PROXY, none     | [FailureAction.Fail]                          |
  *
  * The budget is `maxRetries` automatic retries in a row; an attempt that made progress starts the count again, so a
  * long download with an occasional drop never runs out. A retry waits the source's `retryAfter` (at most
@@ -79,7 +79,7 @@ class RetryPolicy(
                 if (integrityBefore) FailureAction.Fail else FailureAction.StartOver
             }
 
-            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, null -> {
+            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, ErrorClass.PROXY, null -> {
                 FailureAction.Fail
             }
         }

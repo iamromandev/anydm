@@ -3,6 +3,7 @@ package dev.anydm.engine.files
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.Format
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.net.ProxyChoice
 import kotlinx.io.files.Path
 
 private const val MAX_NAME = 80
@@ -33,6 +34,8 @@ data class Profile(
     val nameTemplate: String?,
     /** Bytes per second. */
     val speedLimit: Long?,
+    /** Which proxy its downloads go through (NET-15). */
+    val proxy: ProxyChoice = ProxyChoice.Inherit,
 ) {
     init {
         check(name, saveFolder, nameTemplate, speedLimit)
@@ -47,6 +50,7 @@ data class NewProfile(
     val saveFolder: String? = null,
     val nameTemplate: String? = null,
     val speedLimit: Long? = null,
+    val proxy: ProxyChoice = ProxyChoice.Inherit,
 ) {
     init {
         check(name, saveFolder, nameTemplate, speedLimit)

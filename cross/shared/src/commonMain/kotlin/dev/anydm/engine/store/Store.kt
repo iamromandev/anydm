@@ -5,7 +5,7 @@ import dev.anydm.engine.log.Log
 import kotlinx.coroutines.CoroutineDispatcher
 
 /**
- * anydm's SQLite database (FND-13): downloads with everything that belongs to them, settings (SET-01), traffic (NET-04), categories (FIL-01) the history of finished downloads (FIL-10) and the installed runtime tools (BIN-01). Get one
+ * anydm's SQLite database (FND-13): downloads with everything that belongs to them, settings (SET-01), traffic (NET-04), categories (FIL-01) the history of finished downloads (FIL-10) the installed runtime tools (BIN-01) and the saved proxies (NET-15). Get one
  * from openStore (desktop). [driver] must already be at the current schema, with foreign keys on for every
  * connection. Every call runs on [io] as one transaction that never suspends, so pass a dispatcher that runs one task
  * at a time: SQLite has a single writer anyway.
@@ -29,6 +29,7 @@ class Store internal constructor(
     val torrents: TorrentStore = SqlTorrentStore(database, io)
     val hostKeys: HostKeyStore = SqlHostKeyStore(database, io)
     val rules: RuleStore = SqlRuleStore(database, io, log)
+    val proxies: ProxyStore = SqlProxyStore(database, io)
 
     /**
      * Closes the driver. With the JDBC driver on a file there is nothing held open between calls, so this changes

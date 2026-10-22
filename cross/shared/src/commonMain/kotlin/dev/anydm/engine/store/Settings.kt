@@ -6,6 +6,7 @@ import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.net.AfterQueueAction
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.SlowMode
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.io.files.Path
@@ -64,9 +65,12 @@ data class Settings(
     val keepAwake: Boolean = true,
     /** What to do with the machine once the queue is finished (NET-10). */
     val afterQueue: AfterQueueAction = AfterQueueAction.NONE,
+    /** Which proxy downloads go through when neither the download nor its profile says (NET-15); never [ProxyChoice.Inherit]. */
+    val proxy: ProxyChoice = ProxyChoice.System,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
+        require(proxy != ProxyChoice.Inherit) { "the global proxy has no level to inherit from" }
         require(historyLimit >= 1) { "historyLimit must be >= 1: $historyLimit" }
         require(freeSpaceReserve >= 0) { "freeSpaceReserve must be >= 0: $freeSpaceReserve" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }

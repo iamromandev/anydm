@@ -37,7 +37,15 @@ internal class SqlProfileStore(
                 if (queries.selectByName(new.name).executeAsOneOrNull() != null) {
                     ProfileResult.NameTaken
                 } else {
-                    queries.insert(new.name, new.format?.let(::encode), new.categoryId, new.saveFolder, new.nameTemplate, new.speedLimit)
+                    queries.insert(
+                        new.name,
+                        new.format?.let(::encode),
+                        new.categoryId,
+                        new.saveFolder,
+                        new.nameTemplate,
+                        new.speedLimit,
+                        new.proxy,
+                    )
                     ProfileResult.Saved(checkNotNull(queries.selectLastInserted().executeAsOne().toProfile()))
                 }
             }
@@ -63,6 +71,7 @@ internal class SqlProfileStore(
                             profile.saveFolder,
                             profile.nameTemplate,
                             profile.speedLimit,
+                            profile.proxy,
                             profile.id,
                         )
                         ProfileResult.Saved(profile)
@@ -92,5 +101,5 @@ internal class SqlProfileStore(
 
     // A row that breaks today's rules (a template this version rejects) is no profile: it must not stop a job, or the engine.
     private fun ProfileRow.toProfile(): Profile? =
-        runCatching { Profile(id, name, format?.let(::decode), category_id, save_folder, name_template, speed_limit) }.getOrNull()
+        runCatching { Profile(id, name, format?.let(::decode), category_id, save_folder, name_template, speed_limit, proxy) }.getOrNull()
 }

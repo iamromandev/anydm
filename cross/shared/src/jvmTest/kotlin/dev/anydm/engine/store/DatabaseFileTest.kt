@@ -119,7 +119,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.downloads.context(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -139,7 +139,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.checksum shouldBe null
             store.downloads.get(DownloadId(1))!!.sourceValidator shouldBe "etag:\"v1\""
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -159,7 +159,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.traffic.trafficByDay("0000-01-01", "9999-12-31") shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -179,7 +179,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.categoryId shouldBe CategoryId(5)
             store.categories.list() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -198,7 +198,7 @@ class DatabaseFileTest {
             val store = open()
             store.downloads.get(DownloadId(1))!!.allowDuplicate shouldBe false
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -218,7 +218,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.history.list(10) shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -241,7 +241,7 @@ class DatabaseFileTest {
                 .single()
                 .placedPath shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -261,7 +261,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.fileName shouldBe "a.mp4"
             store.tools.all() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -282,7 +282,7 @@ class DatabaseFileTest {
             store.downloads.format(DownloadId(1)) shouldBe null
             store.extractions.get(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -302,7 +302,7 @@ class DatabaseFileTest {
             val store = open()
             store.downloads.format(DownloadId(1)) shouldBe Format(QualityPreset.SMALL, height = 480)
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -324,7 +324,7 @@ class DatabaseFileTest {
             kept.sourceUrl shouldBe null
             kept.selection shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -341,7 +341,7 @@ class DatabaseFileTest {
             store.downloads.get(DownloadId(1))!!.status shouldBe DownloadStatus.QUEUED
             store.torrents.get(DownloadId(1)) shouldBe null
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -374,7 +374,7 @@ class DatabaseFileTest {
             store.traffic.downloadTraffic(DownloadId(1)) shouldBe 70L
             store.traffic.downloadUpload(DownloadId(1)) shouldBe 0L
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -397,7 +397,7 @@ class DatabaseFileTest {
             row.resume!!.toList() shouldBe listOf<Byte>(10, 11)
             row.fileDone shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -416,7 +416,7 @@ class DatabaseFileTest {
             store.hostKeys.put("h", 22, HostKey("ssh-ed25519", "SHA256:abc"))
             store.hostKeys.get("h", 22) shouldBe HostKey("ssh-ed25519", "SHA256:abc")
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -434,7 +434,7 @@ class DatabaseFileTest {
             store.rules.networkRules() shouldBe NetworkRules()
             store.rules.scheduleRules() shouldBe emptyList()
             store.close()
-            rawDriver(file).use { it.userVersion() shouldBe 20L }
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     @Test
@@ -459,8 +459,31 @@ class DatabaseFileTest {
             rawDriver(file).use {
                 it.texts("SELECT metered FROM network_policy") shouldBe listOf("0")
                 it.texts("SELECT on_metered FROM network_policy") shouldBe listOf("NONE")
-                it.userVersion() shouldBe 20L
+                it.userVersion() shouldBe 21L
             }
+        }
+
+    @Test
+    fun versionTwentyUpgradesWithEveryJobAndProfileInheritingTheProxy() =
+        runTest {
+            val snapshots = requireNotNull(System.getProperty("anydm.schemaDir")) { "anydm.schemaDir is not set" }
+            Files.copy(Path(snapshots, "20.db").toNioPath(), file.toNioPath())
+            rawDriver(file).use { raw ->
+                raw.exec("PRAGMA user_version = 20")
+                raw.exec("INSERT INTO download(kind, status, priority, attempt_count) VALUES ('DIRECT', 'PENDING', 0, 0)")
+                raw.exec("INSERT INTO profile(name) VALUES ('Work')")
+            }
+
+            val store = open()
+            store.downloads.get(DownloadId(1))!!.proxy shouldBe dev.anydm.engine.net.ProxyChoice.Inherit
+            store.profiles
+                .list()
+                .single()
+                .proxy shouldBe dev.anydm.engine.net.ProxyChoice.Inherit
+            store.settings.load().proxy shouldBe dev.anydm.engine.net.ProxyChoice.System
+            store.proxies.list() shouldBe emptyList()
+            store.close()
+            rawDriver(file).use { it.userVersion() shouldBe 21L }
         }
 
     // A made-up version 2 whose migration is [change], run on a version 1 file; create is the real schema.
@@ -499,9 +522,9 @@ class DatabaseFileTest {
     @Test
     fun aNewFileStartsAtTheCurrentVersion() {
         // Bump this with each .sqm, and add its upgrade case to theFirstSchemaVersionUpgradesCleanly.
-        AnydmDb.Schema.version shouldBe 20L
+        AnydmDb.Schema.version shouldBe 21L
 
-        openDatabaseFile(file).use { it.userVersion() shouldBe 20L }
+        openDatabaseFile(file).use { it.userVersion() shouldBe 21L }
     }
 
     @Test

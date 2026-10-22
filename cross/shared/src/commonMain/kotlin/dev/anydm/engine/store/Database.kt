@@ -16,12 +16,15 @@ import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.HdrChoice
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.QualityPreset
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.SegmentId
 import dev.anydm.engine.core.SponsorBlockMode
 import dev.anydm.engine.core.SubtitleFormat
 import dev.anydm.engine.core.SubtitleMode
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyType
 import dev.anydm.engine.store.db.AnydmDb
 import kotlin.enums.EnumEntries
 import kotlin.time.Instant
@@ -35,6 +38,7 @@ import dev.anydm.engine.store.db.Format as FormatRow
 import dev.anydm.engine.store.db.History as HistoryRow
 import dev.anydm.engine.store.db.Mirror as MirrorRow
 import dev.anydm.engine.store.db.Profile as ProfileRow
+import dev.anydm.engine.store.db.Proxy as ProxyRow
 import dev.anydm.engine.store.db.Request_context as RequestContextRow
 import dev.anydm.engine.store.db.Schedule_rule as ScheduleRuleRow
 import dev.anydm.engine.store.db.Segment as SegmentRow
@@ -77,6 +81,7 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
                 playlist_indexAdapter = IntAdapter("download.playlist_index"),
                 selection_limitAdapter = IntAdapter("download.selection_limit"),
                 start_atAdapter = InstantAdapter,
+                proxyAdapter = ProxyChoiceAdapter("download.proxy"),
             ),
         collection_itemAdapter =
             CollectionItemRow.Adapter(
@@ -90,6 +95,13 @@ internal fun createDatabase(driver: SqlDriver): AnydmDb {
             ProfileRow.Adapter(
                 idAdapter = IdAdapter(::ProfileId, ProfileId::value),
                 category_idAdapter = IdAdapter(::CategoryId, CategoryId::value),
+                proxyAdapter = ProxyChoiceAdapter("profile.proxy"),
+            ),
+        proxyAdapter =
+            ProxyRow.Adapter(
+                idAdapter = IdAdapter(::ProxyId, ProxyId::value),
+                typeAdapter = EnumNameAdapter("proxy.type", ProxyType.entries),
+                portAdapter = IntAdapter("proxy.port"),
             ),
         historyAdapter =
             HistoryRow.Adapter(
@@ -168,6 +180,17 @@ internal object InstantAdapter : ColumnAdapter<Instant, Long> {
     override fun decode(databaseValue: Long): Instant = Instant.fromEpochMilliseconds(databaseValue)
 
     override fun encode(value: Instant): Long = value.toEpochMilliseconds()
+}
+
+/** A [ProxyChoice] as its text (`INHERIT`, `DIRECT`, `SYSTEM`, `PROXY:<id>`). */
+internal class ProxyChoiceAdapter(
+    private val column: String,
+) : ColumnAdapter<ProxyChoice, String> {
+    override fun decode(databaseValue: String): ProxyChoice =
+        ProxyChoice.decode(databaseValue)
+            ?: throw IncompatibleStoreException("$column holds '$databaseValue', which this version of anydm doesn't know")
+
+    override fun encode(value: ProxyChoice): String = value.encode()
 }
 
 internal class IntAdapter(

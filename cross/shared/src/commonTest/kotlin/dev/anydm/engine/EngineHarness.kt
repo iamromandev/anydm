@@ -8,10 +8,12 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.ftp.CredentialWriter
+import dev.anydm.engine.ftp.Keychain
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.OnlineProbe
+import dev.anydm.engine.net.ProxyRouter
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
@@ -62,6 +64,8 @@ internal class EngineHarness(
     monotonic: TimeSource = test.testScheduler.timeSource,
     /** Never wakes by default, so tests that move the wall clock with a ShiftedClock are not disturbed. */
     wakeGap: Duration = Duration.INFINITE,
+    proxyRouter: ProxyRouter = ProxyRouter.Direct,
+    proxyKeychain: Keychain? = null,
 ) {
     val engine =
         Engine(
@@ -88,6 +92,8 @@ internal class EngineHarness(
             powerActions = powerActions,
             monotonic = monotonic,
             wakeGap = wakeGap,
+            proxyRouter = proxyRouter,
+            proxyKeychain = proxyKeychain,
         )
 
     private var added = 0

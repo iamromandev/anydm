@@ -12,6 +12,9 @@ data class ProcessSpec(
     init {
         require(command.isNotEmpty()) { "command must not be empty" }
     }
+
+    // The environment can hold a proxy login: only its names are printed.
+    override fun toString(): String = "ProcessSpec(command=$command, workingDirectory=$workingDirectory, environment=${environment.keys})"
 }
 
 enum class ProcessStream { STDOUT, STDERR }

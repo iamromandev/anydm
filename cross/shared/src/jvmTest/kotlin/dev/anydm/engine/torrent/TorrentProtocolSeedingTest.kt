@@ -315,6 +315,20 @@ class TorrentProtocolSeedingTest {
         }
 
     @Test
+    fun aSeedWhoseProxyCantBeUsedFailsAsProxyAndAnyOtherAddFailureAsTransient() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            stored(transfer, "Pack/a.bin", "Pack/b.bin")
+            fs.put(Path(folder, "Pack/b.bin"), ByteArray(300))
+
+            backend.addFailure = StepResult.Failed(ErrorClass.PROXY, "no password saved")
+            protocol.resumeSeeding(transfer.download) shouldBe StepResult.Failed(ErrorClass.PROXY, "no password saved")
+
+            backend.addFailure = StepResult.Failed(null, "no library")
+            protocol.resumeSeeding(transfer.download) shouldBe StepResult.Failed(ErrorClass.TRANSIENT, "no library")
+        }
+
+    @Test
     fun resumeSeedingWithoutABlobAddsItUnderTheFinalNames() =
         runBlocking<Unit> {
             val transfer = prepared()

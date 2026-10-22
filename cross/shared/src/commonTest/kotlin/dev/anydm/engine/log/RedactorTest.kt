@@ -43,6 +43,13 @@ class RedactorTest {
     }
 
     @Test
+    fun aProxyLoginIsMaskedInAnyUrlFormAndInTheEnvironment() {
+        redactor.redact("--proxy socks5h://ann:p%40ss@gw.example.com:1080") shouldBe "--proxy socks5h://***:***@gw.example.com:1080"
+        redactor.redact("ALL_PROXY=http://ann@gw.example.com:3128") shouldBe "ALL_PROXY=http://***@gw.example.com:3128"
+        redactor.redact("""{"proxy": "https://ann:pw@gw.example.com"}""") shouldBe """{"proxy": "https://***:***@gw.example.com"}"""
+    }
+
+    @Test
     fun everyFormIsMasked() {
         for ((input, expected) in cases) withClue(input) { redactor.redact(input) shouldBe expected }
     }

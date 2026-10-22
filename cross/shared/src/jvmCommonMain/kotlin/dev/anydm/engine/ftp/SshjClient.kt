@@ -1,5 +1,12 @@
 package dev.anydm.engine.ftp
 
+import dev.anydm.engine.net.DirectSocketFactory
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxySocketFactory
+import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.currentProxyRoute
+import dev.anydm.engine.net.namedAddress
+import dev.anydm.engine.net.proxyFailureOf
 import dev.anydm.engine.store.HostKey
 import dev.anydm.engine.store.HostKeyStore
 import kotlinx.coroutines.Dispatchers
@@ -47,8 +54,17 @@ class SshjClient(
         client.timeout = TIMEOUT_MS
         client.addHostKeyVerifier(trustOnFirstUse())
         val host = target.host.removePrefix("[").removeSuffix("]")
+        val route = currentProxyRoute("sftp://${target.host}:${target.port}", ProxyUse.SFTP)
+        if (route is ProxyRoute.Blocked) throw RemoteException(RemoteFailure.PROXY, route.reason)
         around(host, target.port) {
-            client.connect(host, target.port)
+            if (route is ProxyRoute.Via) {
+                // The proxy looks the name up; the address keeps it, for the host key too.
+                client.socketFactory = ProxySocketFactory(route.endpoint)
+                client.connect(namedAddress(host), target.port)
+            } else {
+                client.socketFactory = DirectSocketFactory
+                client.connect(host, target.port)
+            }
             authenticate(client, login)
             sftp = client.newSFTPClient()
         }
@@ -203,6 +219,7 @@ class SshjClient(
                 e,
             )
         }
+        proxyFailureOf(e)?.let { return RemoteException(RemoteFailure.PROXY, it.message ?: "the proxy refused", e) }
         return when {
             e is UserAuthException -> {
                 RemoteException(RemoteFailure.AUTH, "the SSH login was refused", e)

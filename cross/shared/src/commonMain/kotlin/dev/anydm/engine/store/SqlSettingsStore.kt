@@ -8,6 +8,7 @@ import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.AfterQueueAction
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.store.db.AnydmDb
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -72,6 +73,7 @@ internal class SqlSettingsStore(
             slowModeLimit = read(SLOW_MODE_LIMIT, DEFAULTS.slowModeLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
             keepAwake = read(KEEP_AWAKE, DEFAULTS.keepAwake) { it.toBooleanStrictOrNull() },
             afterQueue = read(AFTER_QUEUE, DEFAULTS.afterQueue) { name -> AfterQueueAction.entries.firstOrNull { it.name == name } },
+            proxy = read(PROXY, DEFAULTS.proxy) { ProxyChoice.decode(it)?.takeIf { choice -> choice != ProxyChoice.Inherit } },
         )
     }
 
@@ -134,6 +136,7 @@ internal class SqlSettingsStore(
         put(SLOW_MODE_LIMIT, settings.slowModeLimit.takeIf { it != DEFAULTS.slowModeLimit }?.toString())
         put(KEEP_AWAKE, settings.keepAwake.takeIf { it != DEFAULTS.keepAwake }?.toString())
         put(AFTER_QUEUE, settings.afterQueue.takeIf { it != DEFAULTS.afterQueue }?.name)
+        put(PROXY, settings.proxy.takeIf { it != DEFAULTS.proxy }?.encode())
     }
 
     private fun put(
@@ -159,6 +162,7 @@ internal class SqlSettingsStore(
         const val SLOW_MODE_LIMIT = "net.slow_mode_limit"
         const val KEEP_AWAKE = "net.keep_awake"
         const val AFTER_QUEUE = "net.after_queue"
+        const val PROXY = GLOBAL_PROXY
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"
@@ -173,6 +177,9 @@ internal class SqlSettingsStore(
         const val PACING_MAX = "media.pacing_interval_max"
     }
 }
+
+/** The setting that names the global proxy choice; [SqlProxyStore] refuses to remove a proxy it names. */
+internal const val GLOBAL_PROXY = "net.proxy"
 
 /** The setting that names the default profile; [SqlProfileStore] clears it when that profile goes. */
 internal const val DEFAULT_PROFILE = "profile.default"

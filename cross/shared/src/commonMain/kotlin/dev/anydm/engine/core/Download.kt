@@ -2,6 +2,7 @@ package dev.anydm.engine.core
 
 import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.QUEUED
+import dev.anydm.engine.net.ProxyChoice
 import kotlin.time.Instant
 
 /**
@@ -56,6 +57,8 @@ data class Download(
     val selection: ItemSelection? = null,
     /** Waits without a slot until then (NET-09). */
     val startAt: Instant? = null,
+    /** Which proxy it goes through (NET-15); [ProxyChoice.Inherit] leaves it to the profile and the global setting. */
+    val proxy: ProxyChoice = ProxyChoice.Inherit,
 ) {
     init {
         require(status == PAUSED || pauseReasons.isEmpty()) { "only a PAUSED download has pause reasons: $status" }

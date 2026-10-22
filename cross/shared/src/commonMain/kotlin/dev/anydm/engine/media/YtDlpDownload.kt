@@ -37,6 +37,8 @@ internal class YtDlpDownload(
         seed: Map<String, Long> = emptyMap(),
         poll: Duration = 2.seconds,
         minGap: Duration = 10.seconds,
+        /** What to add to the program's environment (the proxy's login, NET-15). */
+        environment: Map<String, String> = emptyMap(),
     ): StepResult<Unit> {
         val tally = ProgressTally()
         seed.forEach { (file, bytes) -> tally.seed(file, bytes) }
@@ -44,7 +46,7 @@ internal class YtDlpDownload(
         var limit = io.speedShare()
         while (true) {
             val process =
-                when (val started = runner.start(ProcessSpec(command(limit)))) {
+                when (val started = runner.start(ProcessSpec(command(limit), environment = environment))) {
                     is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, "yt-dlp")
                     is ProcessOutcome.Ok -> started.value
                 }

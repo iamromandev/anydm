@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.Flow
  * and changes to one that is downloading now (TOR-02, TOR-03).
  */
 interface TorrentService {
+    /** A proxy setting changed (NET-15): the torrents in the session go through the proxy their jobs now ask for. */
+    suspend fun reroute() = Unit
+
     /** The torrent's name, files and metadata, read from a magnet link, an address or a file, as a probe would. No job is made. */
     suspend fun inspect(source: String): StepResult<TorrentInfo>
 

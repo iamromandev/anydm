@@ -1,5 +1,6 @@
 import dev.anydm.engine.core.CategoryId;
 import dev.anydm.engine.core.ProfileId;
+import dev.anydm.engine.net.ProxyChoice;
 
 -- A named bundle of download options (SET-02), read live by the jobs that name it. `format` is the Format as JSON.
 -- download.profile_id has no foreign key (SQLite can't add one to an existing column): ProfileStore.delete clears it.
@@ -10,7 +11,9 @@ CREATE TABLE profile (
     category_id INTEGER AS CategoryId,
     save_folder TEXT,
     name_template TEXT,
-    speed_limit INTEGER CHECK (speed_limit > 0)
+    speed_limit INTEGER CHECK (speed_limit > 0),
+    -- Which proxy its downloads go through (NET-15): ProxyChoice.encode.
+    proxy TEXT AS ProxyChoice NOT NULL DEFAULT 'INHERIT'
 );
 
 selectAll:
@@ -26,10 +29,10 @@ selectLastInserted:
 SELECT * FROM profile WHERE id = last_insert_rowid();
 
 insert:
-INSERT INTO profile(name, format, category_id, save_folder, name_template, speed_limit) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO profile(name, format, category_id, save_folder, name_template, speed_limit, proxy) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 update:
-UPDATE profile SET name = ?, format = ?, category_id = ?, save_folder = ?, name_template = ?, speed_limit = ? WHERE id = ?;
+UPDATE profile SET name = ?, format = ?, category_id = ?, save_folder = ?, name_template = ?, speed_limit = ?, proxy = ? WHERE id = ?;
 
 delete:
 DELETE FROM profile WHERE id = ?;
@@ -39,3 +42,6 @@ SELECT count(*) FROM download WHERE profile_id = ?;
 
 clearJobs:
 UPDATE download SET profile_id = NULL WHERE profile_id = ?;
+
+countProxy:
+SELECT count(*) FROM profile WHERE proxy = ?;

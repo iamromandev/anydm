@@ -14,6 +14,7 @@ import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.RuleEffect
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
@@ -107,6 +108,9 @@ class Queue internal constructor(
         release: Set<DownloadId> = emptySet(),
     ): CommandResult = actor.callLater { applyDiskState(low, release, it) }
 
+    /** A proxy setting changed (NET-15): seeds that waited for a usable proxy are taken up again. */
+    suspend fun retrySeeds(): CommandResult = actor.call { retrySeeds().let { CommandResult.Done(null) } }
+
     /** A runtime tool was installed: jobs paused for TOOLS wait for a slot again (BIN-01). */
     suspend fun applyToolState(): CommandResult = actor.call { applyToolState() }
 
@@ -178,6 +182,12 @@ class Queue internal constructor(
             alsoCollection = true,
         ) { actor.call { setSpeedLimit(id, bytesPerSecond) } }
     }
+
+    /** The proxy the job asks for (NET-15); a collection's items take it too. */
+    suspend fun setProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ): CommandResult = forItems(id, { setProxy(it, choice) }, alsoCollection = true) { actor.call { setProxy(id, choice) } }
 
     /**
      * Sets when the job may start (NET-09), or clears it with null: until then it takes no slot. A running job given a

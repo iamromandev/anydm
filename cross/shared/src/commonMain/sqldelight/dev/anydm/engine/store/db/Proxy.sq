@@ -1,0 +1,36 @@
+import dev.anydm.engine.core.ProxyId;
+import dev.anydm.engine.net.ProxyType;
+
+-- A saved proxy (NET-15). The password is not here: it is in the keychain under `anydm-proxy:<id>`.
+-- `bypass` is the BypassList patterns, one per line. Downloads, profiles and the global setting name a proxy as `PROXY:<id>`
+-- (ProxyChoice.encode) in their own `proxy` column, which cannot be a foreign key: ProxyStore.remove refuses a proxy in use.
+CREATE TABLE proxy (
+    id INTEGER AS ProxyId PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    type TEXT AS ProxyType NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER AS kotlin.Int NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    username TEXT,
+    bypass TEXT NOT NULL DEFAULT ''
+);
+
+selectAll:
+SELECT * FROM proxy ORDER BY name;
+
+selectById:
+SELECT * FROM proxy WHERE id = ?;
+
+selectByName:
+SELECT * FROM proxy WHERE name = ?;
+
+selectLastInserted:
+SELECT * FROM proxy WHERE id = last_insert_rowid();
+
+insert:
+INSERT INTO proxy(name, type, host, port, username, bypass) VALUES (?, ?, ?, ?, ?, ?);
+
+update:
+UPDATE proxy SET name = ?, type = ?, host = ?, port = ?, username = ?, bypass = ? WHERE id = ?;
+
+delete:
+DELETE FROM proxy WHERE id = ?;

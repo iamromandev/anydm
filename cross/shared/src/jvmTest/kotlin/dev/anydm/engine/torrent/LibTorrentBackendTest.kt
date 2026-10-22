@@ -1,13 +1,23 @@
 package dev.anydm.engine.torrent
 
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.net.FakeProxyServer
+import dev.anydm.engine.net.ProxyEndpoint
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxyRouter
+import dev.anydm.engine.net.ProxyType
+import dev.anydm.engine.net.withProxy
 import dev.anydm.engine.protocol.StepResult
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.files.Path
@@ -15,6 +25,7 @@ import org.junit.Assume.assumeTrue
 import org.libtorrent4j.TorrentBuilder
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.file.Files
 import kotlin.random.Random
@@ -110,6 +121,280 @@ class LibTorrentBackendTest {
         size: Int,
         seed: Int,
     ): ByteArray = Random(seed).nextBytes(size).also { File(seedDir, name).also { f -> f.parentFile.mkdirs() }.writeBytes(it) }
+
+    private fun routed(route: ProxyRoute) = ProxyRouter { _, _ -> route }
+
+    @Test
+    fun aLeecherReachesItsSeederOnlyThroughTheSocks5Proxy() =
+        runBlocking<Unit> {
+            val data = file("data.bin", 256 * 1024, 11)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+            FakeProxyServer(FakeProxyServer.Kind.SOCKS5, "ann" to "pw", InetSocketAddress("127.0.0.1", seedPort)).use { proxy ->
+                val route = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", proxy.port, "ann", "pw"))
+
+                val running = withProxy(routed(route), DownloadId(1)) { ok(leecher.add(addRequest(info, File(leechDir, "staging")))) }
+                finish(running).finished shouldBe true
+
+                File(leechDir, "staging/data.bin").readBytes().toList() shouldBe data.toList()
+                proxy.requests.toList().contains("127.0.0.1:$seedPort") shouldBe true
+                proxy.logins.toList().distinct() shouldBe listOf("ann:pw")
+                running.remove()
+            }
+        }
+
+    @Test
+    fun aBlockedRouteStartsNoSessionAndAHttpProxyIsRefusedForPeers() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 12)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin")))
+            seed(info)
+
+            val blocked = withProxy(routed(ProxyRoute.Blocked("no password saved")), DownloadId(1)) { leecher.add(addRequest(info)) }
+            blocked.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.PROXY
+            leecher.sessionTorrents() shouldBe emptyList()
+
+            val http = ProxyRoute.Via(ProxyEndpoint(ProxyType.HTTP, "127.0.0.1", 9))
+            withProxy(routed(http), DownloadId(1)) { leecher.add(addRequest(info)) }
+                .shouldBeInstanceOf<StepResult.Failed>()
+                .errorClass shouldBe ErrorClass.PROXY
+            leecher.sessionTorrents() shouldBe emptyList()
+        }
+
+    @Test
+    fun aFinishedTorrentStillHoldsTheSessionsProxyAgainstADirectNewcomer() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 15)
+            file("b.bin", 64 * 1024, 16)
+            val first = infoOf(torrentOf(File(seedDir, "a.bin")))
+            val second = infoOf(torrentOf(File(seedDir, "b.bin")))
+            seed(first)
+            seed(second)
+            FakeProxyServer(FakeProxyServer.Kind.SOCKS5, null, InetSocketAddress("127.0.0.1", seedPort)).use { proxy ->
+                val route = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", proxy.port))
+                val running = withProxy(routed(route), DownloadId(1)) { ok(leecher.add(addRequest(first))) }
+                finish(running).finished shouldBe true // seeding now, still in the session
+
+                val refused =
+                    withProxy(routed(ProxyRoute.Direct), DownloadId(2)) { leecher.add(addRequest(second, File(leechDir, "second"))) }
+
+                refused.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.PROXY
+                leecher.sessionRoute() shouldBe route
+                running.remove()
+            }
+        }
+
+    @Test
+    fun theSessionFollowsAProxyChangeWhenEveryTorrentAsksForTheNewOne() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 17)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var current: ProxyRoute = silent
+            val running = withProxy(ProxyRouter { _, _ -> current }, DownloadId(1)) { ok(leecher.add(addRequest(info))) }
+            leecher.sessionRoute() shouldBe silent
+
+            leecher.reroute() // nothing changed: still its own
+            leecher.sessionRoute() shouldBe silent
+            current = ProxyRoute.Direct
+            leecher.reroute()
+
+            leecher.sessionRoute() shouldBe ProxyRoute.Direct
+            running.remove()
+        }
+
+    @Test
+    fun aBlockedUserClosesTheSession() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 18)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var current: ProxyRoute = silent
+            val running = withProxy(ProxyRouter { _, _ -> current }, DownloadId(1)) { ok(leecher.add(addRequest(info))) }
+
+            current = ProxyRoute.Blocked("the keychain can't be reached")
+            leecher.reroute()
+
+            leecher.sessionRoute().shouldBeInstanceOf<ProxyRoute.Blocked>()
+            running.remove()
+        }
+
+    @Test
+    fun aRouteChangeDropsThePeersConnectedTheOldWay() =
+        runBlocking<Unit> {
+            file("big.bin", 8 * 1024 * 1024, 19)
+            val info = infoOf(torrentOf(File(seedDir, "big.bin")))
+            seed(info)
+            FakeProxyServer(FakeProxyServer.Kind.SOCKS5, null, InetSocketAddress("127.0.0.1", seedPort)).use { proxy ->
+                var current: ProxyRoute = ProxyRoute.Direct
+                val running =
+                    withProxy(
+                        ProxyRouter {
+                            _,
+                            _,
+                            ->
+                            current
+                        },
+                        DownloadId(1),
+                    ) { ok(leecher.add(addRequest(info, File(leechDir, "live")))) }
+                // Slow enough that the direct connection to the seeder is still up when the route changes.
+                running.setDownloadLimit(64 * 1024)
+                withTimeout(30.seconds) { while (running.live().peers == 0) delay(50) }
+
+                current = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", proxy.port))
+                leecher.reroute()
+
+                // The direct peer is gone; it is back only through the proxy (libtorrent waits before it connects again).
+                withTimeout(30.seconds) { while (running.live().peers > 0 && "127.0.0.1:$seedPort" !in proxy.requests) delay(50) }
+                running.remove()
+            }
+        }
+
+    @Test
+    fun anAddThatFailsAfterItWasRoutedLeavesNoUserBehind() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 20)
+            file("b.bin", 64 * 1024, 21)
+            val first = infoOf(torrentOf(File(seedDir, "a.bin")))
+            val second = infoOf(torrentOf(File(seedDir, "b.bin")))
+            seed(first)
+            seed(second)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            // More names than the torrent has files: the add fails after the torrent reached the session.
+            val tooManyNames =
+                AddTorrent(
+                    first,
+                    Path(File(leechDir, "x").toString()),
+                    emptyList(),
+                    false,
+                    first.files.map { it.path } + "extra",
+                )
+
+            runCatching { withProxy(routed(silent), DownloadId(1)) { leecher.add(tooManyNames) } }.isFailure shouldBe true
+
+            // Nobody is using the session now, so another proxy is no conflict.
+            val direct = withProxy(routed(ProxyRoute.Direct), DownloadId(2)) { leecher.add(addRequest(second, File(leechDir, "second"))) }
+            direct.shouldBeInstanceOf<StepResult.Ok<RunningTorrent>>()
+        }
+
+    @Test
+    fun anAddCancelledWhileItRoutesTheSessionLeavesNoUserBehind() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 22)
+            file("b.bin", 64 * 1024, 23)
+            val first = infoOf(torrentOf(File(seedDir, "a.bin")))
+            val second = infoOf(torrentOf(File(seedDir, "b.bin")))
+            seed(first)
+            seed(second)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            val other = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var firstWants = silent
+            var cancelTheAsker = false
+            // The first torrent is asked what it wants while the second is changing the session's proxy: that is where the
+            // second is cancelled, as a proxy change cancels a transfer that is routing.
+            val firstRouter =
+                ProxyRouter { _, _ ->
+                    if (cancelTheAsker) currentCoroutineContext().job.cancel()
+                    firstWants
+                }
+            val running = withProxy(firstRouter, DownloadId(1)) { ok(leecher.add(addRequest(first))) }
+            leecher.userCount() shouldBe 1
+            // Both now want the other proxy, so the second is let change the session to it.
+            firstWants = other
+            cancelTheAsker = true
+
+            launch { withProxy(routed(other), DownloadId(2)) { leecher.add(addRequest(second, File(leechDir, "second"))) } }.join()
+
+            leecher.userCount() shouldBe 1
+            cancelTheAsker = false
+            running.remove()
+            leecher.userCount() shouldBe 0
+        }
+
+    @Test
+    fun theSessionOpensAgainForTheOthersWhenTheUserThatClosedItLeaves() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 24)
+            file("b.bin", 64 * 1024, 25)
+            val first = infoOf(torrentOf(File(seedDir, "a.bin")))
+            val second = infoOf(torrentOf(File(seedDir, "b.bin")))
+            seed(first)
+            seed(second)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var seedWants: ProxyRoute = silent
+            var downloadWants: ProxyRoute = silent
+            val seed = withProxy(ProxyRouter { _, _ -> seedWants }, DownloadId(1)) { ok(leecher.add(addRequest(first))) }
+            val download =
+                withProxy(
+                    ProxyRouter {
+                        _,
+                        _,
+                        ->
+                        downloadWants
+                    },
+                    DownloadId(2),
+                ) { ok(leecher.add(addRequest(second, File(leechDir, "second")))) }
+
+            downloadWants = ProxyRoute.Blocked("the keychain can't be reached")
+            leecher.reroute()
+            leecher.sessionRoute().shouldBeInstanceOf<ProxyRoute.Blocked>()
+
+            // The download that needed the proxy goes; the session is the seed's to use again.
+            download.remove()
+
+            leecher.sessionRoute() shouldBe silent
+            seed.remove()
+        }
+
+    @Test
+    fun aUserWhoseSettingsCantBeReadClosesTheSessionInsteadOfFailingTheChange() =
+        runBlocking<Unit> {
+            file("a.bin", 64 * 1024, 26)
+            val info = infoOf(torrentOf(File(seedDir, "a.bin")))
+            seed(info)
+            val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+            var broken = false
+            val running =
+                withProxy(
+                    ProxyRouter {
+                        _,
+                        _,
+                        ->
+                        if (broken) error("the store is gone") else silent
+                    },
+                    DownloadId(1),
+                ) { ok(leecher.add(addRequest(info))) }
+
+            broken = true
+            leecher.reroute()
+
+            leecher.sessionRoute().shouldBeInstanceOf<ProxyRoute.Blocked>()
+            running.remove()
+        }
+
+    @Test
+    fun aTorrentThatWantsAnotherProxyWhileOneDownloadsFailsClosed() =
+        runBlocking<Unit> {
+            file("a.bin", 4 * 1024 * 1024, 13)
+            file("b.bin", 64 * 1024, 14)
+            val first = infoOf(torrentOf(File(seedDir, "a.bin")))
+            val second = infoOf(torrentOf(File(seedDir, "b.bin")))
+            seed(first)
+            seed(second)
+            FakeProxyServer(FakeProxyServer.Kind.SOCKS5, null, InetSocketAddress("127.0.0.1", seedPort)).use { proxy ->
+                val route = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", proxy.port))
+                // Held back by a proxy that never answers, so the first torrent is still downloading.
+                val silent = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", ServerSocket(0).use { it.localPort }))
+                val running = withProxy(routed(silent), DownloadId(1)) { ok(leecher.add(addRequest(first))) }
+
+                val refused = withProxy(routed(route), DownloadId(2)) { leecher.add(addRequest(second, File(leechDir, "second"))) }
+
+                refused.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.PROXY
+                running.remove()
+            }
+        }
 
     @Test
     fun aSingleFileMovesBetweenTwoSessions() =

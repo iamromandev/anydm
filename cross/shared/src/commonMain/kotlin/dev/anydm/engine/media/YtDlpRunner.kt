@@ -37,6 +37,12 @@ internal class YtDlpRunner(
         /** A playlist's flat listing (`--flat-playlist`), not one video (`--no-playlist`). */
         flat: Boolean = false,
     ): StepResult<Extracted> {
+        // The job's proxy (NET-15), from the coroutine's ProxyScope; a blocked one stops the run before anything is sent.
+        val proxy =
+            when (val got = YtDlpProxy.forUrl(url)) {
+                is StepResult.Failed -> return got
+                is StepResult.Ok -> got.value
+            }
         val command =
             buildList {
                 add(ytDlp.executable(Tool.YT_DLP.id).toString())
@@ -46,11 +52,12 @@ internal class YtDlpRunner(
                 addAll(listOf("-J", if (flat) "--flat-playlist" else "--no-playlist"))
                 if (deno != null) addAll(listOf("--js-runtimes", "deno:${deno.executable(Tool.DENO.id)}"))
                 addAll(extraArgs)
+                addAll(proxy.args)
                 add("--")
                 add(url)
             }
         val process =
-            when (val started = runner.start(ProcessSpec(command))) {
+            when (val started = runner.start(ProcessSpec(command, environment = proxy.environment))) {
                 is ProcessOutcome.Failed -> return StepResult.Failed(ErrorClass.TOOL_MISSING, Tool.YT_DLP.id)
                 is ProcessOutcome.Ok -> started.value
             }

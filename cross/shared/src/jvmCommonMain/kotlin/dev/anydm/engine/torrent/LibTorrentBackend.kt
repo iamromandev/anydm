@@ -1,6 +1,13 @@
 package dev.anydm.engine.torrent
 
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.net.ProxyEndpoint
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxyScope
+import dev.anydm.engine.net.ProxyType
+import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.checkedFor
+import dev.anydm.engine.net.currentProxyRoute
 import dev.anydm.engine.protocol.StepResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -11,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -50,6 +58,7 @@ import java.io.File
 import java.lang.ref.Reference
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -65,6 +74,14 @@ class LibTorrentBackend(
     private val config: TorrentConfig,
 ) : TorrentBackend {
     private val lock = Mutex()
+    private val proxyLock = Mutex()
+
+    @Volatile private var sessionRoute: ProxyRoute = ProxyRoute.Direct
+
+    // Everyone using the session (a magnet fetch, an added torrent, a seed), each with the route its job asks for as of now. The
+    // session has one proxy, so it changes only when all of them ask for the same.
+    private val users = ConcurrentHashMap<String, suspend () -> ProxyRoute>()
+    private val magnets = AtomicInteger()
     private var manager: SessionManager? = null
     private var closed = false
     private val moves = ConcurrentHashMap<String, CompletableDeferred<StepResult<Unit>>>()
@@ -105,6 +122,9 @@ class LibTorrentBackend(
                 is StepResult.Failed -> return loaded
                 is StepResult.Ok -> Unit
             }
+            // The session starts with the proxy its first caller's job asks for, so nothing is sent before it is set (NET-15).
+            val route = currentProxyRoute(PROXY_URL, ProxyUse.TORRENT)
+            if (route is ProxyRoute.Blocked) return StepResult.Failed(ErrorClass.PROXY, route.reason)
             val port = config.port()
             val started =
                 try {
@@ -114,13 +134,14 @@ class LibTorrentBackend(
                             // Plain reads and writes in place of libtorrent's default memory-mapped files: with the JVM's signal
                             // handlers kept (see SignalGuard), a full disk or a file cut short under a mapping would be a
                             // SIGBUS that ends the process, where a write that fails is an error the engine reports.
-                            it.start(SessionParams(settings(port)).also { params -> params.swig().set_posix_disk_io_constructor() })
+                            it.start(SessionParams(settings(port, route)).also { params -> params.swig().set_posix_disk_io_constructor() })
                         }
                     }
                 } catch (e: RuntimeException) {
                     return StepResult.Failed(null, "the torrent engine can't start: ${e.message}")
                 }
             manager = started
+            sessionRoute = route
             // libtorrent takes the JVM's signal handlers over when it first moves data; put them back as soon as it has.
             watch.launch {
                 while (isActive) {
@@ -131,7 +152,10 @@ class LibTorrentBackend(
             StepResult.Ok(started)
         }
 
-    private fun settings(port: Int): SettingsPack {
+    private fun settings(
+        port: Int,
+        route: ProxyRoute,
+    ): SettingsPack {
         val interfaces = if (config.loopbackOnly) "127.0.0.1:$port" else "0.0.0.0:$port,[::]:$port"
         val pack =
             SettingsPack()
@@ -151,8 +175,128 @@ class LibTorrentBackend(
             }
             // Two sessions of one test share an address.
             pack.setBoolean(settings_pack.bool_types.allow_multiple_connections_per_ip.swigValue(), true)
+            // A peer dropped on purpose (a proxy change) is tried again in a second, not after libtorrent's minute.
+            pack.setInteger(settings_pack.int_types.min_reconnect_time.swigValue(), 1)
         }
+        pack.setProxy(route)
         return pack
+    }
+
+    /**
+     * What the session needs to go through [route] (NET-15), or to stop: a SOCKS5 proxy for peers, trackers and host names,
+     * in anonymous mode so nothing is sent around it, and no DHT, local discovery, UPnP or NAT-PMP, which can't be proxied.
+     * Going direct again turns them back on, unless the session is loopback only.
+     */
+    private fun SettingsPack.setProxy(route: ProxyRoute) {
+        val pack = this
+        // A blocked route sets a SOCKS5 proxy nothing answers at: the session then connects to nothing, which is the point.
+        val endpoint = (route as? ProxyRoute.Via)?.endpoint ?: if (route is ProxyRoute.Blocked) DEAD_PROXY else null
+        val type =
+            when {
+                endpoint == null -> settings_pack.proxy_type_t.none
+                endpoint.username != null -> settings_pack.proxy_type_t.socks5_pw
+                else -> settings_pack.proxy_type_t.socks5
+            }
+        pack.setInteger(settings_pack.int_types.proxy_type.swigValue(), type.swigValue())
+        pack.setString(settings_pack.string_types.proxy_hostname.swigValue(), endpoint?.host.orEmpty())
+        pack.setInteger(settings_pack.int_types.proxy_port.swigValue(), endpoint?.port ?: 0)
+        pack.setString(settings_pack.string_types.proxy_username.swigValue(), endpoint?.username.orEmpty())
+        pack.setString(settings_pack.string_types.proxy_password.swigValue(), endpoint?.password.orEmpty())
+        val proxied = endpoint != null
+        for (flag in listOf(
+            settings_pack.bool_types.proxy_peer_connections,
+            settings_pack.bool_types.proxy_tracker_connections,
+            settings_pack.bool_types.proxy_hostnames,
+            settings_pack.bool_types.anonymous_mode,
+        )) {
+            pack.setBoolean(flag.swigValue(), proxied)
+        }
+        for (flag in listOf(
+            settings_pack.bool_types.enable_dht,
+            settings_pack.bool_types.enable_lsd,
+            settings_pack.bool_types.enable_upnp,
+            settings_pack.bool_types.enable_natpmp,
+        )) {
+            pack.setBoolean(flag.swigValue(), !proxied && !config.loopbackOnly)
+        }
+    }
+
+    /**
+     * Registers the caller as a user of the session under [key] and points the session at the proxy its job asks for (NET-15).
+     * A session has one proxy for all its torrents, so a caller whose proxy differs from what another user asks for is
+     * refused, and nothing connects around it. Users are asked again, so a seed follows a proxy that changed.
+     */
+    private suspend fun routeSession(
+        manager: SessionManager,
+        key: String,
+    ): StepResult.Failed? {
+        val scope = currentCoroutineContext()[ProxyScope]
+        val wanted: suspend () -> ProxyRoute = { scope?.freshRoute(PROXY_URL)?.checkedFor(ProxyUse.TORRENT) ?: ProxyRoute.Direct }
+        val route = wanted()
+        if (route is ProxyRoute.Blocked) return StepResult.Failed(ErrorClass.PROXY, route.reason)
+        return proxyLock.withLock {
+            users[key] = wanted
+            try {
+                when {
+                    route == sessionRoute -> {
+                        null
+                    }
+
+                    users.filterKeys { it != key }.values.all { asked(it) == route } -> {
+                        applyRoute(manager, route)
+                        null
+                    }
+
+                    else -> {
+                        users.remove(key)
+                        StepResult.Failed(ErrorClass.PROXY, "torrents share one proxy, and another torrent is using a different one")
+                    }
+                }
+            } catch (e: Throwable) {
+                // A cancel here (a proxy change restarts the transfer that is routing) must not leave the caller registered.
+                users.remove(key)
+                throw e
+            }
+        }
+    }
+
+    // What a user asks for; a user whose settings can't be read asks for nothing usable, not for an error to escape.
+    private suspend fun asked(user: suspend () -> ProxyRoute): ProxyRoute =
+        try {
+            user()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ProxyRoute.Blocked("the proxy settings can't be read")
+        }
+
+    /**
+     * A user is gone. If the session was closed for want of a usable proxy and the one who needed it was this user, the others
+     * are asked again so the session opens for them.
+     */
+    private suspend fun release(key: String) {
+        users.remove(key)
+        if (sessionRoute is ProxyRoute.Blocked) withContext(NonCancellable) { reroute() }
+    }
+
+    private suspend fun applyRoute(
+        manager: SessionManager,
+        route: ProxyRoute,
+    ) {
+        // libtorrent drops the peers it has when the proxy settings change (the test for it is in LibTorrentBackendTest), so
+        // they come back through the new route.
+        withContext(Dispatchers.IO) { live({}) { manager.applySettings(SettingsPack().also { it.setProxy(route) }) } }
+        sessionRoute = route
+    }
+
+    override suspend fun reroute() {
+        val session = manager ?: return
+        proxyLock.withLock {
+            val wants = users.values.map { asked(it) }
+            // One user whose proxy can't be used closes the session for all: a torrent can't be kept off it any other way.
+            val route = wants.firstOrNull { it is ProxyRoute.Blocked } ?: wants.distinct().singleOrNull() ?: return@withLock
+            if (route != sessionRoute) applyRoute(session, route)
+        }
     }
 
     /** Answers the waits for a move or a rename: libtorrent says when they are done through alerts. */
@@ -249,10 +393,12 @@ class LibTorrentBackend(
                 is StepResult.Failed -> return started
                 is StepResult.Ok -> started.value
             }
+        val key = "magnet:${magnets.incrementAndGet()}"
         val withHints = config.peerHints.fold(uri) { link, peer -> "$link&x.pe=$peer" }
         val seconds = timeout.inWholeSeconds.coerceAtLeast(1).toInt()
         val scratch = Files.createTempDirectory("anydm-magnet-").toFile()
         try {
+            routeSession(manager, key)?.let { return it }
             val bytes =
                 try {
                     runInterruptible(Dispatchers.IO) { manager.fetchMagnet(withHints, seconds, scratch) }
@@ -261,6 +407,7 @@ class LibTorrentBackend(
                 } ?: return StepResult.Failed(ErrorClass.TRANSIENT, "no metadata for the magnet link in $seconds s")
             return metadataOfBytes(bytes)
         } finally {
+            release(key)
             scratch.deleteRecursively()
         }
     }
@@ -277,6 +424,23 @@ class LibTorrentBackend(
             } catch (e: RuntimeException) {
                 return StepResult.Failed(null, "not a valid .torrent: ${e.message}")
             }
+        val key = info.infoHash().toHex()
+        var handedOver = false
+        try {
+            routeSession(manager, key)?.let { return it }
+            return addRouted(request, manager, info, key).also { handedOver = it is StepResult.Ok }
+        } finally {
+            // Leaving without a running torrent (a failure, or a cancel that came before the torrent did) makes the caller no user.
+            if (!handedOver) release(key)
+        }
+    }
+
+    private suspend fun addRouted(
+        request: AddTorrent,
+        manager: SessionManager,
+        info: org.libtorrent4j.TorrentInfo,
+        key: String,
+    ): StepResult<RunningTorrent> {
         val priorities =
             if (request.priorities.isEmpty()) {
                 null
@@ -364,6 +528,7 @@ class LibTorrentBackend(
             val found = live({ null }) { manager.find(hash) }
             if (found != null) {
                 live({}) { manager.remove(found) }
+                release(hash.toHex())
                 return
             }
             delay(ADD_WAIT_EVERY_MS)
@@ -375,6 +540,12 @@ class LibTorrentBackend(
         val infoHash: String,
         val autoManaged: Boolean,
     )
+
+    /** For tests: how many magnet fetches, torrents and seeds are registered as users of the session. */
+    internal fun userCount(): Int = users.size
+
+    /** For tests: the proxy route the session is set to. */
+    internal fun sessionRoute(): ProxyRoute = sessionRoute
 
     /** For tests: what is in the session now. */
     internal fun sessionTorrents(): List<SessionTorrent> {
@@ -467,6 +638,7 @@ class LibTorrentBackend(
 
         override suspend fun remove() {
             // The files stay: the session is only told to forget the torrent.
+            release(hash)
             withContext(Dispatchers.IO) { live({}) { if (handle.isValid) manager.remove(handle) } }
         }
 
@@ -725,3 +897,9 @@ private const val DROP_TRIES = 100
 private const val ALERT_QUEUE_SIZE = 2 * MAX_TORRENT_FILES + 10_000
 private val RENAME_TIMEOUT = 2.minutes
 private const val SIGNAL_CHECK_MS = 25L
+
+// What the router is asked about for a torrent: it has no host of its own, so no bypass applies.
+private const val PROXY_URL = "magnet:"
+
+// Where a blocked session points its proxy: nothing answers there.
+private val DEAD_PROXY = ProxyEndpoint(ProxyType.SOCKS5, "127.0.0.1", 1)
