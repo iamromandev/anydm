@@ -535,4 +535,55 @@ abstract class SettingsStoreContract : StoreTestBase() {
 
             store.settings.load().bondedNetworks shouldBe emptySet()
         }
+
+    @Test
+    fun notificationsAreOnByDefaultAndOffIsStored() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().notifications shouldBe true
+
+            settings.update { it.copy(notifications = false) }
+            settings.load().notifications shouldBe false
+            rows() shouldContain "os.notifications=false"
+
+            settings.update { it.copy(notifications = true) }
+            rows().none { it?.startsWith("os.notifications=") == true } shouldBe true
+        }
+
+    @Test
+    fun bridgeOriginsRoundTripAndNoneIsNoRow() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().bridgeOrigins shouldBe emptySet()
+
+            settings.update { it.copy(bridgeOrigins = setOf("chrome-extension://bbb", "moz-extension://aaa")) }
+            settings.load().bridgeOrigins shouldBe setOf("chrome-extension://bbb", "moz-extension://aaa")
+
+            settings.update { it.copy(bridgeOrigins = emptySet()) }
+            rows().none { it?.startsWith("os.bridge_origins=") == true } shouldBe true
+        }
+
+    @Test
+    fun anOriginThatIsNotAnExtensionOriginIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(bridgeOrigins = setOf("https://evil.example")) }
+        shouldThrow<IllegalArgumentException> { Settings(bridgeOrigins = setOf("chrome-extension://")) }
+    }
+
+    @Test
+    fun anUnreadableListOfExtensionsAnswersNoneInsteadOfAll() =
+        runTest {
+            val store = newStore()
+            driver.exec("INSERT INTO setting(name, data) VALUES ('os.bridge_origins', 'https://evil.example')")
+
+            store.settings.load().bridgeOrigins shouldBe setOf(Settings.NO_EXTENSION)
+        }
+
+    @Test
+    fun theReadableExtensionsOfAHalfReadableListStay() =
+        runTest {
+            val store = newStore()
+            driver.exec("INSERT INTO setting(name, data) VALUES ('os.bridge_origins', 'chrome-extension://mine\nnonsense')")
+
+            store.settings.load().bridgeOrigins shouldBe setOf("chrome-extension://mine")
+        }
 }

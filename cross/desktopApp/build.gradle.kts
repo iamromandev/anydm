@@ -83,6 +83,8 @@ compose.desktop {
         jvmArgs += listOf("--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // The browser bridge (OSI-01) is the JDK's own HTTP server, which the minimal runtime leaves out unless asked.
+            modules("jdk.httpserver")
             packageName = "anydm"
             packageVersion = "1.0.0"
             description = "anydm desktop client"

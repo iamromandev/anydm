@@ -1,8 +1,11 @@
 package dev.anydm.engine.ftp
 
 import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.http.CredentialStore
 import dev.anydm.engine.protocol.FinalizeResult
+import dev.anydm.engine.protocol.LinkProbe
+import dev.anydm.engine.protocol.LinkProbing
 import dev.anydm.engine.protocol.PlanContext
 import dev.anydm.engine.protocol.PlannedFile
 import dev.anydm.engine.protocol.ProbeRequest
@@ -35,9 +38,23 @@ class FtpProtocol(
     private val keys: KeyLogins,
     private val connections: () -> Int = { 4 },
     private val minBlock: Long = MIN_BLOCK,
-) : Protocol {
-    override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> {
-        val url = FtpUrl.parse(request.mirror.url) ?: return StepResult.Failed(null, "not an FTP, FTPS or SFTP address")
+) : Protocol,
+    LinkProbing {
+    override suspend fun probe(request: ProbeRequest): StepResult<ProbeResult> = probeUrl(request.mirror.url)
+
+    override suspend fun probeLink(
+        url: String,
+        context: RequestContext?,
+    ): StepResult<LinkProbe> =
+        when (val probed = probeUrl(url)) {
+            is StepResult.Failed -> probed
+
+            // A remote file is read from an offset by every client, so a size is all there is to say.
+            is StepResult.Ok -> StepResult.Ok(LinkProbe(probed.value.name, probed.value.size, rangesSupported = true))
+        }
+
+    private suspend fun probeUrl(address: String): StepResult<ProbeResult> {
+        val url = FtpUrl.parse(address) ?: return StepResult.Failed(null, "not an FTP, FTPS or SFTP address")
         val login = loginFor(url) ?: return StepResult.Failed(ErrorClass.AUTH, "no login saved for ${url.origin}")
         val target = RemoteTarget(url.scheme, url.host, url.port, url.path)
         val client = clients.create()

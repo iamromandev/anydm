@@ -14,6 +14,7 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.ProxyId
+import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.StepRunner
@@ -78,6 +79,10 @@ import dev.anydm.engine.net.WakeDetector
 import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.net.withProxy
 import dev.anydm.engine.net.withProxyForNew
+import dev.anydm.engine.os.AddLinkResult
+import dev.anydm.engine.os.EntryPoint
+import dev.anydm.engine.os.LinkIntake
+import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
@@ -87,6 +92,8 @@ import dev.anydm.engine.platform.PowerActions
 import dev.anydm.engine.platform.ProxySource
 import dev.anydm.engine.protocol.BondMode
 import dev.anydm.engine.protocol.BondedProtocol
+import dev.anydm.engine.protocol.LinkProbe
+import dev.anydm.engine.protocol.LinkProbing
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.ProxiedProtocol
 import dev.anydm.engine.protocol.StepResult
@@ -99,6 +106,7 @@ import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.ProxyRemoval
 import dev.anydm.engine.store.ProxyResult
+import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
@@ -224,6 +232,16 @@ class Engine(
 
     // The networks now in use; set on the publisher, to tell a change from a poll that found the same.
     private var bondedKeys: Set<String> = emptySet()
+
+    // The protocols that can look at a link without a job (OSI-02), and the check that says a link is already here (FIL-05).
+    private val linkProbers: Map<DownloadKind, LinkProbing> =
+        protocols.mapNotNull { (kind, protocol) -> (protocol as? LinkProbing)?.let { kind to it } }.toMap()
+    private val duplicateCheck = duplicates
+
+    init {
+        // Cookies that could only be kept in memory (OSI-03) are news: they are gone at the next start.
+        store.cookies.onNotSaved = { eventFlow.tryEmit(EngineEvent.CookiesNotSaved) }
+    }
 
     // Each protocol once, however many kinds share it.
     private val protocolList = protocols.values.distinct()
@@ -539,6 +557,14 @@ class Engine(
         val startup =
             scope.async {
                 if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
+                // Cookies stored before they were sealed in the keychain move to it (OSI-03); a failure leaves them for next time.
+                try {
+                    store.sealLegacyCookies().let { if (it > 0) log.info("engine") { "$it stored cookies moved to the keychain" } }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn("engine") { "stored cookies could not be moved to the keychain: ${e.message}" }
+                }
                 // The network and the rules are known before any job can start: the queue starts with their effect, and
                 // offline it starts with every job held (NET-13). The watch starts from the same reading as the queue.
                 val (watch, offline) =
@@ -684,6 +710,79 @@ class Engine(
     }
 
     suspend fun add(new: NewDownload): CommandResult = command { queue.add(withoutLogins(new)) }
+
+    /**
+     * Adds a link that reached the app from outside (OSI-07): a web, FTP or torrent address, a `magnet:` link, a `.torrent`
+     * file or an `anydm://add?url=` link. It goes in at once, with the default profile; a torrent with all its files. [context]
+     * is what its requests carry (the browser's headers and cookies), for a web or FTP link. An `IncomingLink` event says it
+     * was added, with the link as it is stored (no login), so a UI can offer to change the files or the folder.
+     */
+    suspend fun addLink(
+        raw: String,
+        entry: EntryPoint,
+        context: RequestContext? = null,
+    ): AddLinkResult {
+        val parsed = LinkIntake.parse(raw) ?: return AddLinkResult.NotALink
+        val result =
+            if (parsed.kind == DownloadKind.TORRENT) {
+                when (val added = addTorrent(parsed.link)) {
+                    is AddTorrentResult.Added -> AddLinkResult.Added(added.download)
+                    AddTorrentResult.BadSource -> AddLinkResult.NotALink
+                    is AddTorrentResult.Refused -> refused(added.result)
+                    is AddTorrentResult.Failed -> AddLinkResult.Failed(added.failure.message)
+                    AddTorrentResult.EmptySelection, AddTorrentResult.Unavailable -> AddLinkResult.Failed("torrents are not available")
+                }
+            } else {
+                refusedOrAdded(add(NewDownload(parsed.kind, mirrors = listOf(parsed.link), context = context)))
+            }
+        if (result is AddLinkResult.Added) {
+            tell(EngineEvent.IncomingLink(stripUserInfo(parsed.link), parsed.kind, result.download.id, entry))
+        }
+        return result
+    }
+
+    /**
+     * Reads a link without adding it (OSI-02): its name and size, and whether adding it now would be a duplicate. It goes the
+     * way a download would (the default profile's proxy, the same requests), and [context] is what the requests carry. A
+     * torrent is read the way [inspectTorrent] does.
+     */
+    suspend fun probeLink(
+        raw: String,
+        context: RequestContext? = null,
+    ): LinkProbeResult {
+        val parsed = LinkIntake.parse(raw) ?: return LinkProbeResult.NotALink
+        val probe: LinkProbe =
+            if (parsed.kind == DownloadKind.TORRENT) {
+                when (val inspected = inspectTorrent(parsed.link)) {
+                    is InspectResult.Inspected -> LinkProbe(inspected.info.name, inspected.info.total, rangesSupported = false)
+                    is InspectResult.Failed -> return LinkProbeResult.Failed(inspected.failure)
+                    InspectResult.Unavailable -> return LinkProbeResult.Unavailable
+                }
+            } else {
+                val prober = linkProbers[parsed.kind] ?: return LinkProbeResult.Unavailable
+                when (
+                    val probed =
+                        command {
+                            withProxyForNew(proxyRouter, ProxyChoice.Inherit, null) { prober.probeLink(parsed.link, context) }
+                        }
+                ) {
+                    is StepResult.Failed -> return LinkProbeResult.Failed(probed)
+                    is StepResult.Ok -> probed.value
+                }
+            }
+        val duplicate = duplicateCheck.atAdd(NewDownload(parsed.kind, mirrors = listOf(parsed.link))) != null
+        return LinkProbeResult.Probed(stripUserInfo(parsed.link), parsed.kind, probe.name, probe.size, probe.rangesSupported, duplicate)
+    }
+
+    private fun refusedOrAdded(result: CommandResult): AddLinkResult =
+        (result as? CommandResult.Done)?.download?.let { AddLinkResult.Added(it) } ?: refused(result)
+
+    private fun refused(result: CommandResult): AddLinkResult =
+        when (result) {
+            is CommandResult.Duplicate -> AddLinkResult.Duplicate(result.found)
+            is CommandResult.Invalid -> AddLinkResult.Failed(result.reason)
+            else -> AddLinkResult.Failed("the link could not be added")
+        }
 
     /** Saves an SFTP key login under [url]'s origin (FTP-04); false when it only reached memory, or the engine has no keychain. */
     suspend fun saveKeyLogin(
@@ -1208,6 +1307,25 @@ class Engine(
             if (key.isBlank() || key.any { it == '\n' || it == '\r' }) return@command CommandResult.Invalid("not a network name: $key")
             bonding.setEnabled(key, enabled)
             if (keepersStarted) withContext(publisher) { bondingChanged() }
+            CommandResult.Done(null)
+        }
+
+    /** Whether finished, failed and allowance-reached downloads are told to the user (OSI-09); the relay asks the setting for each event. */
+    suspend fun setNotifications(on: Boolean): CommandResult =
+        command {
+            store.settings.update { it.copy(notifications = on) }
+            CommandResult.Done(null)
+        }
+
+    /**
+     * The browser extensions the bridge answers (OSI-01), as `chrome-extension://<id>` or `moz-extension://<id>`; none means
+     * any extension. The bridge asks for the setting on each request.
+     */
+    suspend fun setBridgeOrigins(origins: Set<String>): CommandResult =
+        command {
+            val bad = origins.firstOrNull { !it.matches(Settings.EXTENSION_ORIGIN) }
+            if (bad != null) return@command CommandResult.Invalid("not an extension origin: $bad")
+            store.settings.update { it.copy(bridgeOrigins = origins) }
             CommandResult.Done(null)
         }
 
@@ -1914,6 +2032,14 @@ class Engine(
 
             is EngineEvent.PausedForTool -> {
                 log.info("job") { "job ${event.id.value} paused: needs ${event.tool}" }
+            }
+
+            is EngineEvent.CookiesNotSaved -> {
+                log.warn("job") { "cookies could not be saved in the keychain" }
+            }
+
+            is EngineEvent.IncomingLink -> {
+                log.info("job") { "link from ${event.entry} added as job ${event.id.value} (${event.kind})" }
             }
 
             is EngineEvent.CredentialsNotSaved -> {

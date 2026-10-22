@@ -69,6 +69,13 @@ data class Settings(
     val proxy: ProxyChoice = ProxyChoice.System,
     /** The networks (interface names) the user turned on for bonding (BND-01); none by default. One that is not present now keeps its place. */
     val bondedNetworks: Set<String> = emptySet(),
+    /** Tell the user when a download finishes or fails, or an allowance is reached (OSI-09). */
+    val notifications: Boolean = true,
+    /**
+     * The browser extensions the bridge answers (OSI-01), as `chrome-extension://<id>` or `moz-extension://<id>`. Empty
+     * means any extension origin, until the extension's ids are known (#546).
+     */
+    val bridgeOrigins: Set<String> = emptySet(),
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }
@@ -78,6 +85,7 @@ data class Settings(
         require(
             bondedNetworks.all { it.isNotBlank() && it.none { c -> c == '\n' || c == '\r' } },
         ) { "a bonded network needs a name without line breaks: $bondedNetworks" }
+        require(bridgeOrigins.all { it.matches(EXTENSION_ORIGIN) }) { "not an extension origin: $bridgeOrigins" }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(torrentPort in 0..65535) { "torrentPort must be in 0..65535: $torrentPort" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }
@@ -91,5 +99,13 @@ data class Settings(
         require(defaultSaveFolder == null || defaultSaveFolder.isAbsolute) {
             "defaultSaveFolder must be absolute: $defaultSaveFolder"
         }
+    }
+
+    companion object {
+        /** The origin that stands for "no extension": ids are 32 letters, so no browser extension has this one. */
+        const val NO_EXTENSION = "chrome-extension://-"
+
+        /** A browser extension's origin: `chrome-extension://<id>` or `moz-extension://<id>`, the id being a plain token. */
+        val EXTENSION_ORIGIN = Regex("""(chrome|moz)-extension://[A-Za-z0-9._-]+""")
     }
 }

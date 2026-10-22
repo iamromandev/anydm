@@ -14,10 +14,13 @@ class Store internal constructor(
     private val driver: SqlDriver,
     io: CoroutineDispatcher,
     log: Log = Log.None,
+    /** Where the cookies of downloads are kept (OSI-03); by default memory only, which is what a test or a machine with no keychain gets. */
+    val cookies: CookieVault = CookieVault(null),
 ) : AutoCloseable {
     private val database = createDatabase(driver)
 
-    val downloads: DownloadStore = SqlDownloadStore(database, io)
+    private val sqlDownloads = SqlDownloadStore(database, io, cookies)
+    val downloads: DownloadStore = sqlDownloads
     val settings: SettingsStore = SqlSettingsStore(database, io, log)
     val traffic: TrafficStore = SqlTrafficStore(database, io)
     val categories: CategoryStore = SqlCategoryStore(database, io)
@@ -30,6 +33,12 @@ class Store internal constructor(
     val hostKeys: HostKeyStore = SqlHostKeyStore(database, io)
     val rules: RuleStore = SqlRuleStore(database, io, log)
     val proxies: ProxyStore = SqlProxyStore(database, io)
+
+    /**
+     * Moves cookies stored before they were sealed in the keychain into it (OSI-03), once the keychain has them. Returns how
+     * many it moved; the others are tried again at the next start.
+     */
+    suspend fun sealLegacyCookies(): Int = sqlDownloads.sealLegacyCookies()
 
     /**
      * Closes the driver. With the JDBC driver on a file there is nothing held open between calls, so this changes

@@ -33,6 +33,7 @@ import dev.anydm.engine.store.db.Segment as SegmentRow
 internal class SqlDownloadStore(
     private val database: AnydmDb,
     private val io: CoroutineDispatcher,
+    private val cookies: CookieVault,
 ) : DownloadStore {
     private val downloadQueries = database.downloadQueries
     private val mirrorQueries = database.mirrorQueries
@@ -58,7 +59,33 @@ internal class SqlDownloadStore(
     override suspend fun add(
         new: NewDownload,
         queuedAt: Instant?,
-    ): Download = writing { insertDownload(new, queuedAt) }
+    ): Download {
+        val sealed = sealed(new)
+        return writing { insertDownload(sealed, queuedAt) }
+    }
+
+    // The cookies of a context go to the keychain before the row is written (OSI-03): the row holds a marker.
+    private suspend fun sealed(new: NewDownload): NewDownload {
+        val context = new.context ?: return new
+        return new.copy(context = sealed(context))
+    }
+
+    private suspend fun sealed(context: RequestContext): RequestContext {
+        // A Cookie header is a cookie: it goes where the cookies go, and a Set-Cookie header is nothing a request sends.
+        val (cookieHeaders, otherHeaders) = context.headers.partition { it.first.equals("Cookie", ignoreCase = true) }
+        val headers = otherHeaders.filterNot { it.first.equals("Set-Cookie", ignoreCase = true) }
+        if (context.cookiesLost) {
+            // Lost before this copy was made, and still lost: a marker that opens to that, so the copy can't run as a stranger.
+            return context.copy(headers = headers, cookies = CookieVault.LOST, cookiesLost = false, cookiesUnreachable = false)
+        }
+        val text =
+            (listOfNotNull(context.cookies) + cookieHeaders.map { it.second })
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("; ")
+        if (text.isEmpty()) return context.copy(headers = headers, cookies = null)
+        return context.copy(headers = headers, cookies = cookies.seal(text).marker, cookiesUnreachable = false)
+    }
 
     override suspend fun addCollection(
         parent: NewDownload,
@@ -67,9 +94,11 @@ internal class SqlDownloadStore(
         queuedAt: Instant?,
     ): Pair<Download, List<Download>> {
         require(children.size == items.size) { "every child needs its item: ${children.size} children, ${items.size} items" }
+        val sealedParent = sealed(parent)
+        val sealedChildren = children.map { sealed(it) }
         return writing {
-            val collection = insertDownload(parent, queuedAt)
-            collection to insertChildren(collection.id, children, items, queuedAt)
+            val collection = insertDownload(sealedParent, queuedAt)
+            collection to insertChildren(collection.id, sealedChildren, items, queuedAt)
         }
     }
 
@@ -80,13 +109,14 @@ internal class SqlDownloadStore(
         queuedAt: Instant?,
     ): List<Download> {
         require(children.size == items.size) { "every child needs its item: ${children.size} children, ${items.size} items" }
+        val sealedChildren = children.map { sealed(it) }
         return writing {
             if (downloadQueries.selectById(parent).executeAsOneOrNull() ==
                 null
             ) {
                 emptyList()
             } else {
-                insertChildren(parent, children, items, queuedAt)
+                insertChildren(parent, sealedChildren, items, queuedAt)
             }
         }
     }
@@ -199,24 +229,61 @@ internal class SqlDownloadStore(
     override suspend fun children(parent: DownloadId): List<Download> =
         inTransaction { downloadQueries.selectByParent(parent).executeAsList().map { it.toDownload() } }
 
-    override suspend fun remove(id: DownloadId): Boolean = writing { downloadQueries.delete(id).value > 0 }
-
-    override suspend fun context(id: DownloadId): RequestContext? =
-        inTransaction {
-            contextQueries.selectByDownload(id).executeAsOneOrNull()?.let { row ->
-                RequestContext(
-                    headers =
-                        row.headers.lines().filter { it.isNotEmpty() }.map {
-                            it.substringBefore(
-                                ": ",
-                            ) to it.substringAfter(": ", "")
-                        },
-                    referrer = row.referrer,
-                    userAgent = row.user_agent,
-                    cookies = row.cookies,
-                )
+    override suspend fun remove(id: DownloadId): Boolean {
+        // The row and every row below it go together (a collection's items); so must their cookies in the keychain.
+        val markers =
+            inTransaction {
+                val tree = mutableListOf(id)
+                var next = 0
+                while (next < tree.size) {
+                    tree += downloadQueries.selectByParent(tree[next]).executeAsList().map { it.id }
+                    next++
+                }
+                tree.mapNotNull { contextQueries.selectCookies(it).executeAsOneOrNull()?.cookies }
             }
+        val removed = writing { downloadQueries.delete(id).value > 0 }
+        if (removed) markers.forEach { cookies.forget(it) }
+        return removed
+    }
+
+    override suspend fun context(id: DownloadId): RequestContext? {
+        val row = inTransaction { contextQueries.selectByDownload(id).executeAsOneOrNull() } ?: return null
+        val opened = cookies.open(row.cookies)
+        return RequestContext(
+            headers =
+                row.headers.lines().filter { it.isNotEmpty() }.map {
+                    it.substringBefore(
+                        ": ",
+                    ) to it.substringAfter(": ", "")
+                },
+            referrer = row.referrer,
+            userAgent = row.user_agent,
+            cookies = (opened as? CookieVault.Opened.Text)?.cookies,
+            cookiesLost = opened == CookieVault.Opened.Lost,
+            cookiesUnreachable = opened == CookieVault.Opened.Unavailable,
+        )
+    }
+
+    /**
+     * Moves the cookies of rows written before they were sealed (OSI-03) to the keychain, and replaces them in the row by a
+     * marker once the keychain has them. A row whose cookies could not reach the keychain keeps them and is tried at the
+     * next start. Returns how many were moved.
+     */
+    suspend fun sealLegacyCookies(): Int {
+        val unsealed = inTransaction { contextQueries.selectUnsealed().executeAsList() }
+        var moved = 0
+        for (row in unsealed) {
+            val text = row.cookies ?: continue
+            val sealed = cookies.seal(text)
+            if (!sealed.inKeychain) {
+                cookies.forget(sealed.marker)
+                continue
+            }
+            writing { contextQueries.setCookies(sealed.marker, row.download_id) }
+            moved++
         }
+        return moved
+    }
 
     override suspend fun format(id: DownloadId): Format? =
         inTransaction {
@@ -281,12 +348,18 @@ internal class SqlDownloadStore(
     override suspend fun setContext(
         id: DownloadId,
         context: RequestContext?,
-    ): Boolean =
-        writing {
-            if (downloadQueries.selectById(id).executeAsOneOrNull() == null) return@writing false
-            if (context == null) contextQueries.delete(id) else putContext(id, context)
-            true
-        }
+    ): Boolean {
+        val old = inTransaction { contextQueries.selectCookies(id).executeAsOneOrNull()?.cookies }
+        val sealedContext = context?.let { sealed(it) }
+        val set =
+            writing {
+                if (downloadQueries.selectById(id).executeAsOneOrNull() == null) return@writing false
+                if (sealedContext == null) contextQueries.delete(id) else putContext(id, sealedContext)
+                true
+            }
+        if (set && old != sealedContext?.cookies) cookies.forget(old)
+        return set
+    }
 
     private fun putContext(
         id: DownloadId,

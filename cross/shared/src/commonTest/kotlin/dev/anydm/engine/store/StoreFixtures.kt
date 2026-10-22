@@ -59,9 +59,9 @@ abstract class StoreTestBase {
     protected lateinit var driver: SqlDriver
         private set
 
-    protected fun TestScope.newStore(): Store {
+    protected fun TestScope.newStore(cookies: CookieVault = CookieVault(null)): Store {
         driver = newDriver()
-        return Store(driver, StandardTestDispatcher(testScheduler))
+        return Store(driver, StandardTestDispatcher(testScheduler), cookies = cookies)
     }
 
     @AfterTest
