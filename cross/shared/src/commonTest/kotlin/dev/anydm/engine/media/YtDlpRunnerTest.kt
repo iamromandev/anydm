@@ -1,5 +1,12 @@
 package dev.anydm.engine.media
 
+import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.ErrorClass
+import dev.anydm.engine.net.ProxyEndpoint
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxyRouter
+import dev.anydm.engine.net.ProxyType
+import dev.anydm.engine.net.withProxy
 import dev.anydm.engine.platform.FakeProcessRunner
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.tools.ResolvedTool
@@ -43,6 +50,42 @@ class YtDlpRunnerTest {
                 .single()
                 .command
                 .takeLast(6) shouldBe listOf("--cookies", "/c/cookies.txt", "--sleep-requests", "1.0", "--", url)
+        }
+
+    @Test
+    fun insideAProxyScopeTheRouteReachesTheCommandAndTheEnvironment() =
+        runTest {
+            val login = ProxyRoute.Via(ProxyEndpoint(ProxyType.SOCKS5, "gw.example.com", 1080, "ann", "pw"))
+            val plain = ProxyRoute.Via(ProxyEndpoint(ProxyType.HTTP, "gw.example.com", 3128))
+
+            for ((route, args, environment) in listOf<Triple<ProxyRoute, List<String>, Map<String, String>>>(
+                Triple(ProxyRoute.Direct, listOf("--proxy", ""), mapOf("ALL_PROXY" to "")),
+                Triple(plain, listOf("--proxy", "http://gw.example.com:3128"), mapOf("ALL_PROXY" to "http://gw.example.com:3128")),
+                Triple(login, emptyList(), mapOf("ALL_PROXY" to "socks5h://ann:pw@gw.example.com:1080")),
+            )) {
+                val runner = fake()
+                withProxy(ProxyRouter { _, _ -> route }, DownloadId(1)) { YtDlpRunner(runner).extract(tool, null, url) }
+
+                val started = runner.started.single()
+                started.command shouldBe listOf("/tools/yt-dlp", "--ignore-config", "-J", "--no-playlist") + args + listOf("--", url)
+                started.environment.filterKeys { it == "ALL_PROXY" } shouldBe environment
+                started.command.joinToString(" ").contains("ann:pw") shouldBe false
+            }
+        }
+
+    @Test
+    fun aBlockedRouteStartsNothing() =
+        runTest {
+            val runner = fake()
+
+            val extracted =
+                withProxy(
+                    ProxyRouter { _, _ -> ProxyRoute.Blocked("no password saved") },
+                    DownloadId(1),
+                ) { YtDlpRunner(runner).extract(tool, null, url) }
+
+            extracted.shouldBeInstanceOf<StepResult.Failed>().errorClass shouldBe ErrorClass.PROXY
+            runner.started shouldBe emptyList()
         }
 
     @Test

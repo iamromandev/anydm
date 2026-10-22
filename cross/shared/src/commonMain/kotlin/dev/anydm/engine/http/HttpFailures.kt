@@ -19,10 +19,11 @@ internal fun classOf(status: Int): ErrorClass? =
         else -> null
     }
 
-/** A network failure is TRANSIENT, except those retrying can't fix: TLS, a redirect loop, a URL that isn't HTTP. */
+/** A network failure is TRANSIENT, except those retrying can't fix: TLS, a redirect loop, a URL that isn't HTTP, a proxy that refuses. */
 internal fun classOf(kind: HttpIoKind): ErrorClass? =
     when (kind) {
         HttpIoKind.TLS, HttpIoKind.TOO_MANY_REDIRECTS, HttpIoKind.BAD_URL -> null
+        HttpIoKind.PROXY -> ErrorClass.PROXY
         HttpIoKind.CONNECT, HttpIoKind.TIMEOUT, HttpIoKind.RESET, HttpIoKind.OTHER -> ErrorClass.TRANSIENT
     }
 

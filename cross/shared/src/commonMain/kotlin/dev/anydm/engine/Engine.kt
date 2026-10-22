@@ -13,6 +13,7 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.StepRunner
@@ -29,6 +30,8 @@ import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.CredentialWriter
 import dev.anydm.engine.ftp.FtpUrl
+import dev.anydm.engine.ftp.Keychain
+import dev.anydm.engine.ftp.KeychainUnavailable
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.ftp.stripUserInfo
 import dev.anydm.engine.http.originOf
@@ -52,21 +55,33 @@ import dev.anydm.engine.net.NetworkRules
 import dev.anydm.engine.net.NetworkState
 import dev.anydm.engine.net.NetworkStep
 import dev.anydm.engine.net.NetworkWatch
+import dev.anydm.engine.net.NewProxy
 import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.NoKeychain
 import dev.anydm.engine.net.OnlineProbe
+import dev.anydm.engine.net.PasswordChange
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyCommandResult
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ProxyRouter
 import dev.anydm.engine.net.QueueActivity
 import dev.anydm.engine.net.RuleKeeper
 import dev.anydm.engine.net.RuleStatus
 import dev.anydm.engine.net.ScheduleRule
 import dev.anydm.engine.net.SlowMode
+import dev.anydm.engine.net.StoreProxyRouter
 import dev.anydm.engine.net.TrafficMeter
 import dev.anydm.engine.net.WakeDetector
 import dev.anydm.engine.net.epochMinute
+import dev.anydm.engine.net.withProxy
+import dev.anydm.engine.net.withProxyForNew
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
 import dev.anydm.engine.platform.PowerActions
+import dev.anydm.engine.platform.ProxySource
 import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.ProxiedProtocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.Queue
@@ -75,6 +90,8 @@ import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.NewTorrent
+import dev.anydm.engine.store.ProxyRemoval
+import dev.anydm.engine.store.ProxyResult
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
 import dev.anydm.engine.tools.Tool
@@ -179,11 +196,26 @@ class Engine(
     monotonic: TimeSource = TimeSource.Monotonic,
     /** How much longer than its 5 s tick the machine must have been away to count as woken (NET-12). */
     wakeGap: Duration = 30.seconds,
+    /** Keeps the passwords of saved proxies (NET-15); without one, a proxy can't have a password. */
+    private val proxyKeychain: Keychain? = null,
+    /** What the operating system says about proxies, for the System choice (NET-15); the desktop passes JvmProxySource. Without one, System means no proxy. */
+    proxySource: ProxySource = ProxySource.None,
+    /**
+     * Which route each download's connections take (NET-15): by default the saved choices, with [proxyKeychain] for their
+     * passwords and [proxySource] for the System choice.
+     */
+    private val proxyRouter: ProxyRouter = StoreProxyRouter(store, proxyKeychain ?: NoKeychain, proxySource),
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
     // Each protocol once, however many kinds share it.
     private val protocolList = protocols.values.distinct()
+
+    // Each step of a protocol runs in its download's proxy scope (NET-15); a protocol shared by several kinds is wrapped once.
+    private val scoped: Map<DownloadKind, Protocol> =
+        protocolList.associateWith<Protocol, Protocol> { ProxiedProtocol(it, proxyRouter) }.let { wrapped ->
+            protocols.mapValues { wrapped.getValue(it.value) }
+        }
 
     private val stateFlow = MutableStateFlow<EngineState>(EngineState.NotStarted)
     private val snapshots = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
@@ -239,7 +271,7 @@ class Engine(
         StepRunner(
             fileSystem,
             store.downloads,
-            protocols,
+            scoped,
             defaultFolder,
             reserve = { store.settings.load().freeSpaceReserve },
             duplicates = duplicates,
@@ -301,7 +333,7 @@ class Engine(
             CoroutineScope(scope.coroutineContext + queueJob),
             store,
             runner,
-            protocols,
+            scoped,
             fileSystem,
             clock,
             retryPolicy,
@@ -651,7 +683,7 @@ class Engine(
     /** Reads a torrent without adding it (TOR-02): its name and files, for a choice of which to download. */
     suspend fun inspectTorrent(source: String): InspectResult {
         val service = torrents ?: return InspectResult.Unavailable
-        return when (val inspected = command { service.inspect(source) }) {
+        return when (val inspected = command { withProxyForNew(proxyRouter, ProxyChoice.Inherit, null) { service.inspect(source) } }) {
             is StepResult.Failed -> InspectResult.Failed(inspected)
             is StepResult.Ok -> InspectResult.Inspected(inspected.value)
         }
@@ -679,7 +711,16 @@ class Engine(
         if (files != null && known == null) {
             val service = torrents ?: return AddTorrentResult.Unavailable
             known =
-                when (val inspected = command { service.inspect(source) }) {
+                when (
+                    val inspected =
+                        command {
+                            withProxyForNew(
+                                proxyRouter,
+                                template.proxy,
+                                template.profileId,
+                            ) { service.inspect(source) }
+                        }
+                ) {
                     is StepResult.Failed -> return AddTorrentResult.Failed(inspected)
                     is StepResult.Ok -> inspected.value
                 }
@@ -761,7 +802,14 @@ class Engine(
     ): AddPlaylistResult {
         val source = playlists ?: return AddPlaylistResult.Unavailable
         val listing =
-            when (val listed = source.list(url, selection.listingEnd(LISTING_CAP + 1))) {
+            when (
+                val listed =
+                    withProxyForNew(
+                        proxyRouter,
+                        template.proxy,
+                        template.profileId,
+                    ) { source.list(url, selection.listingEnd(LISTING_CAP + 1)) }
+            ) {
                 is StepResult.Failed -> {
                     return AddPlaylistResult.Failed(listed)
                 }
@@ -893,7 +941,10 @@ class Engine(
             if (collection == null) return@withLock SyncOutcome.NotACollection
             val selection = collection.selection ?: ItemSelection()
             val listing =
-                when (val listed = source.list(collection.sourceUrl!!, selection.listingEnd(LISTING_CAP + 1))) {
+                when (
+                    val listed =
+                        withProxy(proxyRouter, collection.id) { source.list(collection.sourceUrl!!, selection.listingEnd(LISTING_CAP + 1)) }
+                ) {
                     is StepResult.Failed -> {
                         return@withLock SyncOutcome.Failed(listed)
                     }
@@ -965,11 +1016,28 @@ class Engine(
 
     suspend fun addProfile(new: NewProfile): ProfileResult = command { store.profiles.add(new) }
 
-    /** Jobs that name the profile read the new values from their next probe, placement or start. */
-    suspend fun updateProfile(profile: Profile): ProfileResult = command { store.profiles.update(profile) }
+    /** Jobs that name the profile read the new values from their next probe, placement or start; a changed proxy reaches running ones now. */
+    suspend fun updateProfile(profile: Profile): ProfileResult =
+        command {
+            val before = store.profiles.get(profile.id)
+            store.profiles.update(profile).also {
+                if (it is ProfileResult.Saved &&
+                    before?.proxy != profile.proxy
+                ) {
+                    proxyChanged()
+                }
+            }
+        }
 
     /** Removes the profile; its jobs go on with their own values and the defaults. Returns how many jobs named it. */
-    suspend fun deleteProfile(id: ProfileId): Int = command { store.profiles.delete(id) }
+    suspend fun deleteProfile(id: ProfileId): Int =
+        command {
+            val before = store.profiles.get(id)
+            store.profiles.delete(id).also {
+                // Its jobs lose the proxy it gave them.
+                if (before != null && before.proxy != ProxyChoice.Inherit) proxyChanged()
+            }
+        }
 
     /** The profile a new download takes when it names none; null for none. False if there is no such profile. */
     suspend fun setDefaultProfile(id: ProfileId?): Boolean =
@@ -1198,6 +1266,149 @@ class Engine(
         id: DownloadId,
         bytesPerSecond: Long?,
     ): CommandResult = command { queue.setSpeedLimit(id, bytesPerSecond) }
+
+    /** The saved proxies, by name, without their passwords (NET-15). */
+    suspend fun proxies(): List<ProxyEntry> = command { store.proxies.list() }
+
+    /** Saves a proxy; its [password] goes to the keychain, never to the database. A proxy with a password needs a username. */
+    suspend fun addProxy(
+        new: NewProxy,
+        password: String? = null,
+    ): ProxyCommandResult =
+        command {
+            val refusal = passwordRefusal(new.username, if (password == null) PasswordChange.Keep else PasswordChange.Set(password))
+            if (refusal != null) return@command refusal
+            when (val saved = store.proxies.add(new)) {
+                ProxyResult.NameTaken, ProxyResult.NotFound -> {
+                    ProxyCommandResult.NameTaken
+                }
+
+                is ProxyResult.Saved -> {
+                    if (password == null) {
+                        ProxyCommandResult.Saved(saved.proxy)
+                    } else {
+                        savePassword(saved.proxy, password)?.also { store.proxies.remove(saved.proxy.id) }
+                            ?: ProxyCommandResult.Saved(saved.proxy)
+                    }
+                }
+            }
+        }
+
+    /** Saves [proxy] under its id and changes its password as asked; connections that use it start again with the new settings. */
+    suspend fun updateProxy(
+        proxy: ProxyEntry,
+        password: PasswordChange = PasswordChange.Keep,
+    ): ProxyCommandResult =
+        command {
+            val refusal = passwordRefusal(proxy.username, password)
+            if (refusal != null) return@command refusal
+            val before = store.proxies.get(proxy.id) ?: return@command ProxyCommandResult.NotFound
+            when (val saved = store.proxies.update(proxy)) {
+                ProxyResult.NameTaken -> {
+                    ProxyCommandResult.NameTaken
+                }
+
+                ProxyResult.NotFound -> {
+                    ProxyCommandResult.NotFound
+                }
+
+                is ProxyResult.Saved -> {
+                    val failed =
+                        when (password) {
+                            PasswordChange.Keep -> null
+                            PasswordChange.Clear -> clearPassword(saved.proxy)
+                            is PasswordChange.Set -> savePassword(saved.proxy, password.password)
+                        }
+                    if (failed != null) {
+                        // Nothing changes when the keychain can't be reached: the row goes back as it was.
+                        store.proxies.update(before)
+                        return@command failed
+                    }
+                    // A proxy that lost its username has no use for a password; one that can't be deleted is reported.
+                    val left = if (saved.proxy.username == null) clearPassword(saved.proxy) else null
+                    proxyChanged()
+                    if (left != null) ProxyCommandResult.PasswordLeft(saved.proxy) else ProxyCommandResult.Saved(saved.proxy)
+                }
+            }
+        }
+
+    /** Removes a proxy and its password, unless a download, a profile or the global choice still names it. */
+    suspend fun removeProxy(id: ProxyId): ProxyRemoval =
+        command {
+            val proxy = store.proxies.get(id)
+            val removed = store.proxies.remove(id)
+            if (removed == ProxyRemoval.Removed && proxy != null && clearPassword(proxy) != null) ProxyRemoval.PasswordLeft else removed
+        }
+
+    /** Which proxy downloads use when neither they nor their profile say (NET-15); the system's by default. */
+    suspend fun proxyChoice(): ProxyChoice = command { store.settings.load().proxy }
+
+    /** Sets the global proxy choice; [ProxyChoice.Inherit] has nothing to inherit from. Running connections start again. */
+    suspend fun setProxyChoice(choice: ProxyChoice): CommandResult =
+        command {
+            if (choice == ProxyChoice.Inherit) return@command CommandResult.Invalid("the global proxy has no level to inherit from")
+            if (choice is ProxyChoice.Named && store.proxies.get(choice.id) == null) return@command CommandResult.Invalid("no such proxy")
+            store.settings.update { it.copy(proxy = choice) }
+            proxyChanged()
+            CommandResult.Done(null)
+        }
+
+    /** Sets the proxy the job (or a collection's items) asks for; [ProxyChoice.Inherit] leaves it to the profile. Running connections start again. */
+    suspend fun setDownloadProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ): CommandResult =
+        command {
+            if (choice is ProxyChoice.Named && store.proxies.get(choice.id) == null) return@command CommandResult.Invalid("no such proxy")
+            queue.setProxy(id, choice).also { if (it is CommandResult.Done) proxyChanged() }
+        }
+
+    // Running connections start again with their new route, and the torrents in the session, seeds included, follow theirs.
+    private suspend fun proxyChanged() {
+        queue.restartConnections()
+        torrents?.reroute()
+        queue.retrySeeds()
+    }
+
+    private fun passwordRefusal(
+        username: String?,
+        password: PasswordChange,
+    ): ProxyCommandResult? =
+        when {
+            password is PasswordChange.Set && username == null -> {
+                ProxyCommandResult.Invalid("a password needs a username")
+            }
+
+            password is PasswordChange.Set && proxyKeychain == null -> {
+                ProxyCommandResult.KeychainFailed(
+                    "there is no keychain to keep a password in",
+                )
+            }
+
+            else -> {
+                null
+            }
+        }
+
+    // Null when saved, else why not.
+    private suspend fun savePassword(
+        proxy: ProxyEntry,
+        password: String,
+    ): ProxyCommandResult? =
+        try {
+            checkNotNull(proxyKeychain).put(proxy.account, password)
+            null
+        } catch (_: KeychainUnavailable) {
+            ProxyCommandResult.KeychainFailed("the keychain can't be reached")
+        }
+
+    private suspend fun clearPassword(proxy: ProxyEntry): ProxyCommandResult? =
+        try {
+            proxyKeychain?.remove(proxy.account)
+            null
+        } catch (_: KeychainUnavailable) {
+            ProxyCommandResult.KeychainFailed("the keychain can't be reached")
+        }
 
     suspend fun relink(
         id: DownloadId,

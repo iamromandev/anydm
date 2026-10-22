@@ -25,4 +25,7 @@ enum class ErrorClass {
 
     /** The job needs a runtime tool that isn't installed yet; the failure's message is the tool's id (BIN-01). */
     TOOL_MISSING,
+
+    /** The chosen proxy can't be used (it is gone, its password is missing, or it can't carry the protocol); nothing was sent (NET-15). */
+    PROXY,
 }

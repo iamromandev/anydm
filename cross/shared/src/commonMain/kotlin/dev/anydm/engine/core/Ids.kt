@@ -44,3 +44,9 @@ value class ProfileId(
 value class ScheduleRuleId(
     val value: Long,
 )
+
+/** A saved proxy (NET-15). */
+@JvmInline
+value class ProxyId(
+    val value: Long,
+)

@@ -467,7 +467,12 @@ class SiteProtocol(
         if ((site.selection.needsFfmpeg || site.selection.audioFormat != null || site.format.hasYtDlpExtras()) && ffmpeg == null) {
             return missing(Tool.FFMPEG)
         }
-        val accessArgs = extractionArgs(mediaSettings(), withCookies = site.withCookies)
+        val proxy =
+            when (val got = YtDlpProxy.forUrl(site.url)) {
+                is StepResult.Failed -> return got
+                is StepResult.Ok -> got.value
+            }
+        val accessArgs = extractionArgs(mediaSettings(), withCookies = site.withCookies) + proxy.args
         val staging = stagingFolder(transfer, site) ?: return StepResult.Failed(null, "no save folder")
         val made = fileSystem.prepareFolder(staging)
         if (made is FileResult.Failed) return made.toStepFailed()
@@ -497,6 +502,7 @@ class SiteProtocol(
             },
             io,
             seed,
+            environment = proxy.environment,
         )
     }
 

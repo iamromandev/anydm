@@ -6,6 +6,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.DuplicateReason
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.stepRoot
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
@@ -818,6 +819,41 @@ abstract class EngineTorrentContract : StoreTestBase() {
             h.engine.start()
             runCurrent()
 
+            h.status(id) shouldBe DownloadStatus.SEEDING
+            h.engine.stop()
+        }
+
+    @Test
+    fun aSeedWhoseProxyCantBeUsedYetStaysSeeding() =
+        runTest {
+            val store = newStore()
+            val h = EngineHarness(this, store, torrents = service)
+            val id = seededBeforeRestart(store)
+            h.protocol.resumeSeedingResult = StepResult.Failed(ErrorClass.PROXY, "the keychain can't be reached")
+
+            h.engine.start()
+            runCurrent()
+
+            h.status(id) shouldBe DownloadStatus.SEEDING
+            h.engine.stop()
+        }
+
+    @Test
+    fun aProxyChangeTakesUpTheSeedsThatWaitedForAUsableProxy() =
+        runTest {
+            val store = newStore()
+            val h = EngineHarness(this, store, torrents = service)
+            val id = seededBeforeRestart(store)
+            h.protocol.resumeSeedingResult = StepResult.Failed(ErrorClass.PROXY, "the keychain can't be reached")
+            h.engine.start()
+            runCurrent()
+            h.protocol.resumeSeedingCalls shouldBe listOf(id)
+
+            h.protocol.resumeSeedingResult = StepResult.Ok(Unit)
+            h.engine.setProxyChoice(ProxyChoice.Direct)
+            runCurrent()
+
+            h.protocol.resumeSeedingCalls shouldBe listOf(id, id)
             h.status(id) shouldBe DownloadStatus.SEEDING
             h.engine.stop()
         }

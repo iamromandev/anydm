@@ -1,5 +1,13 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.net.DirectSocketFactory
+import dev.anydm.engine.net.ProxyEndpoint
+import dev.anydm.engine.net.ProxyFailure
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxySocketFactory
+import dev.anydm.engine.net.ProxyType
+import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.currentProxyRoute
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -11,6 +19,9 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
+import okhttp3.Credentials
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -20,8 +31,11 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NoRouteToHostException
 import java.net.ProtocolException
+import java.net.Proxy
 import java.net.SocketException
 import java.net.UnknownHostException
 import java.security.cert.CertificateException
@@ -37,6 +51,10 @@ import kotlin.coroutines.resumeWithException
 fun defaultClient(): OkHttpClient =
     OkHttpClient
         .Builder()
+        // Direct means direct: the JVM's own proxy selector, which the system settings can fill, is never asked (NET-15).
+        .proxy(Proxy.NO_PROXY)
+        // A plain Socket() asks that selector again when it connects.
+        .socketFactory(DirectSocketFactory)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(false)
@@ -46,19 +64,48 @@ fun defaultClient(): OkHttpClient =
 /**
  * [HttpTransport] over OkHttp. Follows up to [MAX_REDIRECTS] redirects itself, so it knows the final URL and the hop
  * count, and drops credentials when a redirect leaves the origin. Cancelling the coroutine cancels the call, also
- * while a body read is blocked.
+ * while a body read is blocked. Each hop asks for its proxy route (NET-15, see ProxyScope): direct on [client], through
+ * a proxy on a client of its own (its own connection pool, so no connection is shared between proxies), and never at
+ * all when the route is blocked.
  */
 class OkHttpTransport(
     private val client: OkHttpClient = defaultClient(),
 ) : HttpTransport {
+    // A client and a connection pool for each proxy in use, the least recently used going first, so old logins don't pile up.
+    private val proxied =
+        object : LinkedHashMap<ProxyEndpoint, OkHttpClient>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ProxyEndpoint, OkHttpClient>): Boolean {
+                val full = size > MAX_PROXIED
+                if (full) eldest.value.connectionPool.evictAll()
+                return full
+            }
+        }
+
+    private fun clientVia(endpoint: ProxyEndpoint): OkHttpClient =
+        synchronized(proxied) {
+            proxied.getOrPut(endpoint) { proxiedClient(endpoint) }
+        }
+
     override suspend fun open(request: HttpRequest): HttpResponse {
         var url = request.url.toHttpUrlOrNull() ?: throw HttpIoException(HttpIoKind.BAD_URL, hostOf(request.url))
         var method = request.method
         var headers = request.headers
         var redirects = 0
         while (true) {
-            val call = client.newCall(okRequest(url, method, headers))
+            val route = currentProxyRoute(url.toString(), ProxyUse.HTTP)
+            val chosen =
+                when (route) {
+                    ProxyRoute.Direct -> client
+                    is ProxyRoute.Via -> clientVia(route.endpoint)
+                    is ProxyRoute.Blocked -> throw HttpIoException(HttpIoKind.PROXY, hostOf(url.toString()), detail = route.reason)
+                }
+            val call = chosen.newCall(okRequest(url, method, headers))
             val response = call.await(hostOf(url.toString()))
+            // Only an HTTP proxy answers 407 itself; through SOCKS it comes from the server.
+            if (route is ProxyRoute.Via && route.endpoint.type == ProxyType.HTTP && response.code == PROXY_AUTH_REQUIRED) {
+                response.close()
+                throw HttpIoException(HttpIoKind.PROXY, hostOf(url.toString()), detail = "the proxy refused the login")
+            }
             val location = response.header("Location")?.let(url::resolve)
             if (response.code !in redirectCodes || location == null) {
                 return HttpResponse(
@@ -83,6 +130,46 @@ class OkHttpTransport(
             if (!sameOrigin(url, location)) headers = headers.filterNot { it.first.lowercase() in credentialHeaders }
             url = location
         }
+    }
+
+    private fun proxiedClient(endpoint: ProxyEndpoint): OkHttpClient {
+        val builder = client.newBuilder().connectionPool(ConnectionPool())
+        return when (endpoint.type) {
+            ProxyType.HTTP -> {
+                builder
+                    .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress.createUnresolved(endpoint.host, endpoint.port)))
+                    .proxyAuthenticator { _, response ->
+                        val username = endpoint.username
+                        val basic = response.challenges().any { it.scheme.equals("Basic", ignoreCase = true) }
+                        if (username == null || !basic || response.request.header("Proxy-Authorization") != null) {
+                            null
+                        } else {
+                            response.request
+                                .newBuilder()
+                                .header("Proxy-Authorization", Credentials.basic(username, endpoint.password ?: "", Charsets.UTF_8))
+                                .build()
+                        }
+                    }.build()
+            }
+
+            // Our own sockets do the SOCKS handshake and take the host name along; Dns hands the name through unresolved.
+            ProxyType.SOCKS5 -> {
+                builder
+                    .proxy(Proxy.NO_PROXY)
+                    .socketFactory(ProxySocketFactory(endpoint))
+                    .dns(NamePassthrough)
+                    .build()
+            }
+
+            ProxyType.HTTPS -> {
+                error("an HTTPS proxy can't carry OkHttp's traffic; ProxyRoute.checkedFor blocks it")
+            }
+        }
+    }
+
+    /** A placeholder address that keeps the host name, so a proxy's socket sends the name and nothing resolves it here. */
+    private object NamePassthrough : Dns {
+        override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
     }
 
     override fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
@@ -170,6 +257,8 @@ class OkHttpTransport(
 
     private companion object {
         const val MAX_REDIRECTS = 5
+        const val PROXY_AUTH_REQUIRED = 407
+        const val MAX_PROXIED = 16
         val redirectCodes = setOf(301, 302, 303, 307, 308)
         val credentialHeaders = setOf("authorization", "proxy-authorization", "cookie")
 
@@ -188,6 +277,9 @@ internal fun httpIoExceptionOf(
     e: IOException,
     host: String,
 ): HttpIoException {
+    val refusal = (sequenceOf(e) + e.causes()).filterIsInstance<ProxyFailure>().firstOrNull()
+    if (refusal != null) return HttpIoException(HttpIoKind.PROXY, host, e, refusal.message)
+    if (e.message == "Failed to authenticate with proxy") return HttpIoException(HttpIoKind.PROXY, host, e, "the proxy refused the login")
     val kind =
         when (e) {
             is SSLHandshakeException -> if (e.droppedMidway()) HttpIoKind.RESET else HttpIoKind.TLS

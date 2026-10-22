@@ -41,6 +41,7 @@ import dev.anydm.engine.core.targetPath
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.Bandwidth
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.RuleEffect
 import dev.anydm.engine.net.minOfNotNull
 import dev.anydm.engine.platform.FileResult
@@ -695,8 +696,9 @@ internal class QueueActor(
 
     /**
      * Every job the last run left SEEDING is taken up again by its protocol, each in a coroutine of its own so the start
-     * doesn't wait for a session. A protocol that says it can't (TRANSIENT: no library yet) leaves the job SEEDING for the
-     * next start; any other failure ends the seed as FAILED with its message (TOR-05).
+     * doesn't wait for a session. A protocol that says it can't (TRANSIENT: no library yet; PROXY: the keychain is locked
+     * or the seeds disagree on a proxy) leaves the job SEEDING for the next start or the next proxy change, which asks again
+     * ([retrySeeds]); any other failure ends the seed as FAILED with its message (TOR-05).
      */
     private suspend fun resumeSeeds() {
         for (job in downloads.list(SEEDING)) {
@@ -711,7 +713,7 @@ internal class QueueActor(
                         StepResult.Failed(null, internalError(e))
                     }
                 if (result !is StepResult.Failed) return@launch
-                if (result.errorClass == ErrorClass.TRANSIENT) {
+                if (result.errorClass == ErrorClass.TRANSIENT || result.errorClass == ErrorClass.PROXY) {
                     log.warn("queue") { "seed ${job.id.value} can't be taken up yet: ${result.message}" }
                     return@launch
                 }
@@ -725,6 +727,9 @@ internal class QueueActor(
             }
         }
     }
+
+    /** A proxy setting changed (NET-15): the seeds that couldn't be taken up for want of a usable proxy try again. A seed already up is left alone. */
+    suspend fun retrySeeds() = resumeSeeds()
 
     /** A seed is over: SEEDING to COMPLETED, or to FAILED with [failure] on its last Attempt. Any other status is Rejected. */
     suspend fun finishSeeding(
@@ -764,6 +769,16 @@ internal class QueueActor(
         val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(speedLimit = bytesPerSecond))) }
         slot.download = save(slot.download.copy(speedLimit = bytesPerSecond))
         bandwidth.setLimit(id, effectiveSpeedLimit(slot.download, slot.download.profileId?.let { profiles(it) }))
+        return CommandResult.Done(slot.download)
+    }
+
+    /** The proxy the job asks for (NET-15), kept like the priority; the engine restarts connections so a running job follows it. */
+    suspend fun setProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ): CommandResult {
+        val slot = slots[id] ?: return withJob(id) { CommandResult.Done(save(it.copy(proxy = choice))) }
+        slot.download = save(slot.download.copy(proxy = choice))
         return CommandResult.Done(slot.download)
     }
 

@@ -51,6 +51,9 @@ enum class RemoteFailure {
 
     /** SFTP: the server's key differs from the one saved for it. */
     HOST_KEY_CHANGED,
+
+    /** The proxy can't be used, or refused (NET-15). Nothing was sent to the server. */
+    PROXY,
 }
 
 /** A [RemoteClient] call failed. The message never holds a password or a passphrase. */

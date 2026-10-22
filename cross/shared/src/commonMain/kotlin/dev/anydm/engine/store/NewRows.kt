@@ -14,6 +14,7 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.net.ProxyChoice
 import kotlin.time.Instant
 
 /** One video of a collection, stored with its child (MED-16): what the listing said about it. */
@@ -59,6 +60,8 @@ data class NewDownload(
     val selection: ItemSelection? = null,
     /** Waits without a slot until then (NET-09). */
     val startAt: Instant? = null,
+    /** Which proxy it goes through (NET-15). */
+    val proxy: ProxyChoice = ProxyChoice.Inherit,
 ) {
     init { // the same rules as Download
         require(size == null || size >= 0) { "size must be >= 0: $size" }

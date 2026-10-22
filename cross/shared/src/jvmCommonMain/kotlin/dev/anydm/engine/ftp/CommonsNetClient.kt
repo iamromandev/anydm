@@ -1,5 +1,12 @@
 package dev.anydm.engine.ftp
 
+import dev.anydm.engine.net.DirectSocketFactory
+import dev.anydm.engine.net.ProxyRoute
+import dev.anydm.engine.net.ProxySocketFactory
+import dev.anydm.engine.net.ProxyUse
+import dev.anydm.engine.net.currentProxyRoute
+import dev.anydm.engine.net.namedAddress
+import dev.anydm.engine.net.proxyFailureOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -13,12 +20,16 @@ import org.apache.commons.net.ftp.FTPSClient
 import org.apache.commons.net.util.TrustManagerUtils
 import java.io.FileInputStream
 import java.io.IOException
+import java.net.Socket
 import java.security.KeyStore
 import java.security.cert.CertificateException
+import javax.net.SocketFactory
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLKeyException
 import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
 /** Which certificates an FTPS server may present: the JVM's trusted ones, or (in tests) those of one keystore. */
@@ -57,6 +68,63 @@ internal fun tlsFailureOf(e: SSLException): RemoteFailure {
 }
 
 /**
+ * An FTPS client for a connection that may go through a proxy (NET-15).
+ *
+ * It knows the name of the server it reached through a proxy, where the address it connects to has none to give: TLS
+ * needs the name for the server's certificate and for SNI.
+ *
+ * It also keeps its data connections on the socket factory it is given. `execPROT("P")` swaps that factory for one that
+ * makes plain unconnected TLS sockets, which connect on their own, around any proxy and through the JVM's proxy
+ * selector. [protectData] sends PROT P and puts the given factory back, and every data connection is then made on it and
+ * has TLS layered over it here, as Commons Net would have done.
+ */
+internal class NamedFtpsClient(
+    implicit: Boolean,
+    private val tls: SSLContext,
+) : FTPSClient(implicit) {
+    var named: String? = null
+    private var dataProtected = false
+
+    override fun _connectAction_() {
+        named?.let { _hostname_ = it }
+        super._connectAction_()
+    }
+
+    /** PROT P, and data connections on [plain] with TLS over them. */
+    fun protectData(plain: SocketFactory) {
+        execPROT("P")
+        setSocketFactory(plain)
+        dataProtected = true
+    }
+
+    override fun _openDataConnection_(
+        command: String?,
+        arg: String?,
+    ): Socket? {
+        val plain = super._openDataConnection_(command, arg)
+        if (!dataProtected || plain == null || plain is SSLSocket) return plain
+        try {
+            val host = named ?: _hostname_ ?: remoteAddress.hostAddress
+            val secured = tls.socketFactory.createSocket(plain, host, plain.port, true) as SSLSocket
+            secured.useClientMode = true
+            secured.enableSessionCreation = isCreation
+            getSuites()?.let { secured.enabledCipherSuites = it }
+            getProtocols()?.let { secured.enabledProtocols = it }
+            // The data connection is to the same server as the control one: its certificate has to be for that name.
+            if (isEndpointCheckingEnabled) {
+                secured.sslParameters =
+                    secured.sslParameters.also { it.endpointIdentificationAlgorithm = "HTTPS" }
+            }
+            secured.startHandshake()
+            return secured
+        } catch (e: IOException) {
+            runCatching { plain.close() }
+            throw e
+        }
+    }
+}
+
+/**
  * FTP, FTPS (implicit) and FTPES (explicit) over Apache Commons Net (FTP-01 to FTP-03): passive mode, binary type, UTF-8
  * names, and a range read that starts with `REST` and stops by closing the data connection. TLS checks the server's
  * certificate and its host name (the JVM's trust store, or [trust]). One client is one connection, used by one
@@ -73,13 +141,32 @@ class CommonsNetClient(
     ) {
         val client = clientFor(target.scheme)
         ftp = client
+        val route = currentProxyRoute("${target.scheme.name.lowercase()}://${target.host}:${target.port}", ProxyUse.FTP)
+        if (route is ProxyRoute.Blocked) throw RemoteException(RemoteFailure.PROXY, route.reason)
         around(client) {
             val host = target.host.removePrefix("[").removeSuffix("]")
-            client.connect(host, target.port)
+            val plain: SocketFactory
+            if (route is ProxyRoute.Via) {
+                // The proxy looks the name up. A passive reply's private address is left as the server said it: the
+                // workaround would send the data connection to the proxy's own address.
+                plain = ProxySocketFactory(route.endpoint)
+                client.setSocketFactory(plain)
+                client.setPassiveNatWorkaroundStrategy(null)
+                // The data connection's far end is checked against the control connection's address, which here has no
+                // IP to compare: the proxy is what both reach.
+                client.isRemoteVerificationEnabled = false
+                (client as? NamedFtpsClient)?.named = host
+                client.connect(namedAddress(host), target.port)
+            } else {
+                // Not the JVM's default sockets: they ask its proxy selector, and Direct has to mean direct.
+                plain = DirectSocketFactory
+                client.setSocketFactory(plain)
+                client.connect(host, target.port)
+            }
             expectGreeting(client)
-            if (client is FTPSClient) {
+            if (client is NamedFtpsClient) {
                 client.execPBSZ(0)
-                client.execPROT("P")
+                client.protectData(plain)
             }
             val (user, password) =
                 when (login) {
@@ -188,6 +275,8 @@ class CommonsNetClient(
             val failure = if (client.replyCode == SERVICE_NOT_AVAILABLE) RemoteFailure.TOO_MANY_CONNECTIONS else RemoteFailure.TRANSIENT
             throw RemoteException(failure, "FTP connection closed by the server (${client.replyCode})", e)
         } catch (e: IOException) {
+            val refusal = proxyFailureOf(e)
+            if (refusal != null) throw RemoteException(RemoteFailure.PROXY, refusal.message ?: "the proxy refused", e)
             throw RemoteException(RemoteFailure.TRANSIENT, "connection failed: ${e.message?.take(160)}", e)
         }
 
@@ -197,8 +286,8 @@ class CommonsNetClient(
         val client =
             when (scheme) {
                 FtpScheme.FTP -> FTPClient()
-                FtpScheme.FTPS -> secured(FTPSClient(true))
-                FtpScheme.FTPES -> secured(FTPSClient(false))
+                FtpScheme.FTPS -> secured(NamedFtpsClient(true, tlsContext()))
+                FtpScheme.FTPES -> secured(NamedFtpsClient(false, tlsContext()))
                 FtpScheme.SFTP -> throw IllegalArgumentException("sftp is not FTP")
             }
         client.controlEncoding = "UTF-8"
@@ -207,6 +296,9 @@ class CommonsNetClient(
         client.setDataTimeout(java.time.Duration.ofMillis(TIMEOUT_MS.toLong()))
         return client
     }
+
+    // The context for the data connections, trusting what the control connection trusts.
+    private fun tlsContext(): SSLContext = SSLContext.getInstance("TLS").also { it.init(null, arrayOf(trust.manager()), null) }
 
     // TLS: this trust store, and the certificate has to be for the host that was asked for.
     private fun secured(client: FTPSClient): FTPSClient =

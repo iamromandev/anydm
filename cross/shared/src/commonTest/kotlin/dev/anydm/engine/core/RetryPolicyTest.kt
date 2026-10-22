@@ -5,6 +5,7 @@ import dev.anydm.engine.core.ErrorClass.DISK_FULL
 import dev.anydm.engine.core.ErrorClass.FORMAT_WITHHELD
 import dev.anydm.engine.core.ErrorClass.GONE
 import dev.anydm.engine.core.ErrorClass.INTEGRITY
+import dev.anydm.engine.core.ErrorClass.PROXY
 import dev.anydm.engine.core.ErrorClass.RATE_LIMITED
 import dev.anydm.engine.core.ErrorClass.TOOL_MISSING
 import dev.anydm.engine.core.ErrorClass.TRANSIENT
@@ -61,6 +62,7 @@ class RetryPolicyTest {
                 TOOL_MISSING to FailureAction.Pause(PauseReason.TOOLS),
                 AUTH to FailureAction.Fail,
                 FORMAT_WITHHELD to FailureAction.Fail,
+                PROXY to FailureAction.Fail,
                 INTEGRITY to FailureAction.StartOver,
                 null to FailureAction.Fail,
             )

@@ -117,6 +117,8 @@ class TorrentProtocol(
 
     override suspend fun seedTraffic(): List<SeedSample> = seeds.traffic()
 
+    override suspend fun reroute() = backend.reroute()
+
     /** The latest live values of each torrent the protocol holds, by job (TOR-07): written by the polls, read by [live]. */
     private val latest = mutableMapOf<DownloadId, TorrentLive>()
     private val latestLock = Mutex()
@@ -427,11 +429,16 @@ class TorrentProtocol(
         val request = AddTorrent(info, Path(folder), priorities, sequential = false, fileNames = names, resume = row.resume)
         val handle =
             when (val added = backend.add(request)) {
-                // The session didn't come up (no library on this machine): not the seed's fault, so the job stays SEEDING
-                // for the next start.
-                is StepResult.Failed -> return StepResult.Failed(ErrorClass.TRANSIENT, added.message)
+                // The session didn't come up (no library on this machine), or the job's proxy can't be used (NET-15) right now:
+                // not the seed's fault, so the job stays SEEDING until a start or a proxy change tries again.
+                is StepResult.Failed -> {
+                    val unusable = added.errorClass == ErrorClass.PROXY
+                    return StepResult.Failed(if (unusable) ErrorClass.PROXY else ErrorClass.TRANSIENT, added.message)
+                }
 
-                is StepResult.Ok -> added.value
+                is StepResult.Ok -> {
+                    added.value
+                }
             }
         own(info.infoHash, id)
         seeds.add(id, handle, up = 0, down = 0)

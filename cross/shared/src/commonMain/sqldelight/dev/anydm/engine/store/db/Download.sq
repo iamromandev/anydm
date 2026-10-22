@@ -4,6 +4,7 @@ import dev.anydm.engine.core.DownloadId;
 import dev.anydm.engine.core.DownloadKind;
 import dev.anydm.engine.core.DownloadStatus;
 import dev.anydm.engine.core.ProfileId;
+import dev.anydm.engine.net.ProxyChoice;
 import kotlin.time.Instant;
 
 -- One job: dev.anydm.engine.core.Download. Enums are stored by name, times as epoch milliseconds.
@@ -42,6 +43,8 @@ CREATE TABLE download (
     selection_limit INTEGER AS kotlin.Int,
     -- Waits without a slot until then (NET-09).
     start_at INTEGER AS Instant,
+    -- Which proxy it goes through (NET-15): ProxyChoice.encode, INHERIT leaves it to the profile and the global setting.
+    proxy TEXT AS ProxyChoice NOT NULL DEFAULT 'INHERIT',
     CHECK (parent_id <> id)
 );
 
@@ -53,8 +56,8 @@ CREATE INDEX download_parent ON download(parent_id);
 insert:
 INSERT INTO download(kind, status, parent_id, collection, category_id, profile_id, save_folder, file_name, size,
     priority, speed_limit, attempt_count, next_attempt_at, pause_reasons, queued_at, source_validator, checksum, allow_duplicate,
-    playlist_index, source_url, selection_range, selection_limit, start_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    playlist_index, source_url, selection_range, selection_limit, start_at, proxy)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Only meaningful in the transaction that inserted (the JDBC driver opens a connection per statement outside one).
 selectLastInserted:
@@ -76,7 +79,7 @@ update:
 UPDATE download SET kind = ?, status = ?, parent_id = ?, collection = ?, category_id = ?, profile_id = ?,
     save_folder = ?, file_name = ?, size = ?, priority = ?, speed_limit = ?, attempt_count = ?, next_attempt_at = ?,
     pause_reasons = ?, queued_at = ?, source_validator = ?, checksum = ?, allow_duplicate = ?,
-    playlist_index = ?, source_url = ?, selection_range = ?, selection_limit = ?, start_at = ?
+    playlist_index = ?, source_url = ?, selection_range = ?, selection_limit = ?, start_at = ?, proxy = ?
 WHERE id = ?;
 
 delete:
@@ -84,3 +87,6 @@ DELETE FROM download WHERE id = ?;
 
 clearCategory:
 UPDATE download SET category_id = NULL WHERE category_id = ?;
+
+countProxy:
+SELECT count(*) FROM download WHERE proxy = ?;

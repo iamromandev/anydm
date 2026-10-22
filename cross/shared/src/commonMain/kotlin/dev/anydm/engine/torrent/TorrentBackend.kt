@@ -83,6 +83,12 @@ interface RunningTorrent {
 
 /** The library underneath (libtorrent4j); a fake stands in for it in most tests. */
 interface TorrentBackend {
+    /**
+     * A proxy setting changed (NET-15): the session follows the proxy its torrents now ask for, when they all ask for the
+     * same one. A seed has no transfer to restart, so this is how it changes proxy.
+     */
+    suspend fun reroute() = Unit
+
     /** The metadata of a magnet link, waited for up to [timeout]; TRANSIENT when it doesn't come. */
     suspend fun metadataOfMagnet(
         uri: String,
