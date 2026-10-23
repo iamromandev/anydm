@@ -76,6 +76,10 @@ data class Settings(
      * means any extension origin, until the extension's ids are known (#546).
      */
     val bridgeOrigins: Set<String> = emptySet(),
+    /** Look at the clipboard for a copied link and announce it (OSI-05). Off until the user asks. */
+    val clipboardWatch: Boolean = false,
+    /** Listen for the global hotkey that queues the copied link (OSI-06). Off until the user asks. */
+    val globalHotkey: Boolean = false,
 ) {
     init {
         require(concurrencyLimit >= 1) { "concurrencyLimit must be >= 1: $concurrencyLimit" }

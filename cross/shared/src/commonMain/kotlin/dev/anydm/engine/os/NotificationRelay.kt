@@ -45,7 +45,7 @@ class NotificationRelay(
                         null
                     } else {
                         "Download finished" to
-                            clean(event.outputs.firstOrNull()?.name ?: known?.name ?: A_DOWNLOAD, NAME_MAX)
+                            NotificationText.clean(event.outputs.firstOrNull()?.name ?: known?.name ?: A_DOWNLOAD, NAME_MAX)
                     }
                 }
 
@@ -54,13 +54,17 @@ class NotificationRelay(
                     if (known?.kind == DownloadKind.TOOL) {
                         null
                     } else {
-                        "Download failed" to "${clean(known?.name ?: A_DOWNLOAD, NAME_MAX)}: ${clean(event.message, REASON_MAX)}"
+                        "Download failed" to
+                            "${NotificationText.clean(
+                                known?.name ?: A_DOWNLOAD,
+                                NAME_MAX,
+                            )}: ${NotificationText.clean(event.message, REASON_MAX)}"
                     }
                 }
 
                 is EngineEvent.AllowanceReached -> {
                     val what = if (event.action == AllowanceAction.PAUSE) "downloads paused" else "downloads slowed"
-                    "Data allowance reached" to "${clean(event.network, NAME_MAX)}: $what"
+                    "Data allowance reached" to "${NotificationText.clean(event.network, NAME_MAX)}: $what"
                 }
 
                 else -> {
@@ -77,24 +81,9 @@ class NotificationRelay(
         }
     }
 
-    // One line, no control characters, no web addresses, and not long.
-    private fun clean(
-        text: String,
-        max: Int,
-    ): String {
-        val flat = text.map { if (unsafe(it)) ' ' else it }.joinToString("")
-        val noLinks = flat.replace(ADDRESS, "a link").replace(Regex("\\s+"), " ").trim()
-        return if (noLinks.length <= max) noLinks else noLinks.take(max - 1) + "…"
-    }
-
-    // Control characters, and the ones that reorder what is shown (a name read right to left).
-    private fun unsafe(c: Char): Boolean =
-        c < ' ' || c in '\u007f'..'\u009f' || c in '\u200e'..'\u200f' || c in '\u202a'..'\u202e' || c in '\u2066'..'\u2069'
-
     private companion object {
         const val A_DOWNLOAD = "A download"
         const val NAME_MAX = 60
         const val REASON_MAX = 80
-        val ADDRESS = Regex("[A-Za-z][A-Za-z0-9+.-]*://\\S+")
     }
 }

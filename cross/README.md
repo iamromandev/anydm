@@ -64,6 +64,22 @@ own, with the engine in `shared/`; no server is needed.
     the data folder, and a second launch hands its arguments over and exits. `NotificationRelay` turns finished, failed and
     allowance-reached events into notifications through a `Notifier` (`notifierForCurrentOs`); `Engine.setNotifications`
     switches them. Nothing here registers `magnet:` or `anydm://` with the OS; that is packaging.
+  - The clipboard watch and the global hotkey (#545, part 2) are off until their settings are on (`Engine.setClipboardWatch`,
+    `Engine.setGlobalHotkey`; the services follow `Engine.osSettings`, so a change needs no restart). `ClipboardWatch` looks at
+    the clipboard about every 500 ms and announces a copied link once on `links` (web, FTP, SFTP, magnet and `.torrent`
+    addresses on one line of at most 2 KB, no login in it); it adds nothing, and the link that was there when it started is not
+    news. `HotkeyService` runs a `GlobalHotkey` (Cmd+Shift+D on macOS, Ctrl+Shift+D elsewhere) and hands each press to
+    `HotkeyQueue`, which adds what the clipboard holds as an `EntryPoint.HOTKEY` link and says in one notification what came of
+    it. The capture is JNativeHook (LGPL, an unmodified 0.7 MB jar with its natives inside): a `ChordDetector` sees only
+    Shift, Ctrl/Cmd and D, so no other key is kept or logged, and the library's own logging is off. `HotkeyService.status` says
+    why it is not running: `NeedsPermission` (macOS Accessibility), `Unsupported` (Linux under Wayland or without an X server, or
+    no library for the system), `Failed`. The key is only listened to, so a browser still sees Ctrl/Cmd+Shift+D (its "bookmark all
+    tabs"). Two things the host has to do: pass `nativeGlobalHotkey(libraryFolder)` a folder of the app's own under the user's
+    data folder (the library unpacks its native file next to its own jar otherwise, which in an installed app is not writable and
+    would break a signed bundle; never the shared temp folder), and cancel the service, which stops the hook, before the app exits
+    (the library's hook thread is not a daemon, so the process would stay alive with a system-wide key hook). Ship the jar as it
+    is, not merged into an uber jar: it is LGPL. Tests use fakes: none touches the real clipboard or installs a real key hook, and only that the library loads on
+    this JDK is checked against the real system.
 - `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
   with counts, rows with hover actions and right-click menus, selection and keyboard control, a
   menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in

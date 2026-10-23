@@ -61,6 +61,8 @@ kotlin {
             // sshj needs it); 110.1 MB with java-keyring (+0.4 MB: it, secret-service, dbus-java and jkeychain with its 117 KB
             // universal macOS native). No jar carries a native for another OS that the installer could trim.
             implementation(libs.java.keyring)
+            // The global hotkey (OSI-06). Desktop only: it listens to the keyboard of the whole system.
+            implementation(libs.jnativehook)
         }
         jvmTest.dependencies {
             // libtorrent's native library for this machine's OS (BIN-05): the app carries its own (see :desktopApp), the tests
