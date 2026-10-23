@@ -23,6 +23,8 @@ libtorrent4j = "2.1.0-39"
 commons-net = "3.13.0"
 sshj = "0.41.2"
 java-keyring = "1.0.4"
+# The global hotkey (OSI-06): LGPL, used as an unmodified separate jar; its natives for macOS, Windows and Linux are inside it.
+jnativehook = "2.2.2"
 ftpserver = "1.2.1"
 mina-sshd = "2.20.0"
 # sshj needs BouncyCastle at run time only; the tests write PEM keys with it, so they need it to compile.
@@ -56,6 +58,7 @@ libtorrent4j-windows = { module = "org.libtorrent4j:libtorrent4j-windows", versi
 commons-net = { module = "commons-net:commons-net", version.ref = "commons-net" }
 sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
 java-keyring = { module = "com.github.javakeyring:java-keyring", version.ref = "java-keyring" }
+jnativehook = { module = "com.github.kwhat:jnativehook", version.ref = "jnativehook" }
 ftpserver-core = { module = "org.apache.ftpserver:ftpserver-core", version.ref = "ftpserver" }
 mina-sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "mina-sshd" }
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }

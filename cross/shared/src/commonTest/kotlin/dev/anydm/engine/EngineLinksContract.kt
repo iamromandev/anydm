@@ -6,6 +6,7 @@ import dev.anydm.engine.core.RequestContext
 import dev.anydm.engine.os.AddLinkResult
 import dev.anydm.engine.os.EntryPoint
 import dev.anydm.engine.os.LinkProbeResult
+import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.protocol.LinkProbe
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
@@ -205,5 +206,39 @@ abstract class EngineLinksContract : StoreTestBase() {
             h.store.settings
                 .load()
                 .bridgeOrigins shouldBe emptySet()
+        }
+
+    @Test
+    fun theOsSettingsStartOffAndFollowTheSetters() =
+        linksTest { h, _ ->
+            h.engine.osSettings.value shouldBe OsSettings(clipboardWatch = false, globalHotkey = false)
+
+            h.engine.setClipboardWatch(true) shouldBe CommandResult.Done(null)
+            h.engine.osSettings.value shouldBe OsSettings(clipboardWatch = true, globalHotkey = false)
+            h.engine.setGlobalHotkey(true) shouldBe CommandResult.Done(null)
+            h.engine.osSettings.value shouldBe OsSettings(clipboardWatch = true, globalHotkey = true)
+            h.engine.setClipboardWatch(false)
+            h.engine.osSettings.value shouldBe OsSettings(clipboardWatch = false, globalHotkey = true)
+
+            h.store.settings
+                .load()
+                .globalHotkey shouldBe true
+            h.store.settings
+                .load()
+                .clipboardWatch shouldBe false
+        }
+
+    @Test
+    fun whatWasSwitchedOnBeforeTheEngineStartedIsOnWhenItStarts() =
+        runTest {
+            val store = newStore()
+            store.settings.update { it.copy(clipboardWatch = true, globalHotkey = true) }
+            val h = EngineHarness(this, store)
+            h.engine.start()
+            try {
+                h.engine.osSettings.value shouldBe OsSettings(clipboardWatch = true, globalHotkey = true)
+            } finally {
+                h.engine.stop()
+            }
         }
 }

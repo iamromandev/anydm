@@ -83,6 +83,7 @@ import dev.anydm.engine.os.AddLinkResult
 import dev.anydm.engine.os.EntryPoint
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
+import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
@@ -556,7 +557,10 @@ class Engine(
         // snapshots. A failure here fails the engine.
         val startup =
             scope.async {
-                if (store.settings.load().debugLogging) log.minLevel = LogLevel.DEBUG
+                store.settings.load().let { settings ->
+                    if (settings.debugLogging) log.minLevel = LogLevel.DEBUG
+                    osSettingsLock.withLock { osSettingsOf(settings) }
+                }
                 // Cookies stored before they were sealed in the keychain move to it (OSI-03); a failure leaves them for next time.
                 try {
                     store.sealLegacyCookies().let { if (it > 0) log.info("engine") { "$it stored cookies moved to the keychain" } }
@@ -1309,6 +1313,35 @@ class Engine(
             if (keepersStarted) withContext(publisher) { bondingChanged() }
             CommandResult.Done(null)
         }
+
+    /**
+     * The clipboard watch and the global hotkey are on or off (OSI-05, OSI-06). The services collect this, so switching one
+     * on or off takes effect at once. Off until [start] has read the stored settings.
+     */
+    val osSettings: StateFlow<OsSettings> get() = osSettingsFlow
+
+    private val osSettingsFlow = MutableStateFlow(OsSettings())
+
+    // A setter's change is stored and published as one step, so two at once can't leave the flow behind the store.
+    private val osSettingsLock = Mutex()
+
+    /** Switches the clipboard watch on or off (OSI-05). */
+    suspend fun setClipboardWatch(on: Boolean): CommandResult =
+        command {
+            osSettingsLock.withLock { osSettingsOf(store.settings.update { it.copy(clipboardWatch = on) }) }
+            CommandResult.Done(null)
+        }
+
+    /** Switches the global hotkey on or off (OSI-06). */
+    suspend fun setGlobalHotkey(on: Boolean): CommandResult =
+        command {
+            osSettingsLock.withLock { osSettingsOf(store.settings.update { it.copy(globalHotkey = on) }) }
+            CommandResult.Done(null)
+        }
+
+    private fun osSettingsOf(settings: Settings) {
+        osSettingsFlow.value = OsSettings(settings.clipboardWatch, settings.globalHotkey)
+    }
 
     /** Whether finished, failed and allowance-reached downloads are told to the user (OSI-09); the relay asks the setting for each event. */
     suspend fun setNotifications(on: Boolean): CommandResult =

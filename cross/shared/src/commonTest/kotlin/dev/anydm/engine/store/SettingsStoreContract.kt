@@ -586,4 +586,33 @@ abstract class SettingsStoreContract : StoreTestBase() {
 
             store.settings.load().bridgeOrigins shouldBe setOf("chrome-extension://mine")
         }
+
+    @Test
+    fun clipboardWatchAndGlobalHotkeyAreOffByDefaultAndOnIsStored() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().clipboardWatch shouldBe false
+            settings.load().globalHotkey shouldBe false
+
+            settings.update { it.copy(clipboardWatch = true, globalHotkey = true) }
+            settings.load().clipboardWatch shouldBe true
+            settings.load().globalHotkey shouldBe true
+            rows() shouldContain "os.clipboard_watch=true"
+            rows() shouldContain "os.global_hotkey=true"
+
+            settings.update { it.copy(clipboardWatch = false, globalHotkey = false) }
+            rows().none { it?.startsWith("os.clipboard_watch=") == true || it?.startsWith("os.global_hotkey=") == true } shouldBe true
+        }
+
+    @Test
+    fun anUnreadableOsSettingIsOff() =
+        runTest {
+            val store = newStore()
+            driver.exec("INSERT INTO setting(name, data) VALUES ('os.clipboard_watch', 'maybe')")
+            driver.exec("INSERT INTO setting(name, data) VALUES ('os.global_hotkey', '1')")
+
+            val loaded = store.settings.load()
+            loaded.clipboardWatch shouldBe false
+            loaded.globalHotkey shouldBe false
+        }
 }

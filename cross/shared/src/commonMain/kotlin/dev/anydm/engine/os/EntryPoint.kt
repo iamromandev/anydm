@@ -10,4 +10,7 @@ enum class EntryPoint {
 
     /** A second launch handed it to the running app (OSI-08). */
     SECOND_LAUNCH,
+
+    /** The user pressed the global hotkey with the link on the clipboard (OSI-06). */
+    HOTKEY,
 }

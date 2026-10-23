@@ -86,6 +86,8 @@ internal class SqlSettingsStore(
                         .takeIf { it.isNotEmpty() }
                 },
             notifications = read(NOTIFICATIONS, DEFAULTS.notifications) { it.toBooleanStrictOrNull() },
+            clipboardWatch = read(CLIPBOARD_WATCH, DEFAULTS.clipboardWatch) { it.toBooleanStrictOrNull() },
+            globalHotkey = read(GLOBAL_HOTKEY, DEFAULTS.globalHotkey) { it.toBooleanStrictOrNull() },
             bridgeOrigins =
                 read(BRIDGE_ORIGINS, DEFAULTS.bridgeOrigins) { data ->
                     val valid = data.lines().filter { it.matches(Settings.EXTENSION_ORIGIN) }.toSet()
@@ -164,6 +166,8 @@ internal class SqlSettingsStore(
                 ?.joinToString("\n"),
         )
         put(NOTIFICATIONS, settings.notifications.takeIf { it != DEFAULTS.notifications }?.toString())
+        put(CLIPBOARD_WATCH, settings.clipboardWatch.takeIf { it != DEFAULTS.clipboardWatch }?.toString())
+        put(GLOBAL_HOTKEY, settings.globalHotkey.takeIf { it != DEFAULTS.globalHotkey }?.toString())
         put(
             BRIDGE_ORIGINS,
             settings.bridgeOrigins
@@ -199,6 +203,8 @@ internal class SqlSettingsStore(
         const val PROXY = GLOBAL_PROXY
         const val BONDED = "net.bonded"
         const val NOTIFICATIONS = "os.notifications"
+        const val CLIPBOARD_WATCH = "os.clipboard_watch"
+        const val GLOBAL_HOTKEY = "os.global_hotkey"
         const val BRIDGE_ORIGINS = "os.bridge_origins"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"

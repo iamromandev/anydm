@@ -84,7 +84,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             // The browser bridge (OSI-01) is the JDK's own HTTP server, which the minimal runtime leaves out unless asked.
-            modules("jdk.httpserver")
+            modules("jdk.httpserver", "java.logging")
             packageName = "anydm"
             packageVersion = "1.0.0"
             description = "anydm desktop client"
