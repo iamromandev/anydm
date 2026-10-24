@@ -56,7 +56,9 @@ own, with the engine in `shared/`; no server is needed.
     so; `StartupArgs` sends program arguments through it. `BridgeServer` (the JDK's own HTTP server, so the packaged runtime
     adds `jdk.httpserver`) is the browser extension's door: `127.0.0.1` only, on the first free port of 18400-18409
     (`GET /ping` tells which is anydm), `Host` and `Origin` checked (an extension origin, narrowed by
-    `Engine.setBridgeOrigins`), JSON only, 64 KB at most. `POST /add` reads the link with `Engine.probeLink` and answers
+    `Engine.setBridgeOrigins`; it starts as the Chrome extension of `ui/apps/extension` (#546), and Firefox, whose origin is
+    random per install, is added by the user; an empty list means any extension, and is stored as `*`), JSON only, 64 KB at
+    most. `POST /add` reads the link with `Engine.probeLink` and answers
     with a token valid 15 s; `POST /confirm` redeems it once. A browser's cookies are sealed: the keychain holds the text
     (`CookieVault`, via `openStore(keychain = ...)`) and the row holds a `sealed:` marker, so the database has no cookies; old
     rows are moved at the next start; with no keychain they live in memory for the run, and after a restart the download

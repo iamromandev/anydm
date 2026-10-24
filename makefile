@@ -101,17 +101,21 @@ ui-down: # Stop the UI dev server (kill whatever listens on UI_PORT)
 ui-restart: # Wipe node_modules + bun.lock, reinstall, then run the dev server
 	$(BUN) run --cwd $(UI) web:restart
 
-ui-build: # Build the UI for production
+ui-build: # Build the UI for production, and the browser extension
 	$(BUN) run --cwd $(UI) web:build
+	$(BUN) run --cwd $(UI) ext:build
 
-ui-check: # Typecheck the UI
+ui-check: # Typecheck the UI and the browser extension
 	$(BUN) run --cwd $(UI) web:check
+	$(BUN) run --cwd $(UI) ext:check
 
-ui-test: # Run the UI unit tests
+ui-test: # Run the UI and browser extension unit tests
 	$(BUN) run --cwd $(UI) web:test
+	$(BUN) run --cwd $(UI) ext:test
 
-ui-format: # Format the UI sources
+ui-format: # Format the UI and browser extension sources
 	$(BUN) run --cwd $(UI) web:format
+	$(BUN) run --cwd $(UI) ext:format
 
 ## cross — the Kotlin Multiplatform client (cross/, Gradle wrapper, JDK 21)
 cross-check: # Lint + test + compile the cross/ client

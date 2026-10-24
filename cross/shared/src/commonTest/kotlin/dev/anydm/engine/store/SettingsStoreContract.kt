@@ -551,16 +551,27 @@ abstract class SettingsStoreContract : StoreTestBase() {
         }
 
     @Test
-    fun bridgeOriginsRoundTripAndNoneIsNoRow() =
+    fun bridgeOriginsStartAsTheChromeExtensionAndTheDefaultIsNoRow() =
         runTest {
             val settings = newStore().settings
-            settings.load().bridgeOrigins shouldBe emptySet()
+            settings.load().bridgeOrigins shouldBe setOf(Settings.CHROME_EXTENSION_ORIGIN)
+            Settings.CHROME_EXTENSION_ORIGIN.matches(Settings.EXTENSION_ORIGIN) shouldBe true
 
             settings.update { it.copy(bridgeOrigins = setOf("chrome-extension://bbb", "moz-extension://aaa")) }
             settings.load().bridgeOrigins shouldBe setOf("chrome-extension://bbb", "moz-extension://aaa")
 
-            settings.update { it.copy(bridgeOrigins = emptySet()) }
+            settings.update { it.copy(bridgeOrigins = setOf(Settings.CHROME_EXTENSION_ORIGIN)) }
             rows().none { it?.startsWith("os.bridge_origins=") == true } shouldBe true
+        }
+
+    @Test
+    fun anyExtensionIsAnExplicitChoiceAndNotTheDefault() =
+        runTest {
+            val settings = newStore().settings
+            settings.update { it.copy(bridgeOrigins = emptySet()) }
+
+            rows().any { it?.startsWith("os.bridge_origins=") == true } shouldBe true
+            settings.load().bridgeOrigins shouldBe emptySet()
         }
 
     @Test

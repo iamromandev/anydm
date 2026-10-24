@@ -90,6 +90,7 @@ internal class SqlSettingsStore(
             globalHotkey = read(GLOBAL_HOTKEY, DEFAULTS.globalHotkey) { it.toBooleanStrictOrNull() },
             bridgeOrigins =
                 read(BRIDGE_ORIGINS, DEFAULTS.bridgeOrigins) { data ->
+                    if (data == ANY_EXTENSION) return@read emptySet()
                     val valid = data.lines().filter { it.matches(Settings.EXTENSION_ORIGIN) }.toSet()
                     // The list is a restriction: one that can't be read must not turn into "any extension". What is readable stays;
                     // with none readable the list names an origin no extension has, so nothing is answered until it is set again.
@@ -170,10 +171,10 @@ internal class SqlSettingsStore(
         put(GLOBAL_HOTKEY, settings.globalHotkey.takeIf { it != DEFAULTS.globalHotkey }?.toString())
         put(
             BRIDGE_ORIGINS,
+            // Empty is a choice (any extension), so it is a row; the default is no row.
             settings.bridgeOrigins
-                .takeIf { it.isNotEmpty() }
-                ?.sorted()
-                ?.joinToString("\n"),
+                .takeIf { it != DEFAULTS.bridgeOrigins }
+                ?.let { if (it.isEmpty()) ANY_EXTENSION else it.sorted().joinToString("\n") },
         )
     }
 
@@ -206,6 +207,7 @@ internal class SqlSettingsStore(
         const val CLIPBOARD_WATCH = "os.clipboard_watch"
         const val GLOBAL_HOTKEY = "os.global_hotkey"
         const val BRIDGE_ORIGINS = "os.bridge_origins"
+        const val ANY_EXTENSION = "*"
         const val SEED_RATIO = "torrent.seed_ratio"
         const val SEED_MINUTES = "torrent.seed_minutes"
         const val CLASH_POLICY = "files.clash_policy"

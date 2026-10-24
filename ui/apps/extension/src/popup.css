@@ -1,0 +1,80 @@
+:root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1b1f24;
+    --muted: #5b6573;
+    --accent: #2457d6;
+    --accent-fg: #ffffff;
+    --border: #cfd6df;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #16191e;
+        --fg: #e8ebf0;
+        --muted: #9aa5b4;
+        --accent: #6c97ff;
+        --accent-fg: #0b0e13;
+        --border: #3a424d;
+    }
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font:
+        14px/1.45 system-ui,
+        sans-serif;
+    min-width: 320px;
+}
+
+main {
+    padding: 16px;
+}
+
+h1 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    overflow-wrap: anywhere;
+}
+
+#lines p {
+    margin: 0 0 6px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+#origin {
+    display: block;
+    margin: 8px 0;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+#buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+}

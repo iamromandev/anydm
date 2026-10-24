@@ -1,0 +1,192 @@
+{
+    "note": "Read by the extension's tests and by cross/.../os/BridgeContractTest.kt. Change it and both must still pass.",
+    "chromeOrigin": "chrome-extension://mbbppgojipgblgakhmhbiakindokfmhn",
+    "firefoxOrigin": "moz-extension://5f1c3a52-0b7e-4c6a-9d11-2e1f6c0a7b44",
+    "ping": {
+        "app": "anydm"
+    },
+    "requests": [
+        {
+            "name": "full",
+            "input": {
+                "url": "https://files.example.com/a.zip",
+                "pageUrl": "https://example.com/downloads",
+                "userAgent": "Mozilla/5.0 (X11; Linux x86_64) Test/1.0",
+                "cookies": [
+                    {
+                        "name": "sid",
+                        "value": "abc"
+                    },
+                    {
+                        "name": "t",
+                        "value": "x=y"
+                    }
+                ]
+            },
+            "body": {
+                "url": "https://files.example.com/a.zip",
+                "cookies": "sid=abc; t=x=y",
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Test/1.0"
+                },
+                "referrer": "https://example.com/downloads",
+                "pageUrl": "https://example.com/downloads"
+            },
+            "parsed": {
+                "url": "https://files.example.com/a.zip",
+                "cookies": "sid=abc; t=x=y",
+                "headers": [
+                    [
+                        "User-Agent",
+                        "Mozilla/5.0 (X11; Linux x86_64) Test/1.0"
+                    ]
+                ],
+                "referrer": "https://example.com/downloads",
+                "pageUrl": "https://example.com/downloads"
+            }
+        },
+        {
+            "name": "no-cookies-no-page",
+            "input": {
+                "url": "https://files.example.com/b.iso",
+                "userAgent": "Test/1.0",
+                "cookies": []
+            },
+            "body": {
+                "url": "https://files.example.com/b.iso",
+                "headers": {
+                    "User-Agent": "Test/1.0"
+                }
+            },
+            "parsed": {
+                "url": "https://files.example.com/b.iso",
+                "cookies": null,
+                "headers": [
+                    [
+                        "User-Agent",
+                        "Test/1.0"
+                    ]
+                ],
+                "referrer": null,
+                "pageUrl": null
+            }
+        }
+    ],
+    "replies": [
+        {
+            "name": "probed",
+            "path": "/add",
+            "status": 200,
+            "body": {
+                "token": "0123456789abcdef0123456789abcdef",
+                "name": "a.zip",
+                "size": 5000,
+                "kind": "DIRECT",
+                "rangesSupported": true,
+                "duplicate": false
+            }
+        },
+        {
+            "name": "probed-unknown",
+            "path": "/add",
+            "status": 200,
+            "body": {
+                "token": "0123456789abcdef0123456789abcdef",
+                "name": null,
+                "size": null,
+                "kind": "DIRECT",
+                "rangesSupported": false,
+                "duplicate": true
+            }
+        },
+        {
+            "name": "add-bad-request",
+            "path": "/add",
+            "status": 400,
+            "body": {
+                "error": "bad_request",
+                "message": "a header, the referrer or the cookies hold something HTTP can't send"
+            }
+        },
+        {
+            "name": "add-not-a-link",
+            "path": "/add",
+            "status": 422,
+            "body": {
+                "error": "not_a_link",
+                "message": "not a link anydm takes"
+            }
+        },
+        {
+            "name": "add-unreadable",
+            "path": "/add",
+            "status": 502,
+            "body": {
+                "error": "unreadable",
+                "message": "the server answered 404"
+            }
+        },
+        {
+            "name": "add-unavailable",
+            "path": "/add",
+            "status": 503,
+            "body": {
+                "error": "unavailable",
+                "message": "anydm can't read this kind of link"
+            }
+        },
+        {
+            "name": "added",
+            "path": "/confirm",
+            "status": 200,
+            "body": {
+                "id": 7
+            }
+        },
+        {
+            "name": "confirm-duplicate",
+            "path": "/confirm",
+            "status": 409,
+            "body": {
+                "error": "duplicate",
+                "message": "already in the list"
+            }
+        },
+        {
+            "name": "confirm-unavailable",
+            "path": "/confirm",
+            "status": 503,
+            "body": {
+                "error": "unavailable",
+                "message": "could not be added"
+            }
+        },
+        {
+            "name": "unknown-token",
+            "path": "/confirm",
+            "status": 410,
+            "body": {
+                "error": "unknown_token",
+                "message": "the token was used, ran out, or was never given"
+            }
+        }
+    ],
+    "refusals": [
+        {
+            "name": "origin-not-allowed",
+            "status": 403,
+            "body": {
+                "error": "forbidden",
+                "message": "not an origin this bridge answers to"
+            }
+        },
+        {
+            "name": "not-json",
+            "status": 415,
+            "body": {
+                "error": "unsupported_media_type",
+                "message": "send application/json"
+            }
+        }
+    ]
+}

@@ -1,0 +1,21 @@
+{
+    "name": "extension",
+    "type": "module",
+    "private": true,
+    "version": "0.1.0",
+    "description": "AnyDM browser extension for Chrome and Firefox",
+    "scripts": {
+        "clean": "rm -rf dist && rm -rf node_modules",
+        "format": "bunx prettier . --write",
+        "format.check": "bunx prettier --check .",
+        "check": "bunx tsc --noEmit",
+        "test": "bun test",
+        "build": "bunx tsc --noEmit && bun run scripts/build.ts"
+    },
+    "devDependencies": {
+        "@types/bun": "1.4.2",
+        "prettier": "3.9.9",
+        "prettier-plugin-multiline-arrays": "4.1.11",
+        "typescript": "7.0.2"
+    }
+}

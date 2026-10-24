@@ -1,0 +1,5 @@
+# Build output, not source. Without this, `format.check` passes on a clean tree and
+# fails the moment anyone runs a build.
+dist/
+node_modules/
+server/
