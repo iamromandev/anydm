@@ -73,9 +73,10 @@ data class Settings(
     val notifications: Boolean = true,
     /**
      * The browser extensions the bridge answers (OSI-01), as `chrome-extension://<id>` or `moz-extension://<id>`. Empty
-     * means any extension origin, until the extension's ids are known (#546).
+     * means any extension origin. It starts as anydm's own Chrome extension, whose id is fixed; Firefox gives each install a
+     * random origin, so a Firefox user adds theirs.
      */
-    val bridgeOrigins: Set<String> = emptySet(),
+    val bridgeOrigins: Set<String> = setOf(CHROME_EXTENSION_ORIGIN),
     /** Look at the clipboard for a copied link and announce it (OSI-05). Off until the user asks. */
     val clipboardWatch: Boolean = false,
     /** Listen for the global hotkey that queues the copied link (OSI-06). Off until the user asks. */
@@ -108,6 +109,9 @@ data class Settings(
     companion object {
         /** The origin that stands for "no extension": ids are 32 letters, so no browser extension has this one. */
         const val NO_EXTENSION = "chrome-extension://-"
+
+        /** The origin of anydm's Chrome extension: its manifest carries the key this id comes from (`ui/apps/extension`). */
+        const val CHROME_EXTENSION_ORIGIN = "chrome-extension://mbbppgojipgblgakhmhbiakindokfmhn"
 
         /** A browser extension's origin: `chrome-extension://<id>` or `moz-extension://<id>`, the id being a plain token. */
         val EXTENSION_ORIGIN = Regex("""(chrome|moz)-extension://[A-Za-z0-9._-]+""")

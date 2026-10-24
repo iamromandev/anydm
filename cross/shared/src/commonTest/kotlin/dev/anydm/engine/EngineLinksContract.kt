@@ -10,6 +10,7 @@ import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.protocol.LinkProbe
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.StoreTestBase
 import dev.anydm.engine.torrent.FakeTorrentService
 import dev.anydm.engine.torrent.TorrentFile
@@ -205,7 +206,7 @@ abstract class EngineLinksContract : StoreTestBase() {
 
             h.store.settings
                 .load()
-                .bridgeOrigins shouldBe emptySet()
+                .bridgeOrigins shouldBe setOf(Settings.CHROME_EXTENSION_ORIGIN)
         }
 
     @Test

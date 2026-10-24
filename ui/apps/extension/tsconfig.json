@@ -1,0 +1,32 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "lib": [
+            "ESNext",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "moduleResolution": "bundler",
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "types": [
+            "bun"
+        ]
+    },
+    "include": [
+        "src",
+        "scripts",
+        "contract",
+        "./*.config.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}

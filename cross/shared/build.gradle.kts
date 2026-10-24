@@ -132,6 +132,10 @@ tasks.named<Test>("jvmTest") {
     jvmArgs(socketHandleOpens)
     inputs.dir(schemaSnapshots).withPropertyName("schemaSnapshots").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("anydm.schemaDir", schemaSnapshots.asFile.absolutePath)
+    // The browser extension's contract with the bridge (#546): both sides read this file, so a change to it reruns the tests.
+    val bridgeContract = rootProject.layout.projectDirectory.file("../ui/apps/extension/contract/bridge.json")
+    inputs.file(bridgeContract).withPropertyName("bridgeContract").withPathSensitivity(PathSensitivity.NONE)
+    systemProperty("anydm.bridgeContract", bridgeContract.asFile.absolutePath)
     // BondingLiveTest runs only with -Pbonding.live[=url]: it needs two real networks.
     providers.gradleProperty("bonding.live").orNull?.let { systemProperty("bonding.live", it) }
     // The end-to-end tests run in real time against a child engine process: e2eTest runs them, check runs e2eTest.

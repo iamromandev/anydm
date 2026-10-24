@@ -37,3 +37,7 @@ jobs:
             - run: bun run web:check
             - run: bun run web:test
             - run: bun run web:build
+            - run: bun run ext:format.check
+            - run: bun run ext:check
+            - run: bun run ext:test
+            - run: bun run ext:build
