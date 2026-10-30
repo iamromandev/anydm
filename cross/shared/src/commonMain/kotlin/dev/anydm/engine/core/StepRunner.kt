@@ -86,6 +86,8 @@ class StepRunner(
     private val checkpointEvery: Duration = DEFAULT_CHECKPOINT_EVERY,
     /** A job's profile, looked up when it is probed so an edit reaches its next probe (SET-02); null if it is gone. */
     private val profiles: suspend (ProfileId) -> Profile? = { null },
+    /** The folder a download with none of its own goes to, asked at each use so a changed setting applies at once; [defaultFolder] by default. */
+    private val fallbackFolder: suspend () -> Path = { defaultFolder },
 ) {
     init {
         require(checkpointEvery.isPositive()) { "checkpointEvery must be positive: $checkpointEvery" }
@@ -138,7 +140,16 @@ class StepRunner(
             listener.startedOver("source changed (validator \"$stored\" → \"$probed\"): starting from zero")
         }
         val plan =
-            when (val planned = placement.plan(download, mirror, probe, defaultFolder, firstPrepare = store.files(download.id).isEmpty())) {
+            when (
+                val planned =
+                    placement.plan(
+                        download,
+                        mirror,
+                        probe,
+                        fallbackFolder(),
+                        firstPrepare = store.files(download.id).isEmpty(),
+                    )
+            ) {
                 is StepResult.Failed -> return prepareFailed(download, Step.PROBE, planned)
                 is StepResult.Ok -> planned.value
             }
@@ -320,7 +331,7 @@ class StepRunner(
         download: Download,
         mirror: Mirror,
     ): StepResult<Path> {
-        val folder = download.saveFolder?.let(::Path) ?: defaultFolder
+        val folder = download.saveFolder?.let(::Path) ?: fallbackFolder()
         if (!folder.isAbsolute) return StepResult.Failed(null, "the save folder must be a full path: $folder")
         val prepared = fileSystem.prepareFolder(folder)
         if (prepared is FileResult.Failed) return prepared.toStepFailed()

@@ -5,13 +5,18 @@ import dev.anydm.engine.Engine
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.NewCategory
+import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
+import dev.anydm.engine.files.Profile
 import dev.anydm.engine.ftp.DefaultRemoteClients
 import dev.anydm.engine.ftp.FtpProtocol
 import dev.anydm.engine.ftp.JavaKeyringKeychain
@@ -33,6 +38,7 @@ import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.store.openStore
 import dev.anydm.engine.tools.DesktopPathFinder
 import dev.anydm.engine.tools.DesktopUnpacker
@@ -51,6 +57,7 @@ import dev.anydm.engine.torrent.TorrentProtocol
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.io.files.Path
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
 
 /**
@@ -89,7 +96,9 @@ private suspend fun desktopEngine(
 ): EngineSource {
     val keychain = JavaKeyringKeychain("anydm")
     val logins = KeychainCredentials(keychain)
-    val http = HttpProtocol(OkHttpTransport(), connections = { 4 }, credentials = logins)
+    // HTTP and FTP ask for the connections at each download; the source tells this when the setting changes.
+    val connections = AtomicInteger(store.settings.load().connectionsPerDownload)
+    val http = HttpProtocol(OkHttpTransport(), connections = { connections.get() }, credentials = logins)
     val runner = DesktopProcessRunner()
     val platform = Platform.current()
     val tools =
@@ -109,7 +118,7 @@ private suspend fun desktopEngine(
     val protocols =
         mutableMapOf<DownloadKind, Protocol>(
             DownloadKind.DIRECT to http,
-            DownloadKind.FTP to FtpProtocol(DefaultRemoteClients(store.hostKeys), logins, logins, connections = { 4 }),
+            DownloadKind.FTP to FtpProtocol(DefaultRemoteClients(store.hostKeys), logins, logins, connections = { connections.get() }),
             DownloadKind.SITE to SiteProtocol(http, runner, tools::resolve, store.extractions, fileSystem),
             DownloadKind.TOOL to ToolProtocol(http, runner, DesktopUnpacker(runner), fileSystem, platform.os),
         )
@@ -129,7 +138,7 @@ private suspend fun desktopEngine(
             credentials = logins,
             proxyKeychain = keychain,
         )
-    return engine.asSource(store, protocols.keys)
+    return engine.asSource(store, protocols.keys) { connections.set(it.connectionsPerDownload) }
 }
 
 // Torrents need libtorrent's native library for this machine, unpacked into the app's own data folder; without it they
@@ -251,4 +260,39 @@ internal class UnavailableSource(
         url: String,
         login: SshKeyLogin,
     ) = stopped()
+
+    override suspend fun transferSettings() = stopped()
+
+    override suspend fun applyTransferSettings(next: TransferSettings) = stopped()
+
+    override suspend fun resetTransferSettings() = stopped()
+
+    override suspend fun addCategory(new: NewCategory) = stopped()
+
+    override suspend fun updateCategory(category: Category) = stopped()
+
+    override suspend fun deleteCategory(id: CategoryId) = stopped()
+
+    override suspend fun addProfile(new: NewProfile) = stopped()
+
+    override suspend fun updateProfile(profile: Profile) = stopped()
+
+    override suspend fun deleteProfile(id: ProfileId) = stopped()
+
+    override suspend fun defaultProfile() = stopped()
+
+    override suspend fun setDefaultProfile(id: ProfileId?) = stopped()
+
+    override suspend fun history(limit: Int) = stopped()
+
+    override suspend fun clearHistory() = stopped()
+
+    override suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ) = stopped()
+
+    override suspend fun exportSettings() = stopped()
+
+    override suspend fun importSettings(text: String) = stopped()
 }

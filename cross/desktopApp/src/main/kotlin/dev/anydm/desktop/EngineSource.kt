@@ -9,18 +9,28 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
 import dev.anydm.engine.TorrentDetailResult
+import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.files.CategoryResult
+import dev.anydm.engine.files.NewCategory
+import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
+import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.store.DayTraffic
+import dev.anydm.engine.store.HistoryEntry
+import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.Store
+import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.torrent.TorrentInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -106,11 +116,51 @@ interface EngineSource {
         url: String,
         login: SshKeyLogin,
     ): Boolean
+
+    suspend fun transferSettings(): TransferSettings
+
+    suspend fun applyTransferSettings(next: TransferSettings): CommandResult
+
+    suspend fun resetTransferSettings(): CommandResult
+
+    suspend fun addCategory(new: NewCategory): CategoryResult
+
+    suspend fun updateCategory(category: Category): CategoryResult
+
+    suspend fun deleteCategory(id: CategoryId)
+
+    suspend fun addProfile(new: NewProfile): ProfileResult
+
+    suspend fun updateProfile(profile: Profile): ProfileResult
+
+    suspend fun deleteProfile(id: ProfileId)
+
+    /** The profile a download that names none takes; null for none. */
+    suspend fun defaultProfile(): ProfileId?
+
+    /** False when there is no such profile. */
+    suspend fun setDefaultProfile(id: ProfileId?): Boolean
+
+    suspend fun history(limit: Int): List<HistoryEntry>
+
+    suspend fun clearHistory()
+
+    /** Days [from]..[to] as `YYYY-MM-DD`, inclusive. */
+    suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ): List<DayTraffic>
+
+    suspend fun exportSettings(): String
+
+    suspend fun importSettings(text: String): ImportResult
 }
 
+/** [onTransfer] hears the transfer settings after each change made through the source, for the parts built outside the engine. */
 fun Engine.asSource(
     store: Store,
     kinds: Set<DownloadKind>,
+    onTransfer: (TransferSettings) -> Unit = {},
 ): EngineSource =
     object : EngineSource {
         private val engine = this@asSource
@@ -120,7 +170,7 @@ fun Engine.asSource(
         override val totalSpeed = engine.totalSpeed
         override val events = engine.events
 
-        override suspend fun categories() = store.categories.list()
+        override suspend fun categories() = engine.categories()
 
         override suspend fun start() = engine.start()
 
@@ -191,4 +241,49 @@ fun Engine.asSource(
             url: String,
             login: SshKeyLogin,
         ) = engine.saveKeyLogin(url, login)
+
+        override suspend fun transferSettings() = engine.transferSettings()
+
+        override suspend fun applyTransferSettings(next: TransferSettings) = engine.applyTransferSettings(next).also { told() }
+
+        override suspend fun resetTransferSettings() = engine.resetTransferSettings().also { told() }
+
+        override suspend fun addCategory(new: NewCategory) = engine.addCategory(new)
+
+        override suspend fun updateCategory(category: Category) = engine.updateCategory(category)
+
+        override suspend fun deleteCategory(id: CategoryId) = engine.deleteCategory(id)
+
+        override suspend fun addProfile(new: NewProfile) = engine.addProfile(new)
+
+        override suspend fun updateProfile(profile: Profile) = engine.updateProfile(profile)
+
+        override suspend fun deleteProfile(id: ProfileId) {
+            engine.deleteProfile(id)
+        }
+
+        override suspend fun defaultProfile() = store.settings.load().defaultProfileId
+
+        override suspend fun setDefaultProfile(id: ProfileId?) = engine.setDefaultProfile(id)
+
+        override suspend fun history(limit: Int) = engine.history(limit)
+
+        override suspend fun clearHistory() = engine.clearHistory()
+
+        override suspend fun trafficByDay(
+            from: String,
+            to: String,
+        ) = engine.trafficByDay(from, to)
+
+        override suspend fun exportSettings() = engine.exportSettings()
+
+        // Part of an import may be in even when it throws.
+        override suspend fun importSettings(text: String) =
+            try {
+                engine.importSettings(text)
+            } finally {
+                told()
+            }
+
+        private suspend fun told() = onTransfer(engine.transferSettings())
     }

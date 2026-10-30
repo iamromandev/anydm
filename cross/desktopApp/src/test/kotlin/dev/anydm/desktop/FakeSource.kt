@@ -21,14 +21,23 @@ import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
+import dev.anydm.engine.core.ProfileId
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.files.CategoryResult
+import dev.anydm.engine.files.NewCategory
+import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
+import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.store.DayTraffic
+import dev.anydm.engine.store.HistoryEntry
+import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
@@ -201,6 +210,127 @@ internal class FakeSource(
         call("saveKeyLogin $url")
         keyLogins += url to login
         return keySaved
+    }
+
+    // Settings (#608), kept in memory as the engine would keep them.
+    var transfer = TransferSettings()
+    var defaultProfileId: ProfileId? = null
+    var historyList: List<HistoryEntry> = emptyList()
+    var trafficList: List<DayTraffic> = emptyList()
+    var exported = "{}"
+    val imported = mutableListOf<String>()
+    var importResult: ImportResult = ImportResult.Applied
+
+    /** Answers apply and reset instead of Done, keeping what was there. */
+    var settingsResult: CommandResult? = null
+
+    override suspend fun transferSettings(): TransferSettings {
+        if (refuseAll) throw IllegalStateException("the engine has stopped")
+        return transfer
+    }
+
+    override suspend fun applyTransferSettings(next: TransferSettings): CommandResult {
+        call("applyTransferSettings")
+        settingsResult?.let { return it }
+        next.problems().firstOrNull()?.let { return CommandResult.Invalid(it) }
+        transfer = next
+        return CommandResult.Done(null)
+    }
+
+    override suspend fun resetTransferSettings(): CommandResult {
+        call("resetTransferSettings")
+        settingsResult?.let { return it }
+        transfer = TransferSettings(globalPause = transfer.globalPause, afterQueue = transfer.afterQueue)
+        return CommandResult.Done(null)
+    }
+
+    private var nextId = 1000L
+
+    private fun nameTaken(
+        name: String,
+        except: CategoryId?,
+    ) = categoryList.any { it.id != except && it.name.equals(name.trim(), ignoreCase = true) }
+
+    override suspend fun addCategory(new: NewCategory): CategoryResult {
+        call("addCategory ${new.name}")
+        if (nameTaken(new.name, null)) return CategoryResult.NameTaken
+        val category = Category(CategoryId(nextId++), new.name, new.folder, new.template, new.rules, new.priority)
+        categoryList = (categoryList + category).sortedWith(compareBy({ it.priority }, { it.id.value }))
+        return CategoryResult.Saved(category)
+    }
+
+    override suspend fun updateCategory(category: Category): CategoryResult {
+        call("updateCategory ${category.name}")
+        if (categoryList.none { it.id == category.id }) return CategoryResult.NotFound
+        if (nameTaken(category.name, category.id)) return CategoryResult.NameTaken
+        categoryList =
+            categoryList.map { if (it.id == category.id) category else it }.sortedWith(compareBy({ it.priority }, { it.id.value }))
+        return CategoryResult.Saved(category)
+    }
+
+    override suspend fun deleteCategory(id: CategoryId) {
+        call("deleteCategory ${id.value}")
+        categoryList = categoryList.filter { it.id != id }
+    }
+
+    override suspend fun addProfile(new: NewProfile): ProfileResult {
+        call("addProfile ${new.name}")
+        if (profileList.any { it.name == new.name }) return ProfileResult.NameTaken
+        val profile =
+            Profile(ProfileId(nextId++), new.name, new.format, new.categoryId, new.saveFolder, new.nameTemplate, new.speedLimit, new.proxy)
+        profileList = profileList + profile
+        return ProfileResult.Saved(profile)
+    }
+
+    override suspend fun updateProfile(profile: Profile): ProfileResult {
+        call("updateProfile ${profile.name}")
+        if (profileList.none { it.id == profile.id }) return ProfileResult.NotFound
+        if (profileList.any { it.id != profile.id && it.name == profile.name }) return ProfileResult.NameTaken
+        profileList = profileList.map { if (it.id == profile.id) profile else it }
+        return ProfileResult.Saved(profile)
+    }
+
+    override suspend fun deleteProfile(id: ProfileId) {
+        call("deleteProfile ${id.value}")
+        profileList = profileList.filter { it.id != id }
+        if (defaultProfileId == id) defaultProfileId = null
+    }
+
+    override suspend fun defaultProfile(): ProfileId? = defaultProfileId
+
+    override suspend fun setDefaultProfile(id: ProfileId?): Boolean {
+        call("setDefaultProfile ${id?.value}")
+        if (id != null && profileList.none { it.id == id }) return false
+        defaultProfileId = id
+        return true
+    }
+
+    override suspend fun history(limit: Int): List<HistoryEntry> = historyList.take(limit)
+
+    override suspend fun clearHistory() {
+        call("clearHistory")
+        historyList = emptyList()
+    }
+
+    var trafficAsked: Pair<String, String>? = null
+
+    override suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ): List<DayTraffic> {
+        trafficAsked = from to to
+        return trafficList
+    }
+
+    override suspend fun exportSettings(): String {
+        call("exportSettings")
+        return exported
+    }
+
+    override suspend fun importSettings(text: String): ImportResult {
+        call("importSettings")
+        imported += text
+        return importResult
     }
 }
 

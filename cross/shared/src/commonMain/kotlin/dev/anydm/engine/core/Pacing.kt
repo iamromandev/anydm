@@ -1,9 +1,13 @@
 package dev.anydm.engine.core
 
+import kotlinx.serialization.Serializable
+
 /** How careful requests to a site are (MED-20): not at all, or with pauses between them. */
+@Serializable
 enum class PacingPreset { OFF, BALANCED, CAREFUL, CUSTOM }
 
 /** The pauses, in seconds: between requests, and between one download and the next (a random time from [intervalMin] to [intervalMax]). */
+@Serializable
 data class PacingValues(
     val requestSleep: Double,
     val intervalMin: Double,
@@ -22,6 +26,7 @@ data class PacingValues(
 }
 
 /** A preset, or the [custom] values when the preset is CUSTOM. */
+@Serializable
 data class Pacing(
     val preset: PacingPreset = PacingPreset.OFF,
     val custom: PacingValues = PacingValues(0.0, 0.0, 0.0),

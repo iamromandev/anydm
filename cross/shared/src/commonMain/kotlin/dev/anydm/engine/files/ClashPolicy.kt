@@ -3,8 +3,10 @@ package dev.anydm.engine.files
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import kotlinx.io.files.Path
+import kotlinx.serialization.Serializable
 
 /** What happens when a finished file's name is already taken in the folder (FIL-04). */
+@Serializable
 enum class ClashPolicy {
     /** Keep both: the new file becomes `name (1).ext`, `name (2).ext` and so on. */
     RENAME,

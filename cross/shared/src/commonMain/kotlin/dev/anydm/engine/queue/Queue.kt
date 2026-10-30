@@ -255,6 +255,12 @@ class Queue internal constructor(
         return actor.call { setLimit(limit) }
     }
 
+    /** How many automatic retries in a row a job gets before it fails (FND-07); below 0 is Invalid. */
+    suspend fun setMaxRetries(retries: Int): CommandResult {
+        if (retries < 0) return CommandResult.Invalid("retries must be >= 0: $retries")
+        return actor.call { setMaxRetries(retries) }
+    }
+
     /**
      * Gives [mirrorId] of job [id] a new [url], once the job's protocol agrees it is the same content. That check runs
      * outside the queue, so other commands go on meanwhile. A running job is stopped and probes the new link.

@@ -4,13 +4,18 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.nio.file.Path
 
-/** The OS's file choosers the add dialog opens; null when the user cancels. */
+/** The OS's file choosers the add dialog and settings open; null when the user cancels. */
 interface Pickers {
     fun torrentFile(): Path?
 
     fun folder(): Path?
 
     fun keyFile(): Path?
+
+    /** Where to write a settings file, starting at [name]. */
+    fun saveSettingsFile(name: String): Path? = null
+
+    fun settingsFile(): Path? = null
 }
 
 /** AWT's native file dialog: Finder's on macOS, the system one elsewhere. */
@@ -29,6 +34,16 @@ class DesktopPickers : Pickers {
     }
 
     override fun keyFile(): Path? = choose("Choose an SSH private key")
+
+    override fun saveSettingsFile(name: String): Path? {
+        val dialog = FileDialog(null as Frame?, "Export settings", FileDialog.SAVE)
+        dialog.file = name
+        dialog.isVisible = true
+        val file = dialog.file ?: return null
+        return Path.of(dialog.directory ?: "", file)
+    }
+
+    override fun settingsFile(): Path? = choose("Import settings") { _, name -> name.endsWith(".json", ignoreCase = true) }
 
     private fun choose(
         title: String,

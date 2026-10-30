@@ -1,8 +1,10 @@
 package dev.anydm.engine.net
 
+import kotlinx.serialization.Serializable
 import kotlin.time.Instant
 
 /** What to do with the machine once the queue is finished (NET-10). */
+@Serializable
 enum class AfterQueueAction { NONE, SLEEP, SHUT_DOWN }
 
 /** The armed after-queue action, and when its 30 s countdown ends while it runs. */

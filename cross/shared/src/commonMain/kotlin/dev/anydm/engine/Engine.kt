@@ -1,6 +1,7 @@
 package dev.anydm.engine
 
 import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.Checksum
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
@@ -19,12 +20,15 @@ import dev.anydm.engine.core.RetryPolicy
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.TransitionResult
+import dev.anydm.engine.files.Category
+import dev.anydm.engine.files.CategoryResult
 import dev.anydm.engine.files.CollectionFinishHook
 import dev.anydm.engine.files.DiskGuard
 import dev.anydm.engine.files.FilesDuplicateCheck
 import dev.anydm.engine.files.FilesPlacement
 import dev.anydm.engine.files.HistoryRecorder
 import dev.anydm.engine.files.NameCleaner
+import dev.anydm.engine.files.NewCategory
 import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.files.Profile
@@ -84,6 +88,7 @@ import dev.anydm.engine.os.EntryPoint
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.os.OsSettings
+import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
@@ -102,6 +107,10 @@ import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.Queue
 import dev.anydm.engine.queue.QueueObserver
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.store.BackupRead
+import dev.anydm.engine.store.DayTraffic
+import dev.anydm.engine.store.HistoryEntry
+import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.NewTorrent
@@ -110,6 +119,12 @@ import dev.anydm.engine.store.ProxyResult
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
+import dev.anydm.engine.store.TransferSettings
+import dev.anydm.engine.store.backupOf
+import dev.anydm.engine.store.encode
+import dev.anydm.engine.store.readBackup
+import dev.anydm.engine.store.transfer
+import dev.anydm.engine.store.with
 import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolManager
 import dev.anydm.engine.torrent.MAX_FILE_PRIORITY
@@ -171,7 +186,7 @@ import kotlin.time.TimeSource
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class Engine(
     private val store: Store,
-    fileSystem: FileSystem,
+    private val fileSystem: FileSystem,
     protocols: Map<DownloadKind, Protocol>,
     private val defaultFolder: Path,
     private val clock: Clock = Clock.System,
@@ -326,6 +341,7 @@ class Engine(
             scoped,
             defaultFolder,
             reserve = { store.settings.load().freeSpaceReserve },
+            fallbackFolder = { saveFolder() },
             duplicates = duplicates,
             finish =
                 toolAware(
@@ -1002,7 +1018,7 @@ class Engine(
                     .firstOrNull { it.id == categoryId }
                     ?.folder
                     ?.let(::Path)
-                ?: defaultFolder
+                ?: saveFolder()
         val folder = freshFolder(base, nameCleaner.clean(listing.title))
         val parent =
             template.copy(
@@ -1337,6 +1353,12 @@ class Engine(
     // A setter's change is stored and published as one step, so two at once can't leave the flow behind the store.
     private val osSettingsLock = Mutex()
 
+    // One transfer-settings change at a time, so two saves can't interleave their parts.
+    private val transferLock = Mutex()
+
+    // A name check and its write as one, so two adds can't both take a name.
+    private val categoryLock = Mutex()
+
     /** Switches the clipboard watch on or off (OSI-05). */
     suspend fun setClipboardWatch(on: Boolean): CommandResult =
         command {
@@ -1464,6 +1486,190 @@ class Engine(
             }
             CommandResult.Done(null)
         }
+
+    // Where a download goes when nothing else decides: the saved default folder while it is there (a drive may be
+    // unplugged), else the Downloads folder the engine was built with.
+    private suspend fun saveFolder(): Path {
+        val chosen = store.settings.load().defaultSaveFolder ?: return defaultFolder
+        return if (fileSystem.isFolder(chosen)) chosen else defaultFolder
+    }
+
+    /** The categories, lowest priority number first (FIL-01). */
+    suspend fun categories(): List<Category> = command { store.categories.list() }
+
+    /** Adds a category; NameTaken when another has the name, ignoring case. */
+    suspend fun addCategory(new: NewCategory): CategoryResult =
+        command {
+            categoryLock.withLock {
+                if (nameTaken(
+                        new.name,
+                        null,
+                    )
+                ) {
+                    CategoryResult.NameTaken
+                } else {
+                    CategoryResult.Saved(store.categories.add(new.copy(name = new.name.trim())))
+                }
+            }
+        }
+
+    /** Replaces the category with the same id; its downloads already placed stay where they are. */
+    suspend fun updateCategory(category: Category): CategoryResult =
+        command {
+            categoryLock.withLock {
+                when {
+                    store.categories.list().none { it.id == category.id } -> {
+                        CategoryResult.NotFound
+                    }
+
+                    nameTaken(category.name, category.id) -> {
+                        CategoryResult.NameTaken
+                    }
+
+                    else -> {
+                        val trimmed = category.copy(name = category.name.trim())
+                        store.categories.update(trimmed)
+                        CategoryResult.Saved(trimmed)
+                    }
+                }
+            }
+        }
+
+    /** Removes the category; its downloads keep their files and lose the category. */
+    suspend fun deleteCategory(id: CategoryId): Unit = command { categoryLock.withLock { store.categories.remove(id) } }
+
+    private suspend fun nameTaken(
+        name: String,
+        except: CategoryId?,
+    ) = store.categories.list().any { it.id != except && it.name.equals(name.trim(), ignoreCase = true) }
+
+    /** The newest [limit] finished downloads (FIL-10). */
+    suspend fun history(limit: Int): List<HistoryEntry> = command { store.history.list(limit) }
+
+    /** Forgets the history; downloads and their files stay. */
+    suspend fun clearHistory(): Unit = command { store.history.clear() }
+
+    /** Bytes per day [from]..[to] (`YYYY-MM-DD`, inclusive), by network and kind (NET-07). */
+    suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ): List<DayTraffic> = command { traffic.trafficByDay(from, to) }
+
+    /** The transfer and file settings, categories and profiles as JSON (#608): no proxies, cookies or logins. */
+    suspend fun exportSettings(): String =
+        command { backupOf(store.settings.load(), store.categories.list(), store.profiles.list()).encode() }
+
+    /**
+     * Applies a file [exportSettings] wrote (#608), once all of it checks out: the settings, then categories and profiles
+     * matched by name (a profile kept keeps its proxy), then the default profile when the file names one. A file with any
+     * fault changes nothing. Global pause and the after-queue action are what the user is doing now, not settings to
+     * carry over: the file's are ignored.
+     */
+    suspend fun importSettings(text: String): ImportResult =
+        command {
+            val file =
+                when (val read = readBackup(text, store.categories.list().map { it.name })) {
+                    is BackupRead.Refused -> return@command ImportResult.Refused(read.problems)
+                    is BackupRead.Ok -> read.file
+                }
+            val now = store.settings.load()
+            when (val applied = applyTransferSettings(file.settings.copy(globalPause = now.globalPause, afterQueue = now.afterQueue))) {
+                is CommandResult.Done -> Unit
+
+                // Nothing else is applied yet.
+                is CommandResult.Invalid -> return@command ImportResult.Refused(listOf("settings: ${applied.reason}"))
+
+                else -> return@command ImportResult.Refused(listOf("settings: not applied ($applied)"))
+            }
+            categoryLock.withLock {
+                for (entry in file.categories) {
+                    val found = store.categories.list().firstOrNull { it.name.trim().equals(entry.name.trim(), ignoreCase = true) }
+                    if (found == null) {
+                        store.categories.add(NewCategory(entry.name.trim(), entry.folder, entry.template, entry.rules, entry.priority))
+                    } else {
+                        store.categories.update(
+                            found.copy(folder = entry.folder, template = entry.template, rules = entry.rules, priority = entry.priority),
+                        )
+                    }
+                }
+            }
+            val categoryIds = store.categories.list().associate { it.name.trim().lowercase() to it.id }
+            var defaultId: ProfileId? = null
+            for (entry in file.profiles) {
+                val categoryId = entry.category?.let { categoryIds[it.trim().lowercase()] }
+                val found = store.profiles.list().firstOrNull { it.name == entry.name }
+                val saved =
+                    if (found == null) {
+                        addProfile(NewProfile(entry.name, entry.format, categoryId, entry.saveFolder, entry.nameTemplate, entry.speedLimit))
+                    } else {
+                        updateProfile(
+                            found.copy(
+                                format = entry.format,
+                                categoryId = categoryId,
+                                saveFolder = entry.saveFolder,
+                                nameTemplate = entry.nameTemplate,
+                                speedLimit = entry.speedLimit,
+                            ),
+                        )
+                    }
+                if (entry.isDefault && saved is ProfileResult.Saved) defaultId = saved.profile.id
+            }
+            if (defaultId != null) setDefaultProfile(defaultId)
+            ImportResult.Applied
+        }
+
+    /** The transfer and file settings (#608). */
+    suspend fun transferSettings(): TransferSettings = command { store.settings.load().transfer() }
+
+    /**
+     * Takes every transfer and file setting from [next] (#608), each the way its own command would: the queue's own at once,
+     * slow mode and keep awake as their commands do, the rest read where they are used. Invalid, and nothing changes, when a
+     * value is one [Settings] refuses. Network, OS and tool settings are left alone.
+     */
+    suspend fun applyTransferSettings(next: TransferSettings): CommandResult =
+        command {
+            next.problems().firstOrNull()?.let { return@command CommandResult.Invalid(it) }
+            transferLock.withLock { applyTransfer(next) }
+        }
+
+    /** Every transfer and file setting back to its default, but global pause and the after-queue action as they are. */
+    suspend fun resetTransferSettings(): CommandResult =
+        command {
+            transferLock.withLock {
+                val now = store.settings.load()
+                applyTransfer(TransferSettings(globalPause = now.globalPause, afterQueue = now.afterQueue))
+            }
+        }
+
+    private suspend fun applyTransfer(next: TransferSettings): CommandResult {
+        val now = store.settings.load().transfer()
+        val queued =
+            listOfNotNull(
+                (next.concurrencyLimit != now.concurrencyLimit).takeIf { it }?.let { queue.setLimit(next.concurrencyLimit) },
+                (next.globalSpeedLimit != now.globalSpeedLimit).takeIf { it }?.let { queue.setGlobalSpeedLimit(next.globalSpeedLimit) },
+                (next.globalUploadLimit != now.globalUploadLimit).takeIf { it }?.let { queue.setGlobalUploadLimit(next.globalUploadLimit) },
+                (next.maxRetries != now.maxRetries).takeIf { it }?.let { queue.setMaxRetries(next.maxRetries) },
+            )
+        queued.firstOrNull { it !is CommandResult.Done }?.let { return it }
+        // The rest in one write; pause and the after-queue action have their own paths below.
+        // The queue's own fields were set through it above; what is stored now wins, so a limit set meanwhile isn't undone.
+        store.settings.update {
+            it.with(next.copy(globalPause = it.globalPause, afterQueue = it.afterQueue)).copy(
+                concurrencyLimit = it.concurrencyLimit,
+                globalSpeedLimit = it.globalSpeedLimit,
+                globalUploadLimit = it.globalUploadLimit,
+                maxRetries = it.maxRetries,
+            )
+        }
+        if (next.slowMode != now.slowMode || next.slowModeLimit != now.slowModeLimit) rulesChanged()
+        if (next.keepAwake != now.keepAwake) withContext(publisher) { if (keepersStarted) awake.setEnabled(next.keepAwake) }
+        if (next.afterQueue != now.afterQueue) setAfterQueue(next.afterQueue)
+        if (next.globalPause != now.globalPause) {
+            val result = if (next.globalPause) queue.pauseAll() else queue.resumeAll()
+            if (result !is CommandResult.Done) return result
+        }
+        return CommandResult.Done(null)
+    }
 
     /** Stops the countdown and takes the action away; done also when nothing is armed. */
     suspend fun cancelAfterQueue(): CommandResult = setAfterQueue(AfterQueueAction.NONE)

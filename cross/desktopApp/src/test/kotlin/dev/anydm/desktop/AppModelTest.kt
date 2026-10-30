@@ -302,4 +302,67 @@ class AppModelTest {
             assertEquals(1, source.stopped)
             assertEquals(EngineState.Stopped, model.state.value.engine)
         }
+
+    @Test
+    fun `quit after the queue comes once the queue has run and is done`() =
+        runTest {
+            val source = FakeSource()
+            var quits = 0
+            val model =
+                AppModel(
+                    source,
+                    MemoryFirstRun(done = true),
+                    backgroundScope + UnconfinedTestDispatcher(testScheduler),
+                    FakeFiles(),
+                    onQuit = { quits++ },
+                ).also { it.start() }
+            model.settings.quitAfterQueue.value = true
+            // Idle when it was chosen: it waits for the queue to run.
+            source.downloads.value = listOf(snapshot(1, COMPLETED))
+            assertEquals(0, quits)
+
+            source.downloads.value = listOf(snapshot(1, COMPLETED), snapshot(2, DOWNLOADING))
+            source.downloads.value = listOf(snapshot(1, COMPLETED), snapshot(2, PAUSED))
+
+            assertEquals(1, quits)
+            assertFalse(model.settings.quitAfterQueue.value)
+        }
+
+    @Test
+    fun `categories changed in settings reach the sidebar`() =
+        runTest {
+            val source = FakeSource()
+            val model = model(source)
+            source.categoryList = listOf(Category(CategoryId(1), "Music", "/m", null, emptyList(), 0))
+            model.settings.load()
+            assertEquals(
+                listOf("Music"),
+                model.state.value.categories
+                    .map { it.name },
+            )
+        }
+
+    @Test
+    fun `quit after the queue waits for jobs paused by a rule and ignores collections`() =
+        runTest {
+            val source = FakeSource()
+            var quits = 0
+            val model =
+                AppModel(
+                    source,
+                    MemoryFirstRun(done = true),
+                    backgroundScope + UnconfinedTestDispatcher(testScheduler),
+                    FakeFiles(),
+                    onQuit = { quits++ },
+                ).also { it.start() }
+            model.settings.quitAfterQueue.value = true
+            source.downloads.value = listOf(snapshot(1, DOWNLOADING))
+            // Waiting for the network to come back: still busy.
+            source.downloads.value = listOf(snapshot(1, PAUSED, pauseReasons = setOf(PauseReason.NETWORK)))
+            assertEquals(0, quits)
+            // A collection row on its own holds nothing.
+            source.downloads.value =
+                listOf(snapshot(1, COMPLETED), snapshot(2, QUEUED, collection = dev.anydm.engine.core.CollectionKind.PLAYLIST))
+            assertEquals(1, quits)
+        }
 }
