@@ -146,15 +146,17 @@ abstract class EngineLinksContract : StoreTestBase() {
         }
 
     @Test
-    fun aLinkAlreadyQueuedProbesAsADuplicate() =
+    fun aLinkAlreadyQueuedProbesAsADuplicateOfThatJob() =
         linksTest { h, _ ->
-            h.added(h.engine.addLink("https://example.com/a.zip", EntryPoint.OS_LINK))
+            val existing = h.added(h.engine.addLink("https://example.com/a.zip", EntryPoint.OS_LINK))
             runCurrent()
 
-            h.engine
-                .probeLink("https://example.com/a.zip")
-                .shouldBeInstanceOf<LinkProbeResult.Probed>()
-                .duplicate shouldBe true
+            val probed =
+                h.engine
+                    .probeLink("https://example.com/a.zip")
+                    .shouldBeInstanceOf<LinkProbeResult.Probed>()
+            probed.duplicate shouldBe true
+            probed.found?.existing shouldBe existing.id
         }
 
     @Test

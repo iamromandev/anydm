@@ -26,15 +26,25 @@ internal val IsMac: Boolean = System.getProperty("os.name").startsWith("Mac", ig
 /** Runs the shortcut [event] stands for, if it is one; returns whether it was. None runs under the welcome. */
 internal fun AppModel.handleKey(event: KeyEvent): Boolean {
     val current = state.value
+    if (event.type != KeyEventType.KeyDown || current.showWelcome) return false
+    // Command on a Mac, Control elsewhere; Alt is left out because Windows reports AltGr as Control and Alt.
+    val command = if (IsMac) event.isMetaPressed else event.isCtrlPressed
+    // The add dialog takes Esc and Command/Control+Enter; its fields keep every other key.
+    current.adding?.let { add ->
+        when {
+            event.key == Key.Escape -> closeAdd()
+            command && event.key == Key.Enter -> add.add()
+            else -> return false
+        }
+        return true
+    }
     // A dialog and the filter field keep their keys.
-    if (event.type != KeyEventType.KeyDown || current.showWelcome || current.dialog != null) return false
+    if (current.dialog != null) return false
     if (event.key == Key.Escape) {
         if (current.selection.isEmpty()) return false
         clearSelection()
         return true
     }
-    // Command on a Mac, Control elsewhere; Alt is left out because Windows reports AltGr as Control and Alt.
-    val command = if (IsMac) event.isMetaPressed else event.isCtrlPressed
     if (event.isAltPressed) return false
     if (!command) return !typing && listKey(event)
     if (event.isShiftPressed) return false
@@ -42,6 +52,7 @@ internal fun AppModel.handleKey(event: KeyEvent): Boolean {
     val inList = current.route is Route.Downloads && !typing
     when (event.key) {
         Key.Comma -> navigate(Route.Settings)
+        Key.N -> openAdd()
         Key.A -> if (inList) selectAll() else return false
         Key.R -> if (inList) run(JobCommand.RETRY) else return false
         Key.Enter -> if (inList) run(JobCommand.OPEN) else return false

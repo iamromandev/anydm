@@ -7,41 +7,67 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.OsProfile
+import dev.anydm.engine.ftp.DefaultRemoteClients
+import dev.anydm.engine.ftp.FtpProtocol
+import dev.anydm.engine.ftp.JavaKeyringKeychain
+import dev.anydm.engine.ftp.KeychainCredentials
+import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.OkHttpTransport
+import dev.anydm.engine.media.SiteProtocol
+import dev.anydm.engine.media.YtDlpPlaylistSource
 import dev.anydm.engine.net.DefaultRouteNetwork
+import dev.anydm.engine.platform.AppDirs
 import dev.anydm.engine.platform.DesktopFileSystem
+import dev.anydm.engine.platform.DesktopProcessRunner
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.current
 import dev.anydm.engine.platform.desktopAppDirs
+import dev.anydm.engine.protocol.Protocol
+import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.openStore
+import dev.anydm.engine.tools.DesktopPathFinder
+import dev.anydm.engine.tools.DesktopUnpacker
+import dev.anydm.engine.tools.GithubReleases
+import dev.anydm.engine.tools.Platform
+import dev.anydm.engine.tools.ToolCatalog
+import dev.anydm.engine.tools.ToolManager
+import dev.anydm.engine.tools.ToolProtocol
+import dev.anydm.engine.tools.current
+import dev.anydm.engine.torrent.JnaSignalGuard
+import dev.anydm.engine.torrent.LibTorrentBackend
+import dev.anydm.engine.torrent.TorrentConfig
+import dev.anydm.engine.torrent.TorrentInfo
+import dev.anydm.engine.torrent.TorrentNatives
+import dev.anydm.engine.torrent.TorrentProtocol
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.io.files.Path
+import kotlin.time.Clock
 
 /**
- * The engine this machine runs. Only plain HTTP(S) downloads are wired so far; the stories that add the other protocols
- * add them here. If the store can't be opened the app still starts, with an engine that reports itself failed.
+ * The engine this machine runs, with every protocol it has: web files (HTTP/HTTPS), media pages and playlists (yt-dlp,
+ * fetched by the tool manager), torrents (libtorrent) and FTP/FTPS/SFTP, with logins in the system keychain. A part that
+ * can't be set up (no libtorrent for this machine, say) is left out and the rest still works; [EngineSource.available]
+ * says which kinds are there. If the store can't be opened the app still starts, with an engine that reports itself failed.
  */
 suspend fun openDesktopSource(): EngineSource =
     try {
         val fileSystem = DesktopFileSystem()
-        when (val opened = openStore(desktopAppDirs(), fileSystem)) {
+        val dirs = desktopAppDirs()
+        when (val opened = openStore(dirs, fileSystem)) {
             is FileResult.Ok -> {
                 val store = opened.value
                 try {
-                    Engine(
-                        store = store,
-                        fileSystem = fileSystem,
-                        protocols = mapOf(DownloadKind.DIRECT to HttpProtocol(OkHttpTransport(), connections = { 4 })),
-                        defaultFolder = Path(System.getProperty("user.home"), "Downloads"),
-                        identity = DefaultRouteNetwork(),
-                        osProfile = OsProfile.current(),
-                    ).asSource(store)
+                    desktopEngine(store, fileSystem, dirs)
                 } catch (e: Exception) {
                     store.close()
                     throw e
@@ -54,6 +80,94 @@ suspend fun openDesktopSource(): EngineSource =
         }
     } catch (e: Exception) {
         UnavailableSource(e.message ?: e::class.simpleName ?: "unknown error")
+    }
+
+private suspend fun desktopEngine(
+    store: Store,
+    fileSystem: DesktopFileSystem,
+    dirs: AppDirs,
+): EngineSource {
+    val keychain = JavaKeyringKeychain("anydm")
+    val logins = KeychainCredentials(keychain)
+    val http = HttpProtocol(OkHttpTransport(), connections = { 4 }, credentials = logins)
+    val runner = DesktopProcessRunner()
+    val platform = Platform.current()
+    val tools =
+        ToolManager(
+            catalog = ToolCatalog.Pinned,
+            store = store.tools,
+            runner = runner,
+            fileSystem = fileSystem,
+            finder = DesktopPathFinder(),
+            releases = GithubReleases(OkHttpTransport()),
+            dirs = dirs,
+            platform = platform,
+            settings = { store.settings.load() },
+            clock = Clock.System,
+            toolJobs = { store.downloads.list().filter { it.kind == DownloadKind.TOOL } },
+        )
+    val protocols =
+        mutableMapOf<DownloadKind, Protocol>(
+            DownloadKind.DIRECT to http,
+            DownloadKind.FTP to FtpProtocol(DefaultRemoteClients(store.hostKeys), logins, logins, connections = { 4 }),
+            DownloadKind.SITE to SiteProtocol(http, runner, tools::resolve, store.extractions, fileSystem),
+            DownloadKind.TOOL to ToolProtocol(http, runner, DesktopUnpacker(runner), fileSystem, platform.os),
+        )
+    val torrents = torrentProtocol(store, fileSystem, http, dirs)
+    if (torrents != null) protocols[DownloadKind.TORRENT] = torrents
+    val engine =
+        Engine(
+            store = store,
+            fileSystem = fileSystem,
+            protocols = protocols,
+            defaultFolder = Path(System.getProperty("user.home"), "Downloads"),
+            identity = DefaultRouteNetwork(),
+            osProfile = OsProfile.current(),
+            tools = tools,
+            playlists = YtDlpPlaylistSource(runner, tools::resolve),
+            torrents = torrents,
+            credentials = logins,
+            proxyKeychain = keychain,
+        )
+    return engine.asSource(store, protocols.keys)
+}
+
+// Torrents need libtorrent's native library for this machine, unpacked into the app's own data folder; without it they
+// are left out.
+private suspend fun torrentProtocol(
+    store: Store,
+    fileSystem: DesktopFileSystem,
+    http: HttpProtocol,
+    dirs: AppDirs,
+): TorrentProtocol? =
+    // Everything here may fail on a machine libtorrent doesn't support, down to the signal guard's own native load.
+    try {
+        val natives = TorrentNatives(Path(dirs.data, "natives"), signals = JnaSignalGuard())
+        when (val loaded = natives.load()) {
+            is StepResult.Failed -> {
+                System.err.println("anydm: torrents are unavailable: ${loaded.message}")
+                null
+            }
+
+            is StepResult.Ok -> {
+                TorrentProtocol(
+                    http,
+                    LibTorrentBackend(natives, TorrentConfig({ store.settings.load().torrentPort })),
+                    store.torrents,
+                    NameCleaner(OsProfile.current()),
+                    fileSystem,
+                    { store.settings.load().clashPolicy },
+                    settings = { store.settings.load() },
+                    files = { store.downloads.files(it) },
+                )
+            }
+        }
+    } catch (e: Exception) {
+        System.err.println("anydm: torrents are unavailable: ${e.message}")
+        null
+    } catch (e: LinkageError) {
+        System.err.println("anydm: torrents are unavailable: ${e.message}")
+        null
     }
 
 /** Stands in when the engine could not be built: it is failed from the start and does nothing. */
@@ -108,4 +222,33 @@ internal class UnavailableSource(
     override suspend fun resumeAll() = stopped()
 
     override suspend fun torrentDetail(id: DownloadId) = stopped()
+
+    override val available = emptySet<DownloadKind>()
+
+    override suspend fun profiles() = stopped()
+
+    override suspend fun probeLink(raw: String) = stopped()
+
+    override suspend fun inspectTorrent(source: String) = stopped()
+
+    override suspend fun add(new: NewDownload) = stopped()
+
+    override suspend fun addTorrent(
+        source: String,
+        files: Set<String>?,
+        sequential: Boolean,
+        template: NewDownload,
+        info: TorrentInfo?,
+    ) = stopped()
+
+    override suspend fun addPlaylist(
+        url: String,
+        selection: ItemSelection,
+        template: NewDownload,
+    ) = stopped()
+
+    override suspend fun saveKeyLogin(
+        url: String,
+        login: SshKeyLogin,
+    ) = stopped()
 }

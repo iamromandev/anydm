@@ -115,6 +115,8 @@ data class UiState(
     val speed: Long = 0,
     val banners: List<Banner> = emptyList(),
     val showWelcome: Boolean = false,
+    /** The add dialog while it is open. */
+    val adding: AddModel? = null,
     val options: ListOptions = ListOptions(),
     /** What the list shows now, for the route's filter and [options]. */
     val rows: List<Row> = emptyList(),
@@ -455,6 +457,30 @@ class AppModel(
             eventErrors = eventErrors.filter { it != banner }
             refresh()
         }
+
+    /** Opens the add dialog, with [links] in it; if it is open already, the links are added to what it holds. */
+    fun openAdd(links: List<String> = emptyList()) {
+        val open = state.value.adding
+        if (open != null) {
+            if (links.isNotEmpty()) open.setText((listOf(open.state.value.text) + links).filter { it.isNotBlank() }.joinToString("\n"))
+            return
+        }
+        val add = AddModel(source, scope, links, onDone = ::closeAdd)
+        ui.update { it.copy(adding = add) }
+    }
+
+    fun closeAdd() {
+        val open = state.value.adding ?: return
+        open.cancel()
+        ui.update { if (it.adding === open) it.copy(adding = null) else it }
+    }
+
+    /** Closes the add dialog and selects the download a link duplicates, in the whole list. */
+    fun showExisting(id: DownloadId) {
+        closeAdd()
+        navigate(Route.Downloads(Filter.All))
+        select(id)
+    }
 
     fun finishWelcome() {
         firstRun.markDone()
