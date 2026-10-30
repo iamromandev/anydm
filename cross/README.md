@@ -90,8 +90,12 @@ own, with the engine in `shared/`; no server is needed.
   multi-selection with keys, a context menu and toolbar for every job command, the remove and relink dialogs, a detail
   pane for one selected job, and open / show in folder / copy path for finished files. `AppModel` holds the state every
   screen reads and takes the commands; the list logic (`Rows.kt`, `Commands.kt`, `Format.kt`) is plain Kotlin with
-  its own tests. Add flows and settings come in the later stories, and only plain HTTP(S) downloads are wired to the
-  engine so far.
+  its own tests. Adding downloads (#607): `openDesktopSource` wires every protocol (HTTP/HTTPS, media pages and playlists
+  through yt-dlp, which the tool manager fetches into the cache folder, torrents through libtorrent unpacked into the data
+  folder, FTP/FTPS/SFTP) with logins in the system keychain; a part that can't be set up is left out and its links show as
+  unavailable. The add dialog (`AddModel`, `AddForm.kt`) reads each pasted link before it is added (batch patterns such as
+  `[1-10]` expand), and takes the category, profile, folder, start, media format and login for all of them;
+  `AppModel.openAdd(links)` opens it with links in it. Settings come in the later stories.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.

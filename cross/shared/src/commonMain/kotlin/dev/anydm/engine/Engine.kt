@@ -774,8 +774,16 @@ class Engine(
                     is StepResult.Ok -> probed.value
                 }
             }
-        val duplicate = duplicateCheck.atAdd(NewDownload(parsed.kind, mirrors = listOf(parsed.link))) != null
-        return LinkProbeResult.Probed(stripUserInfo(parsed.link), parsed.kind, probe.name, probe.size, probe.rangesSupported, duplicate)
+        val found = duplicateCheck.atAdd(NewDownload(parsed.kind, mirrors = listOf(parsed.link)))
+        return LinkProbeResult.Probed(
+            stripUserInfo(parsed.link),
+            parsed.kind,
+            probe.name,
+            probe.size,
+            probe.rangesSupported,
+            duplicate = found != null,
+            found = found,
+        )
     }
 
     private fun refusedOrAdded(result: CommandResult): AddLinkResult =

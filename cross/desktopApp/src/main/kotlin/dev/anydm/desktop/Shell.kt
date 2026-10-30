@@ -32,10 +32,16 @@ import dev.anydm.engine.EngineState
 
 /** The window's content: toolbar, sidebar, banners, the current section, status bar and, once, the welcome. */
 @Composable
-fun Shell(model: AppModel) {
+fun Shell(
+    model: AppModel,
+    pickers: Pickers = DesktopPickers(),
+) {
     val state by model.state.collectAsState()
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // The add dialog's fields had the keys; when it closes the window takes them back, so the list's shortcuts work.
+    val adding = state.adding != null
+    LaunchedEffect(adding) { if (!adding) focus.requestFocus() }
     Surface(
         Modifier
             .fillMaxSize()
@@ -56,6 +62,7 @@ fun Shell(model: AppModel) {
                     }
                 }
             }
+            state.adding?.let { AddDialog(it, state.categories, pickers, model::closeAdd, model::showExisting) }
             if (state.showWelcome) Welcome(model::finishWelcome)
         }
     }

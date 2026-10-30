@@ -43,6 +43,7 @@ fun main() {
         ) {
             MenuBar {
                 Menu("File") {
+                    Item("Add…", shortcut = KeyShortcut(Key.N, ctrl = !IsMac, meta = IsMac), onClick = { model.openAdd() })
                     Item("Quit", shortcut = KeyShortcut(Key.Q, ctrl = !IsMac, meta = IsMac), onClick = quit)
                 }
                 Menu("View") {

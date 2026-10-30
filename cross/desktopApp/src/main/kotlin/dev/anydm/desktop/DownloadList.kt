@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -106,6 +107,7 @@ private fun ListToolbar(
             }
         }
         Box(Modifier.weight(1f))
+        Button(onClick = { model.openAdd() }, modifier = Modifier.testTag("add-open")) { Text("Add…") }
         TextButton(onClick = { model.pauseAll() }, modifier = Modifier.testTag("pause-all")) { Text("Pause all") }
         TextButton(onClick = { model.resumeAll() }, modifier = Modifier.testTag("resume-all")) { Text("Resume all") }
     }

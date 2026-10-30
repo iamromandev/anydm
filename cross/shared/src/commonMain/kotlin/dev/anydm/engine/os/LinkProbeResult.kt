@@ -1,6 +1,7 @@
 package dev.anydm.engine.os
 
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.DuplicateFound
 import dev.anydm.engine.protocol.StepResult
 
 /** What [dev.anydm.engine.Engine.probeLink] found out about a link without adding it (OSI-02). */
@@ -14,6 +15,8 @@ sealed interface LinkProbeResult {
         val rangesSupported: Boolean,
         /** Adding it now would be refused as a duplicate (FIL-05). */
         val duplicate: Boolean,
+        /** What it duplicates when [duplicate]: the job already in the list, or a file in the history or on disk. */
+        val found: DuplicateFound? = null,
     ) : LinkProbeResult
 
     /** Not a link this engine takes. */

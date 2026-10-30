@@ -1,9 +1,12 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.AddPlaylistResult
+import dev.anydm.engine.AddTorrentResult
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.FileSnapshot
+import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.Attempt
@@ -14,12 +17,19 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ItemCounts
+import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.files.Profile
+import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.os.LinkIntake
+import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -67,7 +77,10 @@ internal class FakeSource(
         return results[text] ?: CommandResult.Done(null)
     }
 
-    override suspend fun pause(id: DownloadId) = call("pause ${id.value}")
+    override suspend fun pause(id: DownloadId): CommandResult {
+        pauseThrows?.let { throw it }
+        return call("pause ${id.value}")
+    }
 
     override suspend fun resume(id: DownloadId) = call("resume ${id.value}")
 
@@ -103,6 +116,91 @@ internal class FakeSource(
     override suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
         call("torrentDetail ${id.value}")
         return torrent
+    }
+
+    override var available: Set<DownloadKind> = setOf(DownloadKind.DIRECT, DownloadKind.SITE, DownloadKind.TORRENT, DownloadKind.FTP)
+    var profileList: List<Profile> = emptyList()
+
+    /** What [probeLink] answers per link; any other web link probes as a new file named after its last segment. */
+    val probes = mutableMapOf<String, LinkProbeResult>()
+    val probed = mutableListOf<String>()
+    val inspects = mutableMapOf<String, InspectResult>()
+    val addResults = mutableMapOf<String, CommandResult>()
+    var torrentResult: AddTorrentResult? = null
+    var playlistResult: AddPlaylistResult? = null
+
+    /** Every add as the engine got it. */
+    val added = mutableListOf<NewDownload>()
+    val torrentsAdded = mutableListOf<TorrentAdd>()
+    val playlistsAdded = mutableListOf<Triple<String, ItemSelection, NewDownload>>()
+    val keyLogins = mutableListOf<Pair<String, SshKeyLogin>>()
+
+    data class TorrentAdd(
+        val source: String,
+        val files: Set<String>?,
+        val sequential: Boolean,
+        val template: NewDownload,
+        val info: TorrentInfo? = null,
+    )
+
+    /** Thrown by every add, as a store error would be. */
+    var addThrows: Exception? = null
+
+    /** What saving a key login answers: false when it only reached memory. */
+    var keySaved = true
+
+    /** Thrown by pause, as an engine stopping right then would. */
+    var pauseThrows: Exception? = null
+
+    override suspend fun profiles(): List<Profile> = profileList
+
+    override suspend fun probeLink(raw: String): LinkProbeResult {
+        if (refuseAll) throw IllegalStateException("the engine has stopped")
+        synchronized(probed) { probed += raw }
+        gate?.await()
+        return probes[raw]
+            ?: LinkIntake.parse(raw)?.let { LinkProbeResult.Probed(it.link, it.kind, it.link.substringAfterLast('/'), 1000, true, false) }
+            ?: LinkProbeResult.NotALink
+    }
+
+    override suspend fun inspectTorrent(source: String): InspectResult = inspects[source] ?: InspectResult.Unavailable
+
+    override suspend fun add(new: NewDownload): CommandResult {
+        call("add ${new.mirrors.first()}")
+        addThrows?.let { throw it }
+        added += new
+        return addResults[new.mirrors.first()] ?: CommandResult.Done(Download(DownloadId(100L + added.size), new.kind))
+    }
+
+    override suspend fun addTorrent(
+        source: String,
+        files: Set<String>?,
+        sequential: Boolean,
+        template: NewDownload,
+        info: TorrentInfo?,
+    ): AddTorrentResult {
+        call("addTorrent $source")
+        torrentsAdded += TorrentAdd(source, files, sequential, template, info)
+        return torrentResult ?: AddTorrentResult.Added(Download(DownloadId(200), DownloadKind.TORRENT))
+    }
+
+    override suspend fun addPlaylist(
+        url: String,
+        selection: ItemSelection,
+        template: NewDownload,
+    ): AddPlaylistResult {
+        call("addPlaylist $url")
+        playlistsAdded += Triple(url, selection, template)
+        return playlistResult ?: AddPlaylistResult.Added(Download(DownloadId(300), DownloadKind.SITE), emptyList(), 0, 0)
+    }
+
+    override suspend fun saveKeyLogin(
+        url: String,
+        login: SshKeyLogin,
+    ): Boolean {
+        call("saveKeyLogin $url")
+        keyLogins += url to login
+        return keySaved
     }
 }
 
