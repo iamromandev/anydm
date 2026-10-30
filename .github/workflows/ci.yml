@@ -2,7 +2,7 @@ name: CI
 
 on:
     push:
-        branches: [main]
+        branches: [main, dev]
     pull_request:
 
 jobs:
@@ -41,3 +41,25 @@ jobs:
             - run: bun run ext:check
             - run: bun run ext:test
             - run: bun run ext:build
+
+    cross:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            # Caches ~/.gradle/caches and ~/.gradle/wrapper, keyed on these files.
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 25
+                  cache: gradle
+                  cache-dependency-path: |
+                      cross/**/*.gradle*
+                      cross/gradle/libs.versions.toml
+            # The global hotkey library (jnativehook) links against X11 and exits the JVM without a display, so the
+            # runner gets its libraries and a virtual display.
+            - run: |
+                  sudo apt-get update
+                  sudo apt-get install -y xvfb libx11-6 libx11-xcb1 libxt6t64 libxtst6 libxi6 libxinerama1 libxkbcommon-x11-0 libxkbfile1
+            # ktlint, tests, schema migration verification and checkDesktopNatives. The tests use
+            # local servers only.
+            - run: xvfb-run -a make cross-check

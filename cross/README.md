@@ -3,7 +3,7 @@
 The anydm desktop client: Kotlin Multiplatform, with Compose for the window. It downloads on its
 own, with the engine in `shared/`; no server is needed.
 
-- `shared/` — the download engine, being built in #548–#556, in four packages:
+- `shared/` — the download engine (epic #536, complete), in four packages:
   `dev.anydm.engine.core` (job model, states, step runner, queue), `dev.anydm.engine.protocol` (the
   `Protocol` interface each kind of source implements), `dev.anydm.engine.store` (SQLite through
   SQLDelight) and `dev.anydm.engine.platform` (files, app folders, clock). Only the `jvm()` target
@@ -82,17 +82,16 @@ own, with the engine in `shared/`; no server is needed.
     (the library's hook thread is not a daemon, so the process would stay alive with a system-wide key hook). Ship the jar as it
     is, not merged into an uber jar: it is LGPL. Tests use fakes: none touches the real clipboard or installs a real key hook, and only that the library loads on
     this JDK is checked against the real system.
-- `desktopApp/` — the Compose Desktop app, in a native look: a toolbar in the title bar, a sidebar
-  with counts, rows with hover actions and right-click menus, selection and keyboard control, a
-  menu bar, a Settings window, and a tray. It saves finished files into Downloads and plays them in
-  the system's or a chosen player. `make cross-package` builds an unsigned dmg / msi / deb. On
+- `desktopApp/` — the Compose Desktop app. It is a placeholder window for now: the UI is being built
+  in [#604](https://github.com/iamromandev/anydm/issues/604), and it will drive the engine directly.
+  `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.
 
 The app icon is drawn by `desktopApp/icons/make_icons.py`; after changing it, run
 `uv run --no-project --with pillow python icons/make_icons.py` from `desktopApp/`.
 
-Needs JDK 21. The Gradle wrapper is committed, so there is nothing else to install.
+Needs JDK 25. The Gradle wrapper is committed, so there is nothing else to install.
 
 ```bash
 make cross-check     # ktlint, tests, compile
