@@ -63,13 +63,14 @@ fun main(args: Array<String>) {
         quitApp.set(quit)
         val shown by window.state.collectAsState()
         val ui by model.state.collectAsState()
+        val osState by model.os.collectAsState()
         if (window.trayAvailable) {
             Tray(
                 icon = painterResource("icon.png"),
                 tooltip = trayTooltip(ui),
-                onAction = window::show,
+                onAction = model::trayClicked,
                 menu = {
-                    trayMenu(shown, ui.globallyPaused).forEach { item ->
+                    trayMenu(shown, ui.globallyPaused, hasLast = osState.lastNotified != null).forEach { item ->
                         Item(item.label, enabled = item.enabled, onClick = { model.trayAction(item.action) })
                     }
                 },

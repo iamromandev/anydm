@@ -109,8 +109,16 @@ own, with the engine in `shared/`; no server is needed.
   bind to it (`BEST_EFFORT` on Linux). The system section holds notifications, clipboard watch, the global hotkey and its
   status, and the browser bridge origins. Tools shows yt-dlp, ffmpeg and Deno, fetches the newest (`Engine.updateTool`),
   and takes a folder to use instead (`Settings.toolFolders`). Diagnostics switches debug logging (live) and exports the
-  bundle (`DiagnosticsBundle`); the desktop engine now writes `anydm.log` to the logs folder. The hotkey's status reads Off
-  until the OS integration (#610) runs the service.
+  bundle (`DiagnosticsBundle`); the desktop engine now writes `anydm.log` to the logs folder. OS integration (#610): `main(args)`
+  asks `FileSingleInstance` first, so a second launch hands its arguments (`LinkRouter`: magnet, `.torrent`, web, FTP, SFTP,
+  `anydm://add`; the rest is dropped) to the running window, which opens them in the add review. The tray (`TrayMenu`:
+  show or hide, open, pause or resume all, quit) and the window choices (`WindowModel`: close to the tray, start hidden or
+  with `--hidden`; both only where a tray exists) live in `AppPrefs`. `OsServices` runs `NotificationRelay`,
+  `ClipboardWatch` (a "link copied" offer), the global `HotkeyService` (opens the add review with the clipboard) and the
+  `BridgeServer` beside the engine, each following its setting; `OsSignals` carries their state to the status bar
+  (keep-awake, after-queue countdown, bridge port, hotkey) and the permission notice (macOS Accessibility, Linux Wayland).
+  A notification click can't reach the app through osascript or notify-send, so clicking the tray icon opens the row of the
+  last finished or failed download.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.
