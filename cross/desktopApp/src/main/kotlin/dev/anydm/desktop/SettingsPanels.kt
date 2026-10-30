@@ -10,23 +10,43 @@ class SettingsPanels(
     scope: CoroutineScope,
     io: CoroutineDispatcher = Dispatchers.IO,
     val window: WindowModel = WindowModel(MemoryAppPrefs(), trayAvailable = false),
+    linkHandlers: LinkHandlers = NoLinkHandlers(),
 ) {
     val proxies = ProxyModel(source, scope)
     val rules = RulesModel(source, scope)
     val networks = NetworksModel(source, scope)
     val os = OsModel(source, scope)
+    val links = LinkHandlerModel(linkHandlers, scope, io)
     val tools = ToolsModel(source, scope, io = io)
     val diagnostics = DiagnosticsModel(source, scope)
 
     /** Reads the engine again for [section]; sections that are not one of these have nothing to read here. */
     fun load(section: Section) {
         when (section) {
-            Section.PROXIES -> proxies.load()
-            Section.RULES -> rules.load()
-            Section.SYSTEM -> os.load()
-            Section.TOOLS -> tools.load()
-            Section.DIAGNOSTICS -> diagnostics.load()
-            else -> Unit
+            Section.PROXIES -> {
+                proxies.load()
+            }
+
+            Section.RULES -> {
+                rules.load()
+            }
+
+            Section.SYSTEM -> {
+                os.load()
+                links.load()
+            }
+
+            Section.TOOLS -> {
+                tools.load()
+            }
+
+            Section.DIAGNOSTICS -> {
+                diagnostics.load()
+            }
+
+            else -> {
+                Unit
+            }
         }
     }
 }

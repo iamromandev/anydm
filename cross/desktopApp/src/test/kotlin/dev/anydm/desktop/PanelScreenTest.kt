@@ -45,6 +45,7 @@ internal abstract class PanelScreenTest(
     protected var tray = true
 
     protected val pickers = TestPickers()
+    protected val links = FakeLinkHandlers()
 
     @AfterTest
     fun close() = scope.cancel()
@@ -62,6 +63,7 @@ internal abstract class PanelScreenTest(
                 FakeFiles(),
                 io = Dispatchers.Unconfined,
                 window = WindowModel(prefs, tray),
+                linkHandlers = links,
             )
         model.start()
         model.navigate(Route.Settings)

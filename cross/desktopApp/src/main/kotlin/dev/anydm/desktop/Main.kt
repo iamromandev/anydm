@@ -15,7 +15,9 @@ import androidx.compose.ui.window.isTraySupported
 import androidx.compose.ui.window.rememberWindowState
 import dev.anydm.engine.os.FileSingleInstance
 import dev.anydm.engine.os.SingleInstance
+import dev.anydm.engine.platform.DesktopProcessRunner
 import dev.anydm.engine.platform.desktopAppDirs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,12 +25,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == SelfCheck.FLAG) exitProcess(selfCheck(args.getOrNull(1)))
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // macOS hands links and files over as events, the first launch's too; they wait until the model is there.
+    val opens = OpenEvents()
     val dirs = desktopAppDirs()
     // One app per user: a second launch hands its arguments to the running one and ends before any engine opens.
     val ready = CompletableDeferred<AppModel>()
@@ -38,15 +44,19 @@ fun main(args: Array<String>) {
         instance.close()
         exitProcess(0)
     }
+    opens.install()
     val source = runBlocking { openDesktopSource() }
     val firstRun = FileFirstRun(Path.of(dirs.data.toString()))
     // Quit after the queue is chosen in the app; the window's quit is only there once the application runs.
     val quitApp = AtomicReference<() -> Unit> {}
     val window = WindowModel(PreferencesAppPrefs(), trayAvailable = isTraySupported)
-    val model = AppModel(source, firstRun, scope, DesktopFileActions(), onQuit = { quitApp.get()() }, window = window)
+    val linkHandlers = linkHandlersForCurrentOs(DesktopProcessRunner())
+    val model =
+        AppModel(source, firstRun, scope, DesktopFileActions(), onQuit = { quitApp.get()() }, window = window, linkHandlers = linkHandlers)
     model.start()
     model.launch(args.toList(), second = false)
     ready.complete(model)
+    opens.attach { model.launch(it, second = true) }
     application {
         val closing = rememberCoroutineScope()
         // Every quit waits for the one stop, and the app ends even if the stop throws.
@@ -106,4 +116,27 @@ fun main(args: Array<String>) {
             AnydmTheme { Shell(model) }
         }
     }
+}
+
+// The packaged app's smoke test: its own engine, its own data folder, one download; the exit code is the answer.
+private fun selfCheck(folder: String?): Int {
+    val root = folder?.let { Path.of(it) } ?: Files.createTempDirectory("anydm-self-check")
+    val problem =
+        runBlocking {
+            val source = openDesktopSource(SelfCheck.dirs(root))
+            try {
+                source.start()
+                SelfCheck(source, root.resolve("downloads")).run()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // A module the runtime lacks shows up as an Error, not an exception.
+                "${e::class.simpleName}: ${e.message}"
+            } finally {
+                runCatching { source.stop() }
+            }
+        }
+    println(problem?.let { "self-check failed: $it" } ?: "self-check passed")
+    println("launcher: ${System.getProperty("jpackage.app-path") ?: "none (not an installed app)"}")
+    return if (problem == null) 0 else 1
 }

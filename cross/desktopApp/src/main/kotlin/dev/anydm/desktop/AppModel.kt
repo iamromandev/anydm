@@ -174,6 +174,8 @@ class AppModel(
     private val onQuit: () -> Unit = {},
     /** Whether the window is shown, and what closing it does. */
     val window: WindowModel = WindowModel(MemoryAppPrefs(), trayAvailable = false),
+    /** The OS's handlers for magnet: and anydm:// links. */
+    private val linkHandlers: LinkHandlers = NoLinkHandlers(),
 ) {
     private val ui = MutableStateFlow(UiState(showWelcome = !firstRun.isDone()))
     val state: StateFlow<UiState> = ui.asStateFlow()
@@ -203,7 +205,7 @@ class AppModel(
     }
 
     /** The network, OS and tool sections of the settings screen (#609); each acts at once; only the tool folder field keeps a draft until Apply. */
-    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io, window) }
+    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io, window, linkHandlers) }
 
     @Volatile
     private var created = false
