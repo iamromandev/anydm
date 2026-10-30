@@ -116,6 +116,7 @@ import dev.anydm.engine.store.NewItem
 import dev.anydm.engine.store.NewTorrent
 import dev.anydm.engine.store.ProxyRemoval
 import dev.anydm.engine.store.ProxyResult
+import dev.anydm.engine.store.RuntimeSettings
 import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TrafficStore
@@ -123,10 +124,14 @@ import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.store.backupOf
 import dev.anydm.engine.store.encode
 import dev.anydm.engine.store.readBackup
+import dev.anydm.engine.store.runtime
 import dev.anydm.engine.store.transfer
 import dev.anydm.engine.store.with
 import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolManager
+import dev.anydm.engine.tools.ToolStatus
+import dev.anydm.engine.tools.ToolUpdate
+import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.torrent.MAX_FILE_PRIORITY
 import dev.anydm.engine.torrent.SeedEnd
 import dev.anydm.engine.torrent.SeedRule
@@ -1381,6 +1386,62 @@ class Engine(
     suspend fun setNotifications(on: Boolean): CommandResult =
         command {
             store.settings.update { it.copy(notifications = on) }
+            CommandResult.Done(null)
+        }
+
+    /** The settings the OS, bridge, tool and diagnostics sections of the settings screen show (#609). */
+    suspend fun runtimeSettings(): RuntimeSettings = command { store.settings.load().runtime() }
+
+    /** Each runtime tool and the copy in use (BIN-01), for the tools section; empty when this engine has no tool manager. */
+    suspend fun toolStatus(): List<ToolStatus> =
+        command {
+            val manager = tools ?: return@command emptyList()
+            Tool.entries.map { ToolStatus(it, manager.resolve(it)) }
+        }
+
+    /** Fetches the newest build of [tool] now (#609); the TOOL job it adds shows in the list like any other. */
+    suspend fun updateTool(tool: Tool): ToolUpdate =
+        command {
+            val manager = tools ?: return@command ToolUpdate.UNAVAILABLE
+            manager.update(tool) { queue.add(it) }
+        }
+
+    /** Writes DEBUG lines to the log too (#556); the log level changes at once. */
+    suspend fun setDebugLogging(on: Boolean): CommandResult =
+        command {
+            store.settings.update { it.copy(debugLogging = on) }
+            log.minLevel = if (on) LogLevel.DEBUG else LogLevel.INFO
+            CommandResult.Done(null)
+        }
+
+    /** Which yt-dlp builds to follow (BIN-04); the tool manager asks for it on each check. */
+    suspend fun setYtDlpChannel(channel: YtDlpChannel): CommandResult =
+        command {
+            store.settings.update { it.copy(ytDlpChannel = channel) }
+            CommandResult.Done(null)
+        }
+
+    /** Whether a tool already on the machine is used when it is new enough (BIN-03); the tool manager asks for it on each look. */
+    suspend fun setSystemTools(on: Boolean): CommandResult =
+        command {
+            store.settings.update { it.copy(systemTools = on) }
+            CommandResult.Done(null)
+        }
+
+    /** The folder that holds [tool]'s executables, tried before any other copy (BIN-03); null goes back to the usual search. */
+    suspend fun setToolFolder(
+        tool: Tool,
+        folder: String?,
+    ): CommandResult =
+        command {
+            val path = folder?.let(::Path)
+            if (path != null && !path.isAbsolute) return@command CommandResult.Invalid("a tool folder must be absolute: $folder")
+            if (folder != null && folder.any { it == '\n' || it == '\r' }) {
+                return@command CommandResult.Invalid("a tool folder must be on one line")
+            }
+            store.settings.update { settings ->
+                settings.copy(toolFolders = if (path == null) settings.toolFolders - tool else settings.toolFolders + (tool to path))
+            }
             CommandResult.Done(null)
         }
 

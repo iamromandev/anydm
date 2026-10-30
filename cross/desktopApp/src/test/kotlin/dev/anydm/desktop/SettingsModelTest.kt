@@ -4,10 +4,14 @@ import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.net.AfterQueueAction
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ProxyType
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.store.DayTraffic
 import dev.anydm.engine.store.HistoryEntry
@@ -218,6 +222,27 @@ class SettingsModelTest {
         assertEquals(100L * 1024, clips.speedLimit)
         model.setDefaultProfile(clips.id)
         assertEquals(clips.id, model.state.value.defaultProfile)
+    }
+
+    @Test
+    fun `a profile takes one of the saved proxies`() {
+        val office = ProxyEntry(ProxyId(7), "Office", ProxyType.SOCKS5, "p.example", 1080, null, emptyList())
+        source.proxyList = listOf(office)
+        val model = model()
+        assertEquals(listOf(office), model.state.value.proxies)
+        model.newProfile()
+        model.changeProfile { it.copy(name = "Work", proxy = ProxyChoice.Named(office.id)) }
+        model.saveProfile()
+        assertEquals(ProxyChoice.Named(office.id), source.profileList.single().proxy)
+    }
+
+    @Test
+    fun `the profile editor sees a proxy added after the screen loaded`() {
+        val model = model()
+        assertEquals(emptyList(), model.state.value.proxies)
+        source.proxyList = listOf(ProxyEntry(ProxyId(7), "Office", ProxyType.SOCKS5, "p.example", 1080, null, emptyList()))
+        model.select(Section.PROFILES)
+        assertEquals(source.proxyList, model.state.value.proxies)
     }
 
     @Test

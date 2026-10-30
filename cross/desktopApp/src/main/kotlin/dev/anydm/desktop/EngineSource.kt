@@ -15,6 +15,8 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
+import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.CategoryResult
 import dev.anydm.engine.files.NewCategory
@@ -22,17 +24,36 @@ import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.NetworkPolicy
+import dev.anydm.engine.net.NetworkRules
+import dev.anydm.engine.net.NewProxy
+import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.PasswordChange
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyCommandResult
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.HotkeyStatus
 import dev.anydm.engine.os.LinkProbeResult
+import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.DayTraffic
 import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.ProxyRemoval
+import dev.anydm.engine.store.RuntimeSettings
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TransferSettings
+import dev.anydm.engine.tools.Tool
+import dev.anydm.engine.tools.ToolStatus
+import dev.anydm.engine.tools.ToolUpdate
+import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.torrent.TorrentInfo
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -154,13 +175,99 @@ interface EngineSource {
     suspend fun exportSettings(): String
 
     suspend fun importSettings(text: String): ImportResult
+
+    suspend fun proxies(): List<ProxyEntry>
+
+    suspend fun addProxy(
+        new: NewProxy,
+        password: String?,
+    ): ProxyCommandResult
+
+    suspend fun updateProxy(
+        proxy: ProxyEntry,
+        password: PasswordChange,
+    ): ProxyCommandResult
+
+    suspend fun removeProxy(id: ProxyId): ProxyRemoval
+
+    suspend fun proxyChoice(): ProxyChoice
+
+    suspend fun setProxyChoice(choice: ProxyChoice): CommandResult
+
+    suspend fun setDownloadProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ): CommandResult
+
+    suspend fun networkRules(): NetworkRules
+
+    /** Sets the policy of [network], null for the default; a null [policy] removes the entry. */
+    suspend fun setNetworkPolicy(
+        network: String?,
+        policy: NetworkPolicy?,
+    ): CommandResult
+
+    suspend fun scheduleRules(): List<ScheduleRule>
+
+    suspend fun addScheduleRule(new: NewScheduleRule): ScheduleRule
+
+    suspend fun updateScheduleRule(rule: ScheduleRule): Boolean
+
+    suspend fun removeScheduleRule(id: ScheduleRuleId): Boolean
+
+    /** The networks the machine has and which of them bonding uses. */
+    val networks: StateFlow<BondingState>
+
+    suspend fun setNetworkEnabled(
+        key: String,
+        enabled: Boolean,
+    ): CommandResult
+
+    /** The clipboard watch and the global hotkey, as the engine has them now. */
+    val osSettings: StateFlow<OsSettings>
+
+    /** Whether the global hotkey works; off until the OS integration runs it. */
+    val hotkeyStatus: StateFlow<HotkeyStatus>
+
+    suspend fun setClipboardWatch(on: Boolean): CommandResult
+
+    suspend fun setGlobalHotkey(on: Boolean): CommandResult
+
+    suspend fun runtimeSettings(): RuntimeSettings
+
+    suspend fun setNotifications(on: Boolean): CommandResult
+
+    suspend fun setBridgeOrigins(origins: Set<String>): CommandResult
+
+    suspend fun setDebugLogging(on: Boolean): CommandResult
+
+    suspend fun setYtDlpChannel(channel: YtDlpChannel): CommandResult
+
+    suspend fun setSystemTools(on: Boolean): CommandResult
+
+    suspend fun setToolFolder(
+        tool: Tool,
+        folder: String?,
+    ): CommandResult
+
+    suspend fun toolStatus(): List<ToolStatus>
+
+    suspend fun updateTool(tool: Tool): ToolUpdate
+
+    /** Writes a diagnostics bundle (logs, versions, settings with secrets removed) to [target]; null when it worked, else why not. */
+    suspend fun exportDiagnostics(target: String): String?
 }
 
-/** [onTransfer] hears the transfer settings after each change made through the source, for the parts built outside the engine. */
+/**
+ * [onTransfer] hears the transfer settings after each change made through the source, for the parts built outside the engine.
+ * [hotkey] is the hotkey service's status, and [diagnostics] writes the bundle; without them the hotkey reads Off and the export says it can't.
+ */
 fun Engine.asSource(
     store: Store,
     kinds: Set<DownloadKind>,
     onTransfer: (TransferSettings) -> Unit = {},
+    hotkey: StateFlow<HotkeyStatus> = MutableStateFlow(HotkeyStatus.Off),
+    diagnostics: suspend (String) -> String? = { "diagnostics aren't set up in this build" },
 ): EngineSource =
     object : EngineSource {
         private val engine = this@asSource
@@ -284,6 +391,80 @@ fun Engine.asSource(
             } finally {
                 told()
             }
+
+        override val networks = engine.networks
+        override val osSettings = engine.osSettings
+        override val hotkeyStatus = hotkey
+
+        override suspend fun proxies() = engine.proxies()
+
+        override suspend fun addProxy(
+            new: NewProxy,
+            password: String?,
+        ) = engine.addProxy(new, password)
+
+        override suspend fun updateProxy(
+            proxy: ProxyEntry,
+            password: PasswordChange,
+        ) = engine.updateProxy(proxy, password)
+
+        override suspend fun removeProxy(id: ProxyId) = engine.removeProxy(id)
+
+        override suspend fun proxyChoice() = engine.proxyChoice()
+
+        override suspend fun setProxyChoice(choice: ProxyChoice) = engine.setProxyChoice(choice)
+
+        override suspend fun setDownloadProxy(
+            id: DownloadId,
+            choice: ProxyChoice,
+        ) = engine.setDownloadProxy(id, choice)
+
+        override suspend fun networkRules() = engine.networkRules()
+
+        override suspend fun setNetworkPolicy(
+            network: String?,
+            policy: NetworkPolicy?,
+        ) = engine.setNetworkPolicy(network, policy)
+
+        override suspend fun scheduleRules() = engine.scheduleRules()
+
+        override suspend fun addScheduleRule(new: NewScheduleRule) = engine.addScheduleRule(new)
+
+        override suspend fun updateScheduleRule(rule: ScheduleRule) = engine.updateScheduleRule(rule)
+
+        override suspend fun removeScheduleRule(id: ScheduleRuleId) = engine.removeScheduleRule(id)
+
+        override suspend fun setNetworkEnabled(
+            key: String,
+            enabled: Boolean,
+        ) = engine.setNetworkEnabled(key, enabled)
+
+        override suspend fun setClipboardWatch(on: Boolean) = engine.setClipboardWatch(on)
+
+        override suspend fun setGlobalHotkey(on: Boolean) = engine.setGlobalHotkey(on)
+
+        override suspend fun runtimeSettings() = engine.runtimeSettings()
+
+        override suspend fun setNotifications(on: Boolean) = engine.setNotifications(on)
+
+        override suspend fun setBridgeOrigins(origins: Set<String>) = engine.setBridgeOrigins(origins)
+
+        override suspend fun setDebugLogging(on: Boolean) = engine.setDebugLogging(on)
+
+        override suspend fun setYtDlpChannel(channel: YtDlpChannel) = engine.setYtDlpChannel(channel)
+
+        override suspend fun setSystemTools(on: Boolean) = engine.setSystemTools(on)
+
+        override suspend fun setToolFolder(
+            tool: Tool,
+            folder: String?,
+        ) = engine.setToolFolder(tool, folder)
+
+        override suspend fun toolStatus() = engine.toolStatus()
+
+        override suspend fun updateTool(tool: Tool) = engine.updateTool(tool)
+
+        override suspend fun exportDiagnostics(target: String) = diagnostics(target)
 
         private suspend fun told() = onTransfer(engine.transferSettings())
     }

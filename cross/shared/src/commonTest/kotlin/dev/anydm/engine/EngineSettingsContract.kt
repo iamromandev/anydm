@@ -11,8 +11,12 @@ import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.files.NewCategory
 import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.ProfileResult
+import dev.anydm.engine.log.Log
+import dev.anydm.engine.log.LogLevel
+import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.platform.virtualClock
 import dev.anydm.engine.protocol.FakeFailure
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.CommandResult
@@ -22,9 +26,12 @@ import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
 import dev.anydm.engine.store.ProfileEntry
+import dev.anydm.engine.store.RuntimeSettings
 import dev.anydm.engine.store.StoreTestBase
 import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.store.encode
+import dev.anydm.engine.tools.Tool
+import dev.anydm.engine.tools.YtDlpChannel
 import io.kotest.matchers.booleans.shouldBeTrue
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -303,6 +310,72 @@ abstract class EngineSettingsContract : StoreTestBase() {
                 stored.globalPause shouldBe true
                 stored.afterQueue shouldBe AfterQueueAction.SHUT_DOWN
                 stored.defaultProfileId shouldBe clips.id
+            }
+        }
+
+    @Test
+    fun runtimeSettingsStartAsTheDefaults() =
+        runTest {
+            withEngine { h ->
+                h.engine.runtimeSettings() shouldBe RuntimeSettings()
+            }
+        }
+
+    @Test
+    fun theRuntimeSettersStoreAndReadBack() =
+        runTest {
+            withEngine { h ->
+                h.engine.setNotifications(false).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setBridgeOrigins(setOf("moz-extension://abc")).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setYtDlpChannel(YtDlpChannel.NIGHTLY).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setSystemTools(false).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setDebugLogging(true).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setToolFolder(Tool.FFMPEG, "/opt/ff").shouldBeInstanceOf<CommandResult.Done>()
+
+                h.engine.runtimeSettings() shouldBe
+                    RuntimeSettings(
+                        notifications = false,
+                        bridgeOrigins = setOf("moz-extension://abc"),
+                        debugLogging = true,
+                        ytDlpChannel = YtDlpChannel.NIGHTLY,
+                        systemTools = false,
+                        toolFolders = mapOf(Tool.FFMPEG to "/opt/ff"),
+                    )
+                h.store.settings
+                    .load()
+                    .toolFolders shouldBe mapOf(Tool.FFMPEG to Path("/opt/ff"))
+            }
+        }
+
+    @Test
+    fun aToolFolderCanBeClearedAndMustBeAbsolute() =
+        runTest {
+            withEngine { h ->
+                h.engine.setToolFolder(Tool.DENO, "/opt/deno")
+                h.engine.setToolFolder(Tool.DENO, null).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.runtimeSettings().toolFolders shouldBe emptyMap()
+
+                h.engine.setToolFolder(Tool.DENO, "relative/bin").shouldBeInstanceOf<CommandResult.Invalid>()
+                h.engine.setToolFolder(Tool.DENO, "/opt/a\nb").shouldBeInstanceOf<CommandResult.Invalid>()
+                h.engine.runtimeSettings().toolFolders shouldBe emptyMap()
+            }
+        }
+
+    @Test
+    fun debugLoggingChangesTheLogLevelAtOnce() =
+        runTest {
+            val log = Log(RecordingLogSink(), virtualClock())
+            val h = EngineHarness(this, newStore(), log = log).also { it.engine.start() }
+            try {
+                log.minLevel shouldBe LogLevel.INFO
+
+                h.engine.setDebugLogging(true)
+                log.minLevel shouldBe LogLevel.DEBUG
+
+                h.engine.setDebugLogging(false)
+                log.minLevel shouldBe LogLevel.INFO
+            } finally {
+                h.engine.stop()
             }
         }
 

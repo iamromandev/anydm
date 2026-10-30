@@ -16,9 +16,13 @@ import androidx.compose.ui.test.performTextInput
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.files.Profile
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ProxyType
 import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.TransferSettings
 import kotlinx.coroutines.CoroutineScope
@@ -181,6 +185,21 @@ class SettingsScreenTest {
         rule.waitForIdle()
         rule.onNodeWithTag("profile-default-none").assertIsSelected()
         assertEquals(emptyList(), source.profileList)
+    }
+
+    @Test
+    fun `a profile picks its proxy among the saved ones`() {
+        source.proxyList = listOf(ProxyEntry(ProxyId(7), "Office", ProxyType.SOCKS5, "p.example", 1080, null, emptyList()))
+        show()
+        click("settings-section-profiles")
+        click("profile-new")
+        type("profile-name", "Work")
+        rule.onNodeWithTag("profile-proxy-inherit").assertIsSelected()
+        click("profile-proxy-7")
+        rule.onNodeWithTag("profile-proxy-7").assertIsSelected()
+        click("profile-save")
+        rule.waitForIdle()
+        assertEquals(ProxyChoice.Named(ProxyId(7)), source.profileList.single().proxy)
     }
 
     @Test

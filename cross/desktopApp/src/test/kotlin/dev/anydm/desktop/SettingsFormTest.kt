@@ -131,6 +131,15 @@ class SettingsFormTest {
     }
 
     @Test
+    fun `a profile's proxy choice goes to the engine with the rest`() {
+        val profile = Profile(ProfileId(1), "Clips", null, null, null, null, null, ProxyChoice.Direct)
+        assertEquals(ProxyChoice.Direct, profileForm(profile).proxy)
+        assertEquals(ProxyChoice.System, profileForm(profile).copy(proxy = ProxyChoice.System).toProfile(profile).proxy)
+        assertEquals(ProxyChoice.Inherit, ProfileForm(name = "New").toNew().proxy)
+        assertEquals(ProxyChoice.Direct, ProfileForm(name = "New", proxy = ProxyChoice.Direct).toNew().proxy)
+    }
+
+    @Test
     fun `a profile keeps its proxy and the parts of its format the form doesn't show`() {
         val profile =
             Profile(ProfileId(1), "Clips", Format(height = 720, fps = 30), null, null, null, 2048, ProxyChoice.Direct)

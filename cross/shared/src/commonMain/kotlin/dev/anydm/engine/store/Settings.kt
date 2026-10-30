@@ -8,6 +8,7 @@ import dev.anydm.engine.files.ClashPolicy
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.SlowMode
+import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.io.files.Path
 
@@ -41,6 +42,8 @@ data class Settings(
     val ytDlpChannel: YtDlpChannel = YtDlpChannel.STABLE,
     /** Use a tool already on the machine (Homebrew, winget, apt) when it is new enough (BIN-03). */
     val systemTools: Boolean = true,
+    /** A folder the user named for a tool's executables (BIN-03); it is tried before a copy found on the machine, even with [systemTools] off. */
+    val toolFolders: Map<Tool, Path> = emptyMap(),
     /** Where yt-dlp reads cookies from, for pages that need a login (MED-18). */
     val cookieSource: CookieSource = CookieSource.None,
     /** How carefully requests to a site are paced (MED-20). */
@@ -91,6 +94,9 @@ data class Settings(
             bondedNetworks.all { it.isNotBlank() && it.none { c -> c == '\n' || c == '\r' } },
         ) { "a bonded network needs a name without line breaks: $bondedNetworks" }
         require(bridgeOrigins.all { it.matches(EXTENSION_ORIGIN) }) { "not an extension origin: $bridgeOrigins" }
+        require(toolFolders.values.all { it.isAbsolute && it.toString().none { c -> c == '\n' || c == '\r' } }) {
+            "a tool folder must be absolute and on one line: $toolFolders"
+        }
         require(maxRetries >= 0) { "maxRetries must be >= 0: $maxRetries" }
         require(torrentPort in 0..65535) { "torrentPort must be in 0..65535: $torrentPort" }
         require(connectionsPerDownload in 1..16) { "connectionsPerDownload must be in 1..16: $connectionsPerDownload" }

@@ -153,6 +153,59 @@ abstract class EngineToolContract : StoreTestBase() {
     }
 
     @Test
+    fun toolStatusListsEveryToolWithWhatIsInstalled() =
+        runTest {
+            val r = rig(preInstalled = true)
+            r.h.engine.start()
+            try {
+                val status =
+                    r.h.engine
+                        .toolStatus()
+                        .associateBy { it.tool }
+
+                status.keys shouldBe Tool.entries.toSet()
+                status.getValue(Tool.FFMPEG).resolved!!.version shouldBe ToolVersion.parse("8.1.3")
+                status.getValue(Tool.FFMPEG).resolved!!.managed shouldBe true
+                status.getValue(Tool.DENO).resolved shouldBe null
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun updatingAMissingToolStartsItsToolJob() =
+        runTest {
+            val r = rig()
+            r.h.engine.start()
+            try {
+                r.h.engine.updateTool(Tool.FFMPEG) shouldBe ToolUpdate.FETCHING
+                settleEngine()
+
+                r.toolJobs().map { it.download.status } shouldBe listOf(COMPLETED)
+                r.h.engine
+                    .toolStatus()
+                    .first { it.tool == Tool.FFMPEG }
+                    .resolved!!
+                    .version shouldBe ToolVersion.parse("8.1.3")
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
+    fun withoutAToolManagerThereIsNothingToUpdate() =
+        runTest {
+            val r = rig(withManager = false)
+            r.h.engine.start()
+            try {
+                r.h.engine.toolStatus() shouldBe emptyList()
+                r.h.engine.updateTool(Tool.FFMPEG) shouldBe ToolUpdate.UNAVAILABLE
+            } finally {
+                r.h.engine.stop()
+            }
+        }
+
+    @Test
     fun aJobPausedForAMissingToolIsReleasedWhenTheToolJobCompletes() =
         runTest {
             val r = rig()

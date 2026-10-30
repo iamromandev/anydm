@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.net.ProxyChoice
 import kotlinx.coroutines.delay
 
 enum class DetailTab(
@@ -38,6 +41,7 @@ enum class DetailTab(
     SEGMENTS("Segments"),
     ATTEMPTS("Attempts"),
     MIRRORS("Mirrors"),
+    PROXY("Proxy"),
     ERRORS("Errors"),
     PEERS("Peers"),
 }
@@ -82,6 +86,7 @@ internal fun DetailPane(
                 DetailTab.SEGMENTS -> Segments(s)
                 DetailTab.ATTEMPTS -> Attempts(s, failedOnly = false)
                 DetailTab.MIRRORS -> Mirrors(s)
+                DetailTab.PROXY -> Proxy(s, model)
                 DetailTab.ERRORS -> Attempts(s, failedOnly = true)
                 DetailTab.PEERS -> Peers(s, model)
             }
@@ -169,6 +174,36 @@ private fun Peers(
 
         else -> {
             Text("Live peers unavailable.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("peers-unavailable"))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Proxy(
+    s: DownloadSnapshot,
+    model: AppModel,
+) {
+    LaunchedEffect(s.download.id) { model.loadProxies() }
+    val proxies by model.proxies.collectAsState()
+    val id = s.download.id
+    Line("Which proxy this download goes through. Default leaves it to its profile and the global choice (Settings, Proxies).")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Default" to ProxyChoice.Inherit, "None" to ProxyChoice.Direct, "System" to ProxyChoice.System).forEach { (label, choice) ->
+            FilterChip(
+                selected = s.download.proxy == choice,
+                onClick = { model.setDownloadProxy(id, choice) },
+                label = { Text(label) },
+                modifier = Modifier.testTag("detail-proxy-${choice.encode().lowercase()}"),
+            )
+        }
+        proxies.forEach { proxy ->
+            FilterChip(
+                selected = s.download.proxy == ProxyChoice.Named(proxy.id),
+                onClick = { model.setDownloadProxy(id, ProxyChoice.Named(proxy.id)) },
+                label = { Text(proxy.name) },
+                modifier = Modifier.testTag("detail-proxy-${proxy.id.value}"),
+            )
         }
     }
 }

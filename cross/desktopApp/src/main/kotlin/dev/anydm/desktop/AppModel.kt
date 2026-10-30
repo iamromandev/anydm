@@ -10,6 +10,8 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import kotlinx.coroutines.CancellationException
@@ -191,6 +193,9 @@ class AppModel(
             .also { created = true }
     }
 
+    /** The network, OS and tool sections of the settings screen (#609); each acts at once; only the tool folder field keeps a draft until Apply. */
+    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io) }
+
     @Volatile
     private var created = false
 
@@ -355,6 +360,28 @@ class AppModel(
             }
         }
     }
+
+    /** The saved proxies a job can take, read when the detail pane's Proxy tab opens. */
+    private val proxyList = MutableStateFlow<List<ProxyEntry>>(emptyList())
+    val proxies: StateFlow<List<ProxyEntry>> = proxyList.asStateFlow()
+
+    fun loadProxies() {
+        scope.launch {
+            try {
+                proxyList.value = source.proxies()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: IllegalStateException) {
+                // A stopped engine has no proxies to offer; the tab shows the three built-in choices.
+            }
+        }
+    }
+
+    /** Sends [id] through [choice]; Inherit leaves it to its profile and the global choice. */
+    fun setDownloadProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ) = scope.launch { guarded { source.setDownloadProxy(id, choice) }?.let { refused("Changing the proxy", it) } }
 
     fun pauseAll() = scope.launch { guarded { source.pauseAll() }?.let { refused("Pause all", it) } }
 

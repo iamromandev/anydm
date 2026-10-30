@@ -182,6 +182,43 @@ class ToolManagerTest {
         }
 
     @Test
+    fun aFolderTheUserNamedIsUsedBeforeASystemCopy() =
+        runTest {
+            val r =
+                rig(
+                    listOf(version("/opt/mine/deno", "deno 2.3.0")),
+                    installed = mapOf("deno" to "/usr/bin/deno"),
+                )
+            r.fs.put(Path("/opt/mine/deno"), byteArrayOf(1))
+            r.settings = Settings(toolFolders = mapOf(Tool.DENO to Path("/opt/mine")))
+
+            val resolved = r.manager.resolve(Tool.DENO)!!
+
+            resolved.managed shouldBe false
+            resolved.version shouldBe ToolVersion.parse("2.3.0")
+            resolved.executable("deno") shouldBe Path("/opt/mine/deno")
+        }
+
+    @Test
+    fun aFolderTheUserNamedIsUsedEvenWithSystemCopiesSwitchedOff() =
+        runTest {
+            val r = rig(listOf(version("/opt/mine/deno", "deno 2.3.0")))
+            r.fs.put(Path("/opt/mine/deno"), byteArrayOf(1))
+            r.settings = Settings(systemTools = false, toolFolders = mapOf(Tool.DENO to Path("/opt/mine")))
+
+            r.manager.resolve(Tool.DENO)!!.executable("deno") shouldBe Path("/opt/mine/deno")
+        }
+
+    @Test
+    fun aFolderWithoutTheToolFallsBackToTheUsualSearch() =
+        runTest {
+            val r = rig(listOf(version("/usr/bin/deno", "deno 2.1.4")), installed = mapOf("deno" to "/usr/bin/deno"))
+            r.settings = Settings(toolFolders = mapOf(Tool.DENO to Path("/opt/empty")))
+
+            r.manager.resolve(Tool.DENO)!!.executable("deno") shouldBe Path("/usr/bin/deno")
+        }
+
+    @Test
     fun theManagedCopyIsUsedWhenThereIsNoSystemOne() =
         runTest {
             val r = rig()
@@ -466,6 +503,83 @@ class ToolManagerTest {
 
             r.added shouldBe emptyList()
             r.store.get(Tool.YT_DLP)!!.checkedAt shouldBe null
+        }
+
+    // --- updating on request
+
+    @Test
+    fun updateFetchesANewerYtDlpWithoutWaitingADay() =
+        runTest {
+            val r = rig()
+            r.ytDlp("2026.10.01", r.clock.now())
+            r.release = newer
+
+            r.manager.update(Tool.YT_DLP, r.add) shouldBe ToolUpdate.FETCHING
+
+            r.added.single().saveFolder shouldBe "/app/cache/tools/yt-dlp/2026.11.01"
+        }
+
+    @Test
+    fun updateWhenYtDlpIsCurrentSaysSo() =
+        runTest {
+            val r = rig()
+            r.ytDlp("2026.10.01", null)
+            r.release = Release("2026.10.01", "https://example.com/y", "c".repeat(64))
+
+            r.manager.update(Tool.YT_DLP, r.add) shouldBe ToolUpdate.UP_TO_DATE
+
+            r.added shouldBe emptyList()
+        }
+
+    @Test
+    fun updateFetchesAToolThatIsMissing() =
+        runTest {
+            val r = rig()
+
+            r.manager.update(Tool.FFMPEG, r.add) shouldBe ToolUpdate.FETCHING
+
+            r.added.single().saveFolder shouldBe "/app/cache/tools/ffmpeg/8.1.3"
+        }
+
+    @Test
+    fun updateFetchesThePinnedVersionWhenTheInstalledOneIsOlder() =
+        runTest {
+            val r = rig()
+            r.install(Tool.FFMPEG, "7.0.0", "pkg/bin/ffmpeg", "pkg/bin/ffprobe")
+            r.record(Tool.FFMPEG, "7.0.0")
+
+            r.manager.update(Tool.FFMPEG, r.add) shouldBe ToolUpdate.FETCHING
+        }
+
+    @Test
+    fun updateIsUpToDateWhenThePinnedVersionIsInstalled() =
+        runTest {
+            val r = rig()
+            r.install(Tool.FFMPEG, "8.1.3", "pkg/bin/ffmpeg", "pkg/bin/ffprobe")
+            r.record(Tool.FFMPEG, "8.1.3")
+
+            r.manager.update(Tool.FFMPEG, r.add) shouldBe ToolUpdate.UP_TO_DATE
+            r.added shouldBe emptyList()
+        }
+
+    @Test
+    fun updateWhileAFetchRunsAddsNothingMore() =
+        runTest {
+            val r = rig()
+            r.manager.update(Tool.FFMPEG, r.add)
+
+            r.manager.update(Tool.FFMPEG, r.add) shouldBe ToolUpdate.FETCHING
+
+            r.added.size shouldBe 1
+        }
+
+    @Test
+    fun updateIsUnavailableWhenThereIsNothingToFetch() =
+        runTest {
+            val r = rig()
+            r.release = null
+
+            r.manager.update(Tool.YT_DLP, r.add) shouldBe ToolUpdate.UNAVAILABLE
         }
 
     @Test

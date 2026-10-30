@@ -6,6 +6,7 @@ import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.CategoryResult
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
+import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.store.DayTraffic
 import dev.anydm.engine.store.HistoryEntry
@@ -84,6 +85,8 @@ data class SettingsState(
     val message: String? = null,
     val categories: List<Category> = emptyList(),
     val profiles: List<Profile> = emptyList(),
+    /** The saved proxies a profile can pick. */
+    val proxies: List<ProxyEntry> = emptyList(),
     val defaultProfile: ProfileId? = null,
     val category: Editing<CategoryForm, CategoryId, CategoryField>? = null,
     val profile: Editing<ProfileForm, ProfileId, ProfileField>? = null,
@@ -168,6 +171,15 @@ class SettingsModel(
             )
         }
         if (section == Section.HISTORY) scope.launch { guarded { history() } }
+        // Proxies are added in their own section, so the profile editor reads them again when it opens.
+        if (section == Section.PROFILES) {
+            scope.launch {
+                guarded {
+                    val proxies = source.proxies()
+                    ui.update { it.copy(proxies = proxies) }
+                }
+            }
+        }
     }
 
     fun edit(change: (TransferForm) -> TransferForm) =
@@ -477,7 +489,8 @@ class SettingsModel(
         val categories = source.categories()
         val profiles = source.profiles()
         val default = source.defaultProfile()
-        ui.update { it.copy(categories = categories, profiles = profiles, defaultProfile = default) }
+        val proxies = source.proxies()
+        ui.update { it.copy(categories = categories, profiles = profiles, proxies = proxies, defaultProfile = default) }
         onCategories(categories)
     }
 
