@@ -149,7 +149,7 @@ class StepRunner(
                     found.reason == DuplicateReason.IN_HISTORY -> "already downloaded before (see the history)"
                     else -> "already on disk: ${Path(plan.folder, plan.fileName)}"
                 }
-            return prepareFailed(download, Step.PROBE, StepResult.Failed(null, reason))
+            return prepareFailed(download, Step.PROBE, StepResult.Failed(ErrorClass.DUPLICATE, reason))
         }
         if (plan.folder != folder) {
             val prepared = fileSystem.prepareFolder(plan.folder)

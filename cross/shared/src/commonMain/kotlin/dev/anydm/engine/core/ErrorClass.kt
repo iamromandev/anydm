@@ -28,4 +28,10 @@ enum class ErrorClass {
 
     /** The chosen proxy can't be used (it is gone, its password is missing, or it can't carry the protocol); nothing was sent (NET-15). */
     PROXY,
+
+    /**
+     * The probe found the job a duplicate (FIL-06): already in the list, in the history or on disk. Never retried by itself;
+     * the user retries it with `allowDuplicate`.
+     */
+    DUPLICATE,
 }

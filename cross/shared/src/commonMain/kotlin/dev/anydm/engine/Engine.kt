@@ -1257,7 +1257,11 @@ class Engine(
             }
         }
 
-    suspend fun retry(id: DownloadId): CommandResult = command { queue.retry(id) }
+    /** Sends a FAILED job back to the queue; with [allowDuplicate], one that failed as a duplicate (ErrorClass.DUPLICATE) is let through. */
+    suspend fun retry(
+        id: DownloadId,
+        allowDuplicate: Boolean = false,
+    ): CommandResult = command { queue.retry(id, allowDuplicate) }
 
     suspend fun reprioritize(
         id: DownloadId,

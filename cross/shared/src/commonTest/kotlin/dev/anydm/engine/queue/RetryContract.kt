@@ -357,6 +357,24 @@ abstract class RetryContract : QueueTestBase() {
         }
 
     @Test
+    fun aRetryThatAllowsADuplicateKeepsThatOnTheJob() =
+        runTest {
+            val h = started()
+            h.protocol.gone = setOf("https://a.example/f")
+            val a = h.addJob(mirrors = listOf("https://a.example/f"))
+            settle()
+            h.status(a) shouldBe FAILED
+            h.job(a)!!.allowDuplicate shouldBe false
+
+            h.protocol.gone = emptySet()
+            h.queue.retry(a, allowDuplicate = true)
+            settle()
+
+            h.job(a)!!.allowDuplicate shouldBe true
+            h.status(a) shouldBe COMPLETED
+        }
+
+    @Test
     fun failoverKeepsTheJobsPlace() =
         runTest {
             val h = started(limit = 1)

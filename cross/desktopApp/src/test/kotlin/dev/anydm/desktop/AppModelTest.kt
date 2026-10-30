@@ -40,7 +40,8 @@ class AppModelTest {
     private fun TestScope.model(
         source: FakeSource,
         firstRun: FirstRun = MemoryFirstRun(done = true),
-    ): AppModel = AppModel(source, firstRun, backgroundScope + UnconfinedTestDispatcher(testScheduler)).also { it.start() }
+        files: FileActions = FakeFiles(),
+    ): AppModel = AppModel(source, firstRun, backgroundScope + UnconfinedTestDispatcher(testScheduler), files).also { it.start() }
 
     @Test
     fun `counts follow the snapshots`() =

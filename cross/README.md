@@ -37,6 +37,8 @@ own, with the engine in `shared/`; no server is needed.
     equals the stored one, and then only the files whose ranges and partial still match; anything else starts over.
     A QUEUED job without the in-memory `Ready` from `prepare` must go back through PENDING. Tests script jobs with
     `FakeProtocol`, `FakeFileSystem` and `InMemoryPlanStore` from `commonTest`.
+  - A job the probe finds to be a duplicate fails with `ErrorClass.DUPLICATE` and is never retried by itself;
+    `Engine.retry(id, allowDuplicate = true)` sends it back past the duplicate check (the UI's "Download anyway").
   - Bonding (#544) splits one download across networks. `Bonding` keeps the networks (`NetworkLister`), which the user turned
     on (`Engine.setNetworkEnabled`, saved in the settings) and whether a connection can be tied to each (`NetworkBinder`); it is
     on with two or more in use, and with fewer nothing is bound. HTTP workers each take a network, the next one going to the
@@ -83,9 +85,13 @@ own, with the engine in `shared/`; no server is needed.
     is, not merged into an uber jar: it is LGPL. Tests use fakes: none touches the real clipboard or installs a real key hook, and only that the library loads on
     this JDK is checked against the real system.
 - `desktopApp/` — the Compose Desktop app, built in [#604](https://github.com/iamromandev/anydm/issues/604); it drives
-  the engine directly. The shell is in place: window, theme, sidebar with live counts, status bar, menu bar, banners and
-  a first-run welcome (`AppModel` holds the state every screen reads). The download list, add flows and settings come
-  in the later stories, and only plain HTTP(S) downloads are wired to the engine so far.
+  the engine directly. In place so far: the shell (window, theme, sidebar with live counts, status bar, menu bar,
+  banners, a first-run welcome) and the download list (#606): sorting, a text filter, expandable collections,
+  multi-selection with keys, a context menu and toolbar for every job command, the remove and relink dialogs, a detail
+  pane for one selected job, and open / show in folder / copy path for finished files. `AppModel` holds the state every
+  screen reads and takes the commands; the list logic (`Rows.kt`, `Commands.kt`, `Format.kt`) is plain Kotlin with
+  its own tests. Add flows and settings come in the later stories, and only plain HTTP(S) downloads are wired to the
+  engine so far.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.

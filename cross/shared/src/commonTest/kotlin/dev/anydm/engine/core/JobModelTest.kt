@@ -70,8 +70,19 @@ class JobModelTest {
     }
 
     @Test
-    fun errorClassesAreTheSpecsSevenAMissingToolAndAnUnusableProxy() {
+    fun errorClassesAreTheSpecsSevenAMissingToolAnUnusableProxyAndADuplicate() {
         ErrorClass.entries.map { it.name } shouldBe
-            listOf("TRANSIENT", "RATE_LIMITED", "AUTH", "GONE", "DISK_FULL", "FORMAT_WITHHELD", "INTEGRITY", "TOOL_MISSING", "PROXY")
+            listOf(
+                "TRANSIENT",
+                "RATE_LIMITED",
+                "AUTH",
+                "GONE",
+                "DISK_FULL",
+                "FORMAT_WITHHELD",
+                "INTEGRITY",
+                "TOOL_MISSING",
+                "PROXY",
+                "DUPLICATE",
+            )
     }
 }

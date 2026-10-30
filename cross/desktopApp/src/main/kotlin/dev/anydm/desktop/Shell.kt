@@ -51,7 +51,7 @@ fun Shell(model: AppModel) {
                     Sidebar(state, model::navigate)
                     Column(Modifier.weight(1f).fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
                         Banners(state.banners, model::dismiss)
-                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state) }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model) { focus.requestFocus() } }
                         StatusBar(state)
                     }
                 }
@@ -92,29 +92,19 @@ internal fun title(route: Route): String =
     }
 
 @Composable
-private fun Content(state: UiState) {
+private fun Content(
+    state: UiState,
+    model: AppModel,
+    focusList: () -> Unit,
+) {
     when (val route = state.route) {
         Route.Settings -> {
             Placeholder("Settings arrive with the transfer, network and tool settings stories.", "settings")
         }
 
-        // The list itself is the next story; the shell shows what it will fill.
         is Route.Downloads -> {
-            Placeholder(
-                if (state.counts.of(route.filter) == 0) "Nothing here yet." else "The download list arrives in the next story.",
-                "empty",
-            )
+            Downloads(state, route.filter, model, focusList)
         }
-    }
-}
-
-@Composable
-private fun Placeholder(
-    text: String,
-    tag: String,
-) {
-    Box(Modifier.fillMaxSize().testTag(tag), contentAlignment = Alignment.Center) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -161,7 +151,8 @@ private fun StatusBar(state: UiState) {
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(engineLabel(state.engine), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-engine"))
+        val engine = engineLabel(state.engine) + if (state.globallyPaused && state.engine == EngineState.Running) " · Paused" else ""
+        Text(engine, style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-engine"))
         Text(formatSpeed(state.speed), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-speed"))
     }
 }
@@ -174,17 +165,6 @@ internal fun engineLabel(state: EngineState): String =
         EngineState.Stopped -> "Stopped"
         is EngineState.Failed -> "Unavailable"
     }
-
-internal fun formatSpeed(bytesPerSecond: Long): String {
-    val units = listOf("B/s", "KB/s", "MB/s", "GB/s")
-    var value = bytesPerSecond.toDouble()
-    var unit = 0
-    while (value >= 1024 && unit < units.lastIndex) {
-        value /= 1024
-        unit++
-    }
-    return if (unit == 0) "$bytesPerSecond B/s" else "%.1f %s".format(value, units[unit])
-}
 
 @Composable
 private fun Welcome(onStart: () -> Unit) {
