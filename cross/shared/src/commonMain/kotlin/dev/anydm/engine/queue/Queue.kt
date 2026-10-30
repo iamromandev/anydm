@@ -150,8 +150,11 @@ class Queue internal constructor(
             actor.callLater { remove(id, files, it) }
         }
 
-    /** Queues a FAILED job again with a fresh attempt count. */
-    suspend fun retry(id: DownloadId): CommandResult = forItems(id, { retry(it) }) { actor.call { retry(id) } }
+    /** Queues a FAILED job again with a fresh attempt count; [allowDuplicate] lets it past the duplicate check that failed it (FIL-06). */
+    suspend fun retry(
+        id: DownloadId,
+        allowDuplicate: Boolean = false,
+    ): CommandResult = forItems(id, { retry(it, allowDuplicate) }) { actor.call { retry(id, allowDuplicate) } }
 
     /** Every job's combined speed limit in bytes per second, shared by priority, or null for none; below 1 is Invalid. */
     suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult {

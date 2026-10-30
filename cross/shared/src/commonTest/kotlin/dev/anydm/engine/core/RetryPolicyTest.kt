@@ -2,6 +2,7 @@ package dev.anydm.engine.core
 
 import dev.anydm.engine.core.ErrorClass.AUTH
 import dev.anydm.engine.core.ErrorClass.DISK_FULL
+import dev.anydm.engine.core.ErrorClass.DUPLICATE
 import dev.anydm.engine.core.ErrorClass.FORMAT_WITHHELD
 import dev.anydm.engine.core.ErrorClass.GONE
 import dev.anydm.engine.core.ErrorClass.INTEGRITY
@@ -64,6 +65,7 @@ class RetryPolicyTest {
                 FORMAT_WITHHELD to FailureAction.Fail,
                 PROXY to FailureAction.Fail,
                 INTEGRITY to FailureAction.StartOver,
+                DUPLICATE to FailureAction.Fail,
                 null to FailureAction.Fail,
             )
         expected.keys.filterNotNull().toSet() shouldBe ErrorClass.entries.toSet()

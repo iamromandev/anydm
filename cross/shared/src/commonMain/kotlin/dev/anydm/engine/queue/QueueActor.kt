@@ -439,13 +439,24 @@ internal class QueueActor(
         reply: CompletableDeferred<CommandResult>,
     ) = stopThen(id, reply) { removeJob(it, files) }
 
-    suspend fun retry(id: DownloadId): CommandResult =
+    suspend fun retry(
+        id: DownloadId,
+        allowDuplicate: Boolean = false,
+    ): CommandResult =
         withJob(id) { job ->
             if (job.status != FAILED) {
                 CommandResult.Rejected(TransitionResult.Rejected(job.status, QUEUED))
             } else {
                 change(job.transitionTo(QUEUED)) {
-                    hold(it.copy(attemptCount = 0, nextAttemptAt = null, queuedAt = clock.now()))
+                    hold(
+                        it.copy(
+                            attemptCount = 0,
+                            nextAttemptAt = null,
+                            queuedAt = clock.now(),
+                            allowDuplicate =
+                                job.allowDuplicate || allowDuplicate,
+                        ),
+                    )
                 }
             }
         }

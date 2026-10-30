@@ -37,6 +37,7 @@ class ShellTest {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     private val source = FakeSource()
+    private val files = FakeFiles()
     private var welcomeDone = true
     private val firstRun =
         object : FirstRun {
@@ -52,7 +53,7 @@ class ShellTest {
     fun close() = scope.cancel()
 
     private fun show(dark: Boolean = false) {
-        model = AppModel(source, firstRun, scope)
+        model = AppModel(source, firstRun, scope, files)
         model.start()
         rule.setContent { AnydmTheme(dark = dark) { Shell(model) } }
     }

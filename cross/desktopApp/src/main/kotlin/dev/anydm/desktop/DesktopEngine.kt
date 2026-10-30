@@ -5,7 +5,9 @@ import dev.anydm.engine.Engine
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
+import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.OsProfile
 import dev.anydm.engine.http.HttpProtocol
@@ -15,6 +17,7 @@ import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.current
 import dev.anydm.engine.platform.desktopAppDirs
+import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.openStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -67,4 +70,42 @@ internal class UnavailableSource(
     override suspend fun start() = Unit
 
     override suspend fun stop() = Unit
+
+    // Like a stopped engine: every command is refused.
+    private fun stopped(): Nothing = throw IllegalStateException("the engine has stopped")
+
+    override suspend fun pause(id: DownloadId) = stopped()
+
+    override suspend fun resume(id: DownloadId) = stopped()
+
+    override suspend fun cancel(id: DownloadId) = stopped()
+
+    override suspend fun remove(
+        id: DownloadId,
+        files: RemoveFiles,
+    ) = stopped()
+
+    override suspend fun retry(
+        id: DownloadId,
+        allowDuplicate: Boolean,
+    ) = stopped()
+
+    override suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ) = stopped()
+
+    override suspend fun relink(
+        id: DownloadId,
+        mirrorId: MirrorId,
+        url: String,
+    ) = stopped()
+
+    override suspend fun stopSeeding(id: DownloadId) = stopped()
+
+    override suspend fun pauseAll() = stopped()
+
+    override suspend fun resumeAll() = stopped()
+
+    override suspend fun torrentDetail(id: DownloadId) = stopped()
 }

@@ -79,7 +79,7 @@ class RetryPolicy(
                 if (integrityBefore) FailureAction.Fail else FailureAction.StartOver
             }
 
-            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, ErrorClass.PROXY, null -> {
+            ErrorClass.AUTH, ErrorClass.FORMAT_WITHHELD, ErrorClass.PROXY, ErrorClass.DUPLICATE, null -> {
                 FailureAction.Fail
             }
         }

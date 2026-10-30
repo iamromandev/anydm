@@ -21,7 +21,7 @@ fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val source = runBlocking { openDesktopSource() }
     val firstRun = FileFirstRun(Path.of(desktopAppDirs().data.toString()))
-    val model = AppModel(source, firstRun, scope)
+    val model = AppModel(source, firstRun, scope, DesktopFileActions())
     model.start()
     application {
         val closing = rememberCoroutineScope()
@@ -39,7 +39,7 @@ fun main() {
             onCloseRequest = quit,
             title = "anydm",
             icon = painterResource("icon.png"),
-            state = rememberWindowState(width = 1100.dp, height = 720.dp),
+            state = rememberWindowState(width = 1280.dp, height = 800.dp),
         ) {
             MenuBar {
                 Menu("File") {

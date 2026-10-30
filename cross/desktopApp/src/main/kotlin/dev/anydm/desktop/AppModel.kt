@@ -3,14 +3,20 @@ package dev.anydm.desktop
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
+import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.queue.RemoveFiles
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -80,6 +86,25 @@ sealed interface Banner {
     ) : Banner
 }
 
+/** A question the list is waiting on. */
+sealed interface Dialog {
+    data class ConfirmRemove(
+        val ids: List<DownloadId>,
+    ) : Dialog
+
+    /**
+     * [error] is why the last link given was refused; the dialog stays until one is taken or it is closed. [busy] while a
+     * link is being tried: no second one is sent.
+     */
+    data class Relink(
+        val id: DownloadId,
+        val mirrorId: MirrorId,
+        val url: String,
+        val error: String? = null,
+        val busy: Boolean = false,
+    ) : Dialog
+}
+
 data class UiState(
     val route: Route = Route.Downloads(),
     val engine: EngineState = EngineState.NotStarted,
@@ -90,7 +115,31 @@ data class UiState(
     val speed: Long = 0,
     val banners: List<Banner> = emptyList(),
     val showWelcome: Boolean = false,
-)
+    val options: ListOptions = ListOptions(),
+    /** What the list shows now, for the route's filter and [options]. */
+    val rows: List<Row> = emptyList(),
+    /** Where a Shift-click range starts, and the row the arrow keys move from. */
+    val anchor: DownloadId? = null,
+    val cursor: DownloadId? = null,
+    val dialog: Dialog? = null,
+    /** Pause all is on, as far as the jobs tell: some job is paused for it. */
+    val globallyPaused: Boolean = false,
+) {
+    /** The one selected job, for the detail pane; null with none or several selected. */
+    val detail: DownloadSnapshot? get() = selection.singleOrNull()?.let { id -> rows.firstOrNull { it.id == id }?.snapshot }
+
+    /**
+     * The selected jobs [command] applies to, in list order. An item whose collection takes the command too is left out:
+     * the engine gives the collection's command to its items.
+     */
+    fun targets(command: JobCommand): List<DownloadSnapshot> {
+        val applies = rows.filter { it.id in selection && command.appliesTo(it.snapshot) }.map { it.snapshot }
+        val ids = applies.map { it.download.id }.toSet()
+        return applies.filter { it.download.parentId !in ids }
+    }
+
+    fun enabled(command: JobCommand): Boolean = targets(command).let { if (command in SingleJob) it.size == 1 else it.isNotEmpty() }
+}
 
 /**
  * What every screen reads (the only copy of engine data in the app is the counts and the selection derived here): it
@@ -100,6 +149,9 @@ class AppModel(
     private val source: EngineSource,
     private val firstRun: FirstRun,
     private val scope: CoroutineScope,
+    private val files: FileActions,
+    /** Where the file actions run: opening a file can block (a slow share, xdg-open), so never on the UI thread. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val ui = MutableStateFlow(UiState(showWelcome = !firstRun.isDone()))
     val state: StateFlow<UiState> = ui.asStateFlow()
@@ -165,7 +217,26 @@ class AppModel(
         job.await()
     }
 
-    fun navigate(route: Route) = ui.update { it.copy(route = route) }
+    /** True while a text field has the keys, so the list's shortcuts leave them alone. */
+    @Volatile
+    var typing = false
+
+    fun navigate(route: Route) = relist { it.copy(route = route) }
+
+    fun setSort(key: SortKey) =
+        relist {
+            val options = it.options
+            // A second click on the same column turns it round.
+            it.copy(options = options.copy(sort = key, descending = options.sort == key && !options.descending))
+        }
+
+    fun setQuery(query: String) = relist { it.copy(options = it.options.copy(query = query)) }
+
+    fun toggleExpanded(id: DownloadId) =
+        relist {
+            val expanded = it.options.expanded
+            it.copy(options = it.options.copy(expanded = if (id in expanded) expanded - id else expanded + id))
+        }
 
     /** Selects [id] alone, or with [extend] toggles it in the selection. */
     fun select(
@@ -178,10 +249,205 @@ class AppModel(
                 id in current.selection -> current.selection - id
                 else -> current.selection + id
             }
-        current.copy(selection = selection)
+        current.copy(selection = selection, anchor = id, cursor = id)
+    }
+
+    /** Selects the rows from the anchor to [id], as the list shows them. */
+    fun selectRange(id: DownloadId) =
+        ui.update { current ->
+            val ids = current.rows.map { it.id }
+            val from = ids.indexOf(current.anchor ?: id).takeIf { it >= 0 } ?: ids.indexOf(id)
+            val to = ids.indexOf(id)
+            if (to < 0) return@update current
+            current.copy(selection = ids.subList(minOf(from, to), maxOf(from, to) + 1).toSet(), anchor = ids[from], cursor = id)
+        }
+
+    fun selectAll() = ui.update { it.copy(selection = it.rows.map { row -> row.id }.toSet()) }
+
+    /** Moves the cursor [delta] rows; with [extend] the selection runs from the anchor to it, else it is the cursor alone. */
+    fun moveSelection(
+        delta: Int,
+        extend: Boolean = false,
+    ) {
+        val rows = state.value.rows
+        if (rows.isEmpty()) return
+        val at = rows.indexOfFirst { it.id == state.value.cursor }
+        val next = rows[if (at < 0) (if (delta > 0) 0 else rows.lastIndex) else (at + delta).coerceIn(0, rows.lastIndex)].id
+        if (extend) selectRange(next) else select(next)
     }
 
     fun clearSelection() = ui.update { it.copy(selection = emptySet()) }
+
+    /** Gives [command] to the selected jobs it applies to; a refusal of any of them ends up in one banner. */
+    fun run(command: JobCommand) {
+        val current = state.value
+        val targets = current.targets(command)
+        if (!current.enabled(command)) return
+        when (command) {
+            JobCommand.REMOVE -> {
+                ui.update { it.copy(dialog = Dialog.ConfirmRemove(targets.map { s -> s.download.id })) }
+            }
+
+            JobCommand.RELINK -> {
+                val s = targets.single()
+                val mirror = s.mirrors.firstOrNull { it.id == s.lastFailure?.mirrorId } ?: s.mirrors.first()
+                ui.update { it.copy(dialog = Dialog.Relink(s.download.id, mirror.id, mirror.url)) }
+            }
+
+            JobCommand.OPEN, JobCommand.REVEAL, JobCommand.COPY_PATH -> {
+                val path = placedFile(targets.single()) ?: return
+                scope.launch(io) {
+                    val failed =
+                        when (command) {
+                            JobCommand.OPEN -> files.open(path)
+                            JobCommand.REVEAL -> files.reveal(path)
+                            else -> files.copy(path.toString())
+                        }
+                    failed?.let(::addError)
+                }
+            }
+
+            else -> {
+                scope.launch {
+                    each(command, targets) { s ->
+                        val id = s.download.id
+                        when (command) {
+                            JobCommand.PAUSE -> source.pause(id)
+                            JobCommand.RESUME -> source.resume(id)
+                            JobCommand.CANCEL -> source.cancel(id)
+                            JobCommand.RETRY -> source.retry(id, allowDuplicate = false)
+                            JobCommand.DOWNLOAD_ANYWAY -> source.retry(id, allowDuplicate = true)
+                            JobCommand.RAISE -> source.reprioritize(id, s.download.priority + 1)
+                            JobCommand.LOWER -> source.reprioritize(id, s.download.priority - 1)
+                            JobCommand.STOP_SEEDING -> source.stopSeeding(id)
+                            else -> error("$command is not a per-job command")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun pauseAll() = scope.launch { guarded { source.pauseAll() }?.let { refused("Pause all", it) } }
+
+    fun resumeAll() = scope.launch { guarded { source.resumeAll() }?.let { refused("Resume all", it) } }
+
+    /** Removes the jobs the open remove dialog names, their files kept or sent to the trash. */
+    fun confirmRemove(files: RemoveFiles) {
+        val dialog = state.value.dialog as? Dialog.ConfirmRemove ?: return
+        ui.update { it.copy(dialog = null) }
+        val targets = dialog.ids.mapNotNull { id -> snapshotOf(id) }
+        scope.launch { each(JobCommand.REMOVE, targets) { source.remove(it.download.id, files) } }
+    }
+
+    /** Gives the open relink dialog's job [url]; a link the engine refuses keeps the dialog open with the reason. */
+    fun confirmRelink(url: String) {
+        var dialog: Dialog.Relink? = null
+        ui.update { current ->
+            val open = current.dialog as? Dialog.Relink
+            dialog = open?.takeUnless { it.busy }
+            if (dialog == null) current else current.copy(dialog = open!!.copy(busy = true))
+        }
+        val asked = dialog ?: return
+        scope.launch {
+            val result = guarded { source.relink(asked.id, asked.mirrorId, url.trim()) }
+            ui.update { current ->
+                // Closed, or another job's dialog opened, while the link was tried: nothing to show it in.
+                val open = current.dialog as? Dialog.Relink
+                if (open == null || open.id != asked.id || open.mirrorId != asked.mirrorId) return@update current
+                val dialog = open.copy(busy = false)
+                when (result) {
+                    is CommandResult.RelinkFailed -> {
+                        current.copy(
+                            dialog =
+                                dialog.copy(
+                                    url = url,
+                                    error =
+                                        result.failure.message ?: "the link was refused",
+                                ),
+                        )
+                    }
+
+                    is CommandResult.Done, null -> {
+                        current.copy(dialog = null)
+                    }
+
+                    else -> {
+                        current.copy(dialog = dialog.copy(url = url, error = reason(result)))
+                    }
+                }
+            }
+        }
+    }
+
+    fun closeDialog() = ui.update { it.copy(dialog = null) }
+
+    /** The torrent's live peers, or null when the engine can't say. */
+    suspend fun torrentDetail(id: DownloadId): TorrentDetailResult? =
+        try {
+            source.torrentDetail(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+
+    private fun snapshotOf(id: DownloadId) = synchronized(lock) { snapshots.firstOrNull { it.download.id == id } }
+
+    private suspend fun each(
+        command: JobCommand,
+        targets: List<DownloadSnapshot>,
+        call: suspend (DownloadSnapshot) -> CommandResult,
+    ) {
+        val refusals = mutableListOf<CommandResult>()
+        for (s in targets) {
+            val result = guarded { call(s) } ?: return
+            if (result !is CommandResult.Done) refusals += result
+        }
+        if (refusals.isNotEmpty()) {
+            addError("${refusals.size} of ${targets.size} could not be ${command.verb}: ${reason(refusals.first())}.")
+        }
+    }
+
+    private fun refused(
+        what: String,
+        result: CommandResult,
+    ) {
+        if (result !is CommandResult.Done) addError("$what did not go through: ${reason(result)}.")
+    }
+
+    // A stopped engine takes no command (it throws); the banner says so once and the rest are not tried.
+    private suspend fun guarded(call: suspend () -> CommandResult): CommandResult? =
+        try {
+            call()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: IllegalStateException) {
+            addError("The download engine has stopped, so nothing was changed.")
+            null
+        }
+
+    private fun reason(result: CommandResult): String =
+        when (result) {
+            is CommandResult.Done -> "done"
+            CommandResult.NotFound -> "it is no longer in the list"
+            is CommandResult.Rejected -> "it is ${result.rejected.from.name.lowercase()}"
+            CommandResult.TrashUnavailable -> "this system has no trash, so the download and its files stay"
+            is CommandResult.TrashFailed -> "a file could not be moved to the trash (${result.failure.detail ?: result.failure.path})"
+            is CommandResult.Invalid -> result.reason
+            is CommandResult.Duplicate -> "it is a duplicate"
+            is CommandResult.RelinkFailed -> result.failure.message ?: "the link was refused"
+        }
+
+    private fun relist(change: (UiState) -> UiState) = synchronized(lock) { ui.update { listed(change(it)) } }
+
+    // Rows for the route and options, and a selection of only what they show. Call it holding the lock.
+    private fun listed(state: UiState): UiState {
+        val filter = (state.route as? Route.Downloads)?.filter ?: Filter.All
+        val rows = buildRows(snapshots, filter, state.options)
+        val shown = rows.map { it.id }.toSet()
+        return state.copy(rows = rows, selection = state.selection.filterTo(mutableSetOf()) { it in shown })
+    }
 
     fun dismiss(banner: Banner) =
         synchronized(lock) {
@@ -242,12 +508,16 @@ class AppModel(
         if (diskFull && Banner.DiskFull !in dismissed) banners += Banner.DiskFull
         if (!diskFull) dismissed -= Banner.DiskFull
         banners += eventErrors
+        val globallyPaused = snapshots.any { PauseReason.GLOBAL in it.download.pauseReasons }
         ui.update {
-            it.copy(
-                engine = engineState,
-                counts = counts,
-                selection = it.selection.filterTo(mutableSetOf()) { id -> id in ids },
-                banners = banners,
+            listed(
+                it.copy(
+                    engine = engineState,
+                    counts = counts,
+                    selection = it.selection.filterTo(mutableSetOf()) { id -> id in ids },
+                    banners = banners,
+                    globallyPaused = globallyPaused,
+                ),
             )
         }
     }

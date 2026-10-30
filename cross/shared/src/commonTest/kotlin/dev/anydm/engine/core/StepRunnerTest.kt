@@ -394,6 +394,7 @@ class StepRunnerTest {
                     .shouldNotBeNull()
             failure.step shouldBe Step.PROBE
             failure.message shouldBe "already in the list as download 7"
+            failure.errorClass shouldBe ErrorClass.DUPLICATE
             h.journal.last() shouldBe "duplicateCheck"
             h.journal.none { it.startsWith("freeSpace") || it.startsWith("preallocate") } shouldBe true
         }

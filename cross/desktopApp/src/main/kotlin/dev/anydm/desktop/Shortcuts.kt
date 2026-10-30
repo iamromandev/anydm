@@ -25,20 +25,55 @@ internal val IsMac: Boolean = System.getProperty("os.name").startsWith("Mac", ig
 
 /** Runs the shortcut [event] stands for, if it is one; returns whether it was. None runs under the welcome. */
 internal fun AppModel.handleKey(event: KeyEvent): Boolean {
-    if (event.type != KeyEventType.KeyDown || state.value.showWelcome) return false
+    val current = state.value
+    // A dialog and the filter field keep their keys.
+    if (event.type != KeyEventType.KeyDown || current.showWelcome || current.dialog != null) return false
     if (event.key == Key.Escape) {
-        if (state.value.selection.isEmpty()) return false
+        if (current.selection.isEmpty()) return false
         clearSelection()
         return true
     }
     // Command on a Mac, Control elsewhere; Alt is left out because Windows reports AltGr as Control and Alt.
     val command = if (IsMac) event.isMetaPressed else event.isCtrlPressed
-    if (!command || event.isAltPressed || event.isShiftPressed) return false
-    if (event.key == Key.Comma) {
-        navigate(Route.Settings)
-        return true
+    if (event.isAltPressed) return false
+    if (!command) return !typing && listKey(event)
+    if (event.isShiftPressed) return false
+    // The list's own commands act on what the list shows, so only in the downloads section and not while typing.
+    val inList = current.route is Route.Downloads && !typing
+    when (event.key) {
+        Key.Comma -> navigate(Route.Settings)
+        Key.A -> if (inList) selectAll() else return false
+        Key.R -> if (inList) run(JobCommand.RETRY) else return false
+        Key.Enter -> if (inList) run(JobCommand.OPEN) else return false
+        else -> navigate(Route.Downloads(SectionKeys.firstOrNull { it.first == event.key }?.second ?: return false))
     }
-    val filter = SectionKeys.firstOrNull { it.first == event.key }?.second ?: return false
-    navigate(Route.Downloads(filter))
+    return true
+}
+
+// The keys without Command or Control: arrows move the selection, Space pauses or resumes, Delete removes.
+private fun AppModel.listKey(event: KeyEvent): Boolean {
+    if (state.value.route !is Route.Downloads) return false
+    when (event.key) {
+        Key.DirectionUp -> {
+            moveSelection(-1, extend = event.isShiftPressed)
+        }
+
+        Key.DirectionDown -> {
+            moveSelection(1, extend = event.isShiftPressed)
+        }
+
+        Key.Spacebar -> {
+            val command = listOf(JobCommand.PAUSE, JobCommand.RESUME).firstOrNull { state.value.enabled(it) } ?: return false
+            run(command)
+        }
+
+        Key.Delete, Key.Backspace -> {
+            run(JobCommand.REMOVE)
+        }
+
+        else -> {
+            return false
+        }
+    }
     return true
 }
