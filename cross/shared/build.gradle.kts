@@ -6,7 +6,7 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(26)
     jvm()
 
     // Applied explicitly so the jvmCommon edges below extend the default hierarchy instead of

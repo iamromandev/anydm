@@ -91,7 +91,7 @@ own, with the engine in `shared/`; no server is needed.
 The app icon is drawn by `desktopApp/icons/make_icons.py`; after changing it, run
 `uv run --no-project --with pillow python icons/make_icons.py` from `desktopApp/`.
 
-Needs JDK 21. The Gradle wrapper is committed, so there is nothing else to install.
+Needs JDK 26. The Gradle wrapper is committed, so there is nothing else to install.
 
 ```bash
 make cross-check     # ktlint, tests, compile
