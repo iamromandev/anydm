@@ -33,6 +33,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RotatingFileSink
 import dev.anydm.engine.media.SiteProtocol
 import dev.anydm.engine.media.YtDlpPlaylistSource
+import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.DefaultRouteNetwork
 import dev.anydm.engine.net.NetworkPolicy
@@ -42,6 +43,7 @@ import dev.anydm.engine.net.PasswordChange
 import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.ClipboardLink
 import dev.anydm.engine.os.HotkeyStatus
 import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.platform.AppDirs
@@ -50,6 +52,8 @@ import dev.anydm.engine.platform.DesktopProcessRunner
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.current
 import dev.anydm.engine.platform.desktopAppDirs
+import dev.anydm.engine.platform.keepAwakeForCurrentOs
+import dev.anydm.engine.platform.powerActionsForCurrentOs
 import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.RemoveFiles
@@ -159,7 +163,10 @@ private suspend fun desktopEngine(
             torrents = torrents,
             credentials = logins,
             proxyKeychain = keychain,
+            keepAwake = keepAwakeForCurrentOs(runner, log),
+            powerActions = powerActionsForCurrentOs(runner, log),
         )
+    val services = OsServices(engine, runner, dirs, log)
     val bundle = DiagnosticsBundle(store.settings, JvmDiagnosticsPlatform(dirs.logs), Clock.System)
     val diagnostics: suspend (String) -> String? = { target ->
         val versions =
@@ -188,7 +195,18 @@ private suspend fun desktopEngine(
             else -> "the bundle can't be written to $target"
         }
     }
-    return engine.asSource(store, protocols.keys, onTransfer = { connections.set(it.connectionsPerDownload) }, diagnostics = diagnostics)
+    return engine.asSource(
+        store,
+        protocols.keys,
+        onTransfer = { connections.set(it.connectionsPerDownload) },
+        hotkey = services.hotkeyStatus,
+        bridge = services.bridge,
+        clipboardLinks = services.clipboardLinks,
+        hotkeyPresses = services.hotkeyPresses,
+        onStart = services::start,
+        onStop = services::close,
+        diagnostics = diagnostics,
+    )
 }
 
 // Torrents need libtorrent's native library for this machine, unpacked into the app's own data folder; without it they
@@ -349,6 +367,11 @@ internal class UnavailableSource(
     override val networks = MutableStateFlow(BondingState(emptyList()))
     override val osSettings = MutableStateFlow(OsSettings())
     override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
+    override val afterQueue = MutableStateFlow(AfterQueueState.Idle)
+    override val keepAwake = MutableStateFlow(true)
+    override val bridge = MutableStateFlow<BridgeStatus>(BridgeStatus.Off)
+    override val clipboardLinks = emptyFlow<ClipboardLink>()
+    override val hotkeyPresses = emptyFlow<String>()
 
     override suspend fun proxies() = stopped()
 

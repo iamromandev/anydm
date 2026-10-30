@@ -41,6 +41,14 @@ class TrayMenuTest {
     }
 
     @Test
+    fun `an entry for the last finished download is there only when there is one`() {
+        val without = trayMenu(WindowState(), paused = false)
+        assertFalse(without.any { it.action == TrayAction.OPEN_LAST })
+        val with = trayMenu(WindowState(), paused = false, hasLast = true)
+        assertEquals("Show last finished", with.first { it.action == TrayAction.OPEN_LAST }.label)
+    }
+
+    @Test
     fun `the pause entry follows whether everything is paused`() {
         assertEquals("Pause all", trayMenu(WindowState(), paused = false).first { it.action == TrayAction.TOGGLE_PAUSE }.label)
         assertEquals("Resume all", trayMenu(WindowState(), paused = true).first { it.action == TrayAction.TOGGLE_PAUSE }.label)

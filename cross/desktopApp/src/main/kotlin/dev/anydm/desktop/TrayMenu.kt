@@ -1,7 +1,7 @@
 package dev.anydm.desktop
 
 /** What a tray menu entry does. */
-enum class TrayAction { TOGGLE_WINDOW, OPEN, TOGGLE_PAUSE, QUIT }
+enum class TrayAction { TOGGLE_WINDOW, OPEN, OPEN_LAST, TOGGLE_PAUSE, QUIT }
 
 data class TrayItem(
     val action: TrayAction,
@@ -13,10 +13,13 @@ data class TrayItem(
 fun trayMenu(
     window: WindowState,
     paused: Boolean,
+    /** A finished or failed download is waiting to be shown: the entry that opens it is the way in where a tray click isn't heard. */
+    hasLast: Boolean = false,
 ): List<TrayItem> =
-    listOf(
+    listOfNotNull(
         TrayItem(TrayAction.TOGGLE_WINDOW, if (window.visible) "Hide anydm" else "Show anydm"),
         TrayItem(TrayAction.OPEN, "Open main window"),
+        TrayItem(TrayAction.OPEN_LAST, "Show last finished").takeIf { hasLast },
         TrayItem(TrayAction.TOGGLE_PAUSE, if (paused) "Resume all" else "Pause all"),
         TrayItem(TrayAction.QUIT, "Quit"),
     )

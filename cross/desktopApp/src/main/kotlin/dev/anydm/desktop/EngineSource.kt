@@ -24,6 +24,7 @@ import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
@@ -34,6 +35,7 @@ import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.ProxyCommandResult
 import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.ClipboardLink
 import dev.anydm.engine.os.HotkeyStatus
 import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.os.OsSettings
@@ -55,6 +57,7 @@ import dev.anydm.engine.torrent.TorrentInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 
 /**
  * What the app reads from the engine and the commands it gives it; the tests stand in for it with a fake. Every command
@@ -254,6 +257,21 @@ interface EngineSource {
 
     suspend fun updateTool(tool: Tool): ToolUpdate
 
+    /** The armed after-queue action and, while its countdown runs, when it ends. */
+    val afterQueue: StateFlow<AfterQueueState>
+
+    /** Whether the machine is kept awake while a download runs (the setting). */
+    val keepAwake: StateFlow<Boolean>
+
+    /** Whether the browser bridge is listening, and on which port. */
+    val bridge: StateFlow<BridgeStatus>
+
+    /** A link the user copied, while the clipboard watch is on. */
+    val clipboardLinks: Flow<ClipboardLink>
+
+    /** The global hotkey was pressed with this on the clipboard (a link, or whatever text it held). */
+    val hotkeyPresses: Flow<String>
+
     /** Writes a diagnostics bundle (logs, versions, settings with secrets removed) to [target]; null when it worked, else why not. */
     suspend fun exportDiagnostics(target: String): String?
 }
@@ -267,6 +285,13 @@ fun Engine.asSource(
     kinds: Set<DownloadKind>,
     onTransfer: (TransferSettings) -> Unit = {},
     hotkey: StateFlow<HotkeyStatus> = MutableStateFlow(HotkeyStatus.Off),
+    bridge: StateFlow<BridgeStatus> = MutableStateFlow(BridgeStatus.Off),
+    clipboardLinks: Flow<ClipboardLink> = emptyFlow(),
+    hotkeyPresses: Flow<String> = emptyFlow(),
+    /** Stops what the desktop started beside the engine (the OS services). */
+    onStop: () -> Unit = {},
+    /** Starts what the desktop runs beside the engine, once the engine is running. */
+    onStart: () -> Unit = {},
     diagnostics: suspend (String) -> String? = { "diagnostics aren't set up in this build" },
 ): EngineSource =
     object : EngineSource {
@@ -279,10 +304,16 @@ fun Engine.asSource(
 
         override suspend fun categories() = engine.categories()
 
-        override suspend fun start() = engine.start()
+        override suspend fun start() {
+            engine.start()
+            // A running engine whose settings can't be read just keeps the default; that is not a failed start.
+            runCatching { awake.value = engine.transferSettings().keepAwake }
+            onStart()
+        }
 
         // A failed engine's stop() does nothing, so its store is closed here.
         override suspend fun stop() {
+            onStop()
             engine.stop()
             if (engine.state.value is EngineState.Failed) store.close()
         }
@@ -395,6 +426,14 @@ fun Engine.asSource(
         override val networks = engine.networks
         override val osSettings = engine.osSettings
         override val hotkeyStatus = hotkey
+        override val afterQueue = engine.afterQueue
+        override val bridge = bridge
+        override val clipboardLinks = clipboardLinks
+        override val hotkeyPresses = hotkeyPresses
+
+        // Follows the setting, which changes through [told] and is read once here.
+        private val awake = MutableStateFlow(true)
+        override val keepAwake: StateFlow<Boolean> = awake
 
         override suspend fun proxies() = engine.proxies()
 
@@ -466,5 +505,22 @@ fun Engine.asSource(
 
         override suspend fun exportDiagnostics(target: String) = diagnostics(target)
 
-        private suspend fun told() = onTransfer(engine.transferSettings())
+        private suspend fun told() =
+            engine.transferSettings().let {
+                awake.value = it.keepAwake
+                onTransfer(it)
+            }
     }
+
+/** Whether the browser bridge is listening for the extension. */
+sealed interface BridgeStatus {
+    data object Off : BridgeStatus
+
+    data class Listening(
+        val port: Int,
+    ) : BridgeStatus
+
+    data class Failed(
+        val reason: String,
+    ) : BridgeStatus
+}
