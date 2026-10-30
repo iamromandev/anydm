@@ -117,7 +117,7 @@ ui-format: # Format the UI and browser extension sources
 	$(BUN) run --cwd $(UI) web:format
 	$(BUN) run --cwd $(UI) ext:format
 
-## cross — the Kotlin Multiplatform client (cross/, Gradle wrapper, JDK 26)
+## cross — the Kotlin Multiplatform client (cross/, Gradle wrapper, JDK 25)
 cross-check: # Lint + test + compile the cross/ client
 	cd $(CROSS) && ./gradlew check
 
