@@ -67,7 +67,7 @@ private val RUN_LIMIT = 5.seconds
 /** The notifier of the OS this JVM runs on (OSI-09); the desktop passes it to the notification relay. */
 fun notifierForCurrentOs(runner: ProcessRunner): Notifier = DesktopNotifier(runner, DesktopOs.of(System.getProperty("os.name")))
 
-/** The system tray's balloon, for Windows. The icon is added the first time and stays for the life of the process. */
+/** The system tray's balloon, for Windows. It uses the tray icon the app has, and adds a plain one the first time only when there is none. */
 internal object AwtTray {
     private var icon: TrayIcon? = null
 
@@ -77,12 +77,14 @@ internal object AwtTray {
         message: String,
     ) {
         if (GraphicsEnvironment.isHeadless() || !SystemTray.isSupported()) return
+        // The app's own tray icon, when it has one, carries the balloon: a second, blank icon beside it would be a stray.
         val shown =
-            icon ?: TrayIcon(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), "anydm").also {
-                it.isImageAutoSize = true
-                SystemTray.getSystemTray().add(it)
-                icon = it
-            }
+            SystemTray.getSystemTray().trayIcons.firstOrNull() ?: icon
+                ?: TrayIcon(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), "anydm").also {
+                    it.isImageAutoSize = true
+                    SystemTray.getSystemTray().add(it)
+                    icon = it
+                }
         shown.displayMessage(title, message, TrayIcon.MessageType.INFO)
     }
 }

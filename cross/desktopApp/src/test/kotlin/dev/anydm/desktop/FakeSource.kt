@@ -31,6 +31,7 @@ import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
@@ -41,6 +42,7 @@ import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.ProxyCommandResult
 import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.ClipboardLink
 import dev.anydm.engine.os.HotkeyStatus
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
@@ -474,6 +476,11 @@ internal class FakeSource(
         return done
     }
 
+    override val afterQueue = MutableStateFlow(AfterQueueState.Idle)
+    override val keepAwake = MutableStateFlow(true)
+    override val bridge = MutableStateFlow<BridgeStatus>(BridgeStatus.Off)
+    override val clipboardLinks = MutableSharedFlow<ClipboardLink>(extraBufferCapacity = 16)
+    override val hotkeyPresses = MutableSharedFlow<String>(extraBufferCapacity = 16)
     override val osSettings = MutableStateFlow(OsSettings())
     override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
 

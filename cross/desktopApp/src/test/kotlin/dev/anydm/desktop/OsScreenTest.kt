@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
@@ -21,6 +22,29 @@ internal class OsScreenTest : PanelScreenTest(Section.SYSTEM) {
         rule.onNodeWithTag("os-notifications").assertIsOff()
         rule.onNodeWithTag("os-clipboard").assertIsOn()
         rule.onNodeWithTag("os-hotkey").assertIsOff()
+    }
+
+    @Test
+    fun `the window choices show and change the preferences`() {
+        prefs.closeToTray = true
+        prefs.startHidden = false
+        show()
+        rule.onNodeWithTag("window-close-to-tray").assertIsOn()
+        rule.onNodeWithTag("window-start-hidden").assertIsOff()
+        click("window-close-to-tray")
+        click("window-start-hidden")
+        rule.waitForIdle()
+        assertEquals(false, prefs.closeToTray)
+        assertEquals(true, prefs.startHidden)
+    }
+
+    @Test
+    fun `without a tray the window choices are off and say why`() {
+        tray = false
+        show()
+        rule.onNodeWithTag("window-close-to-tray").assertIsNotEnabled()
+        rule.onNodeWithTag("window-start-hidden").assertIsNotEnabled()
+        tag("window-no-tray").assertTextContains("tray", substring = true)
     }
 
     @Test

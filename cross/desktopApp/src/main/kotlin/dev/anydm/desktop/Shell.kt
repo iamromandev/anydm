@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,8 +28,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.anydm.engine.EngineState
+import kotlinx.coroutines.delay
+import kotlin.time.Clock
 
 /** The window's content: toolbar, sidebar, banners, the current section, status bar and, once, the welcome. */
 @Composable
@@ -37,6 +41,7 @@ fun Shell(
     pickers: Pickers = DesktopPickers(),
 ) {
     val state by model.state.collectAsState()
+    val os by model.os.collectAsState()
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     // The add dialog's fields had the keys; when it closes the window takes them back, so the list's shortcuts work.
@@ -56,9 +61,10 @@ fun Shell(
                 Row(Modifier.weight(1f)) {
                     Sidebar(state, model::navigate)
                     Column(Modifier.weight(1f).fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                        OsNotices(os, model)
                         Banners(state.banners, model::dismiss)
                         Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model, pickers) { focus.requestFocus() } }
-                        StatusBar(state)
+                        StatusBar(state, os)
                     }
                 }
             }
@@ -153,14 +159,78 @@ private fun Banners(
     }
 }
 
+/** The hotkey's permission or support notice, and the link the user copied, when there is one. */
 @Composable
-private fun StatusBar(state: UiState) {
+private fun OsNotices(
+    os: OsSignals,
+    model: AppModel,
+) {
+    hotkeyNotice(os)?.let { notice ->
+        NoticeRow("banner-hotkey", notice.text, "banner-hotkey-text") {
+            TextButton(onClick = model::dismissHotkeyNotice, modifier = Modifier.testTag("banner-hotkey-dismiss")) { Text("Dismiss") }
+        }
+    }
+    os.clipboard?.let { copied ->
+        NoticeRow("clipboard-offer", "Link copied: ${copied.link}", "clipboard-text", oneLine = true) {
+            TextButton(onClick = model::acceptClipboard, modifier = Modifier.testTag("clipboard-add")) { Text("Add…") }
+            TextButton(onClick = model::dismissClipboard, modifier = Modifier.testTag("clipboard-dismiss")) { Text("Dismiss") }
+        }
+    }
+}
+
+@Composable
+private fun NoticeRow(
+    tag: String,
+    text: String,
+    textTag: String,
+    oneLine: Boolean = false,
+    actions: @Composable () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .testTag(tag),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            maxLines = if (oneLine) 1 else Int.MAX_VALUE,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).testTag(textTag),
+        )
+        actions()
+    }
+}
+
+@Composable
+private fun StatusBar(
+    state: UiState,
+    os: OsSignals,
+) {
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         val engine = engineLabel(state.engine) + if (state.globallyPaused && state.engine == EngineState.Running) " · Paused" else ""
         Text(engine, style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-engine"))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The countdown's seconds move on their own: the clock is read again every second while one runs.
+            val ends = os.afterQueue.countdownEndsAt
+            val now by produceState(Clock.System.now(), ends) {
+                value = Clock.System.now()
+                while (ends != null) {
+                    delay(1000)
+                    value = Clock.System.now()
+                }
+            }
+            indicators(os, active = state.counts[StatusGroup.ACTIVE], now = now).forEach {
+                Text(it.text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag(it.tag))
+            }
+        }
         Text(formatSpeed(state.speed), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-speed"))
     }
 }

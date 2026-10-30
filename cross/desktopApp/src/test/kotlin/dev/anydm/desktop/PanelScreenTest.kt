@@ -41,6 +41,8 @@ internal abstract class PanelScreenTest(
     protected val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     protected val source = FakeSource()
     protected lateinit var model: AppModel
+    protected val prefs = MemoryPrefs()
+    protected var tray = true
 
     protected val pickers = TestPickers()
 
@@ -59,6 +61,7 @@ internal abstract class PanelScreenTest(
                 scope,
                 FakeFiles(),
                 io = Dispatchers.Unconfined,
+                window = WindowModel(prefs, tray),
             )
         model.start()
         model.navigate(Route.Settings)

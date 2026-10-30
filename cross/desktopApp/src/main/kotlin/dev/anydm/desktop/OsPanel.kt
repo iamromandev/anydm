@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -25,6 +26,7 @@ import dev.anydm.engine.store.Settings
 @Composable
 internal fun OsPanel(
     model: OsModel,
+    window: WindowModel,
     typing: Modifier,
 ) {
     val state by model.state.collectAsState()
@@ -40,6 +42,24 @@ internal fun OsPanel(
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.testTag("os-hotkey-help"),
     )
+    HorizontalDivider()
+    val win by window.state.collectAsState()
+    Text("Window", style = MaterialTheme.typography.titleMedium)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(win.closeToTray, window::setCloseToTray, Modifier.testTag("window-close-to-tray"), enabled = window.trayAvailable)
+        Text("Closing the window keeps anydm running in the tray")
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(win.startHidden, window::setStartHidden, Modifier.testTag("window-start-hidden"), enabled = window.trayAvailable)
+        Text("Start hidden in the tray")
+    }
+    if (!window.trayAvailable) {
+        Text(
+            "This system has no tray for anydm to live in, so closing the window quits it.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag("window-no-tray"),
+        )
+    }
     HorizontalDivider()
     Text("Browser extensions the bridge answers", style = MaterialTheme.typography.titleMedium)
     Text(

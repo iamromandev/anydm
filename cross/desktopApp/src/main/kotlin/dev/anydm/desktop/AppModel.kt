@@ -6,6 +6,7 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
@@ -23,6 +24,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -168,8 +170,10 @@ class AppModel(
     private val files: FileActions,
     /** Where the file actions run: opening a file can block (a slow share, xdg-open), so never on the UI thread. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    /** Quits the app, when the user chose that for after the queue. */
+    /** Quits the app, when the user chose that for after the queue, or closed a window that has no tray to hide to. */
     private val onQuit: () -> Unit = {},
+    /** Whether the window is shown, and what closing it does. */
+    val window: WindowModel = WindowModel(MemoryAppPrefs(), trayAvailable = false),
 ) {
     private val ui = MutableStateFlow(UiState(showWelcome = !firstRun.isDone()))
     val state: StateFlow<UiState> = ui.asStateFlow()
@@ -187,6 +191,11 @@ class AppModel(
     private var snapshots = emptyList<DownloadSnapshot>()
     private var engineState: EngineState = EngineState.NotStarted
 
+    private val osUi = MutableStateFlow(OsSignals())
+
+    /** What the OS services tell the app: the clipboard offer, the hotkey, the bridge, keep-awake and after-queue state. */
+    val os: StateFlow<OsSignals> = osUi.asStateFlow()
+
     /** The settings screen; made the first time it is asked for, and kept, so a draft survives leaving the screen. */
     val settings: SettingsModel by lazy {
         SettingsModel(source, scope, io = io, onCategories = { categories -> ui.update { it.copy(categories = categories) } })
@@ -194,7 +203,7 @@ class AppModel(
     }
 
     /** The network, OS and tool sections of the settings screen (#609); each acts at once; only the tool folder field keeps a draft until Apply. */
-    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io) }
+    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io, window) }
 
     @Volatile
     private var created = false
@@ -226,6 +235,7 @@ class AppModel(
             source.totalSpeed.collect { speed -> ui.update { it.copy(speed = speed.current) } }
         }
         scope.launch { source.events.collect(::onEvent) }
+        followOs()
         scope.launch {
             try {
                 source.start()
@@ -511,6 +521,115 @@ class AppModel(
             refresh()
         }
 
+    /**
+     * A launch of the app (#610): the first one, or a later one whose [arguments] the running app was handed. Links go to the
+     * add review; a later launch always brings the window forward, the first one shows it unless it should start hidden.
+     */
+    fun launch(
+        arguments: List<String>,
+        second: Boolean,
+    ) {
+        val route = LinkRouter.route(arguments)
+        if (second) window.show() else window.startUp(route.hidden, route.links.isNotEmpty())
+        if (route.links.isNotEmpty()) openAdd(route.links)
+    }
+
+    /** The window's close button: it hides to the tray, or the app quits. */
+    fun closeRequested() {
+        if (window.close() == CloseAction.QUIT) onQuit()
+    }
+
+    private fun followOs() {
+        scope.launch {
+            source.osSettings.combine(source.hotkeyStatus) { settings, status -> settings.globalHotkey to status }.collect { (on, status) ->
+                // A notice closed for one status is open again for any other, so a retry that fails the same way is told again.
+                osUi.update {
+                    it.copy(
+                        hotkeyOn = on,
+                        hotkey = status,
+                        hotkeyDismissed =
+                            it.hotkeyDismissed.takeIf { shut ->
+                                shut == status
+                            },
+                    )
+                }
+            }
+        }
+        scope.launch { source.afterQueue.collect { state -> osUi.update { it.copy(afterQueue = state) } } }
+        scope.launch { source.keepAwake.collect { on -> osUi.update { it.copy(keepAwake = on) } } }
+        scope.launch { source.bridge.collect { status -> osUi.update { it.copy(bridge = status) } } }
+        scope.launch { source.clipboardLinks.collect { link -> osUi.update { it.copy(clipboard = link) } } }
+        scope.launch {
+            source.hotkeyPresses.collect { text ->
+                // What was on the clipboard may be anything: only its links reach the add review, from a bounded part of it.
+                val links = LinkRouter.route(text.take(MAX_CLIPBOARD_CHARS).lines().take(MAX_CLIPBOARD_LINES)).links
+                window.show()
+                if (links.isEmpty()) addError("The clipboard holds no link to add.") else openAdd(links)
+            }
+        }
+    }
+
+    /** The copied link goes to the add review. */
+    fun acceptClipboard() {
+        val link = osUi.value.clipboard ?: return
+        osUi.update { it.copy(clipboard = null) }
+        window.show()
+        openAdd(listOf(link.link))
+    }
+
+    fun dismissClipboard() = osUi.update { it.copy(clipboard = null) }
+
+    fun dismissHotkeyNotice() = osUi.update { it.copy(hotkeyDismissed = it.hotkey) }
+
+    /** The tray icon was clicked: the window comes forward, on the download the last notification was about. */
+    fun trayClicked() {
+        val id = osUi.value.lastNotified
+        // A window that is shown already only comes forward: a click is not a reason to move the user's list.
+        if (id == null || window.state.value.visible) {
+            window.show()
+            return
+        }
+        revealLast(id)
+    }
+
+    private fun revealLast(id: DownloadId) {
+        osUi.update { it.copy(lastNotified = null) }
+        reveal(id)
+    }
+
+    /** A tray menu entry was chosen. */
+    fun trayAction(action: TrayAction) {
+        when (action) {
+            TrayAction.TOGGLE_WINDOW -> {
+                window.toggle()
+            }
+
+            TrayAction.OPEN -> {
+                window.show()
+                navigate(Route.Downloads(Filter.All))
+            }
+
+            TrayAction.OPEN_LAST -> {
+                osUi.value.lastNotified?.let(::revealLast) ?: window.show()
+            }
+
+            TrayAction.TOGGLE_PAUSE -> {
+                if (state.value.globallyPaused) resumeAll() else pauseAll()
+            }
+
+            TrayAction.QUIT -> {
+                onQuit()
+            }
+        }
+    }
+
+    /** Brings the window forward on [id]'s row in the whole list, as a click on its notification does. */
+    fun reveal(id: DownloadId) {
+        window.show()
+        navigate(Route.Downloads(Filter.All))
+        select(id)
+    }
+
     /** Opens the add dialog, with [links] in it; if it is open already, the links are added to what it holds. */
     fun openAdd(links: List<String> = emptyList()) {
         val open = state.value.adding
@@ -544,6 +663,16 @@ class AppModel(
         when (event) {
             is EngineEvent.Removed -> {
                 ui.update { it.copy(selection = it.selection - event.id) }
+                osUi.update { if (it.lastNotified == event.id) it.copy(lastNotified = null) else it }
+            }
+
+            // The ones the notifications are about; a tool's own download is not one.
+            is EngineEvent.Completed -> {
+                remember(event.id)
+            }
+
+            is EngineEvent.Failed -> {
+                remember(event.id)
             }
 
             is EngineEvent.CookiesNotSaved -> {
@@ -567,6 +696,11 @@ class AppModel(
                 Unit
             }
         }
+    }
+
+    private fun remember(id: DownloadId) {
+        val tool = synchronized(lock) { snapshots.firstOrNull { it.download.id == id }?.download?.kind == DownloadKind.TOOL }
+        if (!tool) osUi.update { it.copy(lastNotified = id) }
     }
 
     private fun addError(message: String) =
@@ -628,3 +762,12 @@ class AppModel(
         )
     }
 }
+
+private const val MAX_CLIPBOARD_CHARS = 64 * 1024
+private const val MAX_CLIPBOARD_LINES = 50
+
+/** The window choices for a run that keeps them nowhere (tests, and an app with no tray). */
+class MemoryAppPrefs(
+    override var closeToTray: Boolean = true,
+    override var startHidden: Boolean = false,
+) : AppPrefs
