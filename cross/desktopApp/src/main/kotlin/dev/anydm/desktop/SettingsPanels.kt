@@ -9,6 +9,7 @@ class SettingsPanels(
     source: EngineSource,
     scope: CoroutineScope,
     io: CoroutineDispatcher = Dispatchers.IO,
+    val window: WindowModel = WindowModel(MemoryAppPrefs(), trayAvailable = false),
 ) {
     val proxies = ProxyModel(source, scope)
     val rules = RulesModel(source, scope)

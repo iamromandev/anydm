@@ -168,8 +168,10 @@ class AppModel(
     private val files: FileActions,
     /** Where the file actions run: opening a file can block (a slow share, xdg-open), so never on the UI thread. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    /** Quits the app, when the user chose that for after the queue. */
+    /** Quits the app, when the user chose that for after the queue, or closed a window that has no tray to hide to. */
     private val onQuit: () -> Unit = {},
+    /** Whether the window is shown, and what closing it does. */
+    val window: WindowModel = WindowModel(MemoryAppPrefs(), trayAvailable = false),
 ) {
     private val ui = MutableStateFlow(UiState(showWelcome = !firstRun.isDone()))
     val state: StateFlow<UiState> = ui.asStateFlow()
@@ -194,7 +196,7 @@ class AppModel(
     }
 
     /** The network, OS and tool sections of the settings screen (#609); each acts at once; only the tool folder field keeps a draft until Apply. */
-    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io) }
+    val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io, window) }
 
     @Volatile
     private var created = false
@@ -511,6 +513,53 @@ class AppModel(
             refresh()
         }
 
+    /**
+     * A launch of the app (#610): the first one, or a later one whose [arguments] the running app was handed. Links go to the
+     * add review; a later launch always brings the window forward, the first one shows it unless it should start hidden.
+     */
+    fun launch(
+        arguments: List<String>,
+        second: Boolean,
+    ) {
+        val route = LinkRouter.route(arguments)
+        if (second) window.show() else window.startUp(route.hidden, route.links.isNotEmpty())
+        if (route.links.isNotEmpty()) openAdd(route.links)
+    }
+
+    /** The window's close button: it hides to the tray, or the app quits. */
+    fun closeRequested() {
+        if (window.close() == CloseAction.QUIT) onQuit()
+    }
+
+    /** A tray menu entry was chosen. */
+    fun trayAction(action: TrayAction) {
+        when (action) {
+            TrayAction.TOGGLE_WINDOW -> {
+                window.toggle()
+            }
+
+            TrayAction.OPEN -> {
+                window.show()
+                navigate(Route.Downloads(Filter.All))
+            }
+
+            TrayAction.TOGGLE_PAUSE -> {
+                if (state.value.globallyPaused) resumeAll() else pauseAll()
+            }
+
+            TrayAction.QUIT -> {
+                onQuit()
+            }
+        }
+    }
+
+    /** Brings the window forward on [id]'s row in the whole list, as a click on its notification does. */
+    fun reveal(id: DownloadId) {
+        window.show()
+        navigate(Route.Downloads(Filter.All))
+        select(id)
+    }
+
     /** Opens the add dialog, with [links] in it; if it is open already, the links are added to what it holds. */
     fun openAdd(links: List<String> = emptyList()) {
         val open = state.value.adding
@@ -628,3 +677,9 @@ class AppModel(
         )
     }
 }
+
+/** The window choices for a run that keeps them nowhere (tests, and an app with no tray). */
+class MemoryAppPrefs(
+    override var closeToTray: Boolean = true,
+    override var startHidden: Boolean = false,
+) : AppPrefs
