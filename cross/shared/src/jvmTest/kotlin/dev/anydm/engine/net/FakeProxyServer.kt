@@ -51,7 +51,14 @@ internal class FakeProxyServer(
         val upstream = Socket()
         val host = destination.substringBeforeLast(':')
         val port = destination.substringAfterLast(':').toInt()
-        upstream.connect(if (host.all { it.isDigit() || it == '.' }) InetSocketAddress(host, port) else target, 5000)
+        // 0.0.0.0 is what an FTP server that listens on every address puts in its passive reply. Linux's JDK turns it into
+        // this machine's own address, which a server bound to loopback refuses; macOS's reaches loopback. Say loopback.
+        val numeric = host.all { it.isDigit() || it == '.' }
+        val address = if (numeric) InetSocketAddress(host, port) else target
+        upstream.connect(
+            if (address.address?.isAnyLocalAddress == true) InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port) else address,
+            5000,
+        )
         thread(
             isDaemon = true,
         ) { runCatching { input.copyTo(upstream.getOutputStream()) }.also { runCatching { upstream.shutdownOutput() } } }
