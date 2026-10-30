@@ -37,6 +37,15 @@ data class ResolvedTool(
     private fun getValue(name: String): Path = requireNotNull(executables[name]) { "${tool.id} has no executable $name" }
 }
 
+/** A tool and the copy in use; [resolved] null when none is installed. */
+data class ToolStatus(
+    val tool: Tool,
+    val resolved: ResolvedTool?,
+)
+
+/** What asking for an update came to (#609). */
+enum class ToolUpdate { FETCHING, UP_TO_DATE, UNAVAILABLE }
+
 /**
  * Keeps yt-dlp, ffmpeg and Deno available (BIN-01..BIN-04). A tool is found as a copy already on the machine (when
  * allowed and new enough) or as the engine's own under `<cache>/tools/<tool>/<version>`. One that is missing is fetched
@@ -69,12 +78,30 @@ class ToolManager(
 
     /** The tool ready to run, or null when it isn't installed (or not new enough). */
     suspend fun resolve(tool: Tool): ResolvedTool? {
-        if (settings().systemTools) systemCopy(tool)?.let { return it }
+        val settings = settings()
+        // A folder the user named comes first, and holds even with system copies switched off: they chose it.
+        settings.toolFolders[tool]?.let { folder -> inFolder(tool, folder)?.let { return it } }
+        if (settings.systemTools) systemCopy(tool)?.let { return it }
         return managedCopy(tool)
     }
 
-    private suspend fun systemCopy(tool: Tool): ResolvedTool? {
-        val paths = names(tool).mapValues { (_, file) -> finder.find(file) ?: return null }
+    private suspend fun inFolder(
+        tool: Tool,
+        folder: Path,
+    ): ResolvedTool? {
+        val names = names(tool)
+        val found = findExecutables(fileSystem, folder, names.values.toSet())
+        return versioned(tool, names.mapValues { (_, file) -> found[file] ?: return null })
+    }
+
+    private suspend fun systemCopy(tool: Tool): ResolvedTool? =
+        versioned(tool, names(tool).mapValues { (_, file) -> finder.find(file) ?: return null })
+
+    // Runs each executable for its version: the tool is as old as its oldest part, and too old is not found.
+    private suspend fun versioned(
+        tool: Tool,
+        paths: Map<String, Path>,
+    ): ResolvedTool? {
         var lowest: ToolVersion? = null
         for ((_, path) in paths) {
             val ran = withTimeoutOrNull(VERSION_LIMIT) { runner.run(ProcessSpec(listOf(path.toString(), tool.versionArgument))) }
@@ -228,6 +255,25 @@ class ToolManager(
             }
         }
     }
+
+    /**
+     * The user asks for the newest build of [tool] (#609): yt-dlp's latest on its channel, the others the catalog's pinned
+     * version. Fetches it unless the installed one is already that version or newer, or a fetch is under way.
+     */
+    suspend fun update(
+        tool: Tool,
+        add: suspend (NewDownload) -> CommandResult,
+    ): ToolUpdate =
+        lock.withLock {
+            if (stillFetching(tool)) return ToolUpdate.FETCHING
+            val plan = planFor(tool) ?: return ToolUpdate.UNAVAILABLE
+            val record = store.get(tool)
+            if (tool == Tool.YT_DLP && record != null) store.put(record.copy(checkedAt = clock.now()))
+            val have = record?.let { ToolVersion.parse(it.version) }
+            val want = ToolVersion.parse(plan.version)
+            if (have != null && want != null && have >= want && managedCopy(tool) != null) return ToolUpdate.UP_TO_DATE
+            if (fetch(tool, plan, add)) ToolUpdate.FETCHING else ToolUpdate.UNAVAILABLE
+        }
 
     private companion object {
         val VERSION_LIMIT = 10.seconds

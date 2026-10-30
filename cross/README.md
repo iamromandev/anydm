@@ -100,7 +100,17 @@ own, with the engine in `shared/`; no server is needed.
   connections, speed limits, slow mode, seeding, the queue and what happens after it, through
   `Engine.applyTransferSettings` so each applies without a restart; it adds, edits and orders categories and profiles,
   shows the history and 30 days of traffic, resets to defaults, and exports or imports the lot as JSON
-  (`SettingsBackup.kt`: no proxies, cookies or logins). Network, OS and tool settings come in #609.
+  (`SettingsBackup.kt`: no proxies, cookies or logins). Network, OS and tool settings (#609): six more sections of the
+  Settings screen, each with its own presenter in `SettingsPanels` (`ProxyModel`, `RulesModel`, `NetworksModel`,
+  `OsModel`, `ToolsModel`, `DiagnosticsModel`). They have no Save: each change goes to the engine at once, which applies it
+  to running downloads. Proxies are saved with their password in the keychain, chosen globally, per profile (the profile
+  editor) and per download (the detail pane's Proxy tab). Network rules edit the default and per-network limits, data
+  allowances, metered handling and the weekly schedule. Networks switch bonding on per network and show whether the OS can
+  bind to it (`BEST_EFFORT` on Linux). The system section holds notifications, clipboard watch, the global hotkey and its
+  status, and the browser bridge origins. Tools shows yt-dlp, ffmpeg and Deno, fetches the newest (`Engine.updateTool`),
+  and takes a folder to use instead (`Settings.toolFolders`). Diagnostics switches debug logging (live) and exports the
+  bundle (`DiagnosticsBundle`); the desktop engine now writes `anydm.log` to the logs folder. The hotkey's status reads Off
+  until the OS integration (#610) runs the service.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.

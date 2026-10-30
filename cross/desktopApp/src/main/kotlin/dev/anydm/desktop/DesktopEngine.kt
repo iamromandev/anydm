@@ -11,6 +11,8 @@ import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
+import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.NameCleaner
 import dev.anydm.engine.files.NewCategory
@@ -24,9 +26,24 @@ import dev.anydm.engine.ftp.KeychainCredentials
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.OkHttpTransport
+import dev.anydm.engine.log.AppInfo
+import dev.anydm.engine.log.DiagnosticsBundle
+import dev.anydm.engine.log.JvmDiagnosticsPlatform
+import dev.anydm.engine.log.Log
+import dev.anydm.engine.log.RotatingFileSink
 import dev.anydm.engine.media.SiteProtocol
 import dev.anydm.engine.media.YtDlpPlaylistSource
+import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.DefaultRouteNetwork
+import dev.anydm.engine.net.NetworkPolicy
+import dev.anydm.engine.net.NewProxy
+import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.PasswordChange
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.HotkeyStatus
+import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.platform.AppDirs
 import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.DesktopProcessRunner
@@ -44,9 +61,11 @@ import dev.anydm.engine.tools.DesktopPathFinder
 import dev.anydm.engine.tools.DesktopUnpacker
 import dev.anydm.engine.tools.GithubReleases
 import dev.anydm.engine.tools.Platform
+import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolCatalog
 import dev.anydm.engine.tools.ToolManager
 import dev.anydm.engine.tools.ToolProtocol
+import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.tools.current
 import dev.anydm.engine.torrent.JnaSignalGuard
 import dev.anydm.engine.torrent.LibTorrentBackend
@@ -59,6 +78,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.io.files.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
+import dev.anydm.engine.log.ToolVersion as LoggedTool
 
 /**
  * The engine this machine runs, with every protocol it has: web files (HTTP/HTTPS), media pages and playlists (yt-dlp,
@@ -124,8 +144,10 @@ private suspend fun desktopEngine(
         )
     val torrents = torrentProtocol(store, fileSystem, http, dirs)
     if (torrents != null) protocols[DownloadKind.TORRENT] = torrents
+    val log = Log(RotatingFileSink(dirs.logs), Clock.System)
     val engine =
         Engine(
+            log = log,
             store = store,
             fileSystem = fileSystem,
             protocols = protocols,
@@ -138,7 +160,35 @@ private suspend fun desktopEngine(
             credentials = logins,
             proxyKeychain = keychain,
         )
-    return engine.asSource(store, protocols.keys) { connections.set(it.connectionsPerDownload) }
+    val bundle = DiagnosticsBundle(store.settings, JvmDiagnosticsPlatform(dirs.logs), Clock.System)
+    val diagnostics: suspend (String) -> String? = { target ->
+        val versions =
+            Tool.entries.map { tool ->
+                val found = tools.resolve(tool)
+                LoggedTool(
+                    tool.id,
+                    found?.version?.toString(),
+                    found
+                        ?.executables
+                        ?.values
+                        ?.firstOrNull()
+                        ?.toString(),
+                )
+            }
+        val app =
+            AppInfo(
+                "anydm",
+                System.getProperty("jpackage.app-version") ?: "dev",
+                System.getProperty("os.name"),
+                System.getProperty("java.version"),
+            )
+        when (val written = bundle.export(Path(target), app, versions)) {
+            is FileResult.Ok -> null
+            is FileResult.Failed -> written.detail ?: "${written.path} can't be written"
+            else -> "the bundle can't be written to $target"
+        }
+    }
+    return engine.asSource(store, protocols.keys, onTransfer = { connections.set(it.connectionsPerDownload) }, diagnostics = diagnostics)
 }
 
 // Torrents need libtorrent's native library for this machine, unpacked into the app's own data folder; without it they
@@ -295,4 +345,78 @@ internal class UnavailableSource(
     override suspend fun exportSettings() = stopped()
 
     override suspend fun importSettings(text: String) = stopped()
+
+    override val networks = MutableStateFlow(BondingState(emptyList()))
+    override val osSettings = MutableStateFlow(OsSettings())
+    override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
+
+    override suspend fun proxies() = stopped()
+
+    override suspend fun addProxy(
+        new: NewProxy,
+        password: String?,
+    ) = stopped()
+
+    override suspend fun updateProxy(
+        proxy: ProxyEntry,
+        password: PasswordChange,
+    ) = stopped()
+
+    override suspend fun removeProxy(id: ProxyId) = stopped()
+
+    override suspend fun proxyChoice() = stopped()
+
+    override suspend fun setProxyChoice(choice: ProxyChoice) = stopped()
+
+    override suspend fun setDownloadProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ) = stopped()
+
+    override suspend fun networkRules() = stopped()
+
+    override suspend fun setNetworkPolicy(
+        network: String?,
+        policy: NetworkPolicy?,
+    ) = stopped()
+
+    override suspend fun scheduleRules() = stopped()
+
+    override suspend fun addScheduleRule(new: NewScheduleRule) = stopped()
+
+    override suspend fun updateScheduleRule(rule: ScheduleRule) = stopped()
+
+    override suspend fun removeScheduleRule(id: ScheduleRuleId) = stopped()
+
+    override suspend fun setNetworkEnabled(
+        key: String,
+        enabled: Boolean,
+    ) = stopped()
+
+    override suspend fun setClipboardWatch(on: Boolean) = stopped()
+
+    override suspend fun setGlobalHotkey(on: Boolean) = stopped()
+
+    override suspend fun runtimeSettings() = stopped()
+
+    override suspend fun setNotifications(on: Boolean) = stopped()
+
+    override suspend fun setBridgeOrigins(origins: Set<String>) = stopped()
+
+    override suspend fun setDebugLogging(on: Boolean) = stopped()
+
+    override suspend fun setYtDlpChannel(channel: YtDlpChannel) = stopped()
+
+    override suspend fun setSystemTools(on: Boolean) = stopped()
+
+    override suspend fun setToolFolder(
+        tool: Tool,
+        folder: String?,
+    ) = stopped()
+
+    override suspend fun toolStatus() = stopped()
+
+    override suspend fun updateTool(tool: Tool) = stopped()
+
+    override suspend fun exportDiagnostics(target: String) = stopped()
 }

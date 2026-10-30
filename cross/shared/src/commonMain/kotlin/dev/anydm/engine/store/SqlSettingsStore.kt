@@ -10,6 +10,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.store.db.AnydmDb
+import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.YtDlpChannel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
@@ -64,6 +65,18 @@ internal class SqlSettingsStore(
             globalUploadLimit = read(GLOBAL_UPLOAD_LIMIT, DEFAULTS.globalUploadLimit) { it.toLongOrNull()?.takeIf { n -> n > 0 } },
             ytDlpChannel = read(YT_DLP_CHANNEL, DEFAULTS.ytDlpChannel) { name -> YtDlpChannel.entries.firstOrNull { it.name == name } },
             systemTools = read(SYSTEM_TOOLS, DEFAULTS.systemTools) { it.toBooleanStrictOrNull() },
+            toolFolders =
+                read(TOOL_FOLDERS, DEFAULTS.toolFolders) { data ->
+                    data
+                        .lines()
+                        .filter { it.isNotBlank() }
+                        .associate { line ->
+                            val tool = Tool.byId(line.substringBefore('=')) ?: return@read null
+                            val folder = Path(line.substringAfter('='))
+                            if (!folder.isAbsolute) return@read null
+                            tool to folder
+                        }
+                },
             historyLimit = read(HISTORY_LIMIT, DEFAULTS.historyLimit) { it.toIntOrNull()?.takeIf { n -> n >= 1 } },
             freeSpaceReserve = read(FREE_SPACE_RESERVE, DEFAULTS.freeSpaceReserve) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
             clashPolicy = read(CLASH_POLICY, DEFAULTS.clashPolicy) { name -> ClashPolicy.entries.firstOrNull { it.name == name } },
@@ -140,6 +153,14 @@ internal class SqlSettingsStore(
         put(GLOBAL_UPLOAD_LIMIT, settings.globalUploadLimit?.toString())
         put(YT_DLP_CHANNEL, settings.ytDlpChannel.takeIf { it != DEFAULTS.ytDlpChannel }?.name)
         put(SYSTEM_TOOLS, settings.systemTools.takeIf { it != DEFAULTS.systemTools }?.toString())
+        put(
+            TOOL_FOLDERS,
+            settings.toolFolders
+                .takeIf { it.isNotEmpty() }
+                ?.entries
+                ?.sortedBy { it.key.id }
+                ?.joinToString("\n") { (tool, folder) -> "${tool.id}=$folder" },
+        )
         put(HISTORY_LIMIT, settings.historyLimit.takeIf { it != DEFAULTS.historyLimit }?.toString())
         put(FREE_SPACE_RESERVE, settings.freeSpaceReserve.takeIf { it != DEFAULTS.freeSpaceReserve }?.toString())
         put(CLASH_POLICY, settings.clashPolicy.takeIf { it != DEFAULTS.clashPolicy }?.name)
@@ -215,6 +236,7 @@ internal class SqlSettingsStore(
         const val HISTORY_LIMIT = "files.history_limit"
         const val YT_DLP_CHANNEL = "tools.yt_dlp_channel"
         const val SYSTEM_TOOLS = "tools.system_tools"
+        const val TOOL_FOLDERS = "tools.folders"
         const val COOKIE_SOURCE = "media.cookie_source"
         const val PACING = "media.pacing"
         const val PACING_REQUEST = "media.pacing_request_sleep"

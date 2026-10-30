@@ -9,6 +9,7 @@ import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RecordingLogSink
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.platform.virtualClock
+import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.YtDlpChannel
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldContain
@@ -563,6 +564,30 @@ abstract class SettingsStoreContract : StoreTestBase() {
             settings.update { it.copy(bridgeOrigins = setOf(Settings.CHROME_EXTENSION_ORIGIN)) }
             rows().none { it?.startsWith("os.bridge_origins=") == true } shouldBe true
         }
+
+    @Test
+    fun toolFoldersAreStoredPerToolAndTheDefaultIsNoRow() =
+        runTest {
+            val settings = newStore().settings
+            settings.load().toolFolders shouldBe emptyMap()
+
+            val folders = mapOf(Tool.FFMPEG to Path("/opt/ff"), Tool.DENO to Path("/opt/deno"))
+            settings.update { it.copy(toolFolders = folders) }
+            settings.load().toolFolders shouldBe folders
+
+            settings.update { it.copy(toolFolders = emptyMap()) }
+            rows().none { it?.startsWith("tools.folders=") == true } shouldBe true
+        }
+
+    @Test
+    fun aToolFolderWithALineBreakIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(toolFolders = mapOf(Tool.DENO to Path("/opt/a\nb"))) }
+    }
+
+    @Test
+    fun aRelativeToolFolderIsRefused() {
+        shouldThrow<IllegalArgumentException> { Settings(toolFolders = mapOf(Tool.DENO to Path("bin"))) }
+    }
 
     @Test
     fun anyExtensionIsAnExplicitChoiceAndNotTheDefault() =

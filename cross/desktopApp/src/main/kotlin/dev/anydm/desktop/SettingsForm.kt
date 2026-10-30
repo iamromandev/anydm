@@ -17,6 +17,7 @@ import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.TemplateField
 import dev.anydm.engine.files.TemplateParse
 import dev.anydm.engine.net.AfterQueueAction
+import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.store.TransferSettings
 import java.nio.file.Path
 
@@ -32,6 +33,12 @@ enum class Section(
     PROFILES("Profiles"),
     HISTORY("History & traffic"),
     BACKUP("Backup"),
+    PROXIES("Proxies"),
+    RULES("Network rules"),
+    NETWORKS("Networks"),
+    SYSTEM("Notifications & browser"),
+    TOOLS("Tools"),
+    DIAGNOSTICS("Diagnostics"),
     ;
 
     /** The three sections that edit [TransferForm] and share its Save. */
@@ -64,8 +71,8 @@ enum class SettingField {
     CONCURRENCY,
 }
 
-private const val KB = 1024L
-private const val MB = 1024L * 1024
+internal const val KB = 1024L
+internal const val MB = 1024L * 1024
 private const val MAX_PACING = 120.0
 
 /** The transfer and file settings as typed. Speeds are KB/s and the reserve MB; an empty limit is none. */
@@ -130,7 +137,7 @@ fun transferForm(
 
 // Bytes a second as KB/s, rounded up: a limit under 1 KB/s shows as 1, not as a 0 the form would refuse. Saving an
 // untouched field keeps the engine's own value (see [mergeEdits] and [toProfile]).
-private fun kbps(bytes: Long): String = ((bytes + KB - 1) / KB).toString()
+internal fun kbps(bytes: Long): String = ((bytes + KB - 1) / KB).toString()
 
 private fun seconds(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
 
@@ -171,7 +178,7 @@ fun TransferForm.validate(folderExists: (String) -> Boolean): Map<SettingField, 
     }
 
 // Null when [text] is a whole number in [min]..[max], else why not. The default [max] is what the engine's Int takes.
-private fun whole(
+internal fun whole(
     text: String,
     min: Long,
     max: Long = Int.MAX_VALUE.toLong(),
@@ -189,7 +196,7 @@ private fun whole(
 private const val SMALL = 1_000_000L
 
 // A speed in KB/s, which becomes bytes.
-private fun limit(text: String): String? =
+internal fun limit(text: String): String? =
     if (text.isBlank()) null else whole(text, 1, Long.MAX_VALUE / KB)?.let { "$it Or empty for no limit." }
 
 /** [text] is a full path this system can take; false, not an exception, for one it can't (a NUL, or `?` on Windows). */
@@ -368,6 +375,8 @@ data class ProfileForm(
     val template: String = "",
     val speedKbps: String = "",
     val media: ProfileMedia = ProfileMedia.ANY,
+    /** Which proxy its downloads go through; Inherit leaves it to the global choice. */
+    val proxy: ProxyChoice = ProxyChoice.Inherit,
 )
 
 fun profileForm(profile: Profile): ProfileForm =
@@ -377,6 +386,7 @@ fun profileForm(profile: Profile): ProfileForm =
         folder = profile.saveFolder.orEmpty(),
         template = profile.nameTemplate.orEmpty(),
         speedKbps = profile.speedLimit?.let(::kbps).orEmpty(),
+        proxy = profile.proxy,
         media =
             profile.format?.let { format ->
                 ProfileMedia.entries.firstOrNull { it != ProfileMedia.ANY && it.height == format.height && it.audio == format.audioOnly }
@@ -426,9 +436,10 @@ fun ProfileForm.toNew(): NewProfile =
             .ifEmpty { null }
             ?.toLong()
             ?.times(KB),
+        proxy,
     )
 
-/** [profile] with the form's values; its proxy stays as it is (it is edited with the network settings). */
+/** [profile] with the form's values. */
 fun ProfileForm.toProfile(profile: Profile): Profile =
     profile.copy(
         name = name.trim(),
@@ -436,6 +447,7 @@ fun ProfileForm.toProfile(profile: Profile): Profile =
         categoryId = category,
         saveFolder = folder.trim().ifEmpty { null },
         nameTemplate = template.trim().ifEmpty { null },
+        proxy = proxy,
         // A limit the form shows rounded (1500 B/s as 1 KB/s) stays as it was unless the text changed.
         speedLimit =
             if (speedKbps.trim() == profileForm(profile).speedKbps) {

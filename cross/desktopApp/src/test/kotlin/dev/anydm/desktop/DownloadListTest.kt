@@ -5,6 +5,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
@@ -36,8 +37,12 @@ import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ProxyType
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CoroutineScope
@@ -230,6 +235,37 @@ class DownloadListTest {
         rule.onNodeWithTag("tab-attempts").performClick()
         rule.onNodeWithTag("detail-attempts").assertIsDisplayed()
         rule.onNodeWithTag("tab-peers").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the proxy tab shows the job's proxy and changes it`() {
+        source.proxyList = listOf(ProxyEntry(ProxyId(7), "Office", ProxyType.SOCKS5, "p.example", 1080, null, emptyList()))
+        val job = snapshot(1, DOWNLOADING, name = "big.iso")
+        show(job.copy(download = job.download.copy(proxy = ProxyChoice.Direct)))
+        row(1).performClick()
+        rule.onNodeWithTag("tab-proxy").performClick()
+        rule.onNodeWithTag("detail-proxy").assertIsDisplayed()
+        rule.onNodeWithTag("detail-proxy-direct").assertIsSelected()
+        rule.onNodeWithTag("detail-proxy-7").performClick()
+        rule.waitForIdle()
+        assertEquals("setDownloadProxy 1 ${ProxyChoice.Named(ProxyId(7))}", source.calls.last())
+    }
+
+    @Test
+    fun `a refused proxy change is reported`() {
+        source.results["setDownloadProxy 1 ${ProxyChoice.System}"] = CommandResult.Invalid("no such proxy")
+        show(snapshot(1, DOWNLOADING, name = "big.iso"))
+        row(1).performClick()
+        rule.onNodeWithTag("tab-proxy").performClick()
+        rule.onNodeWithTag("detail-proxy-inherit").assertIsSelected()
+        rule.onNodeWithTag("detail-proxy-system").performClick()
+        rule.waitForIdle()
+        assertEquals(
+            1,
+            model.state.value.banners
+                .filterIsInstance<Banner.Error>()
+                .size,
+        )
     }
 
     @Test

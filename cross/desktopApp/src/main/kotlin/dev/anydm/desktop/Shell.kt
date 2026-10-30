@@ -107,7 +107,7 @@ private fun Content(
 ) {
     when (val route = state.route) {
         Route.Settings -> {
-            SettingsScreen(model.settings, pickers) { model.typing = it }
+            SettingsScreen(model.settings, model.panels, pickers) { model.typing = it }
         }
 
         is Route.Downloads -> {

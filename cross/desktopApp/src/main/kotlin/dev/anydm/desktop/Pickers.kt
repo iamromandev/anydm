@@ -16,6 +16,9 @@ interface Pickers {
     fun saveSettingsFile(name: String): Path? = null
 
     fun settingsFile(): Path? = null
+
+    /** Where to write the diagnostics bundle, starting at [name]. */
+    fun saveDiagnosticsFile(name: String): Path? = null
 }
 
 /** AWT's native file dialog: Finder's on macOS, the system one elsewhere. */
@@ -37,6 +40,14 @@ class DesktopPickers : Pickers {
 
     override fun saveSettingsFile(name: String): Path? {
         val dialog = FileDialog(null as Frame?, "Export settings", FileDialog.SAVE)
+        dialog.file = name
+        dialog.isVisible = true
+        val file = dialog.file ?: return null
+        return Path.of(dialog.directory ?: "", file)
+    }
+
+    override fun saveDiagnosticsFile(name: String): Path? {
+        val dialog = FileDialog(null as Frame?, "Export diagnostics", FileDialog.SAVE)
         dialog.file = name
         dialog.isVisible = true
         val file = dialog.file ?: return null

@@ -29,20 +29,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.PacingPreset
 import dev.anydm.engine.files.ClashPolicy
+import dev.anydm.engine.net.ProxyChoice
 
 /** The Settings section (#608): a list of sections on the left, the chosen one on the right. */
 @Composable
 internal fun SettingsScreen(
     model: SettingsModel,
+    panels: SettingsPanels,
     pickers: Pickers,
     onTyping: (Boolean) -> Unit,
 ) {
     val state by model.state.collectAsState()
     LaunchedEffect(Unit) { model.load() }
+    LaunchedEffect(state.section) { panels.load(state.section) }
     Row(Modifier.fillMaxSize().testTag("settings")) {
         Column(
             Modifier
@@ -88,6 +93,12 @@ internal fun SettingsScreen(
                     Section.PROFILES -> Profiles(state, model, pickers, typing)
                     Section.HISTORY -> History(state, model)
                     Section.BACKUP -> Backup(model, pickers)
+                    Section.PROXIES -> ProxiesPanel(panels.proxies, typing)
+                    Section.RULES -> RulesPanel(panels.rules, typing)
+                    Section.NETWORKS -> NetworksPanel(panels.networks)
+                    Section.SYSTEM -> OsPanel(panels.os, typing)
+                    Section.TOOLS -> ToolsPanel(panels.tools, pickers, typing)
+                    Section.DIAGNOSTICS -> DiagnosticsPanel(panels.diagnostics, pickers)
                 }
             }
             Footer(state, model)
@@ -407,6 +418,25 @@ private fun Profiles(
         model.changeProfile { it.copy(speedKbps = v) }
     }
     Choice("Media", ProfileMedia.entries, form.media, "profile-media", { it.label }) { v -> model.changeProfile { it.copy(media = v) } }
+    Text("Proxy", style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Default" to ProxyChoice.Inherit, "None" to ProxyChoice.Direct, "System" to ProxyChoice.System).forEach { (label, choice) ->
+            FilterChip(
+                selected = form.proxy == choice,
+                onClick = { model.changeProfile { it.copy(proxy = choice) } },
+                label = { Text(label) },
+                modifier = Modifier.testTag("profile-proxy-${choice.encode().lowercase()}"),
+            )
+        }
+        state.proxies.forEach { proxy ->
+            FilterChip(
+                selected = form.proxy == ProxyChoice.Named(proxy.id),
+                onClick = { model.changeProfile { it.copy(proxy = ProxyChoice.Named(proxy.id)) } },
+                label = { Text(proxy.name) },
+                modifier = Modifier.testTag("profile-proxy-${proxy.id.value}"),
+            )
+        }
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
             onClick = model::saveProfile,
@@ -534,7 +564,7 @@ private fun Confirm(
 }
 
 @Composable
-private fun Field(
+internal fun Field(
     label: String,
     value: String,
     tag: String,
@@ -542,13 +572,16 @@ private fun Field(
     typing: Modifier,
     unit: String? = null,
     width: Int = 420,
+    secret: Boolean = false,
+    singleLine: Boolean = true,
     onChange: (String) -> Unit,
 ) {
     OutlinedTextField(
         value = value,
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         onValueChange = onChange,
         label = { Text(label) },
-        singleLine = true,
+        singleLine = singleLine,
         isError = error != null,
         suffix = unit?.let { { Text(it) } },
         supportingText = error?.let { { Text(it, modifier = Modifier.testTag("$tag-error")) } },
@@ -557,7 +590,7 @@ private fun Field(
 }
 
 @Composable
-private fun Toggle(
+internal fun Toggle(
     label: String,
     checked: Boolean,
     tag: String,
@@ -570,7 +603,7 @@ private fun Toggle(
 }
 
 @Composable
-private fun <T> Choice(
+internal fun <T> Choice(
     label: String,
     options: List<T>,
     selected: T,
@@ -594,7 +627,7 @@ private fun <T> Choice(
 }
 
 @Composable
-private fun ErrorText(
+internal fun ErrorText(
     text: String,
     tag: String,
 ) = Text(text, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag(tag))

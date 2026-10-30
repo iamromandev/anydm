@@ -22,6 +22,8 @@ import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProfileId
+import dev.anydm.engine.core.ProxyId
+import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.CategoryResult
 import dev.anydm.engine.files.NewCategory
@@ -29,15 +31,33 @@ import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
+import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.NetworkPolicy
+import dev.anydm.engine.net.NetworkRules
+import dev.anydm.engine.net.NewProxy
+import dev.anydm.engine.net.NewScheduleRule
+import dev.anydm.engine.net.PasswordChange
+import dev.anydm.engine.net.ProxyChoice
+import dev.anydm.engine.net.ProxyCommandResult
+import dev.anydm.engine.net.ProxyEntry
+import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.os.HotkeyStatus
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
+import dev.anydm.engine.os.OsSettings
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.DayTraffic
 import dev.anydm.engine.store.HistoryEntry
 import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.ProxyRemoval
+import dev.anydm.engine.store.RuntimeSettings
 import dev.anydm.engine.store.TransferSettings
+import dev.anydm.engine.tools.Tool
+import dev.anydm.engine.tools.ToolStatus
+import dev.anydm.engine.tools.ToolUpdate
+import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
@@ -331,6 +351,207 @@ internal class FakeSource(
         call("importSettings")
         imported += text
         return importResult
+    }
+
+    // --- network, OS and tool settings (#609)
+
+    var proxyList: List<ProxyEntry> = emptyList()
+    var proxyChosen: ProxyChoice = ProxyChoice.System
+    var proxyUse: ProxyRemoval = ProxyRemoval.Removed
+
+    /** Answers add and update instead of saving. */
+    var proxyResult: ProxyCommandResult? = null
+    val passwords = mutableMapOf<ProxyId, String>()
+    private var nextProxy = 1L
+
+    override suspend fun proxies(): List<ProxyEntry> = proxyList
+
+    override suspend fun addProxy(
+        new: NewProxy,
+        password: String?,
+    ): ProxyCommandResult {
+        call("addProxy ${new.name}")
+        proxyResult?.let { return it }
+        if (proxyList.any { it.name == new.name }) return ProxyCommandResult.NameTaken
+        val entry = ProxyEntry(ProxyId(nextProxy++), new.name, new.type, new.host, new.port, new.username, new.bypass)
+        proxyList = proxyList + entry
+        if (password != null) passwords[entry.id] = password
+        return ProxyCommandResult.Saved(entry)
+    }
+
+    override suspend fun updateProxy(
+        proxy: ProxyEntry,
+        password: PasswordChange,
+    ): ProxyCommandResult {
+        call("updateProxy ${proxy.id.value}")
+        proxyResult?.let { return it }
+        if (proxyList.none { it.id == proxy.id }) return ProxyCommandResult.NotFound
+        if (proxyList.any { it.name == proxy.name && it.id != proxy.id }) return ProxyCommandResult.NameTaken
+        proxyList = proxyList.map { if (it.id == proxy.id) proxy else it }
+        when (password) {
+            PasswordChange.Keep -> Unit
+            PasswordChange.Clear -> passwords.remove(proxy.id)
+            is PasswordChange.Set -> passwords[proxy.id] = password.password
+        }
+        return ProxyCommandResult.Saved(proxy)
+    }
+
+    override suspend fun removeProxy(id: ProxyId): ProxyRemoval {
+        call("removeProxy ${id.value}")
+        if (proxyUse == ProxyRemoval.Removed) {
+            proxyList = proxyList.filter { it.id != id }
+            passwords.remove(id)
+        }
+        return proxyUse
+    }
+
+    override suspend fun proxyChoice(): ProxyChoice = proxyChosen
+
+    override suspend fun setProxyChoice(choice: ProxyChoice): CommandResult {
+        val done = call("setProxyChoice $choice")
+        if (done is CommandResult.Done) proxyChosen = choice
+        return done
+    }
+
+    override suspend fun setDownloadProxy(
+        id: DownloadId,
+        choice: ProxyChoice,
+    ) = call("setDownloadProxy ${id.value} $choice")
+
+    var rules = NetworkRules()
+    var scheduleList: List<ScheduleRule> = emptyList()
+    private var nextRule = 1L
+
+    override suspend fun networkRules(): NetworkRules = rules
+
+    override suspend fun setNetworkPolicy(
+        network: String?,
+        policy: NetworkPolicy?,
+    ): CommandResult {
+        val done = call("setNetworkPolicy ${network ?: "*"}")
+        if (done !is CommandResult.Done) return done
+        rules =
+            when {
+                network == null -> rules.copy(default = policy ?: NetworkPolicy())
+                policy == null -> rules.copy(networks = rules.networks - network)
+                else -> rules.copy(networks = rules.networks + (network to policy))
+            }
+        return done
+    }
+
+    override suspend fun scheduleRules(): List<ScheduleRule> = scheduleList
+
+    override suspend fun addScheduleRule(new: NewScheduleRule): ScheduleRule {
+        call("addScheduleRule")
+        return ScheduleRule(ScheduleRuleId(nextRule++), new.days, new.startMinute, new.endMinute, new.action).also {
+            scheduleList = scheduleList + it
+        }
+    }
+
+    override suspend fun updateScheduleRule(rule: ScheduleRule): Boolean {
+        call("updateScheduleRule ${rule.id.value}")
+        val there = scheduleList.any { it.id == rule.id }
+        scheduleList = scheduleList.map { if (it.id == rule.id) rule else it }
+        return there
+    }
+
+    override suspend fun removeScheduleRule(id: ScheduleRuleId): Boolean {
+        call("removeScheduleRule ${id.value}")
+        val there = scheduleList.any { it.id == id }
+        scheduleList = scheduleList.filter { it.id != id }
+        return there
+    }
+
+    override val networks = MutableStateFlow(BondingState(emptyList()))
+
+    override suspend fun setNetworkEnabled(
+        key: String,
+        enabled: Boolean,
+    ): CommandResult {
+        val done = call("setNetworkEnabled $key $enabled")
+        networks.value =
+            BondingState(networks.value.networks.map { if (it.info.key == key) it.copy(enabled = enabled) else it })
+        return done
+    }
+
+    override val osSettings = MutableStateFlow(OsSettings())
+    override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
+
+    override suspend fun setClipboardWatch(on: Boolean): CommandResult {
+        val done = call("setClipboardWatch $on")
+        osSettings.value = osSettings.value.copy(clipboardWatch = on)
+        return done
+    }
+
+    override suspend fun setGlobalHotkey(on: Boolean): CommandResult {
+        val done = call("setGlobalHotkey $on")
+        osSettings.value = osSettings.value.copy(globalHotkey = on)
+        return done
+    }
+
+    var runtime = RuntimeSettings()
+
+    override suspend fun runtimeSettings(): RuntimeSettings = runtime
+
+    override suspend fun setNotifications(on: Boolean): CommandResult {
+        val done = call("setNotifications $on")
+        runtime = runtime.copy(notifications = on)
+        return done
+    }
+
+    override suspend fun setBridgeOrigins(origins: Set<String>): CommandResult {
+        val done = call("setBridgeOrigins ${origins.sorted().joinToString(",")}")
+        if (done is CommandResult.Done) runtime = runtime.copy(bridgeOrigins = origins)
+        return done
+    }
+
+    override suspend fun setDebugLogging(on: Boolean): CommandResult {
+        val done = call("setDebugLogging $on")
+        runtime = runtime.copy(debugLogging = on)
+        return done
+    }
+
+    override suspend fun setYtDlpChannel(channel: YtDlpChannel): CommandResult {
+        val done = call("setYtDlpChannel $channel")
+        runtime = runtime.copy(ytDlpChannel = channel)
+        return done
+    }
+
+    override suspend fun setSystemTools(on: Boolean): CommandResult {
+        val done = call("setSystemTools $on")
+        runtime = runtime.copy(systemTools = on)
+        return done
+    }
+
+    override suspend fun setToolFolder(
+        tool: Tool,
+        folder: String?,
+    ): CommandResult {
+        val done = call("setToolFolder ${tool.id} ${folder ?: "-"}")
+        if (done is CommandResult.Done) {
+            runtime = runtime.copy(toolFolders = if (folder == null) runtime.toolFolders - tool else runtime.toolFolders + (tool to folder))
+        }
+        return done
+    }
+
+    var toolList: List<ToolStatus> = Tool.entries.map { ToolStatus(it, null) }
+    var toolUpdate = ToolUpdate.FETCHING
+
+    override suspend fun toolStatus(): List<ToolStatus> = toolList
+
+    override suspend fun updateTool(tool: Tool): ToolUpdate {
+        call("updateTool ${tool.id}")
+        return toolUpdate
+    }
+
+    /** What exporting a bundle answers: null for it worked. */
+    var diagnosticsError: String? = null
+    val bundles = mutableListOf<String>()
+
+    override suspend fun exportDiagnostics(target: String): String? {
+        call("exportDiagnostics")
+        bundles += target
+        return diagnosticsError
     }
 }
 
