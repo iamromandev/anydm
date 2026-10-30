@@ -27,6 +27,7 @@ import dev.anydm.engine.store.Settings
 internal fun OsPanel(
     model: OsModel,
     window: WindowModel,
+    links: LinkHandlerModel,
     typing: Modifier,
 ) {
     val state by model.state.collectAsState()
@@ -42,6 +43,8 @@ internal fun OsPanel(
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.testTag("os-hotkey-help"),
     )
+    HorizontalDivider()
+    LinksRow(links)
     HorizontalDivider()
     val win by window.state.collectAsState()
     Text("Window", style = MaterialTheme.typography.titleMedium)
@@ -94,4 +97,30 @@ internal fun OsPanel(
     }
     OutlinedButton(onClick = model::resetOrigins, modifier = Modifier.testTag("origin-reset")) { Text("Back to the Chrome extension only") }
     state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("os-message")) }
+}
+
+// Whether the OS opens magnet: and anydm:// links with anydm (#611), and the two actions where the app may do it itself.
+@Composable
+private fun LinksRow(model: LinkHandlerModel) {
+    val state by model.state.collectAsState()
+    Text("Links", style = MaterialTheme.typography.titleMedium)
+    Text(state.status.detail, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("links-status"))
+    state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("links-message")) }
+    when (state.status.support) {
+        LinkSupport.NOT_REGISTERED -> {
+            Button(model::register, enabled = !state.busy, modifier = Modifier.testTag("links-register")) {
+                Text("Open magnet and anydm:// links with anydm")
+            }
+        }
+
+        LinkSupport.REGISTERED -> {
+            OutlinedButton(model::unregister, enabled = !state.busy, modifier = Modifier.testTag("links-remove")) {
+                Text("Stop opening links with anydm")
+            }
+        }
+
+        else -> {
+            Unit
+        }
+    }
 }
