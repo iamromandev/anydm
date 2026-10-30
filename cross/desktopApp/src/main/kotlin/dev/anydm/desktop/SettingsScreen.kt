@@ -96,7 +96,7 @@ internal fun SettingsScreen(
                     Section.PROXIES -> ProxiesPanel(panels.proxies, typing)
                     Section.RULES -> RulesPanel(panels.rules, typing)
                     Section.NETWORKS -> NetworksPanel(panels.networks)
-                    Section.SYSTEM -> OsPanel(panels.os, typing)
+                    Section.SYSTEM -> OsPanel(panels.os, panels.window, typing)
                     Section.TOOLS -> ToolsPanel(panels.tools, pickers, typing)
                     Section.DIAGNOSTICS -> DiagnosticsPanel(panels.diagnostics, pickers)
                 }

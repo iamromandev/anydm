@@ -23,6 +23,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -41,7 +43,11 @@ class AppModelTest {
         source: FakeSource,
         firstRun: FirstRun = MemoryFirstRun(done = true),
         files: FileActions = FakeFiles(),
-    ): AppModel = AppModel(source, firstRun, backgroundScope + UnconfinedTestDispatcher(testScheduler), files).also { it.start() }
+        window: WindowModel = WindowModel(MemoryPrefs(), trayAvailable = true),
+        onQuit: () -> Unit = {},
+    ): AppModel =
+        AppModel(source, firstRun, backgroundScope + UnconfinedTestDispatcher(testScheduler), files, onQuit = onQuit, window = window)
+            .also { it.start() }
 
     @Test
     fun `counts follow the snapshots`() =
@@ -364,5 +370,89 @@ class AppModelTest {
             source.downloads.value =
                 listOf(snapshot(1, COMPLETED), snapshot(2, QUEUED, collection = dev.anydm.engine.core.CollectionKind.PLAYLIST))
             assertEquals(1, quits)
+        }
+
+    // --- launches, the window and the tray (#610)
+
+    @Test
+    fun `a launch with links opens the add review with them and shows the window`() =
+        runTest {
+            val window = WindowModel(MemoryPrefs(startHidden = true), trayAvailable = true)
+            val model = model(FakeSource(), window = window)
+            model.launch(
+                listOf("--hidden", "https://example.com/a.zip", "magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a"),
+                second = false,
+            )
+            assertTrue(window.state.value.visible)
+            assertNotNull(model.state.value.adding)
+        }
+
+    @Test
+    fun `a first launch with no links can stay hidden`() =
+        runTest {
+            val window = WindowModel(MemoryPrefs(), trayAvailable = true)
+            val model = model(FakeSource(), window = window)
+            model.launch(listOf("--hidden"), second = false)
+            assertFalse(window.state.value.visible)
+            assertNull(model.state.value.adding)
+        }
+
+    @Test
+    fun `a second launch always brings the window forward, with or without links`() =
+        runTest {
+            val window = WindowModel(MemoryPrefs(), trayAvailable = true).also { it.hide() }
+            val model = model(FakeSource(), window = window)
+            model.launch(emptyList(), second = true)
+            assertTrue(window.state.value.visible)
+            assertNull(model.state.value.adding)
+
+            window.hide()
+            model.launch(listOf("https://example.com/b"), second = true)
+            assertTrue(window.state.value.visible)
+            assertNotNull(model.state.value.adding)
+        }
+
+    @Test
+    fun `a link that arrives while the add review is open is added to it`() =
+        runTest {
+            val model = model(FakeSource())
+            model.launch(listOf("https://example.com/a"), second = false)
+            model.launch(listOf("https://example.com/b"), second = true)
+            val text =
+                model.state.value.adding!!
+                    .state.value.text
+            assertTrue("https://example.com/a" in text && "https://example.com/b" in text, text)
+        }
+
+    @Test
+    fun `closing the window hides it to the tray, or quits`() =
+        runTest {
+            var quits = 0
+            val window = WindowModel(MemoryPrefs(), trayAvailable = true)
+            val model = model(FakeSource(), window = window, onQuit = { quits++ })
+            model.closeRequested()
+            assertFalse(window.state.value.visible)
+            assertEquals(0, quits)
+
+            window.setCloseToTray(false)
+            window.show()
+            model.closeRequested()
+            assertEquals(1, quits)
+        }
+
+    @Test
+    fun `revealing a download shows the window and selects its row in the whole list`() =
+        runTest {
+            val source = FakeSource()
+            val window = WindowModel(MemoryPrefs(), trayAvailable = true).also { it.hide() }
+            val model = model(source, window = window)
+            source.downloads.value = listOf(snapshot(1, DOWNLOADING), snapshot(2, COMPLETED))
+            model.navigate(Route.Downloads(Filter.Status(StatusGroup.ACTIVE)))
+
+            model.reveal(DownloadId(2))
+
+            assertTrue(window.state.value.visible)
+            assertEquals(Route.Downloads(Filter.All), model.state.value.route)
+            assertEquals(setOf(DownloadId(2)), model.state.value.selection)
         }
 }
