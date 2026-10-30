@@ -30,6 +30,26 @@ class DesktopFileSystemTest : FileSystemContract() {
         )
 
     @Test
+    fun aLinkToAFolderIsAFolder() =
+        runTest {
+            val folder = Path(root, "real").also { SystemFileSystem.createDirectories(it) }
+            val link = Path(root, "link")
+            Files.createSymbolicLink(link.toNioPath(), folder.toNioPath())
+            // The folder clean-up after each test doesn't take links, so the link goes whatever happens.
+            try {
+                val file = Path(root, "a.txt").also { writeText(it, "x") }
+                val fs = fileSystem(trash = null)
+
+                fs.isFolder(folder) shouldBe true
+                fs.isFolder(link) shouldBe true
+                fs.isFolder(file) shouldBe false
+                fs.isFolder(Path(root, "missing")) shouldBe false
+            } finally {
+                Files.delete(link.toNioPath())
+            }
+        }
+
+    @Test
     fun aLargePreallocationIsSparse() {
         val store = Files.getFileStore(root.toNioPath())
         val size = 4L * 1024 * 1024 * 1024 + 1 // past 32-bit offsets

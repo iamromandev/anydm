@@ -25,6 +25,9 @@ SELECT * FROM history ORDER BY finished_at DESC, id DESC LIMIT ?;
 prune:
 DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY finished_at DESC, id DESC LIMIT ?);
 
+clear:
+DELETE FROM history;
+
 selectByUrl:
 SELECT * FROM history WHERE source_url = ? ORDER BY finished_at DESC, id DESC LIMIT 1;
 

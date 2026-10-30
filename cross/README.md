@@ -95,7 +95,12 @@ own, with the engine in `shared/`; no server is needed.
   folder, FTP/FTPS/SFTP) with logins in the system keychain; a part that can't be set up is left out and its links show as
   unavailable. The add dialog (`AddModel`, `AddForm.kt`) reads each pasted link before it is added (batch patterns such as
   `[1-10]` expand), and takes the category, profile, folder, start, media format and login for all of them;
-  `AppModel.openAdd(links)` opens it with links in it. Settings come in the later stories.
+  `AppModel.openAdd(links)` opens it with links in it. Transfer and file settings (#608): the Settings screen
+  (`SettingsModel`, `SettingsForm.kt`) edits the default folder, clash policy, disk reserve, retries, history, pacing,
+  connections, speed limits, slow mode, seeding, the queue and what happens after it, through
+  `Engine.applyTransferSettings` so each applies without a restart; it adds, edits and orders categories and profiles,
+  shows the history and 30 days of traffic, resets to defaults, and exports or imports the lot as JSON
+  (`SettingsBackup.kt`: no proxies, cookies or logins). Network, OS and tool settings come in #609.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.

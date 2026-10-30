@@ -57,7 +57,7 @@ fun Shell(
                     Sidebar(state, model::navigate)
                     Column(Modifier.weight(1f).fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
                         Banners(state.banners, model::dismiss)
-                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model) { focus.requestFocus() } }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model, pickers) { focus.requestFocus() } }
                         StatusBar(state)
                     }
                 }
@@ -102,11 +102,12 @@ internal fun title(route: Route): String =
 private fun Content(
     state: UiState,
     model: AppModel,
+    pickers: Pickers,
     focusList: () -> Unit,
 ) {
     when (val route = state.route) {
         Route.Settings -> {
-            Placeholder("Settings arrive with the transfer, network and tool settings stories.", "settings")
+            SettingsScreen(model.settings, pickers) { model.typing = it }
         }
 
         is Route.Downloads -> {

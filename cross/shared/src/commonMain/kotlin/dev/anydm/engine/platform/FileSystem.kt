@@ -76,6 +76,9 @@ interface FileSystem {
      */
     suspend fun list(path: Path): FileResult<List<Path>>
 
+    /** There is a folder at [path], or a link to one; false for a file, nothing, or one that can't be read. */
+    suspend fun isFolder(path: Path): Boolean
+
     /**
      * The length of the file at [path] (#554 finds outputs placed before a stop): [FileResult.NotFound] if there is
      * none, [FileResult.AlreadyExists] for a folder.

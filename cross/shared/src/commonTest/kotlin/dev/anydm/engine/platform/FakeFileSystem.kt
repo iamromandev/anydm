@@ -176,6 +176,8 @@ internal class FakeFileSystem(
         return FileResult.Ok(Unit)
     }
 
+    override suspend fun isFolder(path: Path): Boolean = path in folders
+
     override suspend fun list(path: Path): FileResult<List<Path>> {
         log("list", path)
         fault(Op.LIST, path)?.let { return it }

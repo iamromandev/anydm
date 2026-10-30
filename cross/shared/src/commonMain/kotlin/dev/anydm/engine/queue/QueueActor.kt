@@ -843,6 +843,12 @@ internal class QueueActor(
         return CommandResult.Done(null)
     }
 
+    /** The next failure reads it. */
+    suspend fun setMaxRetries(retries: Int): CommandResult {
+        settings = store.settings.update { it.copy(maxRetries = retries) }
+        return CommandResult.Done(null)
+    }
+
     // A slot stopped by pauseAll: paused GLOBAL, unless resumeAll came first while it stopped.
     private suspend fun afterGlobalStop(job: Download): CommandResult =
         if (settings.globalPause) change(job.pause(PauseReason.GLOBAL)) else requeue(job)

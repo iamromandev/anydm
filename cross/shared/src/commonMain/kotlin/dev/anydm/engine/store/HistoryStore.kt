@@ -23,6 +23,9 @@ interface HistoryStore {
     /** Deletes all but the newest [keep] entries. */
     suspend fun prune(keep: Int)
 
+    /** Forgets every entry; the downloads and their files are not touched. */
+    suspend fun clear()
+
     /** The newest entry for this cleaned link. */
     suspend fun findByUrl(cleanedUrl: String): HistoryEntry?
 

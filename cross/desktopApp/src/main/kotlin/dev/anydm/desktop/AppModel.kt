@@ -24,6 +24,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+// What keeps quit after the queue waiting, as for the engine's own after-queue actions: a job that waits or runs, or is
+// paused only until a network or schedule rule lets it go on. Collection rows are not jobs.
+private val Busy = setOf(DownloadStatus.PENDING, DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.MUXING)
+private val SelfResuming = setOf(PauseReason.NETWORK, PauseReason.SCHEDULE)
+
+private fun keepsQueueBusy(s: DownloadSnapshot): Boolean {
+    val download = s.download
+    if (download.isCollection) return false
+    return download.status in Busy ||
+        (download.status == DownloadStatus.PAUSED && download.pauseReasons.isNotEmpty() && SelfResuming.containsAll(download.pauseReasons))
+}
+
 /** The statuses the sidebar groups downloads under; a cancelled download is in none of them. */
 enum class StatusGroup(
     val label: String,
@@ -154,6 +166,8 @@ class AppModel(
     private val files: FileActions,
     /** Where the file actions run: opening a file can block (a slow share, xdg-open), so never on the UI thread. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Quits the app, when the user chose that for after the queue. */
+    private val onQuit: () -> Unit = {},
 ) {
     private val ui = MutableStateFlow(UiState(showWelcome = !firstRun.isDone()))
     val state: StateFlow<UiState> = ui.asStateFlow()
@@ -170,6 +184,18 @@ class AppModel(
     private var eventErrors = listOf<Banner.Error>()
     private var snapshots = emptyList<DownloadSnapshot>()
     private var engineState: EngineState = EngineState.NotStarted
+
+    /** The settings screen; made the first time it is asked for, and kept, so a draft survives leaving the screen. */
+    val settings: SettingsModel by lazy {
+        SettingsModel(source, scope, io = io, onCategories = { categories -> ui.update { it.copy(categories = categories) } })
+            .also { created = true }
+    }
+
+    @Volatile
+    private var created = false
+
+    // The queue ran since quit after the queue was chosen; it quits once nothing is left to run.
+    private var queueRan = false
 
     /** Starts the engine and follows it. Once. */
     fun start() {
@@ -534,6 +560,7 @@ class AppModel(
         if (diskFull && Banner.DiskFull !in dismissed) banners += Banner.DiskFull
         if (!diskFull) dismissed -= Banner.DiskFull
         banners += eventErrors
+        afterQueue()
         val globallyPaused = snapshots.any { PauseReason.GLOBAL in it.download.pauseReasons }
         ui.update {
             listed(
@@ -545,6 +572,23 @@ class AppModel(
                     globallyPaused = globallyPaused,
                 ),
             )
+        }
+    }
+
+    // Quit after the queue (#608): armed while something runs or waits, it fires when nothing does any more. Call it
+    // holding the lock.
+    private fun afterQueue() {
+        if (!created || !settings.quitAfterQueue.value) {
+            queueRan = false
+            return
+        }
+        val busy = snapshots.any(::keepsQueueBusy)
+        if (busy) {
+            queueRan = true
+        } else if (queueRan) {
+            queueRan = false
+            settings.quitAfterQueue.value = false
+            onQuit()
         }
     }
 

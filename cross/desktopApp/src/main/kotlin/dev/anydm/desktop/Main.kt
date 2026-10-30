@@ -16,12 +16,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicReference
 
 fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val source = runBlocking { openDesktopSource() }
     val firstRun = FileFirstRun(Path.of(desktopAppDirs().data.toString()))
-    val model = AppModel(source, firstRun, scope, DesktopFileActions())
+    // Quit after the queue is chosen in the app; the window's quit is only there once the application runs.
+    val quitApp = AtomicReference<() -> Unit> {}
+    val model = AppModel(source, firstRun, scope, DesktopFileActions(), onQuit = { quitApp.get()() })
     model.start()
     application {
         val closing = rememberCoroutineScope()
@@ -35,6 +38,7 @@ fun main() {
                 }
             }
         }
+        quitApp.set(quit)
         Window(
             onCloseRequest = quit,
             title = "anydm",

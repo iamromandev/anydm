@@ -36,3 +36,16 @@ data class NewCategory(
         require(template == null || NameTemplate.parse(template) is TemplateParse.Ok) { "template doesn't parse: $template" }
     }
 }
+
+/** What saving a category came to (#608). */
+sealed interface CategoryResult {
+    data class Saved(
+        val category: Category,
+    ) : CategoryResult
+
+    /** Another category has the name, ignoring case. */
+    data object NameTaken : CategoryResult
+
+    /** An update of a category that no longer exists. */
+    data object NotFound : CategoryResult
+}

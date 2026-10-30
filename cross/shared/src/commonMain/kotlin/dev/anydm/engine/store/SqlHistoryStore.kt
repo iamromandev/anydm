@@ -28,6 +28,10 @@ internal class SqlHistoryStore(
         withContext(writeContext) { queries.prune(keep.toLong()) }
     }
 
+    override suspend fun clear() {
+        withContext(writeContext) { queries.clear() }
+    }
+
     override suspend fun findByUrl(cleanedUrl: String): HistoryEntry? =
         withContext(io) { queries.selectByUrl(cleanedUrl).executeAsOneOrNull()?.toEntry() }
 

@@ -27,6 +27,17 @@ abstract class HistoryStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun clearEmptiesIt() =
+        runTest {
+            val history = newStore().history
+            for (i in 1L..3L) history.add(entry(i))
+
+            history.clear()
+
+            history.list(10) shouldBe emptyList()
+        }
+
+    @Test
     fun theSameMomentIsBrokenByInsertionOrder() =
         runTest {
             val history = newStore().history

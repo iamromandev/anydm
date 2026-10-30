@@ -183,6 +183,13 @@ class DesktopFileSystem internal constructor(
         }
     }
 
+    // Links are followed: a default folder is often a link to another disk.
+    override suspend fun isFolder(path: Path): Boolean {
+        requireAbsolute(path)
+        // A path java.nio can't take is no folder.
+        return blocking { FileResult.Ok(Files.isDirectory(path.nio())) } == FileResult.Ok(true)
+    }
+
     override suspend fun list(path: Path): FileResult<List<Path>> {
         requireAbsolute(path)
         return blocking(cancellable = true) {
