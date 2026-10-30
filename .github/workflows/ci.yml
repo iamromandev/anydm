@@ -2,7 +2,7 @@ name: CI
 
 on:
     push:
-        branches: [main]
+        branches: [main, dev]
     pull_request:
 
 jobs:
@@ -41,3 +41,20 @@ jobs:
             - run: bun run ext:check
             - run: bun run ext:test
             - run: bun run ext:build
+
+    cross:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            # Caches ~/.gradle/caches and ~/.gradle/wrapper, keyed on these files.
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 21
+                  cache: gradle
+                  cache-dependency-path: |
+                      cross/**/*.gradle*
+                      cross/gradle/libs.versions.toml
+            # ktlint, tests, schema migration verification and checkDesktopNatives. The tests use
+            # local servers only.
+            - run: make cross-check
