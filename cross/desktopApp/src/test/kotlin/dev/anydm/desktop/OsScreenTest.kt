@@ -117,4 +117,35 @@ internal class OsScreenTest : PanelScreenTest(Section.SYSTEM) {
         rule.waitForIdle()
         tag("os-message").assertTextContains("at least one", substring = true)
     }
+
+    @Test
+    fun `links that do not open in anydm yet can be registered and then removed`() {
+        show()
+        tag("links-status").assertTextContains("Not registered", substring = true)
+        click("links-register")
+        rule.waitForIdle()
+        tag("links-status").assertTextContains("Registered", substring = true)
+        rule.onNodeWithTag("links-register").assertDoesNotExist()
+        click("links-remove")
+        rule.waitForIdle()
+        tag("links-status").assertTextContains("Not registered", substring = true)
+    }
+
+    @Test
+    fun `a refused registration says why`() {
+        links.registerResult = "Access is denied."
+        show()
+        click("links-register")
+        rule.waitForIdle()
+        tag("links-message").assertTextContains("Access is denied.", substring = true)
+    }
+
+    @Test
+    fun `when the installer does it the row only explains`() {
+        links.current = LinkHandlerStatus(LinkSupport.BY_INSTALLER, "The installed bundle registers them.")
+        show()
+        tag("links-status").assertTextContains("installed bundle", substring = true)
+        rule.onNodeWithTag("links-register").assertDoesNotExist()
+        rule.onNodeWithTag("links-remove").assertDoesNotExist()
+    }
 }

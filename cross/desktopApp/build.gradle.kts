@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.time.Duration
 import java.util.zip.ZipFile
 
 plugins {
@@ -76,22 +77,86 @@ val checkDesktopNatives =
     }
 tasks.named("check") { dependsOn(checkDesktopNatives) }
 
+// Starts the installed app image with --self-check: its own engine on a throwaway home folder adds a download from a local
+// server and checks the file (SelfCheck). Fails if the runtime lacks a module or a native library. Not part of `check`: it
+// builds the app image first.
+val smokePackagedApp =
+    tasks.register<Exec>("smokePackagedApp") {
+        description = "Runs the packaged app's self-check: engine start, a local HTTP download, the torrent native."
+        group = "verification"
+        dependsOn("createDistributable")
+        val home = layout.buildDirectory.dir("smoke-home").get().asFile
+        val image = layout.buildDirectory.dir("compose/binaries/main/app").get().asFile
+        val launcher =
+            when {
+                org.gradle.internal.os.OperatingSystem.current().isMacOsX -> "anydm.app/Contents/MacOS/anydm"
+                org.gradle.internal.os.OperatingSystem.current().isWindows -> "anydm/anydm.exe"
+                else -> "anydm/bin/anydm"
+            }
+        doFirst { home.deleteRecursively() }
+        // The self-check keeps its data and downloads under the folder it is given, and user.home points at the same place, so
+        // nothing of the user's is touched.
+        environment("JAVA_TOOL_OPTIONS", "\"-Duser.home=$home\"")
+        commandLine(File(image, launcher).path, "--self-check", File(home, "check").path)
+        timeout.set(Duration.ofMinutes(3))
+    }
+
+// The Info.plist entry that makes macOS hand `scheme:` links to the app (as an Apple event, see OpenEvents.kt).
+fun urlSchemes(vararg schemes: String): String =
+    """
+    <key>CFBundleURLTypes</key>
+    <array>${schemes.joinToString("") { name ->
+        """
+        <dict>
+            <key>CFBundleURLName</key><string>$name link</string>
+            <key>CFBundleURLSchemes</key><array><string>$name</string></array>
+        </dict>"""
+    }}
+    </array>
+    """.trimIndent()
+
 compose.desktop {
     application {
         mainClass = "dev.anydm.desktop.MainKt"
         // Binding a connection to one network (#544) reads the socket's native handle by reflection.
-        jvmArgs += listOf("--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
+        jvmArgs +=
+            listOf(
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED",
+                // SQLite, libtorrent, JNA and JNativeHook load native libraries; newer JDKs warn, then refuse, without this.
+                "--enable-native-access=ALL-UNNAMED",
+            )
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            // The browser bridge (OSI-01) is the JDK's own HTTP server, which the minimal runtime leaves out unless asked.
-            modules("jdk.httpserver", "java.logging")
+            // The runtime is cut down to the modules asked for here. The browser bridge (OSI-01) is the JDK's own HTTP server;
+            // SQLite goes through java.sql; the window choices use java.prefs; JNA and libtorrent4j want jdk.unsupported;
+            // OkHttp checks host names with javax.naming; sshj and the keychain libraries use GSS and java.management.
+            // `suggestRuntimeModules` lists what the class path needs; `smokePackagedApp` proves the result starts.
+            modules(
+                "java.instrument",
+                "java.logging",
+                "java.management",
+                "java.naming",
+                "java.prefs",
+                "java.security.jgss",
+                "java.sql",
+                "jdk.httpserver",
+                "jdk.security.auth",
+                "jdk.unsupported",
+            )
             packageName = "anydm"
             packageVersion = "1.0.0"
             description = "anydm desktop client"
             vendor = "anydm"
+            // Opening a .torrent with the app: the installer writes the association (macOS Info.plist, Windows registry,
+            // Linux .desktop file). magnet: and anydm:// are registered below on macOS and by the app itself elsewhere.
+            fileAssociation("application/x-bittorrent", "torrent", "BitTorrent file")
             macOS {
                 bundleID = "dev.anydm.desktop"
                 iconFile.set(project.file("icons/anydm.icns"))
+                infoPlist {
+                    extraKeysRawXml = urlSchemes("magnet", "anydm")
+                }
             }
             windows {
                 iconFile.set(project.file("icons/anydm.ico"))

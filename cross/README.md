@@ -119,9 +119,39 @@ own, with the engine in `shared/`; no server is needed.
   (keep-awake, after-queue countdown, bridge port, hotkey) and the permission notice (macOS Accessibility, Linux Wayland).
   A notification click can't reach the app through osascript or notify-send, so clicking the tray icon opens the row of the
   last finished or failed download.
-  `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
-  macOS with a Homebrew JDK, Compose refuses to package unless you add
-  `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.
+  Packaging and links (#611): `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point.
+  The installed runtime is cut down to the JDK modules listed in `desktopApp/build.gradle.kts` (`suggestRuntimeModules`
+  lists what the class path needs), one libtorrent native for the build's OS, and the JVM flags the engine needs
+  (`--add-opens java.base/java.net` and `java.io` for binding, `--enable-native-access` for SQLite, JNA, libtorrent and
+  JNativeHook, whose natives sit inside their jars and are unpacked at run time). `make cross-smoke` proves it: it builds the
+  app image and starts it with `--self-check`, which opens the engine on a throwaway home folder, downloads a file from a
+  server on the machine and compares it, and checks that torrents loaded; the exit code is the answer. On macOS with a
+  Homebrew JDK, Compose refuses to package unless you add `compose.desktop.packaging.checkJdkVendor=false` to your own
+  `~/.gradle/gradle.properties` (or pass it with `-P`).
+
+  What each installer writes, and how to remove it:
+
+  | OS | `.torrent` | `magnet:` and `anydm://` | Removing |
+  | --- | --- | --- | --- |
+  | macOS (dmg) | `CFBundleDocumentTypes` in the app's `Info.plist` | `CFBundleURLTypes` in the same file; macOS reads it when the app is in Applications and has been opened once. Links reach the running app as Apple events (`OpenEvents`) | Delete the app |
+  | Windows (msi) | File association by the installer | Not by the installer: Settings, System, "Open magnet and anydm:// links with anydm" writes `HKCU\Software\Classes\magnet` and `\anydm` (per user, no administrator rights) | The same screen's "Stop opening links with anydm", or delete those two keys; uninstalling removes the app, not the keys |
+  | Linux (deb) | `MimeType` in the installed `.desktop` file | Not by the installer: the same button writes `~/.local/share/applications/anydm-links.desktop` and makes it the default with `xdg-mime` for the two schemes and for `.torrent` files | "Stop opening links with anydm", or delete that file (a stale default may stay in `~/.config/mimeapps.list`; desktops skip a missing file); uninstalling removes the app, not the file |
+
+  On Windows 8 and later the app picked under Settings, Apps, Default apps wins over the registry key; the Links row says so
+  when it sees that choice. The packaging smoke test is not in CI yet (a matrix job running `make cross-smoke` on each OS is
+  the follow-up, with `xvfb-run` on Linux).
+
+  Installers are unsigned: macOS will ask you to allow the app in Privacy & Security (or `xattr -cr anydm.app`), and Windows
+  SmartScreen shows "unknown publisher". Signing and notarization are a follow-up for when the credentials exist. There is no
+  auto-update and no telemetry.
+
+  Per-OS checklist, by hand (the tray, native notifications, the hotkey permission and link registration need a desktop):
+  1. Install the package; start anydm from the launcher; the window opens and `anydm.log` appears in the logs folder.
+  2. Settings, System: the Links row says what it can do on this OS; on Windows and Linux press the button.
+  3. Click a `magnet:` link in a browser: anydm comes forward with the add review; the same for an `anydm://add?url=…` link
+     and a double-click on a `.torrent`.
+  4. With anydm already running, repeat 3: no second window appears, the running one takes the link.
+  5. Quit from the tray; uninstall; remove the link registration as the table says; confirm `magnet:` links no longer open it.
 
 The app icon is drawn by `desktopApp/icons/make_icons.py`; after changing it, run
 `uv run --no-project --with pillow python icons/make_icons.py` from `desktopApp/`.
@@ -132,4 +162,5 @@ Needs JDK 25. The Gradle wrapper is committed, so there is nothing else to insta
 make cross-check     # ktlint, tests, compile
 make cross-run       # open the app
 make cross-package   # dmg / msi / deb for this OS
+make cross-smoke     # build the app image and run its self-check
 ```

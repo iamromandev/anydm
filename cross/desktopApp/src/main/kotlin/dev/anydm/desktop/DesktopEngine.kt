@@ -90,10 +90,9 @@ import dev.anydm.engine.log.ToolVersion as LoggedTool
  * can't be set up (no libtorrent for this machine, say) is left out and the rest still works; [EngineSource.available]
  * says which kinds are there. If the store can't be opened the app still starts, with an engine that reports itself failed.
  */
-suspend fun openDesktopSource(): EngineSource =
+suspend fun openDesktopSource(dirs: AppDirs = desktopAppDirs()): EngineSource =
     try {
         val fileSystem = DesktopFileSystem()
-        val dirs = desktopAppDirs()
         when (val opened = openStore(dirs, fileSystem)) {
             is FileResult.Ok -> {
                 val store = opened.value
