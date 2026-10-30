@@ -82,8 +82,10 @@ own, with the engine in `shared/`; no server is needed.
     (the library's hook thread is not a daemon, so the process would stay alive with a system-wide key hook). Ship the jar as it
     is, not merged into an uber jar: it is LGPL. Tests use fakes: none touches the real clipboard or installs a real key hook, and only that the library loads on
     this JDK is checked against the real system.
-- `desktopApp/` — the Compose Desktop app. It is a placeholder window for now: the UI is being built
-  in [#604](https://github.com/iamromandev/anydm/issues/604), and it will drive the engine directly.
+- `desktopApp/` — the Compose Desktop app, built in [#604](https://github.com/iamromandev/anydm/issues/604); it drives
+  the engine directly. The shell is in place: window, theme, sidebar with live counts, status bar, menu bar, banners and
+  a first-run welcome (`AppModel` holds the state every screen reads). The download list, add flows and settings come
+  in the later stories, and only plain HTTP(S) downloads are wired to the engine so far.
   `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. On
   macOS with a Homebrew JDK, Compose refuses to package unless you add
   `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties`.
