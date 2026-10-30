@@ -1,0 +1,73 @@
+### base image ###
+ARG PYTHON_VERSION=3.15.0
+
+FROM python:$PYTHON_VERSION AS base
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG PW_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV PW_DIR=$PW_DIR
+
+ENV PYTHONUNBUFFERED=true
+ENV PYTHONFAULTHANDLER=true
+ENV PYTHONDONTWRITEBYTECODE=true
+ENV PYTHONHASHSEED=random
+
+ENV VENV_PATH="$INSTALL_DIR/.venv"
+ENV PATH="$VENV_PATH/bin:$PATH"
+
+# ffmpeg does the muxing and the MP3 transcode. Installed in the base stage so
+# both the builder and the runtime image carry it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Deno solves YouTube's JavaScript challenges for yt-dlp. Without it yt-dlp
+# falls back to a deprecated client with fewer formats. Pinned: bump it with
+# yt-dlp, deliberately (see README).
+COPY --from=denoland/deno:bin-2.9.7 /deno /usr/local/bin/deno
+
+
+FROM base AS builder
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG PW_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV PW_DIR=$PW_DIR
+
+RUN pip install --upgrade pip
+RUN pip install uv
+
+WORKDIR $INSTALL_DIR
+COPY pyproject.toml $INSTALL_DIR
+
+RUN uv venv
+RUN uv pip install -r $INSTALL_DIR/pyproject.toml
+
+
+FROM base AS local
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG PW_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV PW_DIR=$PW_DIR
+
+WORKDIR $WORK_DIR
+
+COPY --from=builder $INSTALL_DIR $INSTALL_DIR
+COPY . $WORK_DIR

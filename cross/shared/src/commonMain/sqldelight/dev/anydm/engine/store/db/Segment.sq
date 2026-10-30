@@ -1,0 +1,28 @@
+import dev.anydm.engine.core.FileId;
+import dev.anydm.engine.core.SegmentId;
+
+-- Bytes [start_byte, end_byte) of a file, safely written up to watermark: dev.anydm.engine.core.Segment.
+-- `end` is an SQL keyword, hence the _byte names (as in the old server).
+CREATE TABLE segment (
+    id INTEGER AS SegmentId PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER AS FileId NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+    start_byte INTEGER NOT NULL CHECK (start_byte >= 0),
+    end_byte INTEGER NOT NULL,
+    watermark INTEGER NOT NULL,
+    CHECK (start_byte < end_byte),
+    CHECK (watermark BETWEEN start_byte AND end_byte)
+);
+
+CREATE INDEX segment_file ON segment(file_id, start_byte);
+
+insert:
+INSERT INTO segment(file_id, start_byte, end_byte, watermark) VALUES (?, ?, ?, ?);
+
+selectByFile:
+SELECT * FROM segment WHERE file_id = ? ORDER BY start_byte, id;
+
+deleteByFile:
+DELETE FROM segment WHERE file_id = ?;
+
+setWatermark:
+UPDATE segment SET watermark = ? WHERE id = ?;

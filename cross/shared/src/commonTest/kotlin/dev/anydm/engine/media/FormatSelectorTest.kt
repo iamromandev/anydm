@@ -1,0 +1,479 @@
+package dev.anydm.engine.media
+
+import dev.anydm.engine.core.AudioChannels
+import dev.anydm.engine.core.AudioFormat
+import dev.anydm.engine.core.Container
+import dev.anydm.engine.core.EmbedChoice
+import dev.anydm.engine.core.Format
+import dev.anydm.engine.core.HdrChoice
+import dev.anydm.engine.core.QualityPreset
+import dev.anydm.engine.core.SponsorBlockChoice
+import dev.anydm.engine.core.SponsorBlockMode
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
+import kotlin.test.Test
+
+class FormatSelectorTest {
+    private fun video(
+        id: String,
+        height: Int = 1080,
+        fps: Double = 30.0,
+        tbr: Double = 4000.0,
+        codec: String = "avc1.640028",
+        ext: String = "mp4",
+        hdr: Boolean = false,
+        protocol: String = "https",
+        drm: Boolean = false,
+    ) = MediaStream(
+        id,
+        "https://cdn.test/v/$id",
+        ext,
+        protocol,
+        codec,
+        null,
+        height,
+        fps,
+        hdr,
+        tbr,
+        1_000_000L,
+        emptyList(),
+        null,
+        emptyList(),
+        drm,
+    )
+
+    private fun audio(
+        id: String,
+        tbr: Double = 130.0,
+        codec: String = "mp4a.40.2",
+        ext: String = "m4a",
+        protocol: String = "https",
+        language: String? = null,
+        channels: Int? = null,
+    ) = MediaStream(
+        id,
+        "https://cdn.test/v/$id",
+        ext,
+        protocol,
+        null,
+        codec,
+        null,
+        null,
+        false,
+        tbr,
+        100_000L,
+        emptyList(),
+        language,
+        emptyList(),
+        false,
+        channels,
+    )
+
+    private fun muxed(
+        id: String,
+        height: Int = 720,
+        tbr: Double = 1500.0,
+        protocol: String = "https",
+    ) = MediaStream(
+        id,
+        "https://cdn.test/v/$id",
+        "mp4",
+        protocol,
+        "avc1.64001F",
+        "mp4a.40.2",
+        height,
+        30.0,
+        false,
+        tbr,
+        1_000_000L,
+        emptyList(),
+        null,
+    )
+
+    private fun info(vararg streams: MediaStream) = MediaInfo("id", "Title", null, null, "Generic", streams.toList())
+
+    private fun chosen(
+        info: MediaInfo,
+        format: Format = Format(),
+    ): Selection = (FormatSelector.choose(info, format) as Choice.Ok).selection
+
+    private fun noMatch(
+        info: MediaInfo,
+        format: Format = Format(),
+    ): String = (FormatSelector.choose(info, format) as Choice.NoMatch).reason
+
+    @Test
+    fun bestPicksTheTallestThenFastestStreamPlusBestAudio() {
+        val selection =
+            chosen(
+                info(
+                    video("137"),
+                    video("138", fps = 60.0, tbr = 6000.0),
+                    video("139", height = 720),
+                    audio("140"),
+                    audio("251", tbr = 160.0, codec = "opus", ext = "webm"),
+                ),
+            )
+
+        selection.video!!.formatId shouldBe "138"
+        selection.audio!!.formatId shouldBe "251"
+        selection.streams.map { it.formatId } shouldBe listOf("138", "251")
+        selection.needsFfmpeg shouldBe true
+    }
+
+    @Test
+    fun balancedCapsAtFullHdAndSkipsHdr() {
+        val selection =
+            chosen(
+                info(
+                    video("uhd", height = 2160),
+                    video("hdr", fps = 60.0, hdr = true),
+                    video("sdr"),
+                    video("hd", height = 720),
+                    audio("140"),
+                ),
+                Format(QualityPreset.BALANCED),
+            )
+
+        selection.video!!.formatId shouldBe "sdr"
+    }
+
+    @Test
+    fun smallTakesTheTallestUnder480ThenTheLowestBitrate() {
+        val selection =
+            chosen(
+                info(
+                    video("720", height = 720),
+                    video("a", height = 480, tbr = 900.0),
+                    video("b", height = 480, tbr = 600.0),
+                    video("360", height = 360, tbr = 100.0),
+                    audio("140"),
+                ),
+                Format(QualityPreset.SMALL),
+            )
+
+        selection.video!!.formatId shouldBe "b"
+    }
+
+    @Test
+    fun anExplicitHeightPicksTheTallestNotAbove() {
+        val streams = info(video("1080"), video("720", height = 720), video("480", height = 480), audio("140"))
+
+        chosen(streams, Format(height = 800)).video!!.formatId shouldBe "720"
+        chosen(streams, Format(height = 480)).video!!.formatId shouldBe "480"
+    }
+
+    @Test
+    fun anExplicitFpsCapsTheFrameRate() {
+        val streams = info(video("60", fps = 60.0), video("30", fps = 30.0), audio("140"))
+
+        chosen(streams, Format(fps = 30)).video!!.formatId shouldBe "30"
+    }
+
+    @Test
+    fun anExplicitCodecMatchesByPrefix() {
+        val streams = info(video("avc"), video("vp9", height = 720, codec = "vp9", ext = "webm"), audio("140"))
+
+        chosen(streams, Format(videoCodec = "VP9")).video!!.formatId shouldBe "vp9"
+    }
+
+    @Test
+    fun hdrYesNeedsAnHdrStream() {
+        val withHdr = info(video("sdr"), video("hdr", hdr = true, codec = "vp9.2", ext = "webm"), audio("140"))
+
+        chosen(withHdr, Format(hdr = HdrChoice.YES)).video!!.formatId shouldBe "hdr"
+        noMatch(info(video("sdr"), audio("140")), Format(hdr = HdrChoice.YES)) shouldContain "1080p"
+    }
+
+    @Test
+    fun aMuxedStreamWinsWhenItIsTheOnlyChoice() {
+        val selection = chosen(info(muxed("22")))
+
+        selection.video!!.formatId shouldBe "22"
+        selection.audio shouldBe null
+        selection.needsFfmpeg shouldBe false
+        selection.outputExtension shouldBe "mp4"
+    }
+
+    @Test
+    fun separateStreamsBeatALowerMuxedOne() {
+        val selection = chosen(info(muxed("18", height = 360), video("137"), audio("140")))
+
+        selection.streams.map { it.formatId } shouldBe listOf("137", "140")
+    }
+
+    @Test
+    fun videoAloneWhenThereIsNoAudio() {
+        val selection = chosen(info(video("137")))
+
+        selection.streams.map { it.formatId } shouldBe listOf("137")
+        selection.needsFfmpeg shouldBe false
+        selection.outputExtension shouldBe "mp4"
+    }
+
+    @Test
+    fun audioOnlyM4aCopiesTheMp4aStream() {
+        val selection =
+            chosen(info(audio("140"), audio("251", tbr = 160.0, codec = "opus", ext = "webm")), Format(audioOnly = AudioFormat.M4A))
+
+        selection.audio!!.formatId shouldBe "140"
+        selection.video shouldBe null
+        selection.transcode shouldBe false
+        selection.needsFfmpeg shouldBe false
+        selection.outputExtension shouldBe "m4a"
+    }
+
+    @Test
+    fun audioOnlyMp3Transcodes() {
+        val selection =
+            chosen(info(audio("140"), audio("251", tbr = 160.0, codec = "opus", ext = "webm")), Format(audioOnly = AudioFormat.MP3))
+
+        selection.audio!!.formatId shouldBe "251"
+        selection.transcode shouldBe true
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "mp3"
+    }
+
+    @Test
+    fun opusFromAWebmRemuxesWithoutTranscoding() {
+        val selection =
+            chosen(info(audio("140"), audio("251", tbr = 160.0, codec = "opus", ext = "webm")), Format(audioOnly = AudioFormat.OPUS))
+
+        selection.audio!!.formatId shouldBe "251"
+        selection.transcode shouldBe false
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "opus"
+    }
+
+    @Test
+    fun audioOnlyWithoutAudioStreamsIsNoMatch() {
+        noMatch(info(video("137")), Format(audioOnly = AudioFormat.M4A)) shouldContain "audio"
+    }
+
+    @Test
+    fun containerFollowsTheCodecs() {
+        val opus = audio("251", codec = "opus", ext = "webm")
+        val aac = audio("140")
+
+        chosen(info(video("a"), aac)).container shouldBe Container.MP4
+        chosen(info(video("b", codec = "vp9", ext = "webm"), opus)).container shouldBe Container.WEBM
+        chosen(info(video("c"), opus)).container shouldBe Container.MKV
+        chosen(info(video("d", codec = "av01.0.08M.08"), aac)).container shouldBe Container.MP4
+    }
+
+    @Test
+    fun anExplicitContainerForcesFfmpeg() {
+        val single = chosen(info(muxed("22")), Format(container = Container.MKV))
+        single.needsFfmpeg shouldBe true
+        single.outputExtension shouldBe "mkv"
+
+        val pair = chosen(info(video("c"), audio("251", codec = "opus", ext = "webm")), Format(container = Container.MP4))
+        pair.outputExtension shouldBe "mp4"
+    }
+
+    @Test
+    fun noMatchListsWhatIsAvailable() {
+        val reason = noMatch(info(video("1080"), video("720", height = 720, codec = "vp9"), audio("140")), Format(height = 100))
+
+        reason shouldContain "1080p avc1"
+        reason shouldContain "720p vp9"
+    }
+
+    @Test
+    fun anHlsOnlyPageSelectsTheFragmentsRoute() {
+        val parsed = (YtDlpJson.parse(MediaFixtures.hlsOnlyJson()) as MediaParse.Ok).info
+
+        chosen(parsed).route shouldBe StreamRoute.FRAGMENTS
+    }
+
+    @Test
+    fun theRecordedPageGivesTheBestPlainPair() {
+        val parsed = (YtDlpJson.parse(MediaFixtures.splitVideoJson()) as MediaParse.Ok).info
+
+        chosen(parsed).streams.map { it.formatId } shouldBe listOf("137", "251")
+    }
+
+    @Test
+    fun aVideoIsNeverQuietlyDownloadedWithoutItsSound() {
+        noMatch(info(video("137"), audio("140")), Format(audioCodec = "opus")) shouldContain "audio"
+    }
+
+    @Test
+    fun aDashOnlyAudioPairsThroughTheFallbackRoute() {
+        val selection = chosen(info(video("137"), muxed("22"), audio("dash", protocol = "http_dash_segments")))
+
+        selection.streams.map { it.formatId } shouldBe listOf("137", "dash")
+        selection.route shouldBe StreamRoute.YTDLP
+    }
+
+    @Test
+    fun audioOnlyFallsBackToAMuxedStream() {
+        val selection = chosen(info(muxed("22")), Format(audioOnly = AudioFormat.M4A))
+
+        selection.audio!!.formatId shouldBe "22"
+        selection.video shouldBe null
+        selection.transcode shouldBe false
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "m4a"
+    }
+
+    @Test
+    fun theChoiceIsKeptWhileItsStreamsAreStillThere() {
+        val streams =
+            info(
+                video("137"),
+                video("999", height = 2160, tbr = 9000.0),
+                audio("140"),
+                audio("251", tbr = 160.0, codec = "opus", ext = "webm"),
+            )
+
+        (
+            FormatSelector.choose(
+                streams,
+                Format(),
+                pinned = listOf("137", "140"),
+            ) as Choice.Ok
+        ).selection.streams.map { it.formatId } shouldBe
+            listOf("137", "140")
+        (
+            FormatSelector.choose(
+                streams,
+                Format(),
+                pinned = listOf("137", "gone"),
+            ) as Choice.Ok
+        ).selection.streams.map { it.formatId } shouldBe
+            listOf("999", "251")
+    }
+
+    @Test
+    fun routeTieBreakPrefersPlainOverFragments() {
+        val selection =
+            chosen(
+                info(
+                    video("plain", height = 720, tbr = 1000.0),
+                    video("hls", height = 720, tbr = 3000.0, protocol = "m3u8_native"),
+                    audio("140"),
+                ),
+            )
+
+        selection.video!!.formatId shouldBe "plain"
+        selection.route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun theJobRouteIsTheMostDemandingStreamsRoute() {
+        chosen(info(video("a"), audio("140"))).route shouldBe StreamRoute.PLAIN
+        chosen(info(video("a", protocol = "m3u8_native"), audio("140"))).route shouldBe StreamRoute.FRAGMENTS
+        chosen(info(video("a", protocol = "m3u8_native"), audio("dash", protocol = "rtmp"))).route shouldBe StreamRoute.YTDLP
+    }
+
+    @Test
+    fun drmStreamsAreNeverSelected() {
+        val selection = chosen(info(video("drm", height = 2160, drm = true), video("ok", height = 720), audio("140")))
+
+        selection.video!!.formatId shouldBe "ok"
+        noMatch(info(video("drm", drm = true))) shouldContain "no stream"
+    }
+
+    @Test
+    fun anHlsMuxedStreamNeedsFfmpegToRewrap() {
+        val selection = chosen(info(muxed("hls", protocol = "m3u8_native")))
+
+        selection.route shouldBe StreamRoute.FRAGMENTS
+        selection.needsFfmpeg shouldBe true
+        selection.outputExtension shouldBe "mp4"
+    }
+
+    @Test
+    fun theWantedLanguageBeatsABetterBitrate() {
+        val streams = info(video("v"), audio("en", tbr = 100.0, language = "en"), audio("fr", tbr = 200.0, language = "fr"))
+
+        chosen(streams, Format(audioLanguage = "en")).audio!!.formatId shouldBe "en"
+        chosen(streams, Format(audioLanguage = "FR")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun aRegionalCodeMatchesInBothDirections() {
+        val streams = info(video("v"), audio("us", tbr = 100.0, language = "en-US"), audio("de", tbr = 200.0, language = "de"))
+
+        chosen(streams, Format(audioLanguage = "en")).audio!!.formatId shouldBe "us"
+        chosen(
+            info(video("v"), audio("plain", tbr = 100.0, language = "en"), audio("de", tbr = 200.0, language = "de")),
+            Format(audioLanguage = "en-GB"),
+        ).audio!!
+            .formatId shouldBe "plain"
+    }
+
+    @Test
+    fun aMissingLanguageFallsBackToTheBestBitrate() {
+        val streams = info(video("v"), audio("en", tbr = 100.0, language = "en"), audio("fr", tbr = 200.0, language = "fr"))
+
+        chosen(streams, Format(audioLanguage = "de")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun surroundPrefersSixChannels() {
+        val streams = info(video("v"), audio("st", tbr = 200.0, channels = 2), audio("sur", tbr = 100.0, channels = 6))
+
+        chosen(streams, Format(audioChannels = AudioChannels.SURROUND)).audio!!.formatId shouldBe "sur"
+    }
+
+    @Test
+    fun stereoPrefersTwoChannels() {
+        val streams = info(video("v"), audio("st", tbr = 100.0, channels = 2), audio("sur", tbr = 200.0, channels = 6))
+
+        chosen(streams, Format(audioChannels = AudioChannels.STEREO)).audio!!.formatId shouldBe "st"
+        chosen(streams, Format(audioChannels = AudioChannels.ANY)).audio!!.formatId shouldBe "sur"
+    }
+
+    @Test
+    fun languageThenChannelsThenBitrate() {
+        val streams =
+            info(
+                video("v"),
+                audio("en-st", tbr = 300.0, language = "en", channels = 2),
+                audio("en-sur", tbr = 100.0, language = "en", channels = 6),
+                audio("fr-sur", tbr = 400.0, language = "fr", channels = 6),
+            )
+
+        chosen(streams, Format(audioLanguage = "en", audioChannels = AudioChannels.SURROUND)).audio!!.formatId shouldBe "en-sur"
+    }
+
+    @Test
+    fun audioOnlyUsesTheSameOrder() {
+        val streams = info(audio("en", tbr = 300.0, language = "en"), audio("fr", tbr = 100.0, language = "fr"))
+
+        chosen(streams, Format(audioOnly = AudioFormat.M4A, audioLanguage = "fr")).audio!!.formatId shouldBe "fr"
+    }
+
+    @Test
+    fun sponsorBlockMakesTheRouteYtDlp() {
+        val streams = info(video("v"), audio("a"))
+        val choice = SponsorBlockChoice(SponsorBlockMode.CUT)
+
+        val selection = chosen(streams, Format(sponsorBlock = choice))
+
+        selection.route shouldBe StreamRoute.YTDLP
+        selection.needsFfmpeg shouldBe true
+        chosen(info(audio("a")), Format(audioOnly = AudioFormat.M4A, embed = EmbedChoice(metadata = true))).route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun noSponsorBlockKeepsTheStreamRoute() {
+        chosen(info(video("v"), audio("a"))).route shouldBe StreamRoute.PLAIN
+    }
+
+    @Test
+    fun aPinnedChoiceStillGoesToYtDlpWithSponsorBlock() {
+        val streams = info(video("v"), audio("a"))
+
+        val pinned =
+            FormatSelector.choose(
+                streams,
+                Format(sponsorBlock = SponsorBlockChoice(SponsorBlockMode.MARK)),
+                pinned = listOf("v", "a"),
+            )
+
+        (pinned as Choice.Ok).selection.route shouldBe StreamRoute.YTDLP
+    }
+}

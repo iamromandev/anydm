@@ -1,0 +1,30 @@
+import dev.anydm.engine.core.DownloadId;
+
+-- What a download's requests carry besides the URL (HTTP-10): headers as "Name: value" lines, referrer, user agent,
+-- cookies (a `sealed:` marker for the text, which is kept in the keychain, OSI-03). At most one row per download, gone with it.
+CREATE TABLE request_context (
+    download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    headers TEXT NOT NULL DEFAULT '',
+    referrer TEXT,
+    user_agent TEXT,
+    cookies TEXT
+);
+
+put:
+INSERT OR REPLACE INTO request_context(download_id, headers, referrer, user_agent, cookies) VALUES (?, ?, ?, ?, ?);
+
+selectByDownload:
+SELECT * FROM request_context WHERE download_id = ?;
+
+delete:
+DELETE FROM request_context WHERE download_id = ?;
+
+selectCookies:
+SELECT cookies FROM request_context WHERE download_id = ?;
+
+-- Rows whose cookies are still the text itself (OSI-03): written before they were sealed in the keychain.
+selectUnsealed:
+SELECT download_id, cookies FROM request_context WHERE cookies IS NOT NULL AND cookies NOT LIKE 'sealed:%';
+
+setCookies:
+UPDATE request_context SET cookies = ? WHERE download_id = ?;

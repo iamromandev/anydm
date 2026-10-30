@@ -1,0 +1,19 @@
+-- Version 18 to 19 (#543): network policies (NET-05, NET-07), schedule rules (NET-08), per-download start time (NET-09).
+ALTER TABLE download ADD COLUMN start_at INTEGER;
+CREATE TABLE network_policy (
+    network TEXT NOT NULL PRIMARY KEY,
+    speed_limit INTEGER CHECK (speed_limit > 0),
+    upload_limit INTEGER CHECK (upload_limit > 0),
+    allowance_bytes INTEGER CHECK (allowance_bytes >= 0),
+    allowance_period TEXT,
+    allowance_reset_day INTEGER,
+    allowance_warn_percent INTEGER,
+    allowance_action TEXT
+);
+CREATE TABLE schedule_rule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    days TEXT NOT NULL,
+    start_minute INTEGER NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
+    end_minute INTEGER NOT NULL CHECK (end_minute BETWEEN 0 AND 1439),
+    action TEXT NOT NULL
+);

@@ -1,15 +1,10 @@
-# core
-.idea
+### core ###
 .ds_store
+.idea
+.claude
+.remember
+.superpowers
+.worktrees/
 
-# project
-node_modules
-dist
-server
-bun.lock
-downloads
-
-# caches
-.eslintcache
-.cache
-*.tsbuildinfo
+# docs
+docs/superpowers

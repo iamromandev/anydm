@@ -1,0 +1,29 @@
+-- Version 13 to 14 (#540, sub-project E): collections that hold playlist items, the archive that keeps track of them, and profiles.
+ALTER TABLE download ADD COLUMN playlist_index INTEGER;
+ALTER TABLE download ADD COLUMN source_url TEXT;
+ALTER TABLE download ADD COLUMN selection_range TEXT;
+ALTER TABLE download ADD COLUMN selection_limit INTEGER;
+
+CREATE TABLE collection_item (
+    collection_id INTEGER NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    extractor TEXT NOT NULL,
+    video_id TEXT NOT NULL,
+    child_id INTEGER REFERENCES download(id) ON DELETE SET NULL,
+    playlist_index INTEGER NOT NULL,
+    title TEXT,
+    duration INTEGER,
+    done INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection_id, extractor, video_id)
+);
+
+CREATE INDEX collection_item_child ON collection_item(child_id);
+
+CREATE TABLE profile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    format TEXT,
+    category_id INTEGER,
+    save_folder TEXT,
+    name_template TEXT,
+    speed_limit INTEGER CHECK (speed_limit > 0)
+);

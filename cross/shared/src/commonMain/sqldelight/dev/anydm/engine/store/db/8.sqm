@@ -1,0 +1,13 @@
+-- Version 8 to 9 (#539): the history of finished downloads. No foreign key to download: a removed download stays here.
+CREATE TABLE history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER CHECK (size >= 0),
+    finished_at INTEGER NOT NULL,
+    source_url TEXT NOT NULL
+);
+
+CREATE INDEX history_url ON history(source_url);
+CREATE INDEX history_file ON history(name COLLATE NOCASE, size);

@@ -1,0 +1,8 @@
+-- Version 17 to 18 (#542): the SSH host keys SFTP trusts, one per server and port, saved on the first connection.
+CREATE TABLE ssh_host_key (
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    key_type TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    PRIMARY KEY (host, port)
+);

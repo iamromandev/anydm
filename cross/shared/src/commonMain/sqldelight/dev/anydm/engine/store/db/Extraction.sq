@@ -1,0 +1,23 @@
+import dev.anydm.engine.core.DownloadId;
+import kotlin.time.Instant;
+
+-- What yt-dlp said about a media page (MED-01): its -J output and when it ran. At most one row per download, gone with it.
+CREATE TABLE extraction (
+    download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    json TEXT NOT NULL,
+    extracted_at INTEGER AS Instant NOT NULL,
+    -- The format ids chosen from this page, joined by commas: a later extraction keeps them while they are still there.
+    chosen TEXT NOT NULL DEFAULT '',
+    -- The page was read without the cookie source (the site withheld formats from the logged-in session, MED-19).
+    without_cookies INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0
+);
+
+put:
+INSERT OR REPLACE INTO extraction(download_id, url, json, extracted_at, chosen, without_cookies) VALUES (?, ?, ?, ?, ?, ?);
+
+selectByDownload:
+SELECT * FROM extraction WHERE download_id = ?;
+
+delete:
+DELETE FROM extraction WHERE download_id = ?;

@@ -1,0 +1,2 @@
+-- Version 2 to 3 (#554): what the source said it is, so a changed source starts its download over.
+ALTER TABLE download ADD COLUMN source_validator TEXT;

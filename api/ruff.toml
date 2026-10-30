@@ -1,0 +1,28 @@
+target-version = "py314"
+line-length = 120
+src = ["src"]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific
+]
+ignore = [
+    "E501",   # line length (handled by formatter / line-length)
+]
+
+[lint.per-file-ignores]
+# FastAPI injects dependencies via default callables.
+"src/route/**/*.py" = ["B008"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

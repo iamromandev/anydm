@@ -1,0 +1,92 @@
+import dev.anydm.engine.core.CategoryId;
+import dev.anydm.engine.core.CollectionKind;
+import dev.anydm.engine.core.DownloadId;
+import dev.anydm.engine.core.DownloadKind;
+import dev.anydm.engine.core.DownloadStatus;
+import dev.anydm.engine.core.ProfileId;
+import dev.anydm.engine.net.ProxyChoice;
+import kotlin.time.Instant;
+
+-- One job: dev.anydm.engine.core.Download. Enums are stored by name, times as epoch milliseconds.
+-- AUTOINCREMENT never reuses an id, so a stale id can't reach a newer download.
+-- A NULL passes a CHECK, so nullable columns need no IS NULL arm.
+-- category_id has no foreign key (see 6.sqm): CategoryStore.remove clears it. profile_id has none either (see Profile.sq).
+CREATE TABLE download (
+    id INTEGER AS DownloadId PRIMARY KEY AUTOINCREMENT,
+    kind TEXT AS DownloadKind NOT NULL,
+    status TEXT AS DownloadStatus NOT NULL,
+    parent_id INTEGER AS DownloadId REFERENCES download(id) ON DELETE CASCADE,
+    collection TEXT AS CollectionKind,
+    category_id INTEGER AS CategoryId,
+    profile_id INTEGER AS ProfileId,
+    save_folder TEXT,
+    file_name TEXT,
+    size INTEGER CHECK (size >= 0),
+    priority INTEGER AS kotlin.Int NOT NULL,
+    speed_limit INTEGER CHECK (speed_limit > 0),
+    attempt_count INTEGER AS kotlin.Int NOT NULL CHECK (attempt_count >= 0),
+    next_attempt_at INTEGER AS Instant,
+    -- PauseReason names, comma-separated; '' when not paused.
+    pause_reasons TEXT NOT NULL DEFAULT '',
+    queued_at INTEGER AS Instant,
+    -- What the source said it is at the last probe (an ETag...), so a later probe can tell it changed (#554).
+    source_validator TEXT,
+    -- What the finished file must hash to, as `sha256:<hex>` (Checksum.toString), the user's (#573).
+    checksum TEXT,
+    -- Added anyway after a duplicate warning (FIL-06): the duplicate checks leave it alone.
+    allow_duplicate INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    -- A collection's item: its place in the playlist, not in the selection (MED-16).
+    playlist_index INTEGER AS kotlin.Int,
+    -- A collection: where its items came from, and the range and limit chosen, so a sync can list again (MED-17).
+    source_url TEXT,
+    selection_range TEXT,
+    selection_limit INTEGER AS kotlin.Int,
+    -- Waits without a slot until then (NET-09).
+    start_at INTEGER AS Instant,
+    -- Which proxy it goes through (NET-15): ProxyChoice.encode, INHERIT leaves it to the profile and the global setting.
+    proxy TEXT AS ProxyChoice NOT NULL DEFAULT 'INHERIT',
+    CHECK (parent_id <> id)
+);
+
+-- The queue (#552): one status, highest priority first, then longest waiting, then first added.
+CREATE INDEX download_status ON download(status, priority DESC, queued_at, id);
+-- Finds a collection's children when it is removed.
+CREATE INDEX download_parent ON download(parent_id);
+
+insert:
+INSERT INTO download(kind, status, parent_id, collection, category_id, profile_id, save_folder, file_name, size,
+    priority, speed_limit, attempt_count, next_attempt_at, pause_reasons, queued_at, source_validator, checksum, allow_duplicate,
+    playlist_index, source_url, selection_range, selection_limit, start_at, proxy)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Only meaningful in the transaction that inserted (the JDBC driver opens a connection per statement outside one).
+selectLastInserted:
+SELECT * FROM download WHERE id = last_insert_rowid();
+
+selectById:
+SELECT * FROM download WHERE id = ?;
+
+selectAll:
+SELECT * FROM download ORDER BY id;
+
+selectByParent:
+SELECT * FROM download WHERE parent_id = ? ORDER BY playlist_index, id;
+
+selectByStatus:
+SELECT * FROM download WHERE status = ? ORDER BY priority DESC, queued_at, id;
+
+update:
+UPDATE download SET kind = ?, status = ?, parent_id = ?, collection = ?, category_id = ?, profile_id = ?,
+    save_folder = ?, file_name = ?, size = ?, priority = ?, speed_limit = ?, attempt_count = ?, next_attempt_at = ?,
+    pause_reasons = ?, queued_at = ?, source_validator = ?, checksum = ?, allow_duplicate = ?,
+    playlist_index = ?, source_url = ?, selection_range = ?, selection_limit = ?, start_at = ?, proxy = ?
+WHERE id = ?;
+
+delete:
+DELETE FROM download WHERE id = ?;
+
+clearCategory:
+UPDATE download SET category_id = NULL WHERE category_id = ?;
+
+countProxy:
+SELECT count(*) FROM download WHERE proxy = ?;

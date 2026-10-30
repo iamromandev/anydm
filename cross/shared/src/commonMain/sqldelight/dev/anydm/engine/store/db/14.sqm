@@ -1,0 +1,8 @@
+-- Version 14 to 15 (#541, sub-project F): what a torrent job needs besides its source: the metadata, the file choice and
+-- the sequential flag.
+CREATE TABLE torrent (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    metadata BLOB,
+    priorities TEXT NOT NULL DEFAULT '',
+    sequential INTEGER NOT NULL DEFAULT 0
+);

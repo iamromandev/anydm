@@ -1,0 +1,41 @@
+import dev.anydm.engine.core.DownloadId;
+
+-- At most one row per torrent job, gone with it. `metadata` is the .torrent file once it is known (a magnet link has
+-- none until its metadata arrives); `priorities` is one number 0 to 7 per file in torrent order, comma-separated, 0 for a
+-- file the user skips, '' for all files at the default. `resume` is libtorrent's resume data. `seed_ratio` and
+-- `seed_minutes` are the torrent's own seeding limits: NULL takes the global setting, 0 means no limit. `file_done` is the
+-- bytes done of each file, 8 bytes big-endian per file in torrent order.
+CREATE TABLE torrent (
+    download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    metadata BLOB,
+    priorities TEXT NOT NULL DEFAULT '',
+    sequential INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    resume BLOB,
+    seed_ratio REAL,
+    seed_minutes INTEGER,
+    file_done BLOB
+);
+
+put:
+INSERT OR REPLACE INTO torrent(download_id, metadata, priorities, sequential, resume, seed_ratio, seed_minutes) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectByDownload:
+SELECT * FROM torrent WHERE download_id = ?;
+
+setMetadata:
+UPDATE torrent SET metadata = ? WHERE download_id = ?;
+
+setPriorities:
+UPDATE torrent SET priorities = ? WHERE download_id = ?;
+
+setSequential:
+UPDATE torrent SET sequential = ? WHERE download_id = ?;
+
+setResume:
+UPDATE torrent SET resume = ? WHERE download_id = ?;
+
+setFileDone:
+UPDATE torrent SET file_done = ? WHERE download_id = ?;
+
+setSeedRules:
+UPDATE torrent SET seed_ratio = ?, seed_minutes = ? WHERE download_id = ?;

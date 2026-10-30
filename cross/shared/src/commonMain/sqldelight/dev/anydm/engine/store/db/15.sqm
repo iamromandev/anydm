@@ -1,0 +1,7 @@
+-- Version 15 to 16 (#541, sub-project G): a torrent's resume data and its own seeding rules, and upload bytes beside the
+-- download bytes in the traffic totals. seed_ratio and seed_minutes are NULL to take the global setting, 0 for no limit.
+ALTER TABLE torrent ADD COLUMN resume BLOB;
+ALTER TABLE torrent ADD COLUMN seed_ratio REAL;
+ALTER TABLE torrent ADD COLUMN seed_minutes INTEGER;
+ALTER TABLE traffic_day ADD COLUMN bytes_up INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE download_traffic ADD COLUMN bytes_up INTEGER NOT NULL DEFAULT 0;

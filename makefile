@@ -1,0 +1,135 @@
+## core
+# variables
+# This file owns no logic. Each target hands off to the stack that does:
+# api/makefile for Python and Docker, ui/package.json for the SPA.
+#
+# Variables typed on the command line reach the sub-make on their own — GNU make
+# forwards command-line overrides through MAKEFLAGS. Run `make -C api help` for
+# the API's own targets.
+#
+# The migrate and seed targets run inside the API container: bring it up with
+# `make api-up` first.
+API := api
+UI := ui
+CROSS := cross
+BUN := bun
+UI_PORT := 3030
+
+# phony targets
+.PHONY: check seed down restart clean-volumes help \
+	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
+	api-migrate api-seed api-install api-export api-clean-all api-clean-volumes api-clean-host \
+	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format \
+	cross-check cross-test cross-run cross-package
+
+## both stacks
+check: api-check ui-check cross-check # Lint + typecheck all three stacks
+
+seed: api-seed # Seed the built-in search sources and categories: adds any that are missing, never overwrites
+
+down: api-down ui-down # Stop both stacks: remove the API containers, kill the UI dev server
+
+restart: api-restart ui-down ui-dev # Restart both stacks: rebuild + restart the API containers, then relaunch the UI dev server
+
+clean: api-clean-volumes # Remove the project's volumes (db, download, torrent)
+
+## api — delegates to api/makefile
+api-check: # Lint + typecheck the API
+	$(MAKE) -C $(API) check
+
+api-test: # Run the API unit tests
+	$(MAKE) -C $(API) test
+
+api-test-all: # Run every API test, integration included (needs api-up); not the live-site ones
+	$(MAKE) -C $(API) test-all
+
+api-test-live: # Run the live-site tests: real sites, over the internet
+	$(MAKE) -C $(API) test-live
+
+api-run: # Run the API dev server on the host
+	$(MAKE) -C $(API) run
+
+api-up: # Start the API and database containers
+	$(MAKE) -C $(API) up
+
+api-down: # Remove the API containers
+	$(MAKE) -C $(API) down
+
+api-build: # Build the API Docker images
+	$(MAKE) -C $(API) build
+
+api-restart: # Stop, rebuild, and start the API containers
+	$(MAKE) -C $(API) restart
+
+api-ps: # List the API containers
+	$(MAKE) -C $(API) ps
+
+api-logs: # Follow the API container logs
+	$(MAKE) -C $(API) logs
+
+api-migrate: # Run database migrations, then seed the built-in search sources and categories
+	$(MAKE) -C $(API) migrate
+
+api-seed: # Seed the built-in search sources and categories: adds any that are missing, never overwrites (run api-migrate first)
+	$(MAKE) -C $(API) seed
+
+api-install: # Install API dependencies
+	$(MAKE) -C $(API) install
+
+api-export: # Export requirements.txt
+	$(MAKE) -C $(API) export
+
+api-clean-all: # Stop containers, remove volumes and images
+	$(MAKE) -C $(API) clean-all
+
+api-clean-volumes: # Remove the project's volumes (db, download, torrent)
+	$(MAKE) -C $(API) clean-volumes
+
+api-clean-host: # Prune all unused Docker data on the host
+	$(MAKE) -C $(API) clean-host
+
+## ui — delegates to ui/package.json
+ui-install: # Install UI dependencies
+	$(BUN) install --cwd $(UI)
+
+ui-dev: # Run the UI dev server (formats and typechecks first)
+	$(BUN) run --cwd $(UI) web:dev
+
+ui-down: # Stop the UI dev server (kill whatever listens on UI_PORT)
+	@pids=$$(lsof -tiTCP:$(UI_PORT) -sTCP:LISTEN); [ -n "$$pids" ] && kill $$pids || true
+
+ui-restart: # Wipe node_modules + bun.lock, reinstall, then run the dev server
+	$(BUN) run --cwd $(UI) web:restart
+
+ui-build: # Build the UI for production, and the browser extension
+	$(BUN) run --cwd $(UI) web:build
+	$(BUN) run --cwd $(UI) ext:build
+
+ui-check: # Typecheck the UI and the browser extension
+	$(BUN) run --cwd $(UI) web:check
+	$(BUN) run --cwd $(UI) ext:check
+
+ui-test: # Run the UI and browser extension unit tests
+	$(BUN) run --cwd $(UI) web:test
+	$(BUN) run --cwd $(UI) ext:test
+
+ui-format: # Format the UI and browser extension sources
+	$(BUN) run --cwd $(UI) web:format
+	$(BUN) run --cwd $(UI) ext:format
+
+## cross — the Kotlin Multiplatform client (cross/, Gradle wrapper, JDK 25)
+cross-check: # Lint + test + compile the cross/ client
+	cd $(CROSS) && ./gradlew check
+
+cross-test: # Run the cross/ shared tests
+	cd $(CROSS) && ./gradlew :shared:allTests
+
+cross-run: # Open the desktop app
+	cd $(CROSS) && ./gradlew :desktopApp:run
+
+cross-package: # Build a dmg / msi / deb for this OS
+	cd $(CROSS) && ./gradlew :desktopApp:packageDistributionForCurrentOS
+
+# help
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?#' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?#"}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'

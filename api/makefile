@@ -1,0 +1,101 @@
+## core
+# variables
+DOCKER_COMPOSE := docker compose -f docker-compose.yml -p anydm
+UV := uv
+UVX := $(UV)x
+SERVER_CONTAINER := server-anydm-api
+TEST_DB := anydm_test
+
+# phony targets
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate seed db-reset help
+
+## operation
+# system cleanup
+clean-host: # Prune all unused Docker data on the host
+	docker system prune --all --force
+	docker volume prune --all --force
+	docker buildx prune --all --force
+	docker builder prune --all --force
+
+clean-volumes: # Remove this project's volumes (db, download, torrent)
+	$(DOCKER_COMPOSE) down -v
+
+clean-all: # Stop containers, remove volumes & images
+	$(DOCKER_COMPOSE) down -v --rmi all
+
+# docker control
+ps: # List containers
+	$(DOCKER_COMPOSE) ps -a
+
+build: # Build Docker images
+	$(DOCKER_COMPOSE) build
+
+up: # Start containers
+	$(DOCKER_COMPOSE) up -d
+
+stop: # Stop containers
+	$(DOCKER_COMPOSE) stop
+
+down: # Remove containers
+	$(DOCKER_COMPOSE) down
+
+restart: # Restart containers
+	make stop
+	make build
+	make up
+
+logs: # Show live logs
+	$(DOCKER_COMPOSE) logs -f
+
+# python tools (uv)
+install: # Install all dependencies
+	$(UV) sync
+
+install-dev: # Add development dependencies
+	$(UV) add --dev ruff ty
+
+check: # Run lint + type checks
+	make install
+	$(UVX) ruff check --fix
+	$(UV) run ty check
+
+test: # Run the unit test suite
+	$(UV) run pytest
+
+test-all: export DB_NAME = $(TEST_DB)
+test-all: export DB_HOST = localhost
+test-all: export DB_PORT = 5430
+test-all: # Run every test, integration included, against $(TEST_DB) (needs `make up`); not the live-site ones
+	$(UV) run python -m scripts.test_db
+	$(UV) run pytest -m "not network"
+
+test-live: # Run the live-site tests: real sites, over the internet
+	$(UV) run pytest -m network -v -rs
+
+run: # Run FastAPI dev server
+	make check
+	$(UV) run uvicorn src.main:app --reload --loop uvloop --port 8030
+
+export: # Export requirements.txt
+	$(UV) export --format requirements-txt --output requirements.txt
+
+# git
+add: # Stage all changes
+	git add .
+
+# database scripts
+migrate: # Run database migrations, then seed the built-in search sources and categories
+	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
+	$(MAKE) seed
+
+seed: # Seed the built-in search sources and categories: adds any that are missing, never overwrites (needs migrate first)
+	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
+	docker exec $(SERVER_CONTAINER) python -m scripts.seed_categories
+
+db-reset: # DESTROYS every download row: drop and recreate the dev database, then migrate
+	docker exec db-anydm-api sh -c 'psql -U "$$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$$POSTGRES_DB\" WITH (FORCE)" -c "CREATE DATABASE \"$$POSTGRES_DB\""'
+	$(MAKE) migrate
+
+# help
+help:
+	@grep -E '^[a-zA-Z_-]+(\\:[a-zA-Z_-]+)*:.*#' $(MAKEFILE_LIST) | awk 'match($$0, /^[a-zA-Z_-]+(\\:[a-zA-Z_-]+)*/) { name = substr($$0, 1, RLENGTH); gsub(/\\/, "", name); help = $$0; sub(/^[^#]*#/, "", help); printf "\033[36m%-20s\033[0m %s\n", name, help }'

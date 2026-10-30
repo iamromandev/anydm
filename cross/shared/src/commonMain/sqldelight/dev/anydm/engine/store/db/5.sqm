@@ -1,0 +1,26 @@
+-- Version 5 to 6 (#575): traffic and speed history.
+CREATE TABLE traffic_day (
+    day TEXT NOT NULL,
+    network TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (day, network, kind)
+);
+
+CREATE TABLE speed_day (
+    day TEXT NOT NULL PRIMARY KEY,
+    bytes INTEGER NOT NULL,
+    peak INTEGER NOT NULL,
+    active_seconds INTEGER NOT NULL
+);
+
+CREATE TABLE speed_minute (
+    minute INTEGER NOT NULL PRIMARY KEY,
+    bytes INTEGER NOT NULL,
+    peak INTEGER NOT NULL
+);
+
+CREATE TABLE download_traffic (
+    download_id INTEGER NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
+    bytes INTEGER NOT NULL
+);
