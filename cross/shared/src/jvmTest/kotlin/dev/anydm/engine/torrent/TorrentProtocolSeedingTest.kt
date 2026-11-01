@@ -542,4 +542,33 @@ class TorrentProtocolSeedingTest {
                 .resume!!
                 .decodeToString() shouldBe "seed-blob"
         }
+
+    @Test
+    fun recheckReachesTheSeedsTorrent() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+
+            protocol.recheck(transfer.download.id) shouldBe true
+
+            backend.added.single().rechecks shouldBe 1
+        }
+
+    @Test
+    fun reannounceReachesTheSeedsTorrentForOneTrackerOrAll() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            val id = transfer.download.id
+
+            protocol.reannounce(id, "http://t/announce") shouldBe true
+            protocol.reannounce(id, null) shouldBe true
+
+            backend.added.single().reannounces shouldBe listOf("http://t/announce", null)
+        }
+
+    @Test
+    fun recheckAndReannounceOfATorrentNotInTheSessionAreRefused() =
+        runBlocking<Unit> {
+            protocol.recheck(DownloadId(99)) shouldBe false
+            protocol.reannounce(DownloadId(99), null) shouldBe false
+        }
 }

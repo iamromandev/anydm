@@ -51,6 +51,7 @@ import org.libtorrent4j.alerts.SaveResumeDataFailedAlert
 import org.libtorrent4j.alerts.StorageMovedAlert
 import org.libtorrent4j.alerts.StorageMovedFailedAlert
 import org.libtorrent4j.alerts.TorrentAlert
+import org.libtorrent4j.swig.announce_infohash
 import org.libtorrent4j.swig.error_code
 import org.libtorrent4j.swig.libtorrent
 import org.libtorrent4j.swig.settings_pack
@@ -629,6 +630,19 @@ class LibTorrentBackend(
         override fun setPriorities(priorities: List<Int>) =
             live({}) { handle.prioritizeFiles(Array(priorities.size) { Priority.fromSwig(priorities[it]) }) }
 
+        override fun recheck() = live({}) { if (handle.isValid) handle.forceRecheck() }
+
+        override fun reannounce(url: String?) =
+            live({}) {
+                if (!handle.isValid) return@live
+                if (url == null) {
+                    handle.forceReannounce(0, -1, TorrentHandle.IGNORE_MIN_INTERVAL)
+                    return@live
+                }
+                val index = readTrackers(handle).indexOfFirst { it.url == url }
+                if (index >= 0) handle.forceReannounce(0, index, TorrentHandle.IGNORE_MIN_INTERVAL)
+            }
+
         override fun setSequential(on: Boolean) =
             live({}) {
                 if (on) handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD) else handle.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
@@ -757,7 +771,30 @@ class LibTorrentBackend(
                                 )
                             }.sortedByDescending { it.downloadRate + it.uploadRate }
                             .take(MAX_DETAIL_PEERS)
-                    val trackers = readTrackers(handle).map { TorrentTracker(it.url, it.tier, it.verified, it.enabled, it.url == current) }
+                    val read = readTrackers(handle)
+                    // Per-endpoint announce times are on libtorrent's own clock, which Java can't read: the torrent's own
+                    // time to its next announce (milliseconds) pins that clock. It is libtorrent's timer over every eligible
+                    // endpoint (not the soonest raw time), so it is only the one endpoint's time when there is exactly one.
+                    val endpoints = read.sumOf { it.endpoints }
+                    val only = read.firstOrNull { it.endpoints == 1 }?.nextAnnounceAt
+                    val remaining = status.nextAnnounce()
+                    val now = if (endpoints == 1 && only != null && remaining > 0) only - remaining else null
+                    val trackers =
+                        read.map {
+                            TorrentTracker(
+                                it.url,
+                                it.tier,
+                                it.verified,
+                                it.enabled,
+                                it.url == current,
+                                it.message,
+                                it.scrapeSeeds,
+                                it.scrapePeers,
+                                it.fails,
+                                it.updating,
+                                if (now == null) null else secondsUntil(it.nextAnnounceAt, now),
+                            )
+                        }
                     TorrentDetail(peers, trackers, PieceMap(count, have))
                 } finally {
                     Reference.reachabilityFence(status)
@@ -880,7 +917,58 @@ private class TrackerRead(
     val tier: Int,
     val verified: Boolean,
     val enabled: Boolean,
+    val message: String? = null,
+    val scrapeSeeds: Int? = null,
+    val scrapePeers: Int? = null,
+    val fails: Int = 0,
+    val updating: Boolean = false,
+    /** When the next announce is due, in milliseconds on libtorrent's clock; null when none is scheduled. */
+    val nextAnnounceAt: Long? = null,
+    /** How many enabled announce endpoints the tracker has. */
+    val endpoints: Int = 0,
 )
+
+/** Whole seconds from [now] to [at] (both milliseconds on libtorrent's clock); an overdue announce is 0, an unscheduled or absurd one null. */
+private fun secondsUntil(
+    at: Long?,
+    now: Long,
+): Long? {
+    if (at == null) return null
+    val left = at - now
+    return when {
+        left > NEXT_ANNOUNCE_LIMIT_MS -> null
+        left >= 0 -> left / 1000
+        left >= -OVERDUE_MS -> 0L
+        else -> null
+    }
+}
+
+private const val NEXT_ANNOUNCE_LIMIT_MS = 24L * 60 * 60 * 1000
+private const val OVERDUE_MS = 60_000L
+
+/** What one announce endpoint reports for one info hash. */
+private class EndpointRead(
+    val message: String?,
+    val scrapeSeeds: Int?,
+    val scrapePeers: Int?,
+    val fails: Int,
+    val updating: Boolean,
+    val nextAnnounceAt: Long?,
+)
+
+private fun readEndpoint(hash: announce_infohash): EndpointRead {
+    val error = hash.last_error?.takeIf { it.value() != 0 }?.message()
+    // A real error outranks a stale tracker warning.
+    val text = error ?: hash.message?.takeIf { it.isNotBlank() }
+    return EndpointRead(
+        message = text,
+        scrapeSeeds = hash.scrape_complete.takeIf { it >= 0 },
+        scrapePeers = hash.scrape_incomplete.takeIf { it >= 0 },
+        fails = hash.fails.toInt(),
+        updating = hash.updating,
+        nextAnnounceAt = hash.get_next_announce(),
+    )
+}
 
 /**
  * The trackers [handle] has. libtorrent4j's own `trackers()` wraps entries that live in a vector nothing keeps alive; the
@@ -888,14 +976,41 @@ private class TrackerRead(
  */
 private fun readTrackers(handle: TorrentHandle): List<TrackerRead> {
     val all = handle.swig().trackers()
+    val hashes = handle.swig().info_hashes()
+    val v1 = hashes.has_v1()
     try {
         return (0 until all.size).map { i ->
             val entry = all[i]
             val endpoints = entry.endpoints
-            TrackerRead(entry.url, entry.tier.toInt(), entry.verified, (0 until endpoints.size).any { endpoints[it].enabled })
+            val enabled = (0 until endpoints.size).map { endpoints[it] }.filter { it.enabled }
+            // The v1 hash of the endpoint; a torrent with only a v2 hash has nothing live there, so its v2 hash is read.
+            val reads =
+                enabled.map { endpoint ->
+                    readEndpoint(if (v1) endpoint.get_infohash_v1() else endpoint.get_infohash_v2())
+                }
+            // The message and the failure count come from the same endpoint: the one that failed most.
+            val worst =
+                reads
+                    .sortedWith(
+                        compareByDescending<EndpointRead> { it.fails }.thenByDescending { it.message != null },
+                    ).firstOrNull()
+            TrackerRead(
+                entry.url,
+                entry.tier.toInt(),
+                entry.verified,
+                enabled.isNotEmpty(),
+                message = worst?.message,
+                scrapeSeeds = reads.mapNotNull { it.scrapeSeeds }.maxOrNull(),
+                scrapePeers = reads.mapNotNull { it.scrapePeers }.maxOrNull(),
+                fails = worst?.fails ?: 0,
+                updating = reads.any { it.updating },
+                nextAnnounceAt = reads.mapNotNull { it.nextAnnounceAt }.minOrNull(),
+                endpoints = enabled.size,
+            )
         }
     } finally {
         Reference.reachabilityFence(all)
+        Reference.reachabilityFence(hashes)
     }
 }
 

@@ -77,6 +77,15 @@ interface RunningTorrent {
     /** Peers, rates, availability and the bytes done of each file (TOR-07); [TorrentLiveStats.None] once the torrent is gone. */
     fun live(): TorrentLiveStats
 
+    /** Checks the files against the torrent again; the progress climbs from zero meanwhile. Ignored while a check runs. */
+    fun recheck()
+
+    /**
+     * Asks the tracker at [url] for peers now, ignoring its minimum interval, or every tracker when [url] is null.
+     * A [url] the torrent doesn't have, or a tracker with no live endpoint (an untried backup tier, a disabled one), is ignored.
+     */
+    fun reannounce(url: String? = null)
+
     /** The peer list, trackers and piece map; [TorrentDetail.Empty] once the torrent is gone. */
     fun detail(): TorrentDetail
 }

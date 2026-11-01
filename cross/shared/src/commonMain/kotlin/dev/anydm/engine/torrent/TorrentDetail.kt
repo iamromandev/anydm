@@ -47,7 +47,13 @@ class TorrentPeer(
     val seed: Boolean,
 )
 
-/** One tracker of the torrent; [current] is the one it last talked to. libtorrent4j reports no per-tracker status or message. */
+/**
+ * One tracker of the torrent; [current] is the one it last talked to. The rest is read from its announce endpoints and
+ * is the worst of the enabled ones: [message] is the tracker's message or the text of the last error (null when there
+ * is none), [scrapeSeeds] and [scrapePeers] the largest counts a scrape returned (null while unknown), [fails] the most
+ * failed announces in a row, [updating] whether an announce is under way, and [nextAnnounceSeconds] the seconds until
+ * the soonest next announce (null when none is scheduled). libtorrent4j reports no time of the last announce.
+ */
 class TorrentTracker(
     val url: String,
     val tier: Int,
@@ -55,6 +61,12 @@ class TorrentTracker(
     /** Some endpoint of the tracker is enabled. */
     val enabled: Boolean,
     val current: Boolean,
+    val message: String? = null,
+    val scrapeSeeds: Int? = null,
+    val scrapePeers: Int? = null,
+    val fails: Int = 0,
+    val updating: Boolean = false,
+    val nextAnnounceSeconds: Long? = null,
 )
 
 /** Which pieces the torrent has: bit `i % 8` of byte `i / 8` of [have] is piece `i`. */

@@ -44,6 +44,25 @@ internal class FakeTorrentService : TorrentService {
 
     override suspend fun detail(id: DownloadId): TorrentDetail? = details[id]
 
+    /** The jobs [recheck] reached, and the job and url of each [reannounce] (null: all trackers). */
+    val rechecked = mutableListOf<DownloadId>()
+    val reannounced = mutableListOf<Pair<DownloadId, String?>>()
+
+    override suspend fun recheck(id: DownloadId): Boolean {
+        if (id !in running) return false
+        rechecked += id
+        return true
+    }
+
+    override suspend fun reannounce(
+        id: DownloadId,
+        url: String?,
+    ): Boolean {
+        if (id !in running) return false
+        reannounced += id to url
+        return true
+    }
+
     override suspend fun inspect(source: String): StepResult<TorrentInfo> {
         inspected += source
         return known[source]?.let { StepResult.Ok(it) } ?: StepResult.Failed(null, "no torrent at $source")

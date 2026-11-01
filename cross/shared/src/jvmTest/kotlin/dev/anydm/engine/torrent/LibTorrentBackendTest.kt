@@ -1,5 +1,6 @@
 package dev.anydm.engine.torrent
 
+import com.sun.net.httpserver.HttpServer
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.net.FakeProxyServer
@@ -75,6 +76,7 @@ class LibTorrentBackendTest {
     private fun torrentOf(
         path: File,
         tracker: String? = null,
+        more: List<String> = emptyList(),
     ): ByteArray {
         runBlocking { natives.load() }
         return TorrentBuilder()
@@ -82,6 +84,7 @@ class LibTorrentBackendTest {
             .pieceSize(32 * 1024)
             .flags(TorrentBuilder.V1_ONLY)
             .also { if (tracker != null) it.addTracker(tracker) }
+            .also { builder -> more.forEachIndexed { i, url -> builder.addTracker(url, i + 1) } }
             .generate()
             .entry()
             .bencode()
@@ -860,6 +863,106 @@ class LibTorrentBackendTest {
             tracker.url shouldBe "http://127.0.0.1:1/announce"
             tracker.tier shouldBe 0
             tracker.enabled shouldBe true
+            seeding.remove()
+        }
+
+    @Test
+    fun aTrackerThatCannotBeReachedReportsItsFailureAndNextAnnounce() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 48)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce"))
+            val seeding = seed(info)
+
+            withTimeout(30.seconds) {
+                while (seeding
+                        .detail()
+                        .trackers
+                        .single()
+                        .fails < 1
+                ) {
+                    delay(100)
+                }
+            }
+            val tracker = seeding.detail().trackers.single()
+
+            (tracker.message?.isNotBlank() == true) shouldBe true
+            // seconds until the retry: a unit mix-up (milliseconds, ticks) would put it far outside this range
+            (tracker.nextAnnounceSeconds!! in 0L..3600L) shouldBe true
+            tracker.scrapeSeeds shouldBe null
+            tracker.scrapePeers shouldBe null
+            seeding.remove()
+        }
+
+    @Test
+    fun withMoreThanOneTrackerNoNextAnnounceIsGuessed() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 50)
+            val info =
+                infoOf(
+                    torrentOf(
+                        File(seedDir, "data.bin"),
+                        tracker = "http://127.0.0.1:1/announce",
+                        more = listOf("http://127.0.0.1:2/announce"),
+                    ),
+                )
+            val seeding = seed(info)
+
+            withTimeout(30.seconds) { while (seeding.detail().trackers.let { t -> t.size < 2 || t.any { it.fails < 1 } }) delay(100) }
+
+            // libtorrent's own countdown is for whichever endpoint is due first, so it can't be pinned to either tracker
+            seeding.detail().trackers.map { it.nextAnnounceSeconds } shouldBe listOf(null, null)
+            seeding.remove()
+        }
+
+    private fun countingTracker(hits: MutableList<String>): HttpServer {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            hits += exchange.requestURI.path
+            val body = "d8:intervali1800e5:peers0:e".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        return server
+    }
+
+    @Test
+    fun reannounceByUrlAsksThatTrackerAndAnUnknownUrlAsksNone() =
+        runBlocking<Unit> {
+            val hits = java.util.Collections.synchronizedList(mutableListOf<String>())
+            val server = countingTracker(hits)
+            try {
+                file("data.bin", 64 * 1024, 49)
+                val url = "http://127.0.0.1:${server.address.port}/announce"
+                val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = url)))
+                withTimeout(30.seconds) { while (hits.isEmpty()) delay(50) }
+                delay(500)
+                val before = hits.size
+
+                seeding.reannounce("http://nowhere/announce")
+                delay(1500)
+                hits.size shouldBe before
+
+                seeding.reannounce(url)
+                withTimeout(30.seconds) { while (hits.size == before) delay(50) }
+                seeding.progress().error shouldBe null
+                seeding.remove()
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun recheckOfASeedChecksTheFilesAndLeavesItSeeding() =
+        runBlocking<Unit> {
+            file("data.bin", 8 * 1024 * 1024, 51)
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"))))
+
+            seeding.recheck()
+            withTimeout(30.seconds) { while (!seeding.live().checking) delay(1) }
+            withTimeout(30.seconds) { while (seeding.live().checking || !seeding.progress().finished) delay(20) }
+
+            seeding.progress().error shouldBe null
             seeding.remove()
         }
 

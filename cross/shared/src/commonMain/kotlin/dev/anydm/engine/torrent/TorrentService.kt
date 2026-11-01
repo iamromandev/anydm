@@ -36,6 +36,15 @@ interface TorrentService {
     /** Ends the seed of job [id] as [SeedEndReason.STOPPED]; false if it isn't seeding. */
     suspend fun stopSeeding(id: DownloadId): Boolean
 
+    /** Makes the torrent of job [id] check its files again; false if it isn't in the session. */
+    suspend fun recheck(id: DownloadId): Boolean
+
+    /** Asks the tracker at [url] of job [id]'s torrent for peers now, or every tracker when [url] is null; false if it isn't in the session. */
+    suspend fun reannounce(
+        id: DownloadId,
+        url: String?,
+    ): Boolean
+
     /** The latest summary and file progress of every torrent in the session, running or seeding, by job (TOR-07). A copy. */
     suspend fun live(): Map<DownloadId, TorrentLive>
 

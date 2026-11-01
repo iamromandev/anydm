@@ -118,6 +118,18 @@ internal class FakeRunning(
     var liveStats: TorrentLiveStats = TorrentLiveStats.None
     var detailData: TorrentDetail = TorrentDetail.Empty
 
+    /** How often [recheck] was called, and the url of each [reannounce] (null: all trackers). */
+    var rechecks = 0
+    val reannounces = mutableListOf<String?>()
+
+    override fun recheck() {
+        rechecks++
+    }
+
+    override fun reannounce(url: String?) {
+        reannounces += url
+    }
+
     override fun live(): TorrentLiveStats = if (removed > 0) TorrentLiveStats.None else liveStats
 
     override fun detail(): TorrentDetail = if (removed > 0) TorrentDetail.Empty else detailData
