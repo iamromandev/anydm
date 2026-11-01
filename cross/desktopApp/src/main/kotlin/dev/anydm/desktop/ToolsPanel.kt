@@ -53,8 +53,8 @@ internal fun ToolsPanel(
     }
     state.tools.forEach { row ->
         val id = row.tool.id
-        Column(Modifier.fillMaxWidth().testTag("tool-row-$id"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().testTag("tool-row-$id"), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                 Text(
                     row.tool.label + (row.version?.let { " $it" } ?: ""),
                     style = MaterialTheme.typography.titleSmall,
@@ -70,7 +70,7 @@ internal fun ToolsPanel(
             }
             Text(originText(row), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("tool-origin-$id"))
             row.path?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("tool-path-$id")) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                 val shown = state.folderDrafts[row.tool] ?: row.folder
                 Field(
                     "Use this folder instead (empty: search as usual)",
@@ -94,9 +94,9 @@ internal fun ToolsPanel(
         HorizontalDivider()
     }
     Toggle("Use a copy already on this computer when it is new enough", state.systemTools, "tools-system") { model.setSystemTools(it) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         Text("yt-dlp builds to follow", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
             YtDlpChannel.entries.forEach { channel ->
                 FilterChip(
                     selected = channel == state.channel,

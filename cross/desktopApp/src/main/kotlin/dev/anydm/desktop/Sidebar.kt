@@ -1,16 +1,15 @@
 package dev.anydm.desktop
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,18 +17,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun Sidebar(
     state: UiState,
+    onProtocol: (Protocol?) -> Unit,
     onNavigate: (Route) -> Unit,
 ) {
     Column(
         Modifier
             .width(220.dp)
             .fillMaxHeight()
-            .padding(8.dp),
+            .padding(Space.sm),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         val route = state.route
@@ -38,14 +40,18 @@ internal fun Sidebar(
             val target = Route.Downloads(Filter.Status(group))
             Entry(group.label, group.name.lowercase(), state.counts[group], route == target) { onNavigate(target) }
         }
+        SectionHeader("Protocols")
+        Protocol.entries.forEach { protocol ->
+            val selected = route is Route.Downloads && state.options.protocol == protocol
+            Entry(
+                protocol.label,
+                "protocol-${protocol.name.lowercase()}",
+                state.counts.protocol(protocol),
+                selected,
+            ) { onProtocol(if (state.options.protocol == protocol) null else protocol) }
+        }
         if (state.categories.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Categories",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
+            SectionHeader("Categories")
             state.categories.forEach { category ->
                 val target = Route.Downloads(Filter.InCategory(category.id))
                 Entry(
@@ -57,26 +63,7 @@ internal fun Sidebar(
             }
         }
         Spacer(Modifier.weight(1f))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(MaterialTheme.shapes.small)
-                .clickable { onNavigate(Route.Settings) }
-                .testTag("nav-settings")
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-        ) {
-            Text(
-                "Settings",
-                color =
-                    if (route ==
-                        Route.Settings
-                    ) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-            )
-        }
+        Entry("Settings", "settings", null, route == Route.Settings) { onNavigate(Route.Settings) }
     }
 }
 
@@ -84,7 +71,7 @@ internal fun Sidebar(
 private fun Entry(
     label: String,
     key: String,
-    count: Int,
+    count: Int?,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -93,19 +80,26 @@ private fun Entry(
         Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
             .testTag("nav-$key")
             .let { if (selected) it.background(colors.primaryContainer) else it }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = Space.sm, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = if (selected) colors.onPrimaryContainer else colors.onSurface)
         Text(
-            count.toString(),
-            color = colors.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.testTag("count-$key"),
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) colors.onPrimaryContainer else colors.onSurface,
         )
+        if (count != null) {
+            Text(
+                count.toString(),
+                color = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.testTag("count-$key"),
+            )
+        }
     }
 }

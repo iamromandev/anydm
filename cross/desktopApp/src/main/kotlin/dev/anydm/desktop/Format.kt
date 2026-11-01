@@ -25,7 +25,11 @@ internal fun formatEta(
     speed: Long,
 ): String? {
     if (speed <= 0 || remaining < 0) return null
-    val seconds = (remaining + speed - 1) / speed
+    return formatDuration((remaining + speed - 1) / speed)
+}
+
+/** A span of [seconds] as `1h 02m`, `3m 05s` or `12s`. */
+internal fun formatDuration(seconds: Long): String {
     val h = seconds / 3600
     val m = seconds % 3600 / 60
     val s = seconds % 60
@@ -43,12 +47,16 @@ internal fun progress(s: DownloadSnapshot): Float? {
     return (s.downloaded.toFloat() / total).coerceIn(0f, 1f)
 }
 
-/** The ETA a row shows: only while it downloads, at a speed, with a known total. */
-internal fun eta(s: DownloadSnapshot): String? {
+/** Seconds a row still needs: only while it downloads, at a speed, with a known total; null otherwise. */
+internal fun etaSeconds(s: DownloadSnapshot): Long? {
     if (s.download.status != DownloadStatus.DOWNLOADING) return null
     val total = s.total ?: return null
-    return formatEta((total - s.downloaded).coerceAtLeast(0), s.speed)
+    val remaining = (total - s.downloaded).coerceAtLeast(0)
+    return if (s.speed <= 0) null else (remaining + s.speed - 1) / s.speed
 }
+
+/** The ETA a row shows: only while it downloads, at a speed, with a known total. */
+internal fun eta(s: DownloadSnapshot): String? = etaSeconds(s)?.let(::formatDuration)
 
 /** What a row is called: its file name, else the address it comes from, else its number. */
 internal fun displayName(s: DownloadSnapshot): String =

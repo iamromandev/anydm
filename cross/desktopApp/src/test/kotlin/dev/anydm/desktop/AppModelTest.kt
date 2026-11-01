@@ -3,8 +3,11 @@ package dev.anydm.desktop
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.TorrentActionResult
+import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
@@ -15,6 +18,11 @@ import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
 import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.files.Category
+import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.queue.CommandResult.Done
+import dev.anydm.engine.torrent.SeedRule
+import dev.anydm.engine.torrent.TorrentDetail
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.test.TestScope
@@ -22,6 +30,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -109,6 +118,43 @@ class AppModelTest {
                 model.state.value.counts
                     .category(CategoryId(1)),
             )
+        }
+
+    @Test
+    fun `counts per protocol cover all downloads, and the protocol filter narrows the rows`() =
+        runTest {
+            val model =
+                model(
+                    FakeSource().also { src ->
+                        src.downloads.value =
+                            listOf(
+                                snapshot(1, DOWNLOADING),
+                                snapshot(2, QUEUED),
+                                snapshot(3, FAILED),
+                                snapshot(4, QUEUED, kind = DownloadKind.TORRENT),
+                                snapshot(5, QUEUED, kind = DownloadKind.TORRENT),
+                            )
+                    },
+                )
+            val counts = model.state.value.counts
+            assertEquals(3, counts.protocol(Protocol.HTTP))
+            assertEquals(2, counts.protocol(Protocol.TORRENT))
+            assertEquals(0, counts.protocol(Protocol.FTP))
+
+            model.setProtocol(Protocol.TORRENT)
+            assertEquals(
+                listOf(4L, 5L),
+                model.state.value.rows
+                    .map { it.id.value },
+            )
+            assertEquals(Protocol.TORRENT, model.state.value.options.protocol)
+            assertEquals(
+                3,
+                model.state.value.counts
+                    .protocol(Protocol.HTTP),
+            )
+            model.setProtocol(null)
+            assertEquals(5, model.state.value.rows.size)
         }
 
     @Test
@@ -454,5 +500,115 @@ class AppModelTest {
             assertTrue(window.state.value.visible)
             assertEquals(Route.Downloads(Filter.All), model.state.value.route)
             assertEquals(setOf(DownloadId(2)), model.state.value.selection)
+        }
+
+    @Test
+    fun `setting torrent files passes the priorities to the engine`() =
+        runTest {
+            val source = FakeSource()
+            val result = model(source).setTorrentFiles(DownloadId(3), listOf(0, 4, 7))
+            assertEquals(Done(null), result)
+            assertEquals(listOf("torrentFiles 3 [0, 4, 7]"), source.calls)
+        }
+
+    @Test
+    fun `setting seed rules passes them to the engine`() =
+        runTest {
+            val source = FakeSource()
+            val result = model(source).setSeedRules(DownloadId(3), SeedRule.At(1.5), SeedRule.Inherit)
+            assertEquals(Done(null), result)
+            assertEquals(listOf("seedRules 3 At(value=1.5) Inherit"), source.calls)
+        }
+
+    @Test
+    fun `recheck and reannounce report what the engine did`() =
+        runTest {
+            val source = FakeSource()
+            source.recheckAction = TorrentActionResult.NotInSession
+            source.reannounceAction = TorrentActionResult.Unavailable
+            val model = model(source)
+            assertEquals(TorrentActionResult.NotInSession, model.recheckTorrent(DownloadId(4)))
+            assertEquals(TorrentActionResult.Unavailable, model.reannounceTorrent(DownloadId(4), "http://t/a"))
+            assertEquals(listOf("recheck 4", "reannounce 4 http://t/a"), source.calls)
+        }
+
+    @Test
+    fun `a refused torrent command is returned unchanged and shown as a banner`() =
+        runTest {
+            val source = FakeSource()
+            source.results["torrentFiles 3 [0, 0]"] = CommandResult.Invalid("no file is selected")
+            source.results["seedRules 3 Off Off"] = CommandResult.NotFound
+            val model = model(source)
+            assertEquals(CommandResult.Invalid("no file is selected"), model.setTorrentFiles(DownloadId(3), listOf(0, 0)))
+            assertEquals(CommandResult.NotFound, model.setSeedRules(DownloadId(3), SeedRule.Off, SeedRule.Off))
+            source.recheckAction = TorrentActionResult.NotInSession
+            source.reannounceAction = TorrentActionResult.Unavailable
+            assertEquals(TorrentActionResult.NotInSession, model.recheckTorrent(DownloadId(3)))
+            assertEquals(TorrentActionResult.Unavailable, model.reannounceTorrent(DownloadId(3), null))
+            assertEquals(
+                listOf(
+                    "Setting the file priorities did not go through: no file is selected.",
+                    "Setting the seed rules did not go through: it is no longer in the list.",
+                    "Torrent is not in the session",
+                    "Torrent engine unavailable",
+                ),
+                model.state.value.banners
+                    .filterIsInstance<Banner.Error>()
+                    .map { it.message },
+            )
+        }
+
+    @Test
+    fun `torrent commands answer null and show the stopped banner once the engine has stopped`() =
+        runTest {
+            val source = FakeSource()
+            val model = model(source)
+            source.refuseAll = true
+            assertNull(model.setTorrentFiles(DownloadId(1), listOf(4)))
+            assertNull(model.setSeedRules(DownloadId(1), SeedRule.Off, SeedRule.Off))
+            assertNull(model.recheckTorrent(DownloadId(1)))
+            assertNull(model.reannounceTorrent(DownloadId(1), null))
+            assertEquals(
+                listOf("The download engine has stopped, so nothing was changed."),
+                model.state.value.banners
+                    .filterIsInstance<Banner.Error>()
+                    .map { it.message },
+            )
+        }
+
+    @Test
+    fun `cancellation passes through the torrent commands`() =
+        runTest {
+            val source = FakeSource()
+            val model = model(source)
+            source.torrentThrows = CancellationException("cancelled")
+            assertFailsWith<CancellationException> { model.setTorrentFiles(DownloadId(1), listOf(4)) }
+            assertFailsWith<CancellationException> { model.setSeedRules(DownloadId(1), SeedRule.Off, SeedRule.Off) }
+            assertFailsWith<CancellationException> { model.recheckTorrent(DownloadId(1)) }
+            assertFailsWith<CancellationException> { model.reannounceTorrent(DownloadId(1), null) }
+        }
+
+    @Test
+    fun `an unexpected exception through an old command shows a banner and logs the stack trace`() =
+        runTest {
+            val source = FakeSource()
+            val model = model(source)
+            source.commandThrows = RuntimeException("boom")
+            val captured = java.io.ByteArrayOutputStream()
+            val old = System.err
+            System.setErr(java.io.PrintStream(captured, true))
+            try {
+                model.pauseAll().join()
+            } finally {
+                System.setErr(old)
+            }
+            assertEquals(
+                listOf("The request failed: boom."),
+                model.state.value.banners
+                    .filterIsInstance<Banner.Error>()
+                    .map { it.message },
+            )
+            assertTrue(captured.toString().contains("java.lang.RuntimeException: boom"))
+            assertTrue(captured.toString().contains("\tat "))
         }
 }

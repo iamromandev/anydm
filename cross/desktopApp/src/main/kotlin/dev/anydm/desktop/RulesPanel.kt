@@ -37,7 +37,7 @@ internal fun RulesPanel(
     }
     Text("Limits and data allowances. A network with its own policy uses only that; every other network uses the default.")
     val keys = (bonding.networks.map { it.info.key } + state.rules.networks.keys).distinct()
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         FilterChip(
             selected = state.target == null,
             onClick = { model.select(null) },
@@ -85,7 +85,7 @@ private fun PolicyEditor(
 ) {
     val form = state.policy
     val errors = state.policyErrors
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field(
             "Download limit (empty: none)",
             form.downKbps,
@@ -169,7 +169,7 @@ private fun PolicyEditor(
             },
         ) { a -> model.editPolicy { it.copy(onMetered = a) } }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         if (state.hasOverride) {
             OutlinedButton(
                 onClick = model::removeOverride,
@@ -190,7 +190,7 @@ private fun SchedulePanel(
     model: RulesModel,
     typing: Modifier,
 ) {
-    Text("Schedule", style = MaterialTheme.typography.titleMedium)
+    PanelTitle("Schedule")
     Text(
         "Rules by day and time, in your local time. When several apply, the strictest one wins.",
         style = MaterialTheme.typography.bodySmall,
@@ -211,7 +211,7 @@ private fun SchedulePanel(
     }
     val errors = state.ruleErrors
     Text("Days", style = MaterialTheme.typography.labelLarge)
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
         DayOfWeek.entries.forEach { day ->
             FilterChip(
                 selected = day in form.days,
@@ -222,7 +222,7 @@ private fun SchedulePanel(
         }
     }
     errors[RulesField.DAYS]?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("rule-days-error")) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field(
             "From",
             form.start,
@@ -234,7 +234,7 @@ private fun SchedulePanel(
         Field("Until", form.end, "rule-end", errors[RulesField.END], typing, width = 160) { v -> model.editRule { it.copy(end = v) } }
     }
     Choice("Then", RuleAction.entries, form.action, "rule-action", { it.label }) { a -> model.editRule { it.copy(action = a) } }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         OutlinedButton(onClick = model::cancelRule, modifier = Modifier.testTag("rule-cancel")) { Text("Cancel") }
         Button(onClick = model::saveRule, enabled = state.canSaveRule, modifier = Modifier.testTag("rule-save")) { Text("Save") }
     }

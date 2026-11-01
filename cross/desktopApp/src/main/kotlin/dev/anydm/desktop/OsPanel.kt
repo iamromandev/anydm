@@ -3,11 +3,15 @@ package dev.anydm.desktop
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -19,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.anydm.engine.store.Settings
 
@@ -47,7 +52,30 @@ internal fun OsPanel(
     LinksRow(links)
     HorizontalDivider()
     val win by window.state.collectAsState()
-    Text("Window", style = MaterialTheme.typography.titleMedium)
+    PanelTitle("Theme")
+    Row(
+        Modifier.selectableGroup(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.lg),
+    ) {
+        ThemeChoice.entries.forEach { choice ->
+            val key = choice.name.lowercase()
+            Row(
+                Modifier
+                    .selectable(
+                        win.theme == choice,
+                        onClick = { window.setTheme(choice) },
+                        role = Role.RadioButton,
+                    ).testTag("theme-$key"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(win.theme == choice, onClick = null)
+                Text(key.replaceFirstChar { it.uppercase() }, Modifier.padding(start = Space.xs))
+            }
+        }
+    }
+    HorizontalDivider()
+    PanelTitle("Window")
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(win.closeToTray, window::setCloseToTray, Modifier.testTag("window-close-to-tray"), enabled = window.trayAvailable)
         Text("Closing the window keeps anydm running in the tray")
@@ -64,7 +92,7 @@ internal fun OsPanel(
         )
     }
     HorizontalDivider()
-    Text("Browser extensions the bridge answers", style = MaterialTheme.typography.titleMedium)
+    PanelTitle("Browser extensions the bridge answers")
     Text(
         "anydm's own Chrome extension is allowed by default. Firefox gives each install its own address: copy yours " +
             "(moz-extension://…) from about:debugging and add it here.",
@@ -87,7 +115,7 @@ internal fun OsPanel(
         }
     }
     var draft by remember { mutableStateOf("") }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm), verticalAlignment = Alignment.CenterVertically) {
         Field("Add an origin", draft, "origin-new", state.originError, typing, width = 420) { draft = it }
         Button(
             onClick = { if (model.addOrigin(draft)) draft = "" },
@@ -103,7 +131,7 @@ internal fun OsPanel(
 @Composable
 private fun LinksRow(model: LinkHandlerModel) {
     val state by model.state.collectAsState()
-    Text("Links", style = MaterialTheme.typography.titleMedium)
+    PanelTitle("Links")
     Text(state.status.detail, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("links-status"))
     state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("links-message")) }
     when (state.status.support) {

@@ -34,7 +34,7 @@ internal fun NetworksPanel(model: NetworksModel) {
         Row(
             Modifier.fillMaxWidth().testTag("network-row-$key"),
             verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(Space.sm),
         ) {
             Checkbox(
                 checked = network.enabled,

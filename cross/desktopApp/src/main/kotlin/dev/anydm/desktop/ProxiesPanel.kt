@@ -35,7 +35,7 @@ internal fun ProxiesPanel(
         return
     }
     Text("Which proxy downloads use when neither the download nor its profile names one.")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         ChoiceChip("System", ProxyChoice.System, state.choice, "proxy-choice-system", model)
         ChoiceChip("Direct", ProxyChoice.Direct, state.choice, "proxy-choice-direct", model)
         state.proxies.forEach { ChoiceChip(it.name, ProxyChoice.Named(it.id), state.choice, "proxy-choice-${it.id.value}", model) }
@@ -112,9 +112,9 @@ private fun ProxyEditor(
 ) {
     val form = state.form ?: return
     HorizontalDivider()
-    Text(if (form.id == null) "New proxy" else "Change proxy", style = MaterialTheme.typography.titleMedium)
+    PanelTitle(if (form.id == null) "New proxy" else "Change proxy")
     Field("Name", form.name, "proxy-name", state.errors[ProxyField.NAME], typing) { v -> model.edit { it.copy(name = v) } }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         ProxyType.entries.forEach { type ->
             FilterChip(
                 selected = type == form.type,
@@ -125,7 +125,7 @@ private fun ProxyEditor(
         }
     }
     Text(form.type.note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("proxy-type-note"))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field("Host", form.host, "proxy-host", state.errors[ProxyField.HOST], typing, width = 300) { v -> model.edit { it.copy(host = v) } }
         Field("Port", form.port, "proxy-port", state.errors[ProxyField.PORT], typing, width = 110) { v -> model.edit { it.copy(port = v) } }
     }
@@ -151,7 +151,7 @@ private fun ProxyEditor(
         typing,
         singleLine = false,
     ) { v -> model.edit { it.copy(bypass = v) } }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         OutlinedButton(onClick = model::cancel, modifier = Modifier.testTag("proxy-cancel")) { Text("Cancel") }
         Button(onClick = model::save, enabled = state.canSave, modifier = Modifier.testTag("proxy-save")) { Text("Save") }
     }

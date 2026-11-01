@@ -5,6 +5,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -99,6 +100,14 @@ class SettingsScreenTest {
     ) = shown(name).apply {
         performTextClearance()
         performTextInput(text)
+    }
+
+    @Test
+    fun `the chosen settings section is selected and the others are not`() {
+        show()
+        click("settings-section-speed")
+        rule.onNodeWithTag("settings-section-speed").assertIsSelected()
+        rule.onNodeWithTag("settings-section-files").assertIsNotSelected()
     }
 
     @Test

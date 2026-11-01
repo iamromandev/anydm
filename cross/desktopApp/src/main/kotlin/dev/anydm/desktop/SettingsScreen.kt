@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -28,7 +29,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -54,18 +61,31 @@ internal fun SettingsScreen(
                 .width(200.dp)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(8.dp),
+                .padding(Space.sm),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Section.entries.forEach { section ->
+                val selected = section == state.section
                 TextButton(
                     onClick = { model.select(section) },
-                    modifier = Modifier.fillMaxWidth().testTag("settings-section-${section.name.lowercase()}"),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .semantics {
+                                this.selected = selected
+                                role = Role.Tab
+                            }.testTag("settings-section-${section.name.lowercase()}"),
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else NoFill,
+                        ),
                 ) {
                     Text(
                         section.label,
                         modifier = Modifier.fillMaxWidth(),
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         color =
-                            if (section == state.section) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -76,10 +96,10 @@ internal fun SettingsScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(Space.xl),
+                verticalArrangement = Arrangement.spacedBy(Space.md),
             ) {
-                Text(state.section.label, style = MaterialTheme.typography.titleLarge)
+                Text(state.section.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 if (!state.loaded) {
                     Text(state.message ?: "Reading the settings…", modifier = Modifier.testTag("settings-unavailable"))
                     return@Column
@@ -115,8 +135,8 @@ private fun Footer(
     if (!state.section.transfer && state.message == null) return
     HorizontalDivider()
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.fillMaxWidth().padding(horizontal = Space.xl, vertical = Space.sm),
+        horizontalArrangement = Arrangement.spacedBy(Space.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(state.message.orEmpty(), modifier = Modifier.weight(1f).testTag("settings-message"))
@@ -137,7 +157,7 @@ private fun Files(
     typing: Modifier,
 ) {
     val form = state.draft
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field("Default folder (empty: Downloads)", form.folder, "set-folder", state.errors[SettingField.FOLDER], typing) { v ->
             model.edit { it.copy(folder = v) }
         }
@@ -167,7 +187,7 @@ private fun Files(
         model.edit { it.copy(pacing = v) }
     }
     if (form.pacing == PacingPreset.CUSTOM) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
             Field("Between requests", form.pacingSleep, "set-pacing-sleep", null, typing, "s", 180) { v ->
                 model.edit { it.copy(pacingSleep = v) }
             }
@@ -247,7 +267,7 @@ private fun Categories(
         Row(
             Modifier.fillMaxWidth().testTag("category-${category.name}"),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
         ) {
             Column(Modifier.weight(1f)) {
                 Text(category.name)
@@ -277,7 +297,7 @@ private fun Categories(
         return
     }
     HorizontalDivider()
-    Text(if (editing.id == null) "New category" else "Edit category", style = MaterialTheme.typography.titleMedium)
+    PanelTitle(if (editing.id == null) "New category" else "Edit category")
     val form = editing.form
     Field(
         "Name",
@@ -286,7 +306,7 @@ private fun Categories(
         editing.errors[CategoryField.NAME],
         typing,
     ) { v -> model.changeCategory { it.copy(name = v) } }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field("Folder", form.folder, "category-folder", editing.errors[CategoryField.FOLDER], typing) { v ->
             model.changeCategory { it.copy(folder = v) }
         }
@@ -312,7 +332,7 @@ private fun Categories(
     }
     Field("Sites, comma-separated", form.domains, "category-domains", null, typing) { v -> model.changeCategory { it.copy(domains = v) } }
     Text("Kinds", style = MaterialTheme.typography.labelLarge)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         DownloadKind.entries.forEach { kind ->
             FilterChip(
                 selected = kind in form.kinds,
@@ -322,7 +342,7 @@ private fun Categories(
             )
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Button(
             onClick = model::saveCategory,
             enabled = editing.errors.isEmpty(),
@@ -355,7 +375,7 @@ private fun Profiles(
         Row(
             Modifier.fillMaxWidth().testTag("profile-${profile.name}"),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
         ) {
             Text(profile.name, modifier = Modifier.weight(1f))
             FilterChip(
@@ -377,11 +397,11 @@ private fun Profiles(
         return
     }
     HorizontalDivider()
-    Text(if (editing.id == null) "New profile" else "Edit profile", style = MaterialTheme.typography.titleMedium)
+    PanelTitle(if (editing.id == null) "New profile" else "Edit profile")
     val form = editing.form
     Field("Name", form.name, "profile-name", editing.errors[ProfileField.NAME], typing) { v -> model.changeProfile { it.copy(name = v) } }
     Text("Category", style = MaterialTheme.typography.labelLarge)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         FilterChip(
             selected = form.category == null,
             onClick = { model.changeProfile { it.copy(category = null) } },
@@ -397,7 +417,7 @@ private fun Profiles(
             )
         }
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Field(
             "Folder (empty: the category's or the default)",
             form.folder,
@@ -419,7 +439,7 @@ private fun Profiles(
     }
     Choice("Media", ProfileMedia.entries, form.media, "profile-media", { it.label }) { v -> model.changeProfile { it.copy(media = v) } }
     Text("Proxy", style = MaterialTheme.typography.labelLarge)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         listOf("Default" to ProxyChoice.Inherit, "None" to ProxyChoice.Direct, "System" to ProxyChoice.System).forEach { (label, choice) ->
             FilterChip(
                 selected = form.proxy == choice,
@@ -437,7 +457,7 @@ private fun Profiles(
             )
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         Button(
             onClick = model::saveProfile,
             enabled = editing.errors.isEmpty(),
@@ -453,7 +473,7 @@ private fun History(
     model: SettingsModel,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Finished downloads", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        PanelTitle("Finished downloads", modifier = Modifier.weight(1f))
         OutlinedButton(
             onClick = model::askClearHistory,
             enabled = state.history.isNotEmpty(),
@@ -465,7 +485,7 @@ private fun History(
     if (state.history.isEmpty()) Text("Nothing yet.", modifier = Modifier.testTag("history-empty"))
     if (state.history.size == HISTORY_SHOWN) Text("The newest $HISTORY_SHOWN are shown.", style = MaterialTheme.typography.bodySmall)
     state.history.forEachIndexed { index, entry ->
-        Row(Modifier.fillMaxWidth().testTag("history-$index"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().testTag("history-$index"), horizontalArrangement = Arrangement.spacedBy(Space.md)) {
             Column(Modifier.weight(1f)) {
                 Text(entry.name)
                 Text(entry.path, style = MaterialTheme.typography.bodySmall)
@@ -480,19 +500,19 @@ private fun History(
         }
     }
     HorizontalDivider()
-    Text("Traffic, last 30 days", style = MaterialTheme.typography.titleMedium)
+    PanelTitle("Traffic, last 30 days")
     if (state.traffic.isEmpty()) Text("Nothing yet.", modifier = Modifier.testTag("traffic-empty"))
     state.traffic.forEach { day ->
-        Row(Modifier.fillMaxWidth().testTag("traffic-${day.day}"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().testTag("traffic-${day.day}"), horizontalArrangement = Arrangement.spacedBy(Space.md)) {
             Text(day.day, modifier = Modifier.weight(1f))
             Text("↓ " + formatBytes(day.down))
             Text("↑ " + formatBytes(day.up))
         }
     }
     if (state.networks.isNotEmpty()) {
-        Text("By network", style = MaterialTheme.typography.titleSmall)
+        PanelTitle("By network")
         state.networks.forEach { (network, bytes) ->
-            Row(Modifier.fillMaxWidth().testTag("network-$network"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().testTag("network-$network"), horizontalArrangement = Arrangement.spacedBy(Space.md)) {
                 Text(network, modifier = Modifier.weight(1f))
                 Text("↓ " + formatBytes(bytes.first))
                 Text("↑ " + formatBytes(bytes.second))
@@ -507,7 +527,7 @@ private fun Backup(
     pickers: Pickers,
 ) {
     Text("The transfer and file settings, categories and profiles. Proxies, cookies and logins are never in the file.")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
         OutlinedButton(
             onClick = { pickers.saveSettingsFile("anydm-settings.json")?.let(model::export) },
             modifier = Modifier.testTag("backup-export"),
@@ -611,9 +631,9 @@ internal fun <T> Choice(
     name: (T) -> String,
     onPick: (T) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         Text(label, style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
             options.forEach { option ->
                 FilterChip(
                     selected = option == selected,
