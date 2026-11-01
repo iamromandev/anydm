@@ -219,15 +219,17 @@ class LinkInputTest {
             listOf(snapshot(1, dev.anydm.engine.core.DownloadStatus.DOWNLOADING), snapshot(2, dev.anydm.engine.core.DownloadStatus.QUEUED))
         show(width = 900.dp, height = 640.dp)
         tag("row-1").performClick()
+        val oneLine = tag("link-input").getUnclippedBoundsInRoot().let { it.bottom - it.top }
         tag("link-input").performTextInput("hello\nworld\nthird\nfourth")
         tag("link-input-add").performClick()
         rule.waitForIdle()
         tag("link-input-error").assertExists()
         val list = tag("list").getUnclippedBoundsInRoot()
-        assertTrue(list.bottom - list.top >= 70.dp, "list only ${list.bottom - list.top}")
+        val card = tag("row-1").getUnclippedBoundsInRoot().let { it.bottom - it.top }
+        assertTrue(list.bottom - list.top >= card, "list ${list.bottom - list.top} should hold a card of $card")
         val input = tag("link-input").getUnclippedBoundsInRoot()
         // Four lines typed, two shown.
-        assertTrue(input.bottom - input.top < 80.dp, "input ${input.bottom - input.top}")
+        assertTrue(input.bottom - input.top <= oneLine * 2, "input ${input.bottom - input.top} vs one line $oneLine")
     }
 
     @Test

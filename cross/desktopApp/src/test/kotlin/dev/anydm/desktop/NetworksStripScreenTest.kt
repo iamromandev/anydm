@@ -267,7 +267,13 @@ class NetworksStripScreenTest {
         val chips = tag("strip-chips").getUnclippedBoundsInRoot()
         assertTrue(chips.top >= strip.top && chips.bottom <= strip.bottom, "chips $chips outside strip $strip")
         val list = tag("list").getUnclippedBoundsInRoot()
-        assertTrue(list.bottom - list.top >= 140.dp, "list only ${list.bottom - list.top}")
+        assertTwoCardsFit(list.bottom - list.top)
+    }
+
+    // Font metrics change every height, so "room for a list" is counted in cards: two of the first row's height.
+    private fun assertTwoCardsFit(listHeight: Dp) {
+        val card = tag("row-1").getUnclippedBoundsInRoot().let { it.bottom - it.top }
+        assertTrue(listHeight >= card * 2, "list $listHeight should hold two cards of $card")
     }
 
     @Test
@@ -289,7 +295,7 @@ class NetworksStripScreenTest {
         tag("row-1").performClick()
         rule.waitForIdle()
         val list = tag("list").getUnclippedBoundsInRoot()
-        assertTrue(list.bottom - list.top >= 140.dp, "list only ${list.bottom - list.top}")
+        assertTwoCardsFit(list.bottom - list.top)
         tag("row-2").assertIsDisplayed()
     }
 }
