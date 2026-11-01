@@ -30,6 +30,51 @@ class TrafficMeterTest {
     }
 
     @Test
+    fun receivedBytesAddUpByDownloadAndNetwork() {
+        val meter = meter()
+        meter.second(
+            t0,
+            "en0",
+            listOf(
+                TrafficMeter.Sample(a, DIRECT, 100),
+                TrafficMeter.Sample(a, DIRECT, 30, network = "usb"),
+                TrafficMeter.Sample(b, SITE, 5),
+            ),
+        )
+        meter.second(t0 + 1.seconds, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 20), TrafficMeter.Sample(a, DIRECT, 10, network = "usb")))
+
+        meter.drain().downloadNetworks shouldBe mapOf((a to "en0") to 120L, (a to "usb") to 40L, (b to "en0") to 5L)
+    }
+
+    @Test
+    fun sentBytesAndLeftoversFollowTheSameRule() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 0, bytesUp = 9)))
+        meter.bytes(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 3, network = "usb")))
+
+        meter.drain().downloadNetworks shouldBe mapOf((a to "usb") to 3L)
+    }
+
+    @Test
+    fun downloadNetworksAreEmptyAfterDrainAndBackAfterRestore() {
+        val meter = meter()
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100)))
+
+        val batch = meter.drain()
+        meter.drain().downloadNetworks shouldBe emptyMap()
+        batch.isEmpty shouldBe false
+
+        meter.restore(batch)
+        meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 1)))
+        meter.drain().downloadNetworks shouldBe mapOf((a to "en0") to 101L)
+    }
+
+    @Test
+    fun aBatchWithOnlyDownloadNetworksIsNotEmpty() {
+        TrafficBatch(downloadNetworks = mapOf((a to "en0") to 1L)).isEmpty shouldBe false
+    }
+
+    @Test
     fun uploadIsCountedByDayNetworkKindAndDownload() {
         val meter = meter()
         meter.second(t0, "en0", listOf(TrafficMeter.Sample(a, DIRECT, 100, bytesUp = 30), TrafficMeter.Sample(b, SITE, 0, bytesUp = 5)))

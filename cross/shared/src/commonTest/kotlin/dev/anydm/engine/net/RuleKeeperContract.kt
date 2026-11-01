@@ -113,6 +113,20 @@ abstract class RuleKeeperContract : StoreTestBase() {
         }
 
     @Test
+    fun allowanceUsageCountsTheLeftoversOfEndedRunsForTheCurrentNetworkOnly() =
+        runTest {
+            val f = Fixture(this)
+            f.withAllowance()
+            f.network = "wifi"
+            f.leftovers = 5_000
+
+            val usage = f.keeper.allowanceUsage(setOf("wifi", "usb"))
+
+            usage.getValue("wifi").used shouldBe 5_000
+            usage.getValue("usb").used shouldBe 0
+        }
+
+    @Test
     fun aSaveMovesBytesFromTheMeterToTheCacheWithoutCountingTwice() =
         runTest {
             val f = Fixture(this)

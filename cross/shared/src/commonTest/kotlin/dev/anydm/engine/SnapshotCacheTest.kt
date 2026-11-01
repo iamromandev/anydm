@@ -2,6 +2,7 @@ package dev.anydm.engine
 
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.AttemptId
+import dev.anydm.engine.core.CollectionKind
 import dev.anydm.engine.core.Download
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -248,5 +249,45 @@ class SnapshotCacheTest {
 
         cache.jobRemoved(DownloadId(1))
         cache.downloadOf(DownloadId(1)) shouldBe null
+    }
+
+    private fun item(
+        id: Long,
+        parent: Long,
+    ) = Download(DownloadId(id), DownloadKind.SITE, parentId = DownloadId(parent), status = DownloadStatus.QUEUED, size = 1_000)
+
+    @Test
+    fun aCollectionsShareIsItsItemsSumAndIgnoresItsOwn() {
+        val collection = Download(DownloadId(1), DownloadKind.SITE, collection = CollectionKind.PLAYLIST, status = DownloadStatus.QUEUED)
+        val cache = SnapshotCache()
+        cache.load(
+            listOf(collection, item(2, 1), item(3, 1), item(4, 1)),
+            emptyMap(),
+            emptyMap(),
+            emptyMap(),
+            mapOf(
+                DownloadId(1) to mapOf("ghost" to 99L),
+                DownloadId(2) to mapOf("wifi" to 700L, "usb" to 100L),
+                DownloadId(3) to mapOf("wifi" to 50L, "eth" to 7L),
+            ),
+        )
+
+        val list = cache.list().associateBy { it.download.id.value }
+
+        list.getValue(1).networkShare shouldBe mapOf("wifi" to 750L, "usb" to 100L, "eth" to 7L)
+        list.getValue(2).networkShare shouldBe mapOf("wifi" to 700L, "usb" to 100L)
+        list.getValue(4).networkShare shouldBe emptyMap()
+    }
+
+    @Test
+    fun shareGrowsLiveAndAJobTheCacheDoesNotKnowAddsNothing() {
+        val cache = SnapshotCache().with(job(1))
+
+        cache.share(DownloadId(1), "wifi", 10) shouldBe true
+        cache.share(DownloadId(1), "wifi", 5) shouldBe true
+        cache.share(DownloadId(1), "wifi", 0) shouldBe false
+        cache.share(DownloadId(9), "wifi", 5) shouldBe false
+
+        cache.list().single().networkShare shouldBe mapOf("wifi" to 15L)
     }
 }

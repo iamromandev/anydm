@@ -19,6 +19,9 @@ interface AppPrefs {
 
     /** The color scheme; [ThemeChoice.SYSTEM] when none was chosen. */
     var theme: ThemeChoice
+
+    /** The networks strip above the downloads shows only its header. */
+    var stripCollapsed: Boolean
 }
 
 /** The choices in the user's preferences store (the registry, a plist, or a file under `~/.java`). */
@@ -37,6 +40,10 @@ class PreferencesAppPrefs(
         get() =
             runCatching { ThemeChoice.valueOf(node.get(THEME, ThemeChoice.SYSTEM.name)) }.getOrDefault(ThemeChoice.SYSTEM)
         set(value) = write(THEME, value.name)
+
+    override var stripCollapsed: Boolean
+        get() = runCatching { node.getBoolean(STRIP_COLLAPSED, false) }.getOrDefault(false)
+        set(value) = write(STRIP_COLLAPSED, value)
 
     // A store that can't be written costs the choice, not the app.
     private fun write(
@@ -63,6 +70,7 @@ class PreferencesAppPrefs(
         const val CLOSE_TO_TRAY = "closeToTray"
         const val START_HIDDEN = "startHidden"
         const val THEME = "theme"
+        const val STRIP_COLLAPSED = "stripCollapsed"
     }
 }
 
@@ -74,6 +82,7 @@ data class WindowState(
     val closeToTray: Boolean = true,
     val startHidden: Boolean = false,
     val theme: ThemeChoice = ThemeChoice.SYSTEM,
+    val stripCollapsed: Boolean = false,
 )
 
 /**
@@ -84,7 +93,15 @@ class WindowModel(
     private val prefs: AppPrefs,
     val trayAvailable: Boolean,
 ) {
-    private val ui = MutableStateFlow(WindowState(closeToTray = prefs.closeToTray, startHidden = prefs.startHidden, theme = prefs.theme))
+    private val ui =
+        MutableStateFlow(
+            WindowState(
+                closeToTray = prefs.closeToTray,
+                startHidden = prefs.startHidden,
+                theme = prefs.theme,
+                stripCollapsed = prefs.stripCollapsed,
+            ),
+        )
     val state: StateFlow<WindowState> = ui.asStateFlow()
 
     fun show() = ui.update { it.copy(visible = true) }
@@ -106,6 +123,11 @@ class WindowModel(
     fun setTheme(choice: ThemeChoice) {
         prefs.theme = choice
         ui.update { it.copy(theme = choice) }
+    }
+
+    fun setStripCollapsed(on: Boolean) {
+        prefs.stripCollapsed = on
+        ui.update { it.copy(stripCollapsed = on) }
     }
 
     /** The window's close button: hides it to the tray, or says to quit. */

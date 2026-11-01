@@ -10,6 +10,7 @@ internal class MemoryPrefs(
     override var closeToTray: Boolean = true,
     override var startHidden: Boolean = false,
     override var theme: ThemeChoice = ThemeChoice.SYSTEM,
+    override var stripCollapsed: Boolean = false,
 ) : AppPrefs
 
 class WindowModelTest {
@@ -44,6 +45,17 @@ class WindowModelTest {
         assertFalse(window.state.value.visible)
         window.show()
         assertTrue(window.state.value.visible)
+    }
+
+    @Test
+    fun `the networks strip being collapsed is kept in the preferences`() {
+        val prefs = MemoryPrefs()
+        val window = WindowModel(prefs, trayAvailable = true)
+        assertFalse(window.state.value.stripCollapsed)
+        window.setStripCollapsed(true)
+        assertTrue(prefs.stripCollapsed)
+        assertTrue(window.state.value.stripCollapsed)
+        assertTrue(WindowModel(prefs, trayAvailable = true).state.value.stripCollapsed)
     }
 
     @Test
@@ -99,6 +111,19 @@ class WindowModelTest {
             assertEquals(ThemeChoice.SYSTEM, prefs.theme)
             prefs.theme = ThemeChoice.DARK
             assertEquals(ThemeChoice.DARK, PreferencesAppPrefs(node).theme)
+        } finally {
+            node.removeNode()
+        }
+    }
+
+    @Test
+    fun `the collapsed strip round trips through the preferences store`() {
+        val node = Preferences.userRoot().node("dev/anydm/desktop-test-${System.nanoTime()}")
+        try {
+            val prefs = PreferencesAppPrefs(node)
+            assertFalse(prefs.stripCollapsed)
+            prefs.stripCollapsed = true
+            assertTrue(PreferencesAppPrefs(node).stripCollapsed)
         } finally {
             node.removeNode()
         }

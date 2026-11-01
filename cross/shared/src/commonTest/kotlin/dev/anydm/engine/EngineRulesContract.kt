@@ -24,7 +24,10 @@ import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.StoreTestBase
 import dev.anydm.engine.store.TrafficStore
 import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.longs.shouldBeGreaterThanOrEqual
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -87,6 +90,77 @@ abstract class EngineRulesContract : StoreTestBase() {
     ) = store.traffic.add(TrafficBatch(days = mapOf(Triple(today, network, DownloadKind.DIRECT) to bytes)), 0)
 
     private fun EngineHarness.reasons(id: DownloadId) = snapshot(id)!!.download.pauseReasons
+
+    @Test
+    fun allowanceUsageShowsEachNetworksAllowanceNotOnlyTheCurrent() =
+        engineTest {
+            val h = harness(network = { "wlan0" })
+            h.engine.start()
+            h.engine.setNetworkPolicy("usb", NetworkPolicy(allowance = Allowance(2_000_000, AllowancePeriod.Daily, warnPercent = 50)))
+            h.engine.setNetworkPolicy("eth", NetworkPolicy(speedLimit = 1000))
+            h.storeUsage(1_500_000, "usb")
+            h.storeUsage(9_000_000, "eth")
+
+            val usage = h.engine.allowanceUsage()
+
+            usage.keys shouldBe setOf("usb")
+            usage.getValue("usb").used shouldBe 1_500_000L
+            usage.getValue("usb").limit shouldBe 2_000_000L
+            usage.getValue("usb").warnAt shouldBe 1_000_000L
+            usage.getValue("usb").over shouldBe false
+            usage.getValue("usb").resetsAt shouldBe midnight
+            h.engine.rules.value.allowance shouldBe null
+        }
+
+    @Test
+    fun allowanceUsageCountsTheBytesNotYetSavedAndFlagsOverBudget() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Daily)))
+            h.storeUsage(10_000)
+            h.addJob()
+            advanceTimeBy(4.seconds)
+            runCurrent()
+
+            val status = h.engine.allowanceUsage().getValue("unknown")
+
+            status.used shouldBe 10_000L + 64 * 1024L
+            status.over shouldBe true
+        }
+
+    @Test
+    fun allowanceUsageDuringATrafficSaveNeverMissesTheBatchBeingSaved() =
+        engineTest {
+            val traffic = RecordingTraffic(newStore().traffic)
+            val h = harness(network = { "unknown" }, traffic = traffic)
+            h.engine.start()
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(1_000_000, AllowancePeriod.Daily)))
+            h.addJob()
+            advanceTimeBy(9.seconds) // the job has ended; the meter holds its bytes
+            val gate = CompletableDeferred<Unit>()
+            traffic.gate = gate
+            advanceTimeBy(2.seconds) // the save has drained the meter and waits to write
+            runCurrent()
+            traffic.adds.size shouldBe 1
+            (traffic.bytes > 0) shouldBe true
+
+            val asked = async { h.engine.allowanceUsage() }
+            runCurrent()
+            gate.complete(Unit)
+            runCurrent()
+
+            asked.await().getValue("unknown").used shouldBeGreaterThanOrEqual traffic.bytes
+        }
+
+    @Test
+    fun allowanceUsageIsEmptyWithNoAllowances() =
+        engineTest {
+            val h = harness()
+            h.engine.start()
+
+            h.engine.allowanceUsage() shouldBe emptyMap()
+        }
 
     @Test
     fun rulesIsNoneBeforeStartAndACommandBeforeStartAppliesAtStart() =

@@ -34,6 +34,7 @@ import dev.anydm.engine.log.RotatingFileSink
 import dev.anydm.engine.media.SiteProtocol
 import dev.anydm.engine.media.YtDlpPlaylistSource
 import dev.anydm.engine.net.AfterQueueState
+import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.DefaultRouteNetwork
 import dev.anydm.engine.net.NetworkPolicy
@@ -420,6 +421,8 @@ internal class UnavailableSource(
         network: String?,
         policy: NetworkPolicy?,
     ) = stopped()
+
+    override suspend fun allowanceUsage(): Map<String, AllowanceStatus> = stopped()
 
     override suspend fun scheduleRules() = stopped()
 

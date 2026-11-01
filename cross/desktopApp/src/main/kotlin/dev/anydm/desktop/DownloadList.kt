@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +94,8 @@ internal fun Downloads(
     panelHeight: MutableState<Dp>,
 ) {
     Column(Modifier.fillMaxSize()) {
+        NetworksStrip(model.strip) { model.typing = it }
+        LinkInput(model)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val available = maxHeight - PanelTokens.Handle
             Column(Modifier.fillMaxSize()) {
@@ -162,6 +165,9 @@ private fun List(
         }
     }
 }
+
+/** The most room a card gives its share label in the title line. */
+private val ShareLabelMaxWidth = 220.dp
 
 /** The line under a card's name: where the download comes from. */
 private fun source(s: DownloadSnapshot): String = s.mirrors.firstOrNull()?.url ?: s.download.sourceUrl ?: s.download.fileName ?: ""
@@ -237,6 +243,21 @@ private fun ListRow(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = name }.testTag("name-$id"),
                         )
+                    }
+                    val names by model.networkNames.collectAsState()
+                    val share = remember(s.networkShare, names) { shareView(s.networkShare, names) }
+                    if (share.multiple) {
+                        // In the title line, one line of text: the card keeps its height.
+                        Tip("Received per network, as counted so far: ${share.label}", "share-tip-$id", Modifier) {
+                            Text(
+                                share.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = ShareLabelMaxWidth).testTag("row-share-$id"),
+                            )
+                        }
                     }
                     val badge = ProtocolColors.badge(s.download.kind.protocol, dark)
                     Text(

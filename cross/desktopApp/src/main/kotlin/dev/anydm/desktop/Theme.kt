@@ -89,6 +89,35 @@ private val AnydmShapes =
         large = RoundedCornerShape(14.dp),
     )
 
+/** Colours for the segments of the networks split bar and the dots on its chips, one per network in order; none is the error colour. */
+object SplitPalette {
+    const val SIZE = 8
+    private val Light =
+        listOf(
+            Color(0xFF2F6FED),
+            Color(0xFF14937F),
+            Color(0xFFE0861A),
+            Color(0xFF8B5CD6),
+            Color(0xFF3F9E3F),
+            Color(0xFF3A8FB8),
+            Color(0xFFD1569A),
+            Color(0xFF7C8594),
+        )
+    private val Dark =
+        listOf(
+            Color(0xFF8AB0FF),
+            Color(0xFF4FD1BC),
+            Color(0xFFFFB454),
+            Color(0xFFB799F0),
+            Color(0xFF7ED67E),
+            Color(0xFF7CC4E8),
+            Color(0xFFF08CC0),
+            Color(0xFFA6ACB8),
+        )
+
+    fun of(dark: Boolean): List<Color> = if (dark) Dark else Light
+}
+
 /** Spacing steps for padding and gaps. */
 object Space {
     val xs = 4.dp

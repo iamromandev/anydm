@@ -202,6 +202,79 @@ abstract class EngineTrafficContract : StoreTestBase() {
         }
 
     @Test
+    fun aDownloadsNetworkShareIsLiveBeforeAnythingIsSaved() =
+        runTest {
+            val (h, traffic) = started(network = { "en0" })
+            h.protocol.network = "en5"
+            val id = h.addJob()
+            advanceTimeBy(2.seconds)
+            h.protocol.network = null // the rest of the run goes by the default route
+            advanceTimeBy(3.seconds)
+            runCurrent()
+
+            traffic.adds shouldBe emptyList()
+            val share = h.snapshot(id)!!.networkShare
+            share.keys shouldBe setOf("en5", "en0")
+            share.values.sum() shouldBe whole
+
+            advanceTimeBy(11.seconds) // saved by now: the figure stays, it is not counted twice
+            runCurrent()
+            traffic.adds.size shouldBe 1
+            h.snapshot(id)!!.networkShare shouldBe share
+            h.engine.stop()
+        }
+
+    @Test
+    fun seedBytesCountInTheShareUnderTheDefaultRoute() =
+        runTest {
+            val service = FakeTorrentService()
+            val (h, _) = started(network = { "en0" }, torrents = service)
+            val id = h.addJob()
+            advanceTimeBy(5.seconds)
+            val before = h.snapshot(id)!!.networkShare.getValue("en0")
+            service.traffic = listOf(SeedSample(id, up = 5000, down = 300))
+            advanceTimeBy(2.seconds)
+            runCurrent()
+
+            h.snapshot(id)!!.networkShare shouldBe mapOf("en0" to before + 300L)
+            h.engine.stop()
+        }
+
+    @Test
+    fun theLastBytesOfARunCountInTheShareToo() =
+        runTest {
+            val (h, _) = started(network = { "en0" })
+            h.protocol.network = "en5"
+            val id = h.addJob()
+            advanceTimeBy(5.seconds)
+            runCurrent()
+
+            h.snapshot(id)!!.networkShare shouldBe mapOf("en5" to whole)
+            h.engine.stop()
+        }
+
+    @Test
+    fun aRemovedDownloadsLaterBytesVanishFromTheShare() =
+        runTest {
+            val service = FakeTorrentService()
+            val (h, _) = started(network = { "en0" }, torrents = service)
+            val id = h.addJob()
+            advanceTimeBy(5.seconds)
+            h.snapshot(id)!!.networkShare shouldBe mapOf("en0" to whole)
+
+            h.engine.remove(id, RemoveFiles.KEEP)
+            runCurrent()
+            h.snapshot(id) shouldBe null
+            service.traffic = listOf(SeedSample(id, up = 1, down = 500))
+            advanceTimeBy(2.seconds)
+            runCurrent()
+
+            h.snapshot(id) shouldBe null
+            h.engine.downloads.value shouldBe emptyList()
+            h.engine.stop()
+        }
+
+    @Test
     fun theLastBytesOfARunAreCountedUnderTheirNetworkToo() =
         runTest {
             val (h, traffic) = started(network = { "en0" })

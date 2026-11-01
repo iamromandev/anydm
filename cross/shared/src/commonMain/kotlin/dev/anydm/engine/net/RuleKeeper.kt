@@ -111,6 +111,25 @@ internal class RuleKeeper(
         }
     }
 
+    /**
+     * Every network's allowance usage ([allowanceUsageOf]) now, with the store read and the meter read under the lock, so a
+     * save in progress is in one of them and never neither. The unsaved bytes of runs that ended count for the current
+     * network as a whole (approximate, as [evaluate] counts them). Works before [start] too: it reads the stored rules.
+     */
+    suspend fun allowanceUsage(known: Set<String>): Map<String, AllowanceStatus> =
+        lock.withLock {
+            val stored = rules.networkRules()
+            val now = clock.now()
+            val zone = timeZone()
+            val current = network.current()
+            val (from, to) = allowanceDays(stored, now, zone, known + current) ?: return@withLock emptyMap()
+            val days = traffic.trafficByDay(from, to)
+            val unsaved = leftovers()
+            allowanceUsageOf(stored, days, now, zone, known + current) { name, start, end ->
+                meter.pendingBytes(name, start, end) + if (name == current) unsaved else 0L
+            }
+        }
+
     private suspend fun load() {
         networks = rules.networkRules()
         schedule = rules.scheduleRules()

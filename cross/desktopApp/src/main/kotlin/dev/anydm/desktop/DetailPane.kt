@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -52,6 +53,7 @@ enum class DetailTab(
     SEGMENTS("Segments"),
     ATTEMPTS("Attempts"),
     MIRRORS("Mirrors"),
+    NETWORKS("Networks"),
     PROXY("Proxy"),
     ERRORS("Errors"),
     PEERS("Peers"),
@@ -61,10 +63,27 @@ enum class DetailTab(
 
 /** A torrent's tabs, Overview first; the other kinds keep theirs. */
 private val TorrentTabs =
-    listOf(DetailTab.OVERVIEW, DetailTab.FILES, DetailTab.TRACKERS, DetailTab.PEERS, DetailTab.PROXY, DetailTab.ATTEMPTS, DetailTab.ERRORS)
+    listOf(
+        DetailTab.OVERVIEW,
+        DetailTab.FILES,
+        DetailTab.TRACKERS,
+        DetailTab.PEERS,
+        DetailTab.NETWORKS,
+        DetailTab.PROXY,
+        DetailTab.ATTEMPTS,
+        DetailTab.ERRORS,
+    )
 
 private val OtherTabs =
-    listOf(DetailTab.FILES, DetailTab.SEGMENTS, DetailTab.ATTEMPTS, DetailTab.MIRRORS, DetailTab.PROXY, DetailTab.ERRORS)
+    listOf(
+        DetailTab.FILES,
+        DetailTab.SEGMENTS,
+        DetailTab.ATTEMPTS,
+        DetailTab.MIRRORS,
+        DetailTab.NETWORKS,
+        DetailTab.PROXY,
+        DetailTab.ERRORS,
+    )
 
 /** A file split into many segments shows the first ones; every snapshot redraws the tab. */
 private const val MAX_SEGMENTS_SHOWN = 200
@@ -140,6 +159,7 @@ internal fun DetailPane(
                 DetailTab.SEGMENTS -> Segments(s)
                 DetailTab.ATTEMPTS -> Attempts(s, failedOnly = false)
                 DetailTab.MIRRORS -> Mirrors(s)
+                DetailTab.NETWORKS -> Networks(s, model)
                 DetailTab.PROXY -> Proxy(s, model)
                 DetailTab.ERRORS -> Attempts(s, failedOnly = true)
                 DetailTab.PEERS -> live?.let { TorrentPeers(s, it) }
@@ -220,6 +240,43 @@ private fun Attempts(
 private fun Mirrors(s: DownloadSnapshot) {
     if (s.mirrors.isEmpty()) return Line("No mirrors.")
     s.mirrors.forEach { Line("${it.position + 1}. ${it.url}") }
+}
+
+/**
+ * Bytes received per network. The engine counts them from when it began to, so a job that started earlier shows only the
+ * part since: this is not claimed to be the whole history.
+ */
+@Composable
+private fun Networks(
+    s: DownloadSnapshot,
+    model: AppModel,
+) {
+    val names by model.networkNames.collectAsState()
+    val view = remember(s.networkShare, names) { shareView(s.networkShare, names) }
+    if (view.parts.isEmpty()) {
+        return Text(
+            "No bytes recorded per network yet.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag("detail-networks-empty"),
+        )
+    }
+    Line("Bytes received per network, as counted so far. A share under 1% reads <1%.")
+    view.parts.forEach { p ->
+        Row(
+            Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("detail-networks-${p.key}"),
+            horizontalArrangement = Arrangement.spacedBy(Space.md),
+        ) {
+            Text(
+                p.name,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(formatBytes(p.bytes), style = MaterialTheme.typography.bodySmall)
+            Text(p.percentText, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 /** The torrent's heavy detail, polled while it is selected; the drafts and pending edits live here so a tab switch keeps them. */
