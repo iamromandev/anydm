@@ -24,6 +24,7 @@ import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentLive
 import dev.anydm.engine.torrent.TorrentSummary
+import dev.anydm.engine.torrent.TorrentTracker
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -616,6 +617,116 @@ abstract class EngineTorrentContract : StoreTestBase() {
             val bare = started(torrents = null)
             try {
                 bare.engine.torrentDetail(DownloadId(1)) shouldBe TorrentDetailResult.Unavailable
+            } finally {
+                bare.engine.stop()
+            }
+        }
+
+    @Test
+    fun torrentDetailCarriesTheTrackersFields() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                val tracker = TorrentTracker("http://t/announce", 0, true, true, true, "bad", 5, 2, 3, true, 42L)
+                service.details[id] = TorrentDetail(emptyList(), listOf(tracker), PieceMap.Empty)
+
+                val shown =
+                    h.engine
+                        .torrentDetail(id)
+                        .shouldBeInstanceOf<TorrentDetailResult.Detail>()
+                        .detail.trackers
+                        .single()
+
+                shown.message shouldBe "bad"
+                shown.scrapeSeeds shouldBe 5
+                shown.scrapePeers shouldBe 2
+                shown.fails shouldBe 3
+                shown.updating shouldBe true
+                shown.nextAnnounceSeconds shouldBe 42L
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun torrentDetailWithoutAStoredRowHasNoPrioritiesMeaningAllSelected() =
+        runTest {
+            val h = started()
+            try {
+                val id = DownloadId(999)
+                service.details[id] = TorrentDetail.Empty
+
+                val shown = h.engine.torrentDetail(id).shouldBeInstanceOf<TorrentDetailResult.Detail>()
+
+                shown.priorities shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun torrentDetailCarriesPrioritiesAndSeedRules() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                service.details[id] = TorrentDetail.Empty
+                h.engine.setTorrentFiles(id, listOf(0, 7)).shouldBeInstanceOf<CommandResult.Done>()
+                h.engine.setSeedRules(id, SeedRule.At(1.5), SeedRule.Off).shouldBeInstanceOf<CommandResult.Done>()
+
+                val shown = h.engine.torrentDetail(id).shouldBeInstanceOf<TorrentDetailResult.Detail>()
+
+                shown.priorities shouldBe listOf(0, 7)
+                shown.seedRatio shouldBe SeedRule.At(1.5)
+                shown.seedMinutes shouldBe SeedRule.Off
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun recheckTorrentReachesTheRunningTorrent() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                h.engine.recheckTorrent(id) shouldBe TorrentActionResult.NotInSession
+
+                service.running += id
+
+                h.engine.recheckTorrent(id) shouldBe TorrentActionResult.Done
+                service.rechecked shouldBe listOf(id)
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun reannounceTorrentReachesTheRunningTorrentForOneTrackerOrAll() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                h.engine.reannounceTorrent(id, null) shouldBe TorrentActionResult.NotInSession
+
+                service.running += id
+
+                h.engine.reannounceTorrent(id, "http://t/announce") shouldBe TorrentActionResult.Done
+                h.engine.reannounceTorrent(id, null) shouldBe TorrentActionResult.Done
+                service.reannounced shouldBe listOf(id to "http://t/announce", id to null)
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun recheckAndReannounceWithoutAServiceAreUnavailable() =
+        runTest {
+            val bare = started(torrents = null)
+            try {
+                bare.engine.recheckTorrent(DownloadId(1)) shouldBe TorrentActionResult.Unavailable
+                bare.engine.reannounceTorrent(DownloadId(1), null) shouldBe TorrentActionResult.Unavailable
             } finally {
                 bare.engine.stop()
             }

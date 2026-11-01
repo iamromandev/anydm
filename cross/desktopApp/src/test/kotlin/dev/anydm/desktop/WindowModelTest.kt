@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import java.util.prefs.Preferences
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -8,6 +9,7 @@ import kotlin.test.assertTrue
 internal class MemoryPrefs(
     override var closeToTray: Boolean = true,
     override var startHidden: Boolean = false,
+    override var theme: ThemeChoice = ThemeChoice.SYSTEM,
 ) : AppPrefs
 
 class WindowModelTest {
@@ -77,5 +79,39 @@ class WindowModelTest {
         val plain = WindowModel(MemoryPrefs(), trayAvailable = true)
         plain.startUp(hiddenRequested = false, hasLinks = false)
         assertTrue(plain.state.value.visible)
+    }
+
+    @Test
+    fun `the theme starts from the preference and a choice is kept and emitted`() {
+        val prefs = MemoryPrefs(theme = ThemeChoice.DARK)
+        val window = WindowModel(prefs, trayAvailable = true)
+        assertEquals(ThemeChoice.DARK, window.state.value.theme)
+        window.setTheme(ThemeChoice.LIGHT)
+        assertEquals(ThemeChoice.LIGHT, window.state.value.theme)
+        assertEquals(ThemeChoice.LIGHT, prefs.theme)
+    }
+
+    @Test
+    fun `the theme round trips through the preferences store`() {
+        val node = Preferences.userRoot().node("dev/anydm/desktop-test-${System.nanoTime()}")
+        try {
+            val prefs = PreferencesAppPrefs(node)
+            assertEquals(ThemeChoice.SYSTEM, prefs.theme)
+            prefs.theme = ThemeChoice.DARK
+            assertEquals(ThemeChoice.DARK, PreferencesAppPrefs(node).theme)
+        } finally {
+            node.removeNode()
+        }
+    }
+
+    @Test
+    fun `an unreadable theme falls back to system`() {
+        val node = Preferences.userRoot().node("dev/anydm/desktop-test-${System.nanoTime()}")
+        try {
+            node.put("theme", "PURPLE")
+            assertEquals(ThemeChoice.SYSTEM, PreferencesAppPrefs(node).theme)
+        } finally {
+            node.removeNode()
+        }
     }
 }

@@ -860,7 +860,23 @@ class Engine(
     suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
         val service = torrents ?: return TorrentDetailResult.Unavailable
         val detail = command { service.detail(id) } ?: return TorrentDetailResult.NotInSession
-        return TorrentDetailResult.Detail(detail)
+        val row = command { store.torrents.get(id) } ?: return TorrentDetailResult.Detail(detail)
+        return TorrentDetailResult.Detail(detail, row.priorities, row.seedRatio, row.seedMinutes)
+    }
+
+    /** Makes the session check the files of torrent job [id] again; NotInSession when its torrent is not running or seeding. */
+    suspend fun recheckTorrent(id: DownloadId): TorrentActionResult {
+        val service = torrents ?: return TorrentActionResult.Unavailable
+        return if (command { service.recheck(id) }) TorrentActionResult.Done else TorrentActionResult.NotInSession
+    }
+
+    /** Asks the trackers of torrent job [id] for peers now: the one at [url], or all of them when it is null. */
+    suspend fun reannounceTorrent(
+        id: DownloadId,
+        url: String?,
+    ): TorrentActionResult {
+        val service = torrents ?: return TorrentActionResult.Unavailable
+        return if (command { service.reannounce(id, url) }) TorrentActionResult.Done else TorrentActionResult.NotInSession
     }
 
     /** Reads a torrent without adding it (TOR-02): its name and files, for a choice of which to download. */

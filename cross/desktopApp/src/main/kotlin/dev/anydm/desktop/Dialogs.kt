@@ -39,11 +39,13 @@ private fun RemoveDialog(
 ) {
     val count = dialog.ids.size
     AlertDialog(
+        shape = MaterialTheme.shapes.large,
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = model::closeDialog,
-        title = { Text(if (count == 1) "Remove this download?" else "Remove $count downloads?") },
+        title = { PanelTitle(if (count == 1) "Remove this download?" else "Remove $count downloads?") },
         text = { Text("Its files can stay where they are or go to the trash.") },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                 OutlinedButton(onClick = { model.confirmRemove(RemoveFiles.KEEP) }, modifier = Modifier.testTag("remove-keep")) {
                     Text("Remove, keep files")
                 }
@@ -64,10 +66,12 @@ private fun RelinkDialog(
 ) {
     var url by remember(dialog.id, dialog.mirrorId) { mutableStateOf(dialog.url) }
     AlertDialog(
+        shape = MaterialTheme.shapes.large,
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = model::closeDialog,
-        title = { Text("Relink download") },
+        title = { PanelTitle("Relink download") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.sm)) {
                 Text("A new address for the same file; the download goes on from where it stopped.")
                 OutlinedTextField(
                     value = url,

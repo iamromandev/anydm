@@ -3,6 +3,9 @@ package dev.anydm.desktop
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,6 +17,7 @@ import androidx.compose.ui.test.pressKey
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
@@ -103,6 +107,53 @@ class ShellTest {
         rule.onNodeWithTag("nav-settings").performClick()
         assertEquals(Route.Settings, model.state.value.route)
         rule.onNodeWithTag("settings").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the chosen protocol is selected and another protocol is not`() {
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("nav-protocol-torrent").assertIsSelected()
+        rule.onNodeWithTag("nav-protocol-ftp").assertIsNotSelected()
+    }
+
+    @Test
+    fun `no protocol shows as selected while settings is open`() {
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("nav-settings").performClick()
+        rule.onNodeWithTag("nav-protocol-torrent").assertIsNotSelected()
+        rule.onNodeWithTag("nav-settings").assertIsSelected()
+    }
+
+    @Test
+    fun `clicking a protocol in settings leaves settings for the downloads`() {
+        show()
+        rule.onNodeWithTag("nav-settings").performClick()
+        assertEquals(Route.Settings, model.state.value.route)
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        assertEquals(Route.Downloads(Filter.All), model.state.value.route)
+        assertEquals(Protocol.TORRENT, model.state.value.options.protocol)
+    }
+
+    @Test
+    fun `the title names the active protocol`() {
+        assertEquals("All downloads", title(Route.Downloads(Filter.All)))
+        assertEquals("All downloads · Torrent", title(Route.Downloads(Filter.All), Protocol.TORRENT))
+        assertEquals("Settings", title(Route.Settings, Protocol.TORRENT))
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("toolbar-title").assertTextContains("All downloads · Torrent", substring = true)
+    }
+
+    // Intended: the protocol is a second filter beside the status, so it stays when the status changes.
+    @Test
+    fun `the protocol stays when another status filter is chosen`() {
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("nav-failed").performClick()
+        assertEquals(Protocol.TORRENT, model.state.value.options.protocol)
+        rule.onNodeWithTag("toolbar-title").assertTextContains("Torrent", substring = true)
     }
 
     @Test
@@ -196,6 +247,91 @@ class ShellTest {
         rule.onNodeWithTag("welcome-start").performClick()
         rule.onNodeWithTag("welcome").assertDoesNotExist()
         assertEquals(true, welcomeDone)
+    }
+
+    private fun protocolMix() {
+        source.downloads.value =
+            listOf(
+                snapshot(1, DOWNLOADING, name = "a-http"),
+                snapshot(2, COMPLETED, name = "b-http"),
+                snapshot(3, DOWNLOADING, name = "c-http"),
+                snapshot(4, DOWNLOADING, name = "d-tor", kind = DownloadKind.TORRENT),
+                snapshot(5, COMPLETED, name = "e-tor", kind = DownloadKind.TORRENT),
+                snapshot(6, QUEUED, name = "f-ftp", kind = DownloadKind.FTP),
+            )
+    }
+
+    @Test
+    fun `the sidebar lists the protocols with their counts`() {
+        protocolMix()
+        show()
+        rule.onNodeWithTag("count-protocol-http", useUnmergedTree = true).assertTextEquals("3")
+        rule.onNodeWithTag("count-protocol-site", useUnmergedTree = true).assertTextEquals("0")
+        rule.onNodeWithTag("count-protocol-torrent", useUnmergedTree = true).assertTextEquals("2")
+        rule.onNodeWithTag("count-protocol-ftp", useUnmergedTree = true).assertTextEquals("1")
+        rule.onNodeWithTag("count-protocol-tool", useUnmergedTree = true).assertTextEquals("0")
+    }
+
+    @Test
+    fun `clicking a protocol filters the list and clicking it again clears it`() {
+        protocolMix()
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        assertEquals(Protocol.TORRENT, model.state.value.options.protocol)
+        assertEquals(
+            listOf(4L, 5L),
+            model.state.value.rows
+                .map { it.snapshot.download.id.value }
+                .sorted(),
+        )
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        assertEquals(null, model.state.value.options.protocol)
+        assertEquals(6, model.state.value.rows.size)
+    }
+
+    @Test
+    fun `clicking another protocol switches the selection`() {
+        protocolMix()
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("nav-protocol-ftp").performClick()
+        assertEquals(Protocol.FTP, model.state.value.options.protocol)
+        assertEquals(
+            listOf(6L),
+            model.state.value.rows
+                .map { it.snapshot.download.id.value },
+        )
+    }
+
+    @Test
+    fun `a protocol combines with a status filter and the query`() {
+        protocolMix()
+        show()
+        rule.onNodeWithTag("nav-protocol-torrent").performClick()
+        rule.onNodeWithTag("nav-completed").performClick()
+        assertEquals(
+            listOf(5L),
+            model.state.value.rows
+                .map { it.snapshot.download.id.value },
+        )
+        assertEquals(Protocol.TORRENT, model.state.value.options.protocol)
+        rule.onNodeWithTag("nav-all").performClick()
+        model.setQuery("d-")
+        assertEquals(
+            listOf(4L),
+            model.state.value.rows
+                .map { it.snapshot.download.id.value },
+        )
+        // Counts stay over all downloads.
+        rule.onNodeWithTag("count-protocol-http", useUnmergedTree = true).assertTextEquals("3")
+    }
+
+    @Test
+    fun `a protocol with nothing in it shows the no-match placeholder`() {
+        protocolMix()
+        show()
+        rule.onNodeWithTag("nav-protocol-tool").performClick()
+        rule.onNodeWithTag("no-match").assertIsDisplayed()
     }
 
     @Test

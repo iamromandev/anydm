@@ -2,6 +2,7 @@ package dev.anydm.desktop
 
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 
 enum class SortKey(
     val label: String,
@@ -11,13 +12,33 @@ enum class SortKey(
     PROGRESS("Progress"),
     STATUS("Status"),
     PRIORITY("Priority"),
+    SPEED("Speed"),
+    ETA("ETA"),
+    PROTOCOL("Protocol"),
 }
+
+/** What the sidebar filters by and a card's badge says; several kinds can share one. */
+enum class Protocol(
+    val label: String,
+    val kinds: Set<DownloadKind>,
+) {
+    HTTP("HTTP", setOf(DownloadKind.DIRECT)),
+    SITE("Site", setOf(DownloadKind.SITE)),
+    TORRENT("Torrent", setOf(DownloadKind.TORRENT)),
+    FTP("FTP", setOf(DownloadKind.FTP)),
+    TOOL("Tool", setOf(DownloadKind.TOOL)),
+}
+
+val DownloadKind.protocol: Protocol get() =
+    Protocol.entries.firstOrNull { this in it.kinds }
+        ?: error("No protocol lists the download kind $this")
 
 /** How the list is shown: [sort] null keeps the engine's order. */
 data class ListOptions(
     val sort: SortKey? = null,
     val descending: Boolean = false,
     val query: String = "",
+    val protocol: Protocol? = null,
     val expanded: Set<DownloadId> = emptySet(),
 )
 
@@ -49,14 +70,16 @@ internal fun buildRows(
             .mapValues { (_, items) -> items.sortedWith(compareBy(nullsLast()) { it.download.playlistIndex }) }
     val query = options.query.trim()
 
-    fun matches(s: DownloadSnapshot): Boolean = filter.accepts(s) && (query.isEmpty() || matchesQuery(s, query))
+    fun matches(s: DownloadSnapshot): Boolean =
+        filter.accepts(s) && (options.protocol == null || s.download.kind.protocol == options.protocol) &&
+            (query.isEmpty() || matchesQuery(s, query))
 
     val top =
         snapshots.filter { s ->
             val parent = s.download.parentId
             (parent == null || parent !in byId) && (matches(s) || children[s.download.id].orEmpty().any(::matches))
         }
-    val sorted = options.sort?.let { key -> top.sortedWith(comparator(key, options.descending)) } ?: top
+    val sorted = options.sort?.let { key -> top.sortedWith(comparator(key, options.descending, top)) } ?: top
     return buildList {
         for (s in sorted) {
             val items = children[s.download.id].orEmpty()
@@ -86,16 +109,28 @@ private fun matchesQuery(
 private fun comparator(
     key: SortKey,
     descending: Boolean,
+    rows: List<DownloadSnapshot>,
 ): Comparator<DownloadSnapshot> {
+    // Each name is lowercased once, not on every comparison.
+    val names = rows.associate { it.download.id to displayName(it).lowercase() }
+
+    fun name(s: DownloadSnapshot): String = names.getValue(s.download.id)
+
     fun <T : Comparable<T>> by(value: (DownloadSnapshot) -> T?): Comparator<DownloadSnapshot> {
         val order: Comparator<T> = if (descending) reverseOrder() else naturalOrder()
         return compareBy(nullsLast(order), value)
     }
-    return when (key) {
-        SortKey.NAME -> by { displayName(it).lowercase() }
-        SortKey.SIZE -> by { it.total ?: it.download.size }
-        SortKey.PROGRESS -> by { progress(it) }
-        SortKey.STATUS -> by { it.download.status.ordinal }
-        SortKey.PRIORITY -> by { it.download.priority }
-    }
+    val primary: Comparator<DownloadSnapshot> =
+        when (key) {
+            SortKey.NAME -> by { name(it) }
+            SortKey.SIZE -> by { it.total ?: it.download.size }
+            SortKey.PROGRESS -> by { progress(it) }
+            SortKey.STATUS -> by { it.download.status.ordinal }
+            SortKey.PRIORITY -> by { it.download.priority }
+            SortKey.SPEED -> by { it.speed }
+            SortKey.ETA -> by { etaSeconds(it) }
+            SortKey.PROTOCOL -> by { it.download.kind.protocol.label }
+        }
+    // Equal values keep a fixed order, whichever way the list runs: by name, then by number.
+    return primary.thenComparing(compareBy<DownloadSnapshot> { name(it) }.thenBy { it.download.id.value })
 }

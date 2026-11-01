@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.prefs.Preferences
 
+/** Which colors the app wears: the OS's, or always light or dark. */
+enum class ThemeChoice { SYSTEM, LIGHT, DARK }
+
 /** What the user chose about the window (#610); kept between runs. */
 interface AppPrefs {
     /** Closing the window hides it to the tray instead of quitting. */
@@ -13,6 +16,9 @@ interface AppPrefs {
 
     /** The app starts with the window hidden. */
     var startHidden: Boolean
+
+    /** The color scheme; [ThemeChoice.SYSTEM] when none was chosen. */
+    var theme: ThemeChoice
 }
 
 /** The choices in the user's preferences store (the registry, a plist, or a file under `~/.java`). */
@@ -27,13 +33,28 @@ class PreferencesAppPrefs(
         get() = runCatching { node.getBoolean(START_HIDDEN, false) }.getOrDefault(false)
         set(value) = write(START_HIDDEN, value)
 
+    override var theme: ThemeChoice
+        get() =
+            runCatching { ThemeChoice.valueOf(node.get(THEME, ThemeChoice.SYSTEM.name)) }.getOrDefault(ThemeChoice.SYSTEM)
+        set(value) = write(THEME, value.name)
+
     // A store that can't be written costs the choice, not the app.
     private fun write(
         key: String,
         value: Boolean,
+    ) = write(key) { node.putBoolean(key, value) }
+
+    private fun write(
+        key: String,
+        value: String,
+    ) = write(key) { node.put(key, value) }
+
+    private fun write(
+        key: String,
+        put: () -> Unit,
     ) {
         runCatching {
-            node.putBoolean(key, value)
+            put()
             node.flush()
         }
     }
@@ -41,6 +62,7 @@ class PreferencesAppPrefs(
     private companion object {
         const val CLOSE_TO_TRAY = "closeToTray"
         const val START_HIDDEN = "startHidden"
+        const val THEME = "theme"
     }
 }
 
@@ -51,6 +73,7 @@ data class WindowState(
     val visible: Boolean = true,
     val closeToTray: Boolean = true,
     val startHidden: Boolean = false,
+    val theme: ThemeChoice = ThemeChoice.SYSTEM,
 )
 
 /**
@@ -61,7 +84,7 @@ class WindowModel(
     private val prefs: AppPrefs,
     val trayAvailable: Boolean,
 ) {
-    private val ui = MutableStateFlow(WindowState(closeToTray = prefs.closeToTray, startHidden = prefs.startHidden))
+    private val ui = MutableStateFlow(WindowState(closeToTray = prefs.closeToTray, startHidden = prefs.startHidden, theme = prefs.theme))
     val state: StateFlow<WindowState> = ui.asStateFlow()
 
     fun show() = ui.update { it.copy(visible = true) }
@@ -78,6 +101,11 @@ class WindowModel(
     fun setStartHidden(on: Boolean) {
         prefs.startHidden = on
         ui.update { it.copy(startHidden = on) }
+    }
+
+    fun setTheme(choice: ThemeChoice) {
+        prefs.theme = choice
+        ui.update { it.copy(theme = choice) }
     }
 
     /** The window's close button: hides it to the tray, or says to quit. */

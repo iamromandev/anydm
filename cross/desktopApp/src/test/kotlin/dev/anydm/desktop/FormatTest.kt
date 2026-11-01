@@ -53,6 +53,14 @@ class FormatTest {
     }
 
     @Test
+    fun `eta seconds is the number eta formats, null when there is none`() {
+        assertEquals(60L, etaSeconds(snapshot(1, DOWNLOADING, total = 100 * mib, downloaded = 40 * mib, speed = mib)))
+        assertNull(etaSeconds(snapshot(1, PAUSED, total = 100, downloaded = 10, speed = 5)))
+        assertNull(etaSeconds(snapshot(1, DOWNLOADING, total = 100, downloaded = 10, speed = 0)))
+        assertNull(etaSeconds(snapshot(1, DOWNLOADING, total = null, downloaded = 10, speed = 5)))
+    }
+
+    @Test
     fun `a row is named by its file, else its address, else its number`() {
         assertEquals("a.iso", displayName(snapshot(1, COMPLETED, name = "a.iso")))
         val mirror = Mirror(MirrorId(1), DownloadId(2), "https://x.example/b", 0)

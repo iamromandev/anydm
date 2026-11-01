@@ -10,15 +10,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,7 +29,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.anydm.engine.EngineState
 import kotlinx.coroutines.delay
@@ -43,6 +46,8 @@ fun Shell(
     val state by model.state.collectAsState()
     val os by model.os.collectAsState()
     val focus = remember { FocusRequester() }
+    // Above the route switch, so the detail panel keeps its height through a visit to settings.
+    val panelHeight = remember { mutableStateOf(PanelTokens.Default) }
     LaunchedEffect(Unit) { focus.requestFocus() }
     // The add dialog's fields had the keys; when it closes the window takes them back, so the list's shortcuts work.
     val adding = state.adding != null
@@ -57,13 +62,13 @@ fun Shell(
     ) {
         Box {
             Column(Modifier.fillMaxSize()) {
-                Toolbar(state.route)
+                Toolbar(state, model)
                 Row(Modifier.weight(1f)) {
-                    Sidebar(state, model::navigate)
+                    Sidebar(state, model::setProtocol, model::navigate)
                     Column(Modifier.weight(1f).fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
                         OsNotices(os, model)
                         Banners(state.banners, model::dismiss)
-                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model, pickers) { focus.requestFocus() } }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, model, pickers, panelHeight) { focus.requestFocus() } }
                         StatusBar(state, os)
                     }
                 }
@@ -74,33 +79,24 @@ fun Shell(
     }
 }
 
-@Composable
-private fun Toolbar(route: Route) {
-    Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("anydm", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "  ·  " + title(route),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-internal fun title(route: Route): String =
+/** The section's title; on a downloads list [protocol], when one is chosen, is named after it. */
+internal fun title(
+    route: Route,
+    protocol: Protocol? = null,
+): String =
     when (route) {
         Route.Settings -> {
             "Settings"
         }
 
         is Route.Downloads -> {
-            when (val filter = route.filter) {
-                Filter.All -> "All downloads"
-                is Filter.Status -> filter.group.label
-                is Filter.InCategory -> "Category"
-            }
+            val base =
+                when (val filter = route.filter) {
+                    Filter.All -> "All downloads"
+                    is Filter.Status -> filter.group.label
+                    is Filter.InCategory -> "Category"
+                }
+            if (protocol == null) base else "$base · ${protocol.label}"
         }
     }
 
@@ -109,6 +105,7 @@ private fun Content(
     state: UiState,
     model: AppModel,
     pickers: Pickers,
+    panelHeight: MutableState<Dp>,
     focusList: () -> Unit,
 ) {
     when (val route = state.route) {
@@ -117,7 +114,7 @@ private fun Content(
         }
 
         is Route.Downloads -> {
-            Downloads(state, route.filter, model, focusList)
+            Downloads(state, route.filter, model, focusList, panelHeight)
         }
     }
 }
@@ -143,16 +140,7 @@ private fun Banners(
                     "banner-error" to banner.message
                 }
             }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(
-                    MaterialTheme.colorScheme.errorContainer,
-                ).padding(horizontal = 16.dp, vertical = 6.dp)
-                .testTag(tag),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Strip(MaterialTheme.colorScheme.errorContainer, Modifier.testTag(tag)) {
             Text(text, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
             TextButton(onClick = { onDismiss(banner) }, modifier = Modifier.testTag("banner-dismiss")) { Text("Dismiss") }
         }
@@ -186,15 +174,7 @@ private fun NoticeRow(
     oneLine: Boolean = false,
     actions: @Composable () -> Unit,
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.secondaryContainer)
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .testTag(tag),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Strip(MaterialTheme.colorScheme.secondaryContainer, Modifier.testTag(tag)) {
         Text(
             text,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -211,13 +191,11 @@ private fun StatusBar(
     state: UiState,
     os: OsSignals,
 ) {
-    Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
+    Strip(MaterialTheme.colorScheme.surfaceVariant) {
         val engine = engineLabel(state.engine) + if (state.globallyPaused && state.engine == EngineState.Running) " · Paused" else ""
-        Text(engine, style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-engine"))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Text(engine, style = MaterialTheme.typography.labelMedium, color = muted, modifier = Modifier.testTag("status-engine"))
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.md)) {
             // The countdown's seconds move on their own: the clock is read again every second while one runs.
             val ends = os.afterQueue.countdownEndsAt
             val now by produceState(Clock.System.now(), ends) {
@@ -228,10 +206,15 @@ private fun StatusBar(
                 }
             }
             indicators(os, active = state.counts[StatusGroup.ACTIVE], now = now).forEach {
-                Text(it.text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag(it.tag))
+                Text(it.text, style = MaterialTheme.typography.labelMedium, color = muted, modifier = Modifier.testTag(it.tag))
             }
         }
-        Text(formatSpeed(state.speed), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-speed"))
+        Text(
+            formatSpeed(state.speed),
+            style = MaterialTheme.typography.labelMedium,
+            color = muted,
+            modifier = Modifier.testTag("status-speed"),
+        )
     }
 }
 
@@ -256,9 +239,9 @@ private fun Welcome(onStart: () -> Unit) {
             .testTag("welcome"),
         contentAlignment = Alignment.Center,
     ) {
-        Card(Modifier.padding(32.dp)) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Welcome to anydm", style = MaterialTheme.typography.headlineSmall)
+        DialogCard(Modifier.padding(Space.xl)) {
+            Column(Modifier.padding(Space.xl), verticalArrangement = Arrangement.spacedBy(Space.md)) {
+                Text("Welcome to anydm", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text("Downloads go to your Downloads folder unless a category says otherwise. You can change this in Settings.")
                 Button(onClick = onStart, modifier = Modifier.testTag("welcome-start")) { Text("Get started") }
             }

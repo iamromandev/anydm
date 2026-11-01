@@ -8,6 +8,7 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.FileSnapshot
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.CategoryId
@@ -60,6 +61,7 @@ import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolStatus
 import dev.anydm.engine.tools.ToolUpdate
 import dev.anydm.engine.tools.YtDlpChannel
+import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
@@ -85,6 +87,27 @@ internal class FakeSource(
     var refuseAll = false
     var torrent: TorrentDetailResult = TorrentDetailResult.NotInSession
 
+    /** What [torrentDetail] answers for a job that has its own entry, instead of [torrent]. */
+    val torrentById = mutableMapOf<Long, TorrentDetailResult>()
+
+    /** What [recheckTorrent] answers. */
+    var recheckAction: TorrentActionResult = TorrentActionResult.Done
+
+    /** What [reannounceTorrent] answers. */
+    var reannounceAction: TorrentActionResult = TorrentActionResult.Done
+
+    /** Thrown by the torrent commands (files, seed rules, recheck, reannounce) once set. */
+    var torrentThrows: Throwable? = null
+
+    /** Thrown by the plain commands (pause, resume, ...) once set. */
+    var commandThrows: Throwable? = null
+
+    /** Thrown by [torrentDetail] once set: a poll that fails. */
+    var detailThrows: Throwable? = null
+
+    /** The next [setSeedRules] waits for it (once) after it is recorded: a save still in flight. */
+    var seedGate: CompletableDeferred<Unit>? = null
+
     /** While set, every command waits for it after it is recorded: a command still in flight. */
     var gate: CompletableDeferred<Unit>? = null
 
@@ -103,6 +126,7 @@ internal class FakeSource(
 
     private suspend fun call(text: String): CommandResult {
         if (refuseAll) throw IllegalStateException("the engine has stopped")
+        commandThrows?.let { throw it }
         synchronized(calls) { calls += text }
         gate?.await()
         return results[text] ?: CommandResult.Done(null)
@@ -146,7 +170,45 @@ internal class FakeSource(
 
     override suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
         call("torrentDetail ${id.value}")
-        return torrent
+        detailThrows?.let { throw it }
+        return torrentById[id.value] ?: torrent
+    }
+
+    override suspend fun setTorrentFiles(
+        id: DownloadId,
+        priorities: List<Int>,
+    ): CommandResult {
+        torrentThrows?.let { throw it }
+        return call("torrentFiles ${id.value} $priorities")
+    }
+
+    override suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): CommandResult {
+        torrentThrows?.let { throw it }
+        val text = "seedRules ${id.value} $ratio $minutes"
+        val held = seedGate?.also { seedGate = null }
+        if (held == null) return call(text)
+        synchronized(calls) { calls += text }
+        held.await()
+        return results[text] ?: CommandResult.Done(null)
+    }
+
+    override suspend fun recheckTorrent(id: DownloadId): TorrentActionResult {
+        torrentThrows?.let { throw it }
+        call("recheck ${id.value}")
+        return recheckAction
+    }
+
+    override suspend fun reannounceTorrent(
+        id: DownloadId,
+        url: String?,
+    ): TorrentActionResult {
+        torrentThrows?.let { throw it }
+        call("reannounce ${id.value} ${url ?: "all"}")
+        return reannounceAction
     }
 
     override var available: Set<DownloadKind> = setOf(DownloadKind.DIRECT, DownloadKind.SITE, DownloadKind.TORRENT, DownloadKind.FTP)
@@ -582,12 +644,13 @@ internal fun snapshot(
     files: List<FileSnapshot> = emptyList(),
     torrent: TorrentSummary? = null,
     saveFolder: String? = null,
+    kind: DownloadKind = if (torrent != null) DownloadKind.TORRENT else DownloadKind.DIRECT,
 ): DownloadSnapshot =
     DownloadSnapshot(
         download =
             Download(
                 DownloadId(id),
-                if (torrent != null) DownloadKind.TORRENT else DownloadKind.DIRECT,
+                kind,
                 status,
                 parentId = parent?.let(::DownloadId),
                 collection = collection,

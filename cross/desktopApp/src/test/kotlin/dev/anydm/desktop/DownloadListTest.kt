@@ -1,7 +1,14 @@
 package dev.anydm.desktop
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -9,6 +16,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -21,14 +29,18 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.withKeyDown
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import dev.anydm.engine.FileSnapshot
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.AttemptId
 import dev.anydm.engine.core.CollectionKind
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
+import dev.anydm.engine.core.DownloadStatus.PAUSED
 import dev.anydm.engine.core.DownloadStatus.QUEUED
 import dev.anydm.engine.core.DownloadStatus.SEEDING
 import dev.anydm.engine.core.ErrorClass
@@ -37,6 +49,7 @@ import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
+import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.Step
 import dev.anydm.engine.core.StepFailure
@@ -53,6 +66,7 @@ import org.junit.Rule
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTestApi::class)
@@ -69,7 +83,10 @@ class DownloadListTest {
     @AfterTest
     fun close() = scope.cancel()
 
-    private fun show(vararg snapshots: dev.anydm.engine.DownloadSnapshot) {
+    private fun show(
+        vararg snapshots: dev.anydm.engine.DownloadSnapshot,
+        width: Dp? = null,
+    ) {
         source.downloads.value = snapshots.toList()
         model =
             AppModel(
@@ -83,7 +100,11 @@ class DownloadListTest {
                 files,
             )
         model.start()
-        rule.setContent { AnydmTheme(dark = false) { Shell(model) } }
+        rule.setContent {
+            AnydmTheme(dark = false) {
+                if (width == null) Shell(model) else Box(Modifier.width(width).height(800.dp).clipToBounds()) { Shell(model) }
+            }
+        }
     }
 
     private fun row(id: Long) = rule.onNodeWithTag("row-$id")
@@ -123,7 +144,6 @@ class DownloadListTest {
     @Test
     fun `the bulk toolbar pauses every selected job`() {
         show(snapshot(1, DOWNLOADING), snapshot(2, DOWNLOADING), snapshot(3, COMPLETED))
-        rule.onNodeWithTag("cmd-pause").assertDoesNotExist()
         model.selectAll()
         rule.waitForIdle()
         rule.onNodeWithTag("cmd-retry").assertIsNotEnabled()
@@ -172,16 +192,236 @@ class DownloadListTest {
     }
 
     @Test
-    fun `sorting by a column reorders the rows`() {
+    fun `the sort menu reorders the rows and turns the direction round`() {
         show(snapshot(1, QUEUED, name = "b", size = 10), snapshot(2, QUEUED, name = "a", size = 30))
+        rule.onNodeWithTag("sort-menu").performClick()
+        SortKey.entries.forEach { rule.onNodeWithTag("sort-${it.name.lowercase()}").assertIsDisplayed() }
         rule.onNodeWithTag("sort-size").performClick()
-        rule.onNodeWithTag("sort-size").performClick()
+        assertEquals(
+            listOf(1L, 2L),
+            model.state.value.rows
+                .map { it.id.value },
+        )
+        rule.onNodeWithTag("sort-menu").performClick()
+        rule.onNodeWithTag("sort-size").assertTextContains("↑", substring = true).performClick()
         assertEquals(
             listOf(2L, 1L),
             model.state.value.rows
                 .map { it.id.value },
         )
-        rule.onNodeWithTag("sort-name").assertIsDisplayed()
+        rule.onNodeWithTag("sort-menu").performClick()
+        rule.onNodeWithTag("sort-size").assertTextContains("↓", substring = true)
+        rule.onNodeWithTag("sort-name").assertTextEquals("Name")
+    }
+
+    @Test
+    fun `a card shows badge, source, speed and eta for an http and a torrent download`() {
+        val http = snapshot(1, DOWNLOADING, name = "big.iso", total = 100 * mib, downloaded = 40 * mib, speed = mib)
+        val torrent =
+            snapshot(2, DOWNLOADING, name = "t", total = 100 * mib, downloaded = 50 * mib, speed = 2 * mib, kind = DownloadKind.TORRENT)
+        show(
+            http.copy(mirrors = listOf(Mirror(MirrorId(1), DownloadId(1), "https://a.example/big.iso", 0))),
+            torrent.copy(download = torrent.download.copy(sourceUrl = "magnet:?xt=urn:btih:abc")),
+        )
+        rule.onNodeWithTag("badge-1").assertTextEquals("HTTP")
+        rule.onNodeWithTag("source-1").assertTextEquals("https://a.example/big.iso")
+        rule.onNodeWithTag("speed-1").assertTextEquals(formatSpeed(mib))
+        rule.onNodeWithTag("eta-1").assertTextEquals("1m 00s")
+        rule.onNodeWithTag("badge-2").assertTextEquals("Torrent")
+        rule.onNodeWithTag("source-2").assertTextEquals("magnet:?xt=urn:btih:abc")
+        rule.onNodeWithTag("speed-2").assertTextEquals(formatSpeed(2 * mib))
+        rule.onNodeWithTag("priority-1").assertIsDisplayed()
+        rule.onNodeWithTag("size-1").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a card keeps the disk-full pause text`() {
+        show(snapshot(1, PAUSED, pauseReasons = setOf(PauseReason.LOW_DISK)), snapshot(2, PAUSED, pauseReasons = setOf(PauseReason.GLOBAL)))
+        rule.onNodeWithTag("status-1").assertTextEquals("Paused (disk full)")
+        rule.onNodeWithTag("status-2").assertTextEquals("Paused (all)")
+    }
+
+    @Test
+    fun `the toolbar pause and resume follow the selection`() {
+        show(snapshot(1, DOWNLOADING), snapshot(2, PAUSED))
+        rule.onNodeWithTag("cmd-pause").assertIsNotEnabled()
+        rule.onNodeWithTag("cmd-resume").assertIsNotEnabled()
+        rule.onNodeWithTag("add-open").assertIsEnabled()
+        rule.onNodeWithTag("pause-all").assertIsEnabled()
+        listOf("cmd-cancel", "cmd-retry", "cmd-remove").forEach { rule.onNodeWithTag(it).assertIsDisplayed().assertIsNotEnabled() }
+        row(1).performClick()
+        rule.onNodeWithTag("cmd-pause").assertIsEnabled()
+        rule.onNodeWithTag("cmd-resume").assertIsNotEnabled()
+        row(2).performClick()
+        rule.onNodeWithTag("cmd-pause").assertIsNotEnabled()
+        rule.onNodeWithTag("cmd-resume").assertIsEnabled()
+    }
+
+    private val toolbarTags =
+        listOf(
+            "add-open",
+            "cmd-pause",
+            "cmd-resume",
+            "cmd-cancel",
+            "cmd-retry",
+            "cmd-remove",
+            "pause-all",
+            "resume-all",
+            "query",
+            "sort-menu",
+        )
+
+    private fun assertToolbarInside(width: Dp) {
+        toolbarTags.forEach { tag ->
+            val bounds = rule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+            assertTrue(
+                bounds.right <= width && bounds.left >= 0.dp && bounds.top >= 0.dp && bounds.bottom <= 700.dp,
+                "$tag is outside the window: $bounds",
+            )
+        }
+    }
+
+    @Test
+    fun `a narrow window keeps every toolbar action reachable`() {
+        show(snapshot(1, DOWNLOADING), width = 420.dp)
+        row(1).performClick()
+        assertToolbarInside(420.dp)
+    }
+
+    @Test
+    fun `at the minimum width with a selection the toolbar stays inside the window`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        row(1).performClick()
+        assertToolbarInside(900.dp)
+    }
+
+    @Test
+    fun `selecting a row does not move the toolbar`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        val before = rule.onNodeWithTag("query").getUnclippedBoundsInRoot()
+        row(1).performClick()
+        assertEquals(before, rule.onNodeWithTag("query").getUnclippedBoundsInRoot())
+    }
+
+    @Test
+    fun `the title is one item`() {
+        show(snapshot(1, DOWNLOADING))
+        rule.onNodeWithTag("toolbar-title").assertTextContains("anydm", substring = true)
+    }
+
+    @Test
+    fun `the full source and name are available beyond the ellipsis`() {
+        val url = "https://a.example/" + "x".repeat(200) + ".iso"
+        val job = snapshot(1, DOWNLOADING, name = "n".repeat(200))
+        show(job.copy(mirrors = listOf(Mirror(MirrorId(1), DownloadId(1), url, 0))))
+        rule.onNodeWithTag("source-1").assertContentDescriptionEquals(url)
+        rule.onNodeWithTag("name-1").assertContentDescriptionEquals("n".repeat(200))
+    }
+
+    @Test
+    fun `the source line is hidden when blank or the same as the name`() {
+        val same = snapshot(1, DOWNLOADING, name = "big.iso")
+        val blank = snapshot(2, DOWNLOADING)
+        show(same, blank.copy(download = blank.download.copy(fileName = "x", sourceUrl = " ")))
+        rule.onNodeWithTag("source-1").assertDoesNotExist()
+        rule.onNodeWithTag("source-2").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the card list still shows its cards beside the open detail pane`() {
+        val job = snapshot(1, DOWNLOADING, name = "big.iso")
+        show(job.copy(mirrors = listOf(Mirror(MirrorId(1), DownloadId(1), "https://a.example/big.iso", 0))), width = 900.dp)
+        row(1).performClick()
+        rule.onNodeWithTag("detail").assertIsDisplayed()
+        rule.onNodeWithTag("source-1").assertIsDisplayed()
+        rule.onNodeWithTag("status-1").assertIsDisplayed()
+    }
+
+    private fun heightOf(tag: String) = rule.onNodeWithTag(tag).getUnclippedBoundsInRoot().let { it.bottom - it.top }
+
+    private fun dragHandle(dy: Float) =
+        rule.onNodeWithTag("detail-handle").performMouseInput {
+            moveTo(center)
+            press()
+            moveBy(Offset(0f, dy))
+            release()
+        }
+
+    @Test
+    fun `the detail panel sits below the list across the full width`() {
+        show(snapshot(1, DOWNLOADING), snapshot(2, QUEUED), width = 900.dp)
+        row(1).performClick()
+        val list = rule.onNodeWithTag("list").getUnclippedBoundsInRoot()
+        val detail = rule.onNodeWithTag("detail").getUnclippedBoundsInRoot()
+        assertTrue(detail.top >= list.bottom - 1.dp, "detail $detail should be below list $list")
+        assertTrue(kotlin.math.abs(((detail.right - detail.left) - (list.right - list.left)).value) < 2f, "detail $detail vs list $list")
+        assertEquals(280.dp, detail.bottom - detail.top)
+    }
+
+    @Test
+    fun `dragging the handle up makes the panel taller and down shorter`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        row(1).performClick()
+        dragHandle(-60f)
+        assertTrue(kotlin.math.abs((heightOf("detail") - 340.dp).value) < 4f, "got ${heightOf("detail")}")
+        dragHandle(100f)
+        assertTrue(kotlin.math.abs((heightOf("detail") - 240.dp).value) < 4f, "got ${heightOf("detail")}")
+    }
+
+    @Test
+    fun `the panel never gets smaller than its minimum or leaves the list too little room`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        row(1).performClick()
+        dragHandle(2000f)
+        assertEquals(160.dp, heightOf("detail"))
+        dragHandle(-4000f)
+        assertTrue(heightOf("list") >= 239.dp, "list ${heightOf("list")}")
+        assertTrue(heightOf("detail") > 280.dp)
+    }
+
+    @Test
+    fun `the panel keeps its height when another row is selected`() {
+        show(snapshot(1, DOWNLOADING), snapshot(2, QUEUED), width = 900.dp)
+        row(1).performClick()
+        dragHandle(-60f)
+        val resized = heightOf("detail")
+        row(2).performClick()
+        rule.onNodeWithTag("detail").assertIsDisplayed()
+        assertEquals(resized, heightOf("detail"))
+    }
+
+    @Test
+    fun `the panel keeps its height across a visit to settings`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        row(1).performClick()
+        dragHandle(-60f)
+        val resized = heightOf("detail")
+        model.navigate(Route.Settings)
+        rule.waitForIdle()
+        model.navigate(Route.Downloads(Filter.All))
+        rule.waitForIdle()
+        rule.onNodeWithTag("detail").assertIsDisplayed()
+        assertEquals(resized, heightOf("detail"))
+    }
+
+    @Test
+    fun `the handle is described for assistive tools`() {
+        show(snapshot(1, DOWNLOADING), width = 900.dp)
+        row(1).performClick()
+        rule.onNodeWithTag("detail-handle").assertContentDescriptionEquals("Resize detail panel")
+    }
+
+    @Test
+    fun `the panel closes unless exactly one row is selected`() {
+        show(snapshot(1, DOWNLOADING), snapshot(2, QUEUED), width = 900.dp)
+        row(1).performClick()
+        rule.onNodeWithTag("detail-handle").assertIsDisplayed()
+        row(2).performKeyInput { keyDown(Key.ShiftLeft) }
+        row(2).performMouseInput { click() }
+        row(2).performKeyInput { keyUp(Key.ShiftLeft) }
+        assertEquals(setOf(DownloadId(1), DownloadId(2)), model.state.value.selection)
+        rule.onNodeWithTag("detail").assertDoesNotExist()
+        rule.onNodeWithTag("detail-handle").assertDoesNotExist()
     }
 
     @Test

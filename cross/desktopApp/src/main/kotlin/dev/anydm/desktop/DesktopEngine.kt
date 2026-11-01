@@ -73,6 +73,7 @@ import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.tools.current
 import dev.anydm.engine.torrent.JnaSignalGuard
 import dev.anydm.engine.torrent.LibTorrentBackend
+import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentConfig
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentNatives
@@ -298,6 +299,24 @@ internal class UnavailableSource(
     override suspend fun resumeAll() = stopped()
 
     override suspend fun torrentDetail(id: DownloadId) = stopped()
+
+    override suspend fun setTorrentFiles(
+        id: DownloadId,
+        priorities: List<Int>,
+    ) = stopped()
+
+    override suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ) = stopped()
+
+    override suspend fun recheckTorrent(id: DownloadId) = stopped()
+
+    override suspend fun reannounceTorrent(
+        id: DownloadId,
+        url: String?,
+    ) = stopped()
 
     override val available = emptySet<DownloadKind>()
 

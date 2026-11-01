@@ -135,6 +135,21 @@ class TorrentProtocol(
     override suspend fun detail(id: DownloadId): TorrentDetail? =
         (handles.get(id) ?: seeds.handle(id))?.let { withContext(Dispatchers.Default) { it.detail() } }
 
+    override suspend fun recheck(id: DownloadId): Boolean {
+        val handle = handles.get(id) ?: seeds.handle(id) ?: return false
+        withContext(Dispatchers.Default) { handle.recheck() }
+        return true
+    }
+
+    override suspend fun reannounce(
+        id: DownloadId,
+        url: String?,
+    ): Boolean {
+        val handle = handles.get(id) ?: seeds.handle(id) ?: return false
+        withContext(Dispatchers.Default) { handle.reannounce(url) }
+        return true
+    }
+
     private suspend fun record(
         id: DownloadId,
         stats: TorrentStats,

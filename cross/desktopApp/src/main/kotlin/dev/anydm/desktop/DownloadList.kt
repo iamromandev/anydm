@@ -1,277 +1,324 @@
 package dev.anydm.desktop
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.core.DownloadStatus
+import java.awt.Cursor
 
-/** The commands the toolbar offers for a selection; the context menu has all that apply. */
-private val BulkCommands = listOf(JobCommand.PAUSE, JobCommand.RESUME, JobCommand.CANCEL, JobCommand.RETRY, JobCommand.REMOVE)
+/** Panel sizes of the bottom detail panel. */
+internal object PanelTokens {
+    val Default = 280.dp
+    val Min = 160.dp
+    val KeepListMin = 240.dp
+    val Handle = 10.dp
+}
 
-/** The downloads section: the list's toolbar, the list, and the selected job's details beside it. */
+/** [requested] kept within [min] and what [available] leaves after [keepListMin] for the list; the minimum wins when both cannot hold. */
+internal fun clampPanelHeight(
+    requested: Dp,
+    available: Dp,
+    min: Dp = PanelTokens.Min,
+    keepListMin: Dp = PanelTokens.KeepListMin,
+): Dp = requested.coerceIn(min, maxOf(min, available - keepListMin))
+
+/** The height after dragging the handle [dragDown] (negative = up, which makes the panel taller). */
+internal fun draggedPanelHeight(
+    current: Dp,
+    dragDown: Dp,
+    available: Dp,
+): Dp = clampPanelHeight(current - dragDown, available)
+
+/** The downloads section: the card list, and the selected job's details in a resizable panel below it. */
 @Composable
 internal fun Downloads(
     state: UiState,
     filter: Filter,
     model: AppModel,
     focusList: () -> Unit,
+    panelHeight: MutableState<Dp>,
 ) {
     Column(Modifier.fillMaxSize()) {
-        ListToolbar(state, model)
-        HorizontalDivider()
-        Row(Modifier.weight(1f)) {
-            BoxWithConstraints(Modifier.weight(1f).fillMaxSize()) {
-                // A narrow list (a small window, or the detail pane open) keeps the name readable by leaving out speed, ETA and priority.
-                val compact = maxWidth < CompactBelow
-                Column(Modifier.fillMaxSize()) {
-                    Header(state.options, compact, model::setSort)
-                    HorizontalDivider()
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val available = maxHeight - PanelTokens.Handle
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
-                        state.rows.isNotEmpty() -> List(state, compact, model, focusList)
+                        state.rows.isNotEmpty() -> List(state, model, focusList)
                         state.counts.of(filter) == 0 -> Placeholder("Nothing here yet.", "empty")
                         else -> Placeholder("No downloads match.", "no-match")
                     }
                 }
+                state.detail?.let { detail ->
+                    // Keyed on the job, so a drag in progress ends when the selection moves on.
+                    key(detail.download.id) {
+                        ResizeHandle { dragDown ->
+                            // From the height as shown, so a window that shrank does not make the first drag jump.
+                            panelHeight.value = draggedPanelHeight(clampPanelHeight(panelHeight.value, available), dragDown, available)
+                        }
+                    }
+                    DetailPane(detail, model) { clampPanelHeight(panelHeight.value, available) }
+                }
             }
-            state.detail?.let { DetailPane(it, model) }
         }
         Dialogs(state.dialog, model)
     }
 }
 
+/** The bar between the list and the detail panel; [onDrag] gets the vertical movement in dp (down is positive). */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun ListToolbar(
-    state: UiState,
-    model: AppModel,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun ResizeHandle(onDrag: (Dp) -> Unit) {
+    val density = LocalDensity.current
+    val current by rememberUpdatedState(onDrag)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(PanelTokens.Handle)
+            .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)))
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { delta -> current(with(density) { delta.toDp() }) },
+            ).semantics { contentDescription = "Resize detail panel" }
+            .testTag("detail-handle"),
+        contentAlignment = Alignment.Center,
     ) {
-        OutlinedTextField(
-            value = state.options.query,
-            onValueChange = model::setQuery,
-            placeholder = { Text("Filter by name or address") },
-            singleLine = true,
-            modifier = Modifier.width(260.dp).testTag("query").onFocusChanged { model.typing = it.isFocused },
+        Box(
+            Modifier
+                .width(40.dp)
+                .height(4.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)),
         )
-        if (state.selection.isNotEmpty()) {
-            BulkCommands.forEach { command ->
-                OutlinedButton(
-                    onClick = { model.run(command) },
-                    enabled = state.enabled(command),
-                    modifier = Modifier.testTag("cmd-${command.tag}"),
-                ) { Text(command.label) }
-            }
-        }
-        Box(Modifier.weight(1f))
-        Button(onClick = { model.openAdd() }, modifier = Modifier.testTag("add-open")) { Text("Add…") }
-        TextButton(onClick = { model.pauseAll() }, modifier = Modifier.testTag("pause-all")) { Text("Pause all") }
-        TextButton(onClick = { model.resumeAll() }, modifier = Modifier.testTag("resume-all")) { Text("Resume all") }
-    }
-}
-
-private val SizeWidth = 80.dp
-private val ProgressWidth = 120.dp
-private val SpeedWidth = 80.dp
-private val EtaWidth = 64.dp
-private val StatusWidth = 110.dp
-private val PriorityWidth = 56.dp
-private val CompactBelow = 760.dp
-
-@Composable
-private fun Header(
-    options: ListOptions,
-    compact: Boolean,
-    onSort: (SortKey) -> Unit,
-) {
-    @Composable
-    fun RowScope.Column(
-        key: SortKey?,
-        label: String,
-        modifier: Modifier,
-    ) {
-        val arrow = if (key != null && options.sort == key) (if (options.descending) " ↓" else " ↑") else ""
-        Text(
-            label + arrow,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier =
-                modifier
-                    .then(if (key != null) Modifier.clickable { onSort(key) }.testTag("sort-${key.name.lowercase()}") else Modifier)
-                    .padding(vertical = 6.dp),
-        )
-    }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        Column(SortKey.NAME, "Name", Modifier.weight(1f))
-        Column(SortKey.SIZE, "Size", Modifier.width(SizeWidth))
-        Column(SortKey.PROGRESS, "Progress", Modifier.width(ProgressWidth))
-        if (!compact) {
-            Column(null, "Speed", Modifier.width(SpeedWidth))
-            Column(null, "ETA", Modifier.width(EtaWidth))
-        }
-        Column(SortKey.STATUS, "Status", Modifier.width(StatusWidth))
-        if (!compact) Column(SortKey.PRIORITY, "Priority", Modifier.width(PriorityWidth))
     }
 }
 
 @Composable
 private fun List(
     state: UiState,
-    compact: Boolean,
     model: AppModel,
     focusList: () -> Unit,
 ) {
-    LazyColumn(Modifier.fillMaxSize().testTag("list")) {
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("list"),
+        contentPadding = PaddingValues(Space.md),
+        verticalArrangement = Arrangement.spacedBy(Space.sm),
+    ) {
         items(state.rows, key = { it.id.value }) { row ->
-            ListRow(row, row.id in state.selection, compact, state, model, focusList)
+            ListRow(row, row.id in state.selection, state, model, focusList)
         }
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+/** The line under a card's name: where the download comes from. */
+private fun source(s: DownloadSnapshot): String = s.mirrors.firstOrNull()?.url ?: s.download.sourceUrl ?: s.download.fileName ?: ""
+
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ListRow(
     row: Row,
     selected: Boolean,
-    compact: Boolean,
     state: UiState,
     model: AppModel,
     focusList: () -> Unit,
 ) {
     val s = row.snapshot
+    val id = row.id.value
     var menu by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
-                // One press handler for every button, so Shift and Command/Control are read from the same event.
-                .onPointerEvent(PointerEventType.Press) { event ->
-                    // The expand arrow took this press.
-                    if (event.changes.any { it.isConsumed }) return@onPointerEvent
-                    val keys = event.keyboardModifiers
-                    focusList()
-                    when {
-                        event.buttons.isSecondaryPressed -> {
-                            if (!selected) model.select(row.id)
-                            menu = true
-                        }
+    val dark = LocalDark.current
+    val name = displayName(s)
+    Box(Modifier.padding(start = 20.dp * row.depth)) {
+        Surface(
+            shape = CardTokens.shape,
+            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = CardTokens.elevation,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    // One press handler for every button, so Shift and Command/Control are read from the same event.
+                    .onPointerEvent(PointerEventType.Press) { event ->
+                        // The expand arrow took this press.
+                        if (event.changes.any { it.isConsumed }) return@onPointerEvent
+                        val keys = event.keyboardModifiers
+                        focusList()
+                        when {
+                            event.buttons.isSecondaryPressed -> {
+                                if (!selected) model.select(row.id)
+                                menu = true
+                            }
 
-                        keys.isShiftPressed -> {
-                            model.selectRange(row.id)
-                        }
+                            keys.isShiftPressed -> {
+                                model.selectRange(row.id)
+                            }
 
-                        if (IsMac) keys.isMetaPressed else keys.isCtrlPressed -> {
-                            model.select(row.id, extend = true)
-                        }
+                            if (IsMac) keys.isMetaPressed else keys.isCtrlPressed -> {
+                                model.select(row.id, extend = true)
+                            }
 
-                        else -> {
-                            model.select(row.id)
+                            else -> {
+                                model.select(row.id)
+                            }
                         }
-                    }
-                }.padding(start = 12.dp + 20.dp * row.depth, end = 12.dp, top = 6.dp, bottom = 6.dp)
-                .testTag("row-${row.id.value}"),
-            verticalAlignment = Alignment.CenterVertically,
+                    }.testTag("row-$id"),
         ) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                if (row.expandable) {
-                    Text(
-                        if (row.expanded) "▾ " else "▸ ",
-                        modifier =
-                            Modifier
-                                .onPointerEvent(PointerEventType.Press) { event ->
-                                    // A right-click goes on to the row: select and menu.
-                                    if (!event.buttons.isPrimaryPressed) return@onPointerEvent
-                                    event.changes.forEach { it.consume() }
-                                    model.toggleExpanded(row.id)
-                                }.testTag("expand-${row.id.value}"),
-                    )
-                }
-                Column {
-                    Text(
-                        displayName(s),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag("name-${row.id.value}"),
-                    )
-                    s.items?.let { items ->
+            Column(Modifier.padding(horizontal = Space.md, vertical = Space.sm), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.sm), verticalAlignment = Alignment.CenterVertically) {
+                    if (row.expandable) {
                         Text(
-                            "${items.completed}/${items.total} done",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.testTag("items-${row.id.value}"),
+                            if (row.expanded) "▾" else "▸",
+                            modifier =
+                                Modifier
+                                    .onPointerEvent(PointerEventType.Press) { event ->
+                                        // A right-click goes on to the row: select and menu.
+                                        if (!event.buttons.isPrimaryPressed) return@onPointerEvent
+                                        event.changes.forEach { it.consume() }
+                                        model.toggleExpanded(row.id)
+                                    }.testTag("expand-$id"),
                         )
                     }
-                    s.lastFailure?.message?.takeIf { s.download.status == DownloadStatus.FAILED }?.let {
+                    Tip(name, "name-tip-$id", Modifier.weight(1f)) {
                         Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
+                            name,
+                            style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.testTag("error-${row.id.value}"),
+                            modifier = Modifier.fillMaxWidth().semantics { contentDescription = name }.testTag("name-$id"),
                         )
                     }
+                    val badge = ProtocolColors.badge(s.download.kind.protocol, dark)
+                    Text(
+                        s.download.kind.protocol.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = badge.content,
+                        modifier =
+                            Modifier
+                                .background(badge.container, MaterialTheme.shapes.small)
+                                .padding(horizontal = Space.sm, vertical = 2.dp)
+                                .testTag("badge-$id"),
+                    )
+                    Text(statusLabel(s), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("status-$id"))
+                }
+                s.items?.let { items ->
+                    Text(
+                        "${items.completed}/${items.total} done",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("items-$id"),
+                    )
+                }
+                s.lastFailure?.message?.takeIf { s.download.status == DownloadStatus.FAILED }?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("error-$id"),
+                    )
+                }
+                // Wraps at narrow widths instead of dropping anything.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Space.md),
+                    verticalArrangement = Arrangement.spacedBy(Space.xs),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val from = source(s)
+                    if (from.isNotBlank() && from != name) {
+                        Tip(from, "source-tip-$id", Modifier.widthIn(max = 280.dp)) {
+                            Text(
+                                from,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.semantics { contentDescription = from }.testTag("source-$id"),
+                            )
+                        }
+                    }
+                    Row(Modifier.width(150.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val done = progress(s)
+                        if (done != null) {
+                            LinearProgressIndicator(progress = { done }, modifier = Modifier.weight(1f))
+                            Text(
+                                " ${(done * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.testTag("progress-$id"),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.weight(1f))
+                        }
+                    }
+                    Text(
+                        if (s.speed > 0) formatSpeed(s.speed) else "—",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("speed-$id"),
+                    )
+                    Text(eta(s) ?: "—", style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("eta-$id"))
+                    Text(
+                        (s.total ?: s.download.size)?.let(::formatBytes) ?: "—",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("size-$id"),
+                    )
+                    Text(
+                        "Priority ${s.download.priority}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("priority-$id"),
+                    )
                 }
             }
-            Text((s.total ?: s.download.size)?.let(::formatBytes) ?: "—", Modifier.width(SizeWidth))
-            Row(Modifier.width(ProgressWidth), verticalAlignment = Alignment.CenterVertically) {
-                val done = progress(s)
-                if (done != null) {
-                    LinearProgressIndicator(progress = { done }, modifier = Modifier.weight(1f))
-                    Text(" ${(done * 100).toInt()}%", modifier = Modifier.testTag("progress-${row.id.value}"))
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.weight(1f))
-                }
-            }
-            if (!compact) {
-                Text(if (s.speed > 0) formatSpeed(s.speed) else "", Modifier.width(SpeedWidth))
-                Text(eta(s) ?: "", Modifier.width(EtaWidth).testTag("eta-${row.id.value}"))
-            }
-            Text(statusLabel(s), Modifier.width(StatusWidth).testTag("status-${row.id.value}"))
-            if (!compact) Text(s.download.priority.toString(), Modifier.width(PriorityWidth))
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             JobCommand.entries.filter { state.enabled(it) }.forEach { command ->
@@ -288,12 +335,36 @@ private fun ListRow(
     }
 }
 
+/** Shows [full] in a tooltip on hover, for text the card cuts short. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun Tip(
+    full: String,
+    tag: String,
+    modifier: Modifier,
+    content: @Composable () -> Unit,
+) {
+    TooltipArea(
+        tooltip = {
+            Surface(shape = MaterialTheme.shapes.small, tonalElevation = 4.dp, shadowElevation = 4.dp) {
+                Text(
+                    full,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(Space.sm).widthIn(max = 600.dp).testTag(tag),
+                )
+            }
+        },
+        modifier = modifier,
+        content = content,
+    )
+}
+
 @Composable
 internal fun Placeholder(
     text: String,
     tag: String,
 ) {
     Box(Modifier.fillMaxSize().testTag(tag), contentAlignment = Alignment.Center) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

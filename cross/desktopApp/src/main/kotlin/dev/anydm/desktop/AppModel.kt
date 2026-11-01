@@ -3,6 +3,7 @@ package dev.anydm.desktop
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
@@ -15,6 +16,7 @@ import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
+import dev.anydm.engine.torrent.SeedRule
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -76,10 +78,13 @@ class Counts(
     val all: Int = 0,
     private val byGroup: Map<StatusGroup, Int> = emptyMap(),
     private val byCategory: Map<CategoryId, Int> = emptyMap(),
+    private val byProtocol: Map<Protocol, Int> = emptyMap(),
 ) {
     operator fun get(group: StatusGroup): Int = byGroup[group] ?: 0
 
     fun category(id: CategoryId): Int = byCategory[id] ?: 0
+
+    fun protocol(p: Protocol): Int = byProtocol[p] ?: 0
 
     fun of(filter: Filter): Int =
         when (filter) {
@@ -267,6 +272,13 @@ class AppModel(
     var typing = false
 
     fun navigate(route: Route) = relist { it.copy(route = route) }
+
+    /** Filters the list to [protocol] (null: all); from settings this goes back to the list, since settings has none. */
+    fun setProtocol(protocol: Protocol?) =
+        relist {
+            val route = if (it.route == Route.Settings) Route.Downloads(Filter.All) else it.route
+            it.copy(route = route, options = it.options.copy(protocol = protocol))
+        }
 
     fun setSort(key: SortKey) =
         relist {
@@ -459,6 +471,39 @@ class AppModel(
             null
         }
 
+    /**
+     * Sets the torrent's file priorities. A refusal is returned as it is and shown as a banner; null means nothing changed or
+     * the outcome is unknown (the engine has stopped, and a banner says so), so treat it as a failure.
+     */
+    suspend fun setTorrentFiles(
+        id: DownloadId,
+        priorities: List<Int>,
+    ): CommandResult? = guarded { source.setTorrentFiles(id, priorities) }?.also { refused("Setting the file priorities", it) }
+
+    /** Sets the torrent's own seeding limits; the result is shown like [setTorrentFiles], and null means the same. */
+    suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): CommandResult? = guarded { source.setSeedRules(id, ratio, minutes) }?.also { refused("Setting the seed rules", it) }
+
+    /** Rechecks the torrent's files; a refusal shows a banner, and null means nothing changed or the outcome is unknown. */
+    suspend fun recheckTorrent(id: DownloadId): TorrentActionResult? = guarded { source.recheckTorrent(id) }?.also { notDone(it) }
+
+    /** Announces to every tracker, or only to [url]; the result is shown like [recheckTorrent], and null means the same. */
+    suspend fun reannounceTorrent(
+        id: DownloadId,
+        url: String?,
+    ): TorrentActionResult? = guarded { source.reannounceTorrent(id, url) }?.also { notDone(it) }
+
+    private fun notDone(result: TorrentActionResult) {
+        when (result) {
+            TorrentActionResult.Done -> Unit
+            TorrentActionResult.NotInSession -> addError("Torrent is not in the session")
+            TorrentActionResult.Unavailable -> addError("Torrent engine unavailable")
+        }
+    }
+
     private fun snapshotOf(id: DownloadId) = synchronized(lock) { snapshots.firstOrNull { it.download.id == id } }
 
     private suspend fun each(
@@ -484,13 +529,18 @@ class AppModel(
     }
 
     // A stopped engine takes no command (it throws); the banner says so once and the rest are not tried.
-    private suspend fun guarded(call: suspend () -> CommandResult): CommandResult? =
+    private suspend fun <T> guarded(call: suspend () -> T): T? =
         try {
             call()
         } catch (e: CancellationException) {
             throw e
         } catch (_: IllegalStateException) {
             addError("The download engine has stopped, so nothing was changed.")
+            null
+        } catch (e: Exception) {
+            System.err.println("anydm: a command failed")
+            e.printStackTrace()
+            addError("The request failed: ${e.message ?: e::class.simpleName}.")
             null
         }
 
@@ -761,6 +811,7 @@ class AppModel(
             all = all.size,
             byGroup = StatusGroup.entries.associateWith { group -> statuses.count { it in group.statuses } },
             byCategory = all.mapNotNull { it.download.categoryId }.groupingBy { it }.eachCount(),
+            byProtocol = all.groupingBy { it.download.kind.protocol }.eachCount(),
         )
     }
 }
@@ -772,4 +823,5 @@ private const val MAX_CLIPBOARD_LINES = 50
 class MemoryAppPrefs(
     override var closeToTray: Boolean = true,
     override var startHidden: Boolean = false,
+    override var theme: ThemeChoice = ThemeChoice.SYSTEM,
 ) : AppPrefs

@@ -4,6 +4,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import dev.anydm.engine.os.HotkeyStatus
@@ -36,6 +37,19 @@ internal class OsScreenTest : PanelScreenTest(Section.SYSTEM) {
         rule.waitForIdle()
         assertEquals(false, prefs.closeToTray)
         assertEquals(true, prefs.startHidden)
+    }
+
+    @Test
+    fun `choosing a theme changes the preference at once`() {
+        show()
+        click("theme-dark")
+        rule.waitForIdle()
+        assertEquals(ThemeChoice.DARK, prefs.theme)
+        rule.onNodeWithTag("theme-dark").assertIsSelected()
+        click("theme-light")
+        rule.waitForIdle()
+        assertEquals(ThemeChoice.LIGHT, prefs.theme)
+        rule.onNodeWithTag("theme-light").assertIsSelected()
     }
 
     @Test

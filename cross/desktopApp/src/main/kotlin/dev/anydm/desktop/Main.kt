@@ -1,5 +1,7 @@
 package dev.anydm.desktop
 
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -29,6 +31,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
+
+private const val MIN_WINDOW_WIDTH = 900
+private const val MIN_WINDOW_HEIGHT = 640
 
 fun main(args: Array<String>) {
     if (args.firstOrNull() == SelfCheck.FLAG) exitProcess(selfCheck(args.getOrNull(1)))
@@ -93,6 +98,12 @@ fun main(args: Array<String>) {
             icon = painterResource("icon.png"),
             state = rememberWindowState(width = 1280.dp, height = 800.dp),
         ) {
+            // The layout needs room for the toolbar and a card: the window can't be dragged smaller.
+            val frame = this.window
+            DisposableEffect(frame) {
+                frame.minimumSize = java.awt.Dimension(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+                onDispose {}
+            }
             MenuBar {
                 Menu("File") {
                     Item("Add…", shortcut = KeyShortcut(Key.N, ctrl = !IsMac, meta = IsMac), onClick = { model.openAdd() })
@@ -113,7 +124,13 @@ fun main(args: Array<String>) {
                     }
                 }
             }
-            AnydmTheme { Shell(model) }
+            val dark =
+                when (shown.theme) {
+                    ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+                    ThemeChoice.LIGHT -> false
+                    ThemeChoice.DARK -> true
+                }
+            AnydmTheme(dark) { Shell(model) }
         }
     }
 }

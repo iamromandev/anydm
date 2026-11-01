@@ -8,6 +8,7 @@ import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
@@ -53,6 +54,7 @@ import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolStatus
 import dev.anydm.engine.tools.ToolUpdate
 import dev.anydm.engine.tools.YtDlpChannel
+import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -109,6 +111,28 @@ interface EngineSource {
     suspend fun resumeAll(): CommandResult
 
     suspend fun torrentDetail(id: DownloadId): TorrentDetailResult
+
+    /** Sets the torrent's file priorities in torrent order (0 skips a file, 4 is Normal). */
+    suspend fun setTorrentFiles(
+        id: DownloadId,
+        priorities: List<Int>,
+    ): CommandResult
+
+    /** Sets the torrent's own seed limits: Inherit uses the global default, Off never stops, At stops at the value. */
+    suspend fun setSeedRules(
+        id: DownloadId,
+        ratio: SeedRule<Double>,
+        minutes: SeedRule<Int>,
+    ): CommandResult
+
+    /** Rechecks the torrent's files against what is on disk. */
+    suspend fun recheckTorrent(id: DownloadId): TorrentActionResult
+
+    /** Announces to every tracker, or only to [url]. */
+    suspend fun reannounceTorrent(
+        id: DownloadId,
+        url: String?,
+    ): TorrentActionResult
 
     /** The kinds of download this engine can take; a part that couldn't be set up is missing. */
     val available: Set<DownloadKind>
@@ -352,6 +376,24 @@ fun Engine.asSource(
         override suspend fun resumeAll() = engine.resumeAll()
 
         override suspend fun torrentDetail(id: DownloadId) = engine.torrentDetail(id)
+
+        override suspend fun setTorrentFiles(
+            id: DownloadId,
+            priorities: List<Int>,
+        ) = engine.setTorrentFiles(id, priorities)
+
+        override suspend fun setSeedRules(
+            id: DownloadId,
+            ratio: SeedRule<Double>,
+            minutes: SeedRule<Int>,
+        ) = engine.setSeedRules(id, ratio, minutes)
+
+        override suspend fun recheckTorrent(id: DownloadId) = engine.recheckTorrent(id)
+
+        override suspend fun reannounceTorrent(
+            id: DownloadId,
+            url: String?,
+        ) = engine.reannounceTorrent(id, url)
 
         override suspend fun profiles() = engine.profiles()
 
