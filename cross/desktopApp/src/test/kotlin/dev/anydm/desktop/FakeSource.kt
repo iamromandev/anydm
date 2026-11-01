@@ -33,6 +33,7 @@ import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.net.AfterQueueState
+import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
@@ -486,7 +487,14 @@ internal class FakeSource(
     var scheduleList: List<ScheduleRule> = emptyList()
     private var nextRule = 1L
 
-    override suspend fun networkRules(): NetworkRules = rules
+    /** [networkRules] reads the rules, then waits for this before it returns them, so a test can hold a read open. */
+    var rulesGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+    override suspend fun networkRules(): NetworkRules {
+        val read = rules
+        rulesGate?.await()
+        return read
+    }
 
     override suspend fun setNetworkPolicy(
         network: String?,
@@ -501,6 +509,17 @@ internal class FakeSource(
                 else -> rules.copy(networks = rules.networks + (network to policy))
             }
         return done
+    }
+
+    /** What [allowanceUsage] returns; a test sets it. Not recorded as a call: the strip asks every few seconds. */
+    var usage: Map<String, AllowanceStatus> = emptyMap()
+
+    /** Thrown by [allowanceUsage] while set. */
+    var usageThrows: Exception? = null
+
+    override suspend fun allowanceUsage(): Map<String, AllowanceStatus> {
+        usageThrows?.let { throw it }
+        return usage
     }
 
     override suspend fun scheduleRules(): List<ScheduleRule> = scheduleList
@@ -643,6 +662,7 @@ internal fun snapshot(
     mirrors: List<Mirror> = emptyList(),
     files: List<FileSnapshot> = emptyList(),
     torrent: TorrentSummary? = null,
+    networkShare: Map<String, Long> = emptyMap(),
     saveFolder: String? = null,
     kind: DownloadKind = if (torrent != null) DownloadKind.TORRENT else DownloadKind.DIRECT,
 ): DownloadSnapshot =
@@ -672,6 +692,7 @@ internal fun snapshot(
         files = files,
         items = items,
         torrent = torrent,
+        networkShare = networkShare,
     )
 
 /** [FileActions] that only record what they were asked; [failure] is what each answers. */

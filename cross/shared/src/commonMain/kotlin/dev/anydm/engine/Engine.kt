@@ -51,6 +51,7 @@ import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.AfterQueueAction
 import dev.anydm.engine.net.AfterQueueKeeper
 import dev.anydm.engine.net.AfterQueueState
+import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.AwakeKeeper
 import dev.anydm.engine.net.Bonding
 import dev.anydm.engine.net.BondingState
@@ -622,8 +623,9 @@ class Engine(
                 val attempts = jobs.associate { it.id to store.downloads.attempts(it.id) }
                 val mirrors = jobs.associate { it.id to store.downloads.mirrors(it.id) }
                 val files = jobs.associate { it.id to filesOf(it.id) }
+                val shares = jobs.associate { it.id to traffic.downloadNetworkTraffic(it.id) }
                 withContext(publisher) {
-                    cache.load(jobs, attempts, mirrors, files)
+                    cache.load(jobs, attempts, mirrors, files, shares)
                     publish()
                     // The keepers read what is there now: an armed action waits for work to start and end, so a start
                     // never fires it.
@@ -1632,6 +1634,19 @@ class Engine(
         to: String,
     ): List<DayTraffic> = command { traffic.trafficByDay(from, to) }
 
+    /**
+     * Every network's usage against its allowance, in its own period (plexo-networks-ui): the networks with a policy of
+     * their own and the known ones (bonded, and the default route's) under the default policy. Counted as the rules
+     * count it (RuleKeeper.allowanceUsage), with the bytes not yet saved. A network with no allowance has no entry.
+     */
+    suspend fun allowanceUsage(): Map<String, AllowanceStatus> =
+        command {
+            val known =
+                bonding.state.value.networks
+                    .mapTo(mutableSetOf()) { it.info.key }
+            withContext(publisher) { keeper.allowanceUsage(known) }
+        }
+
     /** The transfer and file settings, categories and profiles as JSON (#608): no proxies, cookies or logins. */
     suspend fun exportSettings(): String =
         command { backupOf(store.settings.load(), store.categories.list(), store.profiles.list()).encode() }
@@ -2482,8 +2497,10 @@ class Engine(
         bonding.observe(
             samples.filter { it.network != null }.groupBy({ checkNotNull(it.network) }, { it.bytes }).mapValues { it.value.sum() },
         )
-        meter.second(now, identity.current(), samples)
-        takeLeftovers(now)
+        val network = identity.current()
+        meter.second(now, network, samples)
+        countShare(samples, network)
+        takeLeftovers(now, network)
         totalSamples.addLast(total)
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
         speedFlow.value = SpeedWindow(total, totalSamples.toList())
@@ -2543,7 +2560,10 @@ class Engine(
                 return
             }
         if (moved.isEmpty()) return
-        meter.bytes(clock.now(), identity.current(), moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) })
+        val samples = moved.map { TrafficMeter.Sample(it.id, DownloadKind.TORRENT, it.down, it.up) }
+        val network = identity.current()
+        meter.bytes(clock.now(), network, samples)
+        if (countShare(samples, network)) publish()
         checkRules(byBytes = true)
     }
 
@@ -2629,9 +2649,24 @@ class Engine(
         return (if (plain > 0 || sent > 0) listOf(TrafficMeter.Sample(id, kind, plain, sent)) else emptyList()) + bound
     }
 
-    private fun takeLeftovers(now: Instant) {
+    // The bytes the meter was just given, added to each job's network share (the meter's key); true when any changed.
+    private fun countShare(
+        samples: List<TrafficMeter.Sample>,
+        default: String,
+    ): Boolean {
+        var changed = false
+        for (sample in samples) changed = cache.share(sample.id, sample.network ?: default, sample.bytes) || changed
+        return changed
+    }
+
+    private fun takeLeftovers(
+        now: Instant,
+        network: String = identity.current(),
+    ) {
         val left = leftovers.getAndUpdate { emptyList() }
-        if (left.isNotEmpty()) meter.bytes(now, identity.current(), left)
+        if (left.isEmpty()) return
+        meter.bytes(now, network, left)
+        countShare(left, network)
     }
 
     /**

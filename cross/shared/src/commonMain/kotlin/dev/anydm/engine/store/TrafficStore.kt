@@ -63,6 +63,9 @@ interface TrafficStore {
     /** Every byte [id] received; 0 when none or it is gone. */
     suspend fun downloadTraffic(id: DownloadId): Long
 
+    /** The bytes [id] received on each network (keyed as in [DayTraffic.network]); empty when none or it is gone. */
+    suspend fun downloadNetworkTraffic(id: DownloadId): Map<String, Long>
+
     /** Every byte [id] sent; 0 when none or it is gone. */
     suspend fun downloadUpload(id: DownloadId): Long
 }

@@ -32,6 +32,12 @@ data class DownloadSnapshot(
     val items: ItemCounts? = null,
     /** A torrent in the session: its peers, rates and ratio (TOR-07); null for any other job and for a torrent that is not running or seeding. */
     val torrent: TorrentSummary? = null,
+    /**
+     * Bytes received on each network, keyed as the traffic history keys them (the bound network's key, else the default
+     * route's identity); live, and kept across restarts. Empty for a job that pre-dates the table, and partial for one
+     * resumed after it (only the bytes counted since). A collection's is its items' sum.
+     */
+    val networkShare: Map<String, Long> = emptyMap(),
 )
 
 /**

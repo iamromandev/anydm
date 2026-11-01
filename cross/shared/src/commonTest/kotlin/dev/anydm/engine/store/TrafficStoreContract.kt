@@ -103,6 +103,31 @@ abstract class TrafficStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun downloadNetworkBytesAccumulateAndGoWithTheirDownload() =
+        runTest {
+            val store = newStore()
+            val id = store.downloads.add(NewDownload(DownloadKind.DIRECT)).id
+            store.traffic.add(TrafficBatch(downloadNetworks = mapOf((id to "wifi") to 700L, (id to "usb") to 200L)), pruneBefore = 0)
+            store.traffic.add(TrafficBatch(downloadNetworks = mapOf((id to "usb") to 100L)), pruneBefore = 0)
+
+            store.traffic.downloadNetworkTraffic(id) shouldBe mapOf("wifi" to 700L, "usb" to 300L)
+
+            store.downloads.remove(id)
+
+            store.traffic.downloadNetworkTraffic(id) shouldBe emptyMap()
+        }
+
+    @Test
+    fun downloadNetworkBytesOfARemovedDownloadAreDropped() =
+        runTest {
+            val gone = DownloadId(999)
+            val traffic = newStore().traffic
+            traffic.add(TrafficBatch(downloadNetworks = mapOf((gone to "wifi") to 9L)), pruneBefore = 0)
+
+            traffic.downloadNetworkTraffic(gone) shouldBe emptyMap()
+        }
+
+    @Test
     fun uploadBytesAddToDaysAndDownloads() =
         runTest {
             val store = newStore()

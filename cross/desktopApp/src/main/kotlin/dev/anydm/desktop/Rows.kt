@@ -134,3 +134,70 @@ private fun comparator(
     // Equal values keep a fixed order, whichever way the list runs: by name, then by number.
     return primary.thenComparing(compareBy<DownloadSnapshot> { name(it) }.thenBy { it.download.id.value })
 }
+
+/**
+ * One network's part of a download. [percent] is a whole number and the parts of a [ShareView] sum to 100; a part that is
+ * really under 1% ([tiny]) may still carry a point of that sum, but is shown as `<1%` ([percentText]).
+ */
+data class SharePart(
+    val key: String,
+    val name: String,
+    val bytes: Long,
+    val percent: Int,
+    val tiny: Boolean = false,
+) {
+    val percentText: String get() = if (tiny) "<1%" else "$percent%"
+}
+
+/** The bytes a download received on each network, largest first. Only networks that carried bytes are listed. */
+data class ShareView(
+    val parts: List<SharePart> = emptyList(),
+) {
+    /** The card shows a share only when more than one network carried bytes. */
+    val multiple: Boolean get() = parts.size >= 2
+
+    /** `Wi-Fi 70% · USB 30%`. */
+    val label: String get() = parts.joinToString(" · ") { "${it.name} ${it.percentText}" }
+}
+
+/** The key the engine gives traffic it could not place on any network. */
+private const val UNKNOWN_NETWORK_KEY = "unknown"
+
+/**
+ * [share] (network key to bytes) as a [ShareView]; [names] says what each key is called, and an unknown key is shown as it is
+ * (the key `unknown` as "Unknown network"). Two networks with one name get their keys appended. Percentages use the largest
+ * remainder, so they sum to 100 and none is rounded past it.
+ */
+internal fun shareView(
+    share: Map<String, Long>,
+    names: Map<String, String>,
+): ShareView {
+    val counted = share.filterValues { it > 0 }
+    val total = counted.values.sum()
+    if (total <= 0) return ShareView()
+    val sorted = counted.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })
+    // Each part's exact share is bytes * 100 / total; the leftover points go to the largest fractions.
+    val floors = sorted.map { (it.value * 100 / total).toInt() }
+    val leftover = 100 - floors.sum()
+    val extra =
+        sorted.indices
+            .sortedWith(compareByDescending<Int> { sorted[it].value * 100 % total }.thenBy { it })
+            .take(leftover)
+            .toSet()
+    val shown =
+        sorted.map { e ->
+            names[e.key] ?: if (e.key == UNKNOWN_NETWORK_KEY) "Unknown network" else e.key
+        }
+    val repeated =
+        shown
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
+    return ShareView(
+        sorted.mapIndexed { i, e ->
+            val name = if (shown[i] in repeated) "${shown[i]} (${e.key})" else shown[i]
+            SharePart(e.key, name, e.value, floors[i] + if (i in extra) 1 else 0, tiny = e.value * 100 < total)
+        },
+    )
+}

@@ -26,6 +26,7 @@ import dev.anydm.engine.files.Profile
 import dev.anydm.engine.files.ProfileResult
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.net.AfterQueueState
+import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
@@ -233,6 +234,9 @@ interface EngineSource {
         network: String?,
         policy: NetworkPolicy?,
     ): CommandResult
+
+    /** Every network's usage against its allowance in its own period, by network key; a network with no allowance is missing. */
+    suspend fun allowanceUsage(): Map<String, AllowanceStatus>
 
     suspend fun scheduleRules(): List<ScheduleRule>
 
@@ -506,6 +510,8 @@ fun Engine.asSource(
             network: String?,
             policy: NetworkPolicy?,
         ) = engine.setNetworkPolicy(network, policy)
+
+        override suspend fun allowanceUsage() = engine.allowanceUsage()
 
         override suspend fun scheduleRules() = engine.scheduleRules()
 

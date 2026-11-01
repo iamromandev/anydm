@@ -24,9 +24,12 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.scan
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -211,6 +214,22 @@ class AppModel(
 
     /** The network, OS and tool sections of the settings screen (#609); each acts at once; only the tool folder field keeps a draft until Apply. */
     val panels: SettingsPanels by lazy { SettingsPanels(source, scope, io, window, linkHandlers) }
+
+    /** What is typed in the add-links input; kept here so it survives a visit to another screen, and cleared when it is sent. */
+    val linkDraft = MutableStateFlow("")
+
+    /** The networks strip above the downloads; made when the downloads view first shows it. */
+    val strip: NetworksStripModel by lazy { NetworksStripModel(source, scope, window) }
+
+    /**
+     * What each network is called, by key, for the per-download share; follows the engine's networks. Only grows, so an
+     * interface that went away keeps the name it had.
+     */
+    val networkNames: StateFlow<Map<String, String>> by lazy {
+        source.networks
+            .scan(emptyMap<String, String>()) { known, state -> known + state.networks.associate { it.info.key to it.info.name } }
+            .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+    }
 
     @Volatile
     private var created = false
@@ -824,4 +843,5 @@ class MemoryAppPrefs(
     override var closeToTray: Boolean = true,
     override var startHidden: Boolean = false,
     override var theme: ThemeChoice = ThemeChoice.SYSTEM,
+    override var stripCollapsed: Boolean = false,
 ) : AppPrefs

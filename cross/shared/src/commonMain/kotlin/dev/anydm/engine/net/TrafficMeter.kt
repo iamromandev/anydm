@@ -29,6 +29,7 @@ internal class TrafficMeter(
 
     private val days = mutableMapOf<Triple<String, String, DownloadKind>, Long>()
     private val downloads = mutableMapOf<DownloadId, Long>()
+    private val downloadNetworks = mutableMapOf<Pair<DownloadId, String>, Long>()
     private val daysUp = mutableMapOf<Triple<String, String, DownloadKind>, Long>()
     private val downloadsUp = mutableMapOf<DownloadId, Long>()
     private val speedDays = mutableMapOf<String, SpeedDelta>()
@@ -74,6 +75,7 @@ internal class TrafficMeter(
             if (sample.bytes > 0) {
                 days.mergeWith(Triple(day, sample.network ?: network, sample.kind), sample.bytes, Long::plus)
                 downloads.mergeWith(sample.id, sample.bytes, Long::plus)
+                downloadNetworks.mergeWith(sample.id to (sample.network ?: network), sample.bytes, Long::plus)
             }
             if (sample.bytesUp > 0) {
                 daysUp.mergeWith(Triple(day, sample.network ?: network, sample.kind), sample.bytesUp, Long::plus)
@@ -92,11 +94,20 @@ internal class TrafficMeter(
     /** What was counted since the last drain; the meter starts empty again. */
     fun drain(): TrafficBatch {
         val batch =
-            TrafficBatch(days.toMap(), downloads.toMap(), speedDays.toMap(), speedMinutes.toMap(), daysUp.toMap(), downloadsUp.toMap())
+            TrafficBatch(
+                days.toMap(),
+                downloads.toMap(),
+                speedDays.toMap(),
+                speedMinutes.toMap(),
+                daysUp.toMap(),
+                downloadsUp.toMap(),
+                downloadNetworks.toMap(),
+            )
         days.clear()
         downloads.clear()
         daysUp.clear()
         downloadsUp.clear()
+        downloadNetworks.clear()
         speedDays.clear()
         speedMinutes.clear()
         return batch
@@ -106,6 +117,7 @@ internal class TrafficMeter(
     fun restore(batch: TrafficBatch) {
         batch.days.forEach { (key, bytes) -> days.mergeWith(key, bytes, Long::plus) }
         batch.downloads.forEach { (id, bytes) -> downloads.mergeWith(id, bytes, Long::plus) }
+        batch.downloadNetworks.forEach { (key, bytes) -> downloadNetworks.mergeWith(key, bytes, Long::plus) }
         batch.daysUp.forEach { (key, bytes) -> daysUp.mergeWith(key, bytes, Long::plus) }
         batch.downloadsUp.forEach { (id, bytes) -> downloadsUp.mergeWith(id, bytes, Long::plus) }
         batch.speedDays.forEach { (day, speed) -> speedDays.mergeWith(day, speed, ::combined) }

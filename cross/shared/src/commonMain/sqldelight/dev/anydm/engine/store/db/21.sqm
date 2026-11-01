@@ -1,0 +1,7 @@
+-- Version 21 to 22 (plexo-networks-ui): the bytes each download received on each network.
+CREATE TABLE download_network_traffic (
+    download_id INTEGER NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    network TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (download_id, network)
+);

@@ -29,6 +29,7 @@ internal class SnapshotCache {
         var liveDone: List<Long>? = null
         var speed = 0L
         val samples = ArrayDeque<Long>()
+        val share = mutableMapOf<String, Long>()
     }
 
     private val entries = mutableMapOf<Long, Entry>()
@@ -39,12 +40,14 @@ internal class SnapshotCache {
         attempts: Map<DownloadId, List<Attempt>>,
         mirrors: Map<DownloadId, List<Mirror>>,
         files: Map<DownloadId, List<FileSnapshot>>,
+        shares: Map<DownloadId, Map<String, Long>> = emptyMap(),
     ) {
         for (job in jobs) {
             val entry = Entry(job)
             attempts[job.id].orEmpty().forEach { entry.attempts[it.id.value] = it }
             entry.mirrors = mirrors[job.id].orEmpty()
             entry.files = files[job.id].orEmpty()
+            entry.share += shares[job.id].orEmpty()
             entries[job.id.value] = entry
         }
     }
@@ -84,6 +87,18 @@ internal class SnapshotCache {
         total: Long?,
     ) {
         entries[id.value]?.live = downloaded to total
+    }
+
+    /** Bytes [id] received on [network]; true when the figure changed. A job the cache doesn't know adds nothing. */
+    fun share(
+        id: DownloadId,
+        network: String,
+        bytes: Long,
+    ): Boolean {
+        if (bytes <= 0) return false
+        val entry = entries[id.value] ?: return false
+        entry.share[network] = (entry.share[network] ?: 0L) + bytes
+        return true
     }
 
     /** One more one-second sample; the window keeps the last [SpeedWindow.SIZE]. */
@@ -155,6 +170,7 @@ internal class SnapshotCache {
                     downloaded = children.sumOf { it.downloaded },
                     total = if (children.isEmpty() || children.any { it.total == null }) null else children.sumOf { it.total!! },
                     items = itemCounts(children.map { it.download.status }),
+                    networkShare = children.fold(emptyMap()) { sum, child -> sum.plusBytes(child.networkShare) },
                 )
             }
         }
@@ -179,6 +195,10 @@ internal class SnapshotCache {
                 mirrors = entry.mirrors,
                 files = files,
                 torrent = entry.torrent,
+                networkShare = entry.share.toMap(),
             )
         }
 }
+
+private fun Map<String, Long>.plusBytes(other: Map<String, Long>): Map<String, Long> =
+    other.entries.fold(this) { sum, (network, bytes) -> sum + (network to (sum[network] ?: 0L) + bytes) }

@@ -34,6 +34,10 @@ internal class SqlTrafficStore(
                 queries.ensureDownload(id.value)
                 queries.addDownload(bytes = bytes, id = id.value)
             }
+            for ((key, bytes) in batch.downloadNetworks) {
+                queries.ensureDownloadNetwork(id = key.first.value, network = key.second)
+                queries.addDownloadNetwork(bytes = bytes, id = key.first.value, network = key.second)
+            }
             for ((id, bytes) in batch.downloadsUp) {
                 queries.ensureDownload(id.value)
                 queries.addDownloadUp(bytes = bytes, id = id.value)
@@ -77,6 +81,9 @@ internal class SqlTrafficStore(
 
     override suspend fun downloadTraffic(id: DownloadId): Long =
         withContext(io) { queries.downloadBytes(id.value).executeAsOneOrNull() ?: 0L }
+
+    override suspend fun downloadNetworkTraffic(id: DownloadId): Map<String, Long> =
+        withContext(io) { queries.downloadNetworks(id.value).executeAsList().associate { it.network to it.bytes } }
 
     override suspend fun downloadUpload(id: DownloadId): Long =
         withContext(io) { queries.downloadUpBytes(id.value).executeAsOneOrNull() ?: 0L }

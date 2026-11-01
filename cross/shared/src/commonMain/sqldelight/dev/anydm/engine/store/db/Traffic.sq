@@ -28,6 +28,14 @@ CREATE TABLE download_traffic (
     bytes_up INTEGER NOT NULL DEFAULT 0
 );
 
+-- Bytes each download received on each network (plexo-networks-ui); rows before this table have none.
+CREATE TABLE download_network_traffic (
+    download_id INTEGER NOT NULL REFERENCES download(id) ON DELETE CASCADE,
+    network TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (download_id, network)
+);
+
 -- Each add is a row made if missing, then the delta added to it.
 ensureDay:
 INSERT OR IGNORE INTO traffic_day(day, network, kind, bytes, bytes_up) VALUES (?, ?, ?, 0, 0);
@@ -61,6 +69,12 @@ UPDATE download_traffic SET bytes = bytes + :bytes WHERE download_id = :id;
 addDownloadUp:
 UPDATE download_traffic SET bytes_up = bytes_up + :bytes WHERE download_id = :id;
 
+ensureDownloadNetwork:
+INSERT OR IGNORE INTO download_network_traffic(download_id, network, bytes) SELECT :id, :network, 0 WHERE EXISTS (SELECT 1 FROM download WHERE id = :id);
+
+addDownloadNetwork:
+UPDATE download_network_traffic SET bytes = bytes + :bytes WHERE download_id = :id AND network = :network;
+
 pruneMinutes:
 DELETE FROM speed_minute WHERE minute < ?;
 
@@ -78,6 +92,9 @@ SELECT * FROM speed_minute WHERE minute >= ? ORDER BY minute;
 
 downloadBytes:
 SELECT bytes FROM download_traffic WHERE download_id = ?;
+
+downloadNetworks:
+SELECT network, bytes FROM download_network_traffic WHERE download_id = ? ORDER BY network;
 
 downloadUpBytes:
 SELECT bytes_up FROM download_traffic WHERE download_id = ?;

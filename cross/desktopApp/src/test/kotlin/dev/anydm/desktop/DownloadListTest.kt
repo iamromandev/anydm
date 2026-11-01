@@ -362,10 +362,11 @@ class DownloadListTest {
     fun `dragging the handle up makes the panel taller and down shorter`() {
         show(snapshot(1, DOWNLOADING), width = 900.dp)
         row(1).performClick()
-        dragHandle(-60f)
-        assertTrue(kotlin.math.abs((heightOf("detail") - 340.dp).value) < 4f, "got ${heightOf("detail")}")
+        // The add-links input above the list leaves the panel room for about 30 dp more at this window height.
+        dragHandle(-20f)
+        assertTrue(kotlin.math.abs((heightOf("detail") - 300.dp).value) < 4f, "got ${heightOf("detail")}")
         dragHandle(100f)
-        assertTrue(kotlin.math.abs((heightOf("detail") - 240.dp).value) < 4f, "got ${heightOf("detail")}")
+        assertTrue(kotlin.math.abs((heightOf("detail") - 200.dp).value) < 4f, "got ${heightOf("detail")}")
     }
 
     @Test

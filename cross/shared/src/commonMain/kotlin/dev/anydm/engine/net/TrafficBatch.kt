@@ -22,6 +22,8 @@ data class TrafficBatch(
     /** The same keys as [days] and [downloads], for the bytes sent (TOR-09). */
     val daysUp: Map<Triple<String, String, DownloadKind>, Long> = emptyMap(),
     val downloadsUp: Map<DownloadId, Long> = emptyMap(),
+    /** (download, network) to the bytes it received there; the network is keyed as in [days]. */
+    val downloadNetworks: Map<Pair<DownloadId, String>, Long> = emptyMap(),
 ) {
     /** Bytes received and sent on [network] on the local days [from]..[to] (`YYYY-MM-DD`, inclusive). */
     fun networkBytes(
@@ -37,7 +39,8 @@ data class TrafficBatch(
                 speedDays.isEmpty() &&
                 speedMinutes.isEmpty() &&
                 daysUp.isEmpty() &&
-                downloadsUp.isEmpty()
+                downloadsUp.isEmpty() &&
+                downloadNetworks.isEmpty()
 }
 
 /** The sum of both maps' entries for [network] on days [from]..[to]; days compare as `YYYY-MM-DD` text. */
