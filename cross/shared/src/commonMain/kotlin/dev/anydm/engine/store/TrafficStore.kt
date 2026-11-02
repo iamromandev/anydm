@@ -52,6 +52,13 @@ interface TrafficStore {
         to: String,
     ): Long
 
+    /** Forgets the bytes of [network] on the days [from]..[to] (`YYYY-MM-DD`, inclusive), all kinds, received and sent. */
+    suspend fun clearNetwork(
+        network: String,
+        from: String,
+        to: String,
+    )
+
     suspend fun speedDays(
         from: String,
         to: String,

@@ -4,82 +4,284 @@ import dev.anydm.engine.net.BindStatus
 import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
-import dev.anydm.engine.queue.CommandResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlin.test.AfterTest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-internal fun network(
-    key: String,
-    status: BindStatus = BindStatus.ISOLATED,
-    enabled: Boolean = false,
-    speed: Double? = null,
-    faulted: Boolean = false,
-    up: Boolean = true,
-) = BondedNetwork(NetworkInfo(key, "Network $key", up, listOf("10.0.0.1")), enabled, status, speed, faulted)
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class NetworksModelTest {
+    private fun network(
+        key: String,
+        name: String = key,
+        speed: Double? = null,
+        up: Boolean = true,
+    ) = BondedNetwork(NetworkInfo(key, name, up, emptyList()), true, BindStatus.ISOLATED, speed, false)
 
-class NetworksModelTest {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-    private val source = FakeSource()
-    private val model = NetworksModel(source, scope)
+    private class Setup(
+        val source: FakeSource,
+        val visuals: NetworkVisuals,
+        val model: NetworksModel,
+        val editor: NetworkEditor,
+        val limits: MutableList<String?>,
+    )
 
-    @AfterTest
-    fun close() = scope.cancel()
-
-    @Test
-    fun `a network switches on and off through the engine`() {
-        source.networks.value = BondingState(listOf(network("en0"), network("en1")))
-        model.enable("en0", true)
-        assertEquals(listOf("setNetworkEnabled en0 true"), source.calls)
-        assertTrue(
-            source.networks.value.networks
-                .first { it.info.key == "en0" }
-                .enabled,
-        )
-    }
-
-    @Test
-    fun `a refused switch says why`() {
-        source.results["setNetworkEnabled en0 true"] = CommandResult.Invalid("not a network name")
-        model.enable("en0", true)
-        assertEquals("not a network name", model.state.value.message)
-    }
+    private fun menu(block: suspend TestScope.(Setup) -> Unit) =
+        runTest(UnconfinedTestDispatcher()) {
+            val source = FakeSource()
+            source.networks.value =
+                BondingState(listOf(network("usb0", "USB Tethering", speed = 3_000_000.0), network("en0", "Wi-Fi")))
+            val visuals = NetworkVisuals(null)
+            val looks = NetworkLooksModel(source, visuals, backgroundScope)
+            val limits = mutableListOf<String?>()
+            val model = NetworksModel(source, looks.looks, backgroundScope) { limits += it }
+            block(Setup(source, visuals, model, NetworkEditor(visuals, looks.looks), limits))
+        }
 
     @Test
-    fun `a stopped engine is reported`() {
-        source.refuseAll = true
-        model.enable("en0", true)
-        assertEquals("The download engine has stopped, so nothing was changed.", model.state.value.message)
-    }
+    fun `each network is a row with its color, its OS name, its kind tag and its live speed or Idle`() =
+        menu { s ->
+            val rows = s.model.state.value.rows
+            assertEquals(listOf("en0", "usb0"), rows.map { it.key })
+            val wifi = rows[0]
+            assertEquals("Wi-Fi", wifi.name)
+            assertEquals("Wi-Fi", wifi.osName)
+            assertEquals("WIFI", wifi.kind.tag)
+            assertEquals("teal", wifi.colorId)
+            assertNull(wifi.speed)
+            val usb = rows[1]
+            assertEquals("USB", usb.kind.tag)
+            assertEquals("amber", usb.colorId)
+            assertEquals(3_000_000L, usb.speed)
+        }
 
     @Test
-    fun `each binding capability has words that say what it means`() {
-        assertTrue(bindingHelp(BindStatus.ISOLATED).contains("keeps"))
-        assertTrue(bindingHelp(BindStatus.BEST_EFFORT).contains("default route"))
-        assertTrue(bindingHelp(BindStatus.UNSUPPORTED).contains("can't"))
-        assertEquals("Not checked yet.", bindingHelp(BindStatus.UNKNOWN))
-        assertEquals("Best effort", bindingLabel(BindStatus.BEST_EFFORT))
-    }
+    fun `a network that carries nothing is Idle`() =
+        menu { s ->
+            s.source.networks.value = BondingState(listOf(network("en0", "Wi-Fi", speed = 0.0)))
+            assertNull(
+                s.model.state.value.rows
+                    .single()
+                    .speed,
+            )
+        }
 
     @Test
-    fun `the summary says whether downloads are bonded`() {
-        assertEquals("No networks found.", bondingSummary(BondingState(emptyList())))
-        assertTrue(bondingSummary(BondingState(listOf(network("en0", enabled = true)))).contains("two or more"))
-        val two = BondingState(listOf(network("en0", enabled = true), network("en1", enabled = true)))
-        assertEquals("Downloads are shared across 2 networks.", bondingSummary(two))
-    }
+    fun `a rename and a pick show in the rows`() =
+        menu { s ->
+            s.visuals.rename("usb0", "Pixel")
+            s.visuals.pick("usb0", "rose")
+            val usb =
+                s.model.state.value.rows
+                    .first { it.key == "usb0" }
+            assertEquals("Pixel", usb.name)
+            assertEquals("USB Tethering", usb.osName)
+            assertEquals("rose", usb.colorId)
+        }
 
     @Test
-    fun `a network that cannot be bound cannot be switched on`() {
-        assertFalse(canSwitch(network("tun0", BindStatus.UNSUPPORTED)))
-        assertTrue(canSwitch(network("en0", BindStatus.BEST_EFFORT)))
-        assertNull(model.state.value.message)
-    }
+    fun `a network that is down says so`() =
+        menu { s ->
+            s.source.networks.value = BondingState(listOf(network("en0", "Wi-Fi", up = false)))
+            assertFalse(
+                s.model.state.value.rows
+                    .single()
+                    .up,
+            )
+        }
+
+    @Test
+    fun `no network at all is no rows`() =
+        menu { s ->
+            s.source.networks.value = BondingState(emptyList())
+            assertTrue(
+                s.model.state.value.rows
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun `the menu opens, closes and toggles`() =
+        menu { s ->
+            assertFalse(s.model.state.value.open)
+            s.model.toggle()
+            assertTrue(s.model.state.value.open)
+            s.model.close()
+            assertFalse(s.model.state.value.open)
+            s.model.open()
+            s.model.open()
+            assertTrue(s.model.state.value.open)
+        }
+
+    @Test
+    fun `a row's chevron and the limits link ask for limits, and close the menu`() =
+        menu { s ->
+            s.model.open()
+            s.model.openLimits("usb0")
+            assertFalse(s.model.state.value.open)
+            s.model.open()
+            s.model.openLimits(null)
+            assertEquals(listOf<String?>("usb0", null), s.limits)
+        }
+
+    // The edit popover
+
+    @Test
+    fun `editing starts from the name and color the network has now`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            val edit = assertNotNull(s.editor.editing.value)
+            assertEquals("USB Tethering", edit.name)
+            assertEquals("amber", edit.colorId)
+            assertEquals("menu", edit.anchor)
+        }
+
+    @Test
+    fun `save renames and recolors, and the popover closes`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setName("  Pixel ")
+            s.editor.setColor("rose")
+            assertTrue(s.editor.save())
+            assertNull(s.editor.editing.value)
+            assertEquals(NetworkPref("Pixel", "rose"), s.visuals.prefs.value["usb0"])
+        }
+
+    @Test
+    fun `an empty name keeps the popover open with a reason and saves nothing`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setName("   ")
+            s.editor.setColor("rose")
+            assertFalse(s.editor.save())
+            assertNotNull(
+                s.editor.editing.value
+                    ?.error,
+            )
+            assertTrue(
+                s.visuals.prefs.value
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun `cancel throws the draft away`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setName("Pixel")
+            s.editor.cancel()
+            assertNull(s.editor.editing.value)
+            assertTrue(
+                s.visuals.prefs.value
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun `saving without a change writes nothing, and the color stays automatic`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            assertTrue(s.editor.save())
+            assertTrue(
+                s.visuals.prefs.value
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun `picking the swatch a network was automatically given pins it`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setColor("amber")
+            assertTrue(s.editor.save())
+            assertEquals(
+                "amber",
+                s.visuals.prefs.value["usb0"]
+                    ?.color,
+            )
+        }
+
+    @Test
+    fun `a color touched and put back on the shown one still pins it`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setColor("rose")
+            s.editor.setColor("amber")
+            assertTrue(s.editor.save())
+            assertEquals(
+                "amber",
+                s.visuals.prefs.value["usb0"]
+                    ?.color,
+            )
+        }
+
+    @Test
+    fun `renaming alone does not pin the color`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setName("Pixel")
+            assertTrue(s.editor.save())
+            assertNull(
+                s.visuals.prefs.value["usb0"]
+                    ?.color,
+            )
+        }
+
+    @Test
+    fun `the name field can't hold more than forty characters`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.setName("x".repeat(60))
+            assertEquals(
+                MAX_NETWORK_NAME,
+                s.editor.editing.value!!
+                    .name.length,
+            )
+        }
+
+    @Test
+    fun `a name that could not be written is kept for this run and said so, then the next save closes`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val source = FakeSource()
+            source.networks.value = BondingState(listOf(network("en0", "Wi-Fi")))
+            val dir =
+                java.nio.file.Files
+                    .createTempDirectory("anydm-editor")
+            val blocker = dir.resolve("blocker")
+            java.nio.file.Files
+                .writeString(blocker, "x")
+            val visuals = NetworkVisuals(blocker.resolve("network-visuals.json"))
+            val looks = NetworkLooksModel(source, visuals, backgroundScope)
+            val editor = NetworkEditor(visuals, looks.looks)
+            editor.start("en0", "menu", "Wi-Fi")
+            editor.setName("Home")
+            assertFalse(editor.save())
+            assertNotNull(editor.editing.value?.error)
+            assertEquals("Home", looks.looks.value.names["en0"])
+            assertTrue(editor.save())
+            assertNull(editor.editing.value)
+        }
+
+    @Test
+    fun `only one popover is open at a time`() =
+        menu { s ->
+            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("en0", "table", "Wi-Fi")
+            assertEquals(
+                "en0",
+                s.editor.editing.value!!
+                    .key,
+            )
+            assertEquals(
+                "table",
+                s.editor.editing.value!!
+                    .anchor,
+            )
+        }
 }

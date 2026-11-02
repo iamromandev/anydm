@@ -15,6 +15,8 @@ const SCHEMES = new Set([
 export interface BrowserCookie {
     name: string;
     value: string;
+    /** The cookie's SameSite setting as the browser reports it: "strict", "lax", "no_restriction" or "unspecified". */
+    sameSite?: string;
 }
 
 /** What is known about a link when it is added: everything but the token. */

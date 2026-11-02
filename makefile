@@ -121,13 +121,13 @@ ui-format: # Format the UI and browser extension sources
 cross-check: # Lint + test + compile the cross/ client
 	cd $(CROSS) && ./gradlew check
 
-cross-test: # Run the cross/ shared tests
-	cd $(CROSS) && ./gradlew :shared:allTests
+cross-test: # Run the cross/ shared tests and the desktop app tests
+	cd $(CROSS) && ./gradlew :shared:allTests :desktopApp:test
 
-cross-run: # Open the desktop app
-	cd $(CROSS) && ./gradlew :desktopApp:run
+cross-run: # Open the desktop app; CROSS_HOME=<folder> keeps its data out of your home folder (-Panydm.userHome)
+	cd $(CROSS) && ./gradlew :desktopApp:run$(if $(CROSS_HOME), -Panydm.userHome=$(CROSS_HOME))
 
-cross-package: # Build a dmg / msi / deb for this OS
+cross-package: # Build the desktop app's installer (dmg / msi / deb) for this OS
 	cd $(CROSS) && ./gradlew :desktopApp:packageDistributionForCurrentOS
 
 cross-smoke: # Build the app image and start it with --self-check (engine, local download, torrent native)

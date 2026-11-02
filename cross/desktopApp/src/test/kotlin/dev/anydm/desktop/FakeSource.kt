@@ -1,6 +1,5 @@
 package dev.anydm.desktop
 
-import dev.anydm.engine.AddPlaylistResult
 import dev.anydm.engine.AddTorrentResult
 import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.EngineEvent
@@ -8,7 +7,6 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.FileSnapshot
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
-import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.CategoryId
@@ -18,72 +16,74 @@ import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.ItemCounts
-import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.PauseReason
-import dev.anydm.engine.core.ProfileId
-import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.ScheduleRuleId
-import dev.anydm.engine.files.Category
-import dev.anydm.engine.files.CategoryResult
-import dev.anydm.engine.files.NewCategory
-import dev.anydm.engine.files.NewProfile
-import dev.anydm.engine.files.Profile
-import dev.anydm.engine.files.ProfileResult
-import dev.anydm.engine.ftp.SshKeyLogin
-import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
-import dev.anydm.engine.net.NewProxy
 import dev.anydm.engine.net.NewScheduleRule
-import dev.anydm.engine.net.PasswordChange
-import dev.anydm.engine.net.ProxyChoice
-import dev.anydm.engine.net.ProxyCommandResult
-import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ScheduleRule
-import dev.anydm.engine.os.ClipboardLink
-import dev.anydm.engine.os.HotkeyStatus
+import dev.anydm.engine.os.BridgePairing
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
-import dev.anydm.engine.os.OsSettings
+import dev.anydm.engine.os.PairedBrowser
+import dev.anydm.engine.os.PairedBrowsers
+import dev.anydm.engine.os.PairingState
+import dev.anydm.engine.os.RevokeResult
+import dev.anydm.engine.platform.Clipboard
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.DayTraffic
-import dev.anydm.engine.store.HistoryEntry
-import dev.anydm.engine.store.ImportResult
 import dev.anydm.engine.store.NewDownload
-import dev.anydm.engine.store.ProxyRemoval
-import dev.anydm.engine.store.RuntimeSettings
 import dev.anydm.engine.store.TransferSettings
-import dev.anydm.engine.tools.Tool
-import dev.anydm.engine.tools.ToolStatus
-import dev.anydm.engine.tools.ToolUpdate
-import dev.anydm.engine.tools.YtDlpChannel
-import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Instant
 
 /**
  * An [EngineSource] the tests drive by hand. [calls] records each command as text ("pause 3", "remove 2 KEEP"); [results]
  * answers one by that text, [Done] otherwise; [refuseAll] makes every command throw as a stopped engine does.
  */
 internal class FakeSource(
-    var categoryList: List<Category> = emptyList(),
     var startError: Throwable? = null,
 ) : EngineSource {
     override val state = MutableStateFlow<EngineState>(EngineState.NotStarted)
     override val downloads = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
     override val totalSpeed = MutableStateFlow(SpeedWindow.Empty)
     override val events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
+    override var available: Set<DownloadKind> = setOf(DownloadKind.DIRECT, DownloadKind.SITE, DownloadKind.TORRENT, DownloadKind.FTP)
+    override val networks = MutableStateFlow(BondingState(emptyList()))
+    var clipboardText: String? = null
+
+    /** Counted down once the clipboard has been read: a test waits on it before asserting that a read changed nothing. */
+    val clipboardRead = java.util.concurrent.CountDownLatch(1)
+    override val clipboard =
+        Clipboard {
+            clipboardText.also { clipboardRead.countDown() }
+        }
+
+    /** What [freeSpace] answers per folder; null for a folder with no entry. */
+    val free = mutableMapOf<String, Long>()
+
+    override fun freeSpace(folder: String): Long? = free[folder]
+
     var started = 0
     var stopped = 0
     val calls = mutableListOf<String>()
+
+    /** The commands that ran to their answer (past the [gate]). */
+    val finished = mutableListOf<String>()
     val results = mutableMapOf<String, CommandResult>()
     var refuseAll = false
     var torrent: TorrentDetailResult = TorrentDetailResult.NotInSession
@@ -91,31 +91,21 @@ internal class FakeSource(
     /** What [torrentDetail] answers for a job that has its own entry, instead of [torrent]. */
     val torrentById = mutableMapOf<Long, TorrentDetailResult>()
 
-    /** What [recheckTorrent] answers. */
-    var recheckAction: TorrentActionResult = TorrentActionResult.Done
-
-    /** What [reannounceTorrent] answers. */
-    var reannounceAction: TorrentActionResult = TorrentActionResult.Done
-
-    /** Thrown by the torrent commands (files, seed rules, recheck, reannounce) once set. */
-    var torrentThrows: Throwable? = null
-
     /** Thrown by the plain commands (pause, resume, ...) once set. */
     var commandThrows: Throwable? = null
 
     /** Thrown by [torrentDetail] once set: a poll that fails. */
     var detailThrows: Throwable? = null
 
-    /** The next [setSeedRules] waits for it (once) after it is recorded: a save still in flight. */
-    var seedGate: CompletableDeferred<Unit>? = null
-
     /** While set, every command waits for it after it is recorded: a command still in flight. */
     var gate: CompletableDeferred<Unit>? = null
 
-    override suspend fun categories(): List<Category> = categoryList
+    /** While set, [start] waits for it: an engine still starting. */
+    var startGate: CompletableDeferred<Unit>? = null
 
     override suspend fun start() {
         started++
+        startGate?.await()
         startError?.let { throw it }
         state.value = EngineState.Running
     }
@@ -130,13 +120,11 @@ internal class FakeSource(
         commandThrows?.let { throw it }
         synchronized(calls) { calls += text }
         gate?.await()
+        synchronized(calls) { finished += text }
         return results[text] ?: CommandResult.Done(null)
     }
 
-    override suspend fun pause(id: DownloadId): CommandResult {
-        pauseThrows?.let { throw it }
-        return call("pause ${id.value}")
-    }
+    override suspend fun pause(id: DownloadId) = call("pause ${id.value}")
 
     override suspend fun resume(id: DownloadId) = call("resume ${id.value}")
 
@@ -152,18 +140,11 @@ internal class FakeSource(
         allowDuplicate: Boolean,
     ) = call(if (allowDuplicate) "retry ${id.value} anyway" else "retry ${id.value}")
 
-    override suspend fun reprioritize(
-        id: DownloadId,
-        priority: Int,
-    ) = call("priority ${id.value} $priority")
-
     override suspend fun relink(
         id: DownloadId,
         mirrorId: MirrorId,
         url: String,
     ) = call("relink ${id.value} ${mirrorId.value} $url")
-
-    override suspend fun stopSeeding(id: DownloadId) = call("stopSeeding ${id.value}")
 
     override suspend fun pauseAll() = call("pauseAll")
 
@@ -178,42 +159,7 @@ internal class FakeSource(
     override suspend fun setTorrentFiles(
         id: DownloadId,
         priorities: List<Int>,
-    ): CommandResult {
-        torrentThrows?.let { throw it }
-        return call("torrentFiles ${id.value} $priorities")
-    }
-
-    override suspend fun setSeedRules(
-        id: DownloadId,
-        ratio: SeedRule<Double>,
-        minutes: SeedRule<Int>,
-    ): CommandResult {
-        torrentThrows?.let { throw it }
-        val text = "seedRules ${id.value} $ratio $minutes"
-        val held = seedGate?.also { seedGate = null }
-        if (held == null) return call(text)
-        synchronized(calls) { calls += text }
-        held.await()
-        return results[text] ?: CommandResult.Done(null)
-    }
-
-    override suspend fun recheckTorrent(id: DownloadId): TorrentActionResult {
-        torrentThrows?.let { throw it }
-        call("recheck ${id.value}")
-        return recheckAction
-    }
-
-    override suspend fun reannounceTorrent(
-        id: DownloadId,
-        url: String?,
-    ): TorrentActionResult {
-        torrentThrows?.let { throw it }
-        call("reannounce ${id.value} ${url ?: "all"}")
-        return reannounceAction
-    }
-
-    override var available: Set<DownloadKind> = setOf(DownloadKind.DIRECT, DownloadKind.SITE, DownloadKind.TORRENT, DownloadKind.FTP)
-    var profileList: List<Profile> = emptyList()
+    ) = call("torrentFiles ${id.value} $priorities")
 
     /** What [probeLink] answers per link; any other web link probes as a new file named after its last segment. */
     val probes = mutableMapOf<String, LinkProbeResult>()
@@ -221,13 +167,10 @@ internal class FakeSource(
     val inspects = mutableMapOf<String, InspectResult>()
     val addResults = mutableMapOf<String, CommandResult>()
     var torrentResult: AddTorrentResult? = null
-    var playlistResult: AddPlaylistResult? = null
 
     /** Every add as the engine got it. */
     val added = mutableListOf<NewDownload>()
     val torrentsAdded = mutableListOf<TorrentAdd>()
-    val playlistsAdded = mutableListOf<Triple<String, ItemSelection, NewDownload>>()
-    val keyLogins = mutableListOf<Pair<String, SshKeyLogin>>()
 
     data class TorrentAdd(
         val source: String,
@@ -237,21 +180,16 @@ internal class FakeSource(
         val info: TorrentInfo? = null,
     )
 
+    /** [probeLink] goes on waiting for the [gate] when its caller is cancelled, as an engine call that can't be interrupted does. */
+    var probeIgnoresCancel = false
+
     /** Thrown by every add, as a store error would be. */
     var addThrows: Exception? = null
-
-    /** What saving a key login answers: false when it only reached memory. */
-    var keySaved = true
-
-    /** Thrown by pause, as an engine stopping right then would. */
-    var pauseThrows: Exception? = null
-
-    override suspend fun profiles(): List<Profile> = profileList
 
     override suspend fun probeLink(raw: String): LinkProbeResult {
         if (refuseAll) throw IllegalStateException("the engine has stopped")
         synchronized(probed) { probed += raw }
-        gate?.await()
+        if (probeIgnoresCancel) withContext(NonCancellable) { gate?.await() } else gate?.await()
         return probes[raw]
             ?: LinkIntake.parse(raw)?.let { LinkProbeResult.Probed(it.link, it.kind, it.link.substringAfterLast('/'), 1000, true, false) }
             ?: LinkProbeResult.NotALink
@@ -278,33 +216,117 @@ internal class FakeSource(
         return torrentResult ?: AddTorrentResult.Added(Download(DownloadId(200), DownloadKind.TORRENT))
     }
 
-    override suspend fun addPlaylist(
-        url: String,
-        selection: ItemSelection,
-        template: NewDownload,
-    ): AddPlaylistResult {
-        call("addPlaylist $url")
-        playlistsAdded += Triple(url, selection, template)
-        return playlistResult ?: AddPlaylistResult.Added(Download(DownloadId(300), DownloadKind.SITE), emptyList(), 0, 0)
+    // Pairing, scripted: the codes handed out in turn, what the newest one is in, and the browsers paired.
+
+    /** The codes [startPairing] hands out in turn (then [DEFAULT_CODE]). */
+    val pairCodes = ArrayDeque<String>()
+    var pairLife: Duration = BridgePairing.CODE_LIFE
+
+    /** What "now" is when [startPairing] works out when a code ends; a test points it at its fake clock. */
+    var pairNow: () -> Instant = { Clock.System.now() }
+
+    /** What the newest code is in; every earlier one is EXPIRED, as the engine replaces a code with the next. */
+    var pairState: PairingState = PairingState.WAITING
+
+    /** Thrown by [startPairing] while set. */
+    var pairingThrows: Exception? = null
+
+    /** Run at the start of each code's `state()` (a test makes something happen at that moment). */
+    @Volatile
+    var onState: () -> Unit = {}
+
+    /** The codes a cancel named, in order; null for a cancel that named none. */
+    val cancelledWith = java.util.Collections.synchronizedList(mutableListOf<PairingCode?>())
+
+    /** Thrown by a code's `state()` while set. */
+    var pairStateThrows: Exception? = null
+
+    /** While set, [startPairing] waits for it. */
+    var pairGate: CompletableDeferred<Unit>? = null
+
+    /** Makes the wait on [pairGate] immune to cancellation: the engine's own work, once begun, runs to its end. */
+    var pairGateHolds = false
+
+    /** While set, [revokeBrowser] waits for it before it changes anything. */
+    var revokeGate: CompletableDeferred<Unit>? = null
+    var pairedList: PairedBrowsers = PairedBrowsers.Listed(emptyList())
+    var pairedThrows: Exception? = null
+    var revokeResult: RevokeResult = RevokeResult.REVOKED
+
+    /** Held up by the browser list: [pairedBrowsers] waits for it once set. */
+    var pairedGate: CompletableDeferred<Unit>? = null
+
+    /** The names of the threads the pairing calls ran on. */
+    val pairThreads = java.util.Collections.synchronizedList(mutableListOf<String>())
+    val pairCodesIssued = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private val stateAsks =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+
+    /** The code [startPairing] handed out last. */
+    @Volatile
+    var lastIssued: PairingCode? = null
+
+    /** Counted down the first time a code's state is answered: a test on another thread waits on it. */
+    val stateSeen = java.util.concurrent.CountDownLatch(1)
+
+    // The codes issued so far are all ended by a cancel (a later one is a new code).
+    private val cancelledUpTo =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+
+    /** How many times a code's state was asked for. */
+    val stateAsked: Int get() = stateAsks.get()
+
+    override suspend fun startPairing(): PairingCode {
+        synchronized(calls) { calls += "startPairing" }
+        pairThreads += Thread.currentThread().name
+        pairingThrows?.let { throw it }
+        pairGate?.let { gate -> if (pairGateHolds) withContext(NonCancellable) { gate.await() } else gate.await() }
+        val grouped = pairCodes.removeFirstOrNull() ?: DEFAULT_CODE
+        val number = synchronized(pairCodesIssued) { pairCodesIssued.also { it += grouped }.size }
+        return PairingCode(grouped, pairNow() + pairLife) {
+            onState()
+            stateAsks.incrementAndGet()
+            pairThreads += Thread.currentThread().name
+            stateSeen.countDown()
+            pairStateThrows?.let { throw it }
+            if (pairCodesIssued.size == number && number > cancelledUpTo.get()) pairState else PairingState.EXPIRED
+        }.also { lastIssued = it }
     }
 
-    override suspend fun saveKeyLogin(
-        url: String,
-        login: SshKeyLogin,
-    ): Boolean {
-        call("saveKeyLogin $url")
-        keyLogins += url to login
-        return keySaved
+    override suspend fun cancelPairing(only: PairingCode?) {
+        synchronized(calls) { calls += "cancelPairing" }
+        pairThreads += Thread.currentThread().name
+        cancelledWith += only
+        // As the engine: a code named is ended only while it is the newest.
+        if (only != null && only !== lastIssued) return
+        cancelledUpTo.set(pairCodesIssued.size)
     }
 
-    // Settings (#608), kept in memory as the engine would keep them.
+    override suspend fun pairedBrowsers(): PairedBrowsers {
+        synchronized(calls) { calls += "pairedBrowsers" }
+        pairThreads += Thread.currentThread().name
+        pairedThrows?.let { throw it }
+        pairedGate?.await()
+        return pairedList
+    }
+
+    override suspend fun revokeBrowser(id: String): RevokeResult {
+        synchronized(calls) { calls += "revokeBrowser $id" }
+        pairThreads += Thread.currentThread().name
+        revokeGate?.await()
+        val list = pairedList
+        if (revokeResult == RevokeResult.REVOKED && list is PairedBrowsers.Listed) {
+            pairedList = PairedBrowsers.Listed(list.browsers.filter { it.id != id })
+        }
+        return revokeResult
+    }
+
+    override val transferLock = Mutex()
+
+    // Transfer settings, kept in memory as the engine would keep them.
     var transfer = TransferSettings()
-    var defaultProfileId: ProfileId? = null
-    var historyList: List<HistoryEntry> = emptyList()
-    var trafficList: List<DayTraffic> = emptyList()
-    var exported = "{}"
-    val imported = mutableListOf<String>()
-    var importResult: ImportResult = ImportResult.Applied
 
     /** Answers apply and reset instead of Done, keeping what was there. */
     var settingsResult: CommandResult? = null
@@ -329,172 +351,11 @@ internal class FakeSource(
         return CommandResult.Done(null)
     }
 
-    private var nextId = 1000L
-
-    private fun nameTaken(
-        name: String,
-        except: CategoryId?,
-    ) = categoryList.any { it.id != except && it.name.equals(name.trim(), ignoreCase = true) }
-
-    override suspend fun addCategory(new: NewCategory): CategoryResult {
-        call("addCategory ${new.name}")
-        if (nameTaken(new.name, null)) return CategoryResult.NameTaken
-        val category = Category(CategoryId(nextId++), new.name, new.folder, new.template, new.rules, new.priority)
-        categoryList = (categoryList + category).sortedWith(compareBy({ it.priority }, { it.id.value }))
-        return CategoryResult.Saved(category)
-    }
-
-    override suspend fun updateCategory(category: Category): CategoryResult {
-        call("updateCategory ${category.name}")
-        if (categoryList.none { it.id == category.id }) return CategoryResult.NotFound
-        if (nameTaken(category.name, category.id)) return CategoryResult.NameTaken
-        categoryList =
-            categoryList.map { if (it.id == category.id) category else it }.sortedWith(compareBy({ it.priority }, { it.id.value }))
-        return CategoryResult.Saved(category)
-    }
-
-    override suspend fun deleteCategory(id: CategoryId) {
-        call("deleteCategory ${id.value}")
-        categoryList = categoryList.filter { it.id != id }
-    }
-
-    override suspend fun addProfile(new: NewProfile): ProfileResult {
-        call("addProfile ${new.name}")
-        if (profileList.any { it.name == new.name }) return ProfileResult.NameTaken
-        val profile =
-            Profile(ProfileId(nextId++), new.name, new.format, new.categoryId, new.saveFolder, new.nameTemplate, new.speedLimit, new.proxy)
-        profileList = profileList + profile
-        return ProfileResult.Saved(profile)
-    }
-
-    override suspend fun updateProfile(profile: Profile): ProfileResult {
-        call("updateProfile ${profile.name}")
-        if (profileList.none { it.id == profile.id }) return ProfileResult.NotFound
-        if (profileList.any { it.id != profile.id && it.name == profile.name }) return ProfileResult.NameTaken
-        profileList = profileList.map { if (it.id == profile.id) profile else it }
-        return ProfileResult.Saved(profile)
-    }
-
-    override suspend fun deleteProfile(id: ProfileId) {
-        call("deleteProfile ${id.value}")
-        profileList = profileList.filter { it.id != id }
-        if (defaultProfileId == id) defaultProfileId = null
-    }
-
-    override suspend fun defaultProfile(): ProfileId? = defaultProfileId
-
-    override suspend fun setDefaultProfile(id: ProfileId?): Boolean {
-        call("setDefaultProfile ${id?.value}")
-        if (id != null && profileList.none { it.id == id }) return false
-        defaultProfileId = id
-        return true
-    }
-
-    override suspend fun history(limit: Int): List<HistoryEntry> = historyList.take(limit)
-
-    override suspend fun clearHistory() {
-        call("clearHistory")
-        historyList = emptyList()
-    }
-
-    var trafficAsked: Pair<String, String>? = null
-
-    override suspend fun trafficByDay(
-        from: String,
-        to: String,
-    ): List<DayTraffic> {
-        trafficAsked = from to to
-        return trafficList
-    }
-
-    override suspend fun exportSettings(): String {
-        call("exportSettings")
-        return exported
-    }
-
-    override suspend fun importSettings(text: String): ImportResult {
-        call("importSettings")
-        imported += text
-        return importResult
-    }
-
-    // --- network, OS and tool settings (#609)
-
-    var proxyList: List<ProxyEntry> = emptyList()
-    var proxyChosen: ProxyChoice = ProxyChoice.System
-    var proxyUse: ProxyRemoval = ProxyRemoval.Removed
-
-    /** Answers add and update instead of saving. */
-    var proxyResult: ProxyCommandResult? = null
-    val passwords = mutableMapOf<ProxyId, String>()
-    private var nextProxy = 1L
-
-    override suspend fun proxies(): List<ProxyEntry> = proxyList
-
-    override suspend fun addProxy(
-        new: NewProxy,
-        password: String?,
-    ): ProxyCommandResult {
-        call("addProxy ${new.name}")
-        proxyResult?.let { return it }
-        if (proxyList.any { it.name == new.name }) return ProxyCommandResult.NameTaken
-        val entry = ProxyEntry(ProxyId(nextProxy++), new.name, new.type, new.host, new.port, new.username, new.bypass)
-        proxyList = proxyList + entry
-        if (password != null) passwords[entry.id] = password
-        return ProxyCommandResult.Saved(entry)
-    }
-
-    override suspend fun updateProxy(
-        proxy: ProxyEntry,
-        password: PasswordChange,
-    ): ProxyCommandResult {
-        call("updateProxy ${proxy.id.value}")
-        proxyResult?.let { return it }
-        if (proxyList.none { it.id == proxy.id }) return ProxyCommandResult.NotFound
-        if (proxyList.any { it.name == proxy.name && it.id != proxy.id }) return ProxyCommandResult.NameTaken
-        proxyList = proxyList.map { if (it.id == proxy.id) proxy else it }
-        when (password) {
-            PasswordChange.Keep -> Unit
-            PasswordChange.Clear -> passwords.remove(proxy.id)
-            is PasswordChange.Set -> passwords[proxy.id] = password.password
-        }
-        return ProxyCommandResult.Saved(proxy)
-    }
-
-    override suspend fun removeProxy(id: ProxyId): ProxyRemoval {
-        call("removeProxy ${id.value}")
-        if (proxyUse == ProxyRemoval.Removed) {
-            proxyList = proxyList.filter { it.id != id }
-            passwords.remove(id)
-        }
-        return proxyUse
-    }
-
-    override suspend fun proxyChoice(): ProxyChoice = proxyChosen
-
-    override suspend fun setProxyChoice(choice: ProxyChoice): CommandResult {
-        val done = call("setProxyChoice $choice")
-        if (done is CommandResult.Done) proxyChosen = choice
-        return done
-    }
-
-    override suspend fun setDownloadProxy(
-        id: DownloadId,
-        choice: ProxyChoice,
-    ) = call("setDownloadProxy ${id.value} $choice")
-
     var rules = NetworkRules()
     var scheduleList: List<ScheduleRule> = emptyList()
     private var nextRule = 1L
 
-    /** [networkRules] reads the rules, then waits for this before it returns them, so a test can hold a read open. */
-    var rulesGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
-
-    override suspend fun networkRules(): NetworkRules {
-        val read = rules
-        rulesGate?.await()
-        return read
-    }
+    override suspend fun networkRules(): NetworkRules = rules
 
     override suspend fun setNetworkPolicy(
         network: String?,
@@ -511,7 +372,7 @@ internal class FakeSource(
         return done
     }
 
-    /** What [allowanceUsage] returns; a test sets it. Not recorded as a call: the strip asks every few seconds. */
+    /** What [allowanceUsage] returns; a test sets it. Not recorded as a call: the UI asks every few seconds. */
     var usage: Map<String, AllowanceStatus> = emptyMap()
 
     /** Thrown by [allowanceUsage] while set. */
@@ -522,12 +383,45 @@ internal class FakeSource(
         return usage
     }
 
+    /** What [trafficByDay] returns (every day, whatever the range); a test sets it. */
+    var traffic: List<DayTraffic> = emptyList()
+
+    override suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ): List<DayTraffic> {
+        if (refuseAll) throw IllegalStateException("the engine has stopped")
+        return traffic.filter { it.day in from..to }
+    }
+
+    override suspend fun resetAllowanceUsage(network: String): CommandResult {
+        val done = call("resetAllowanceUsage $network")
+        if (done !is CommandResult.Done) return done
+        // As the engine: a network with no allowance has no usage to start over.
+        if (rules.policyFor(network).allowance == null) return CommandResult.Invalid("network has no data limit: $network")
+        usage = usage.mapValues { (key, it) -> if (key == network) it.copy(used = 0, over = false) else it }
+        return done
+    }
+
     override suspend fun scheduleRules(): List<ScheduleRule> = scheduleList
+
+    /** The number of [addScheduleRule] calls (1 is the first) that throw `IOException("disk full")`; null for none. */
+    var addRuleFailsAt: Int? = null
+    private var addRuleCalls = 0
+
+    /** The number of the [addScheduleRule] call that stores its rule and then throws (an answer lost on the way back); null for none. */
+    var addRuleFailsAfterStoringAt: Int? = null
+
+    /** Ids of rules whose [removeScheduleRule] throws `IOException("disk locked")` and leaves the rule in place. */
+    var removeRuleFails: Set<Long> = emptySet()
 
     override suspend fun addScheduleRule(new: NewScheduleRule): ScheduleRule {
         call("addScheduleRule")
+        val number = ++addRuleCalls
+        if (number == addRuleFailsAt) throw java.io.IOException("disk full")
         return ScheduleRule(ScheduleRuleId(nextRule++), new.days, new.startMinute, new.endMinute, new.action).also {
             scheduleList = scheduleList + it
+            if (number == addRuleFailsAfterStoringAt) throw java.io.IOException("answer lost")
         }
     }
 
@@ -540,12 +434,11 @@ internal class FakeSource(
 
     override suspend fun removeScheduleRule(id: ScheduleRuleId): Boolean {
         call("removeScheduleRule ${id.value}")
+        if (id.value in removeRuleFails) throw java.io.IOException("disk locked")
         val there = scheduleList.any { it.id == id }
         scheduleList = scheduleList.filter { it.id != id }
         return there
     }
-
-    override val networks = MutableStateFlow(BondingState(emptyList()))
 
     override suspend fun setNetworkEnabled(
         key: String,
@@ -556,92 +449,16 @@ internal class FakeSource(
             BondingState(networks.value.networks.map { if (it.info.key == key) it.copy(enabled = enabled) else it })
         return done
     }
-
-    override val afterQueue = MutableStateFlow(AfterQueueState.Idle)
-    override val keepAwake = MutableStateFlow(true)
-    override val bridge = MutableStateFlow<BridgeStatus>(BridgeStatus.Off)
-    override val clipboardLinks = MutableSharedFlow<ClipboardLink>(extraBufferCapacity = 16)
-    override val hotkeyPresses = MutableSharedFlow<String>(extraBufferCapacity = 16)
-    override val osSettings = MutableStateFlow(OsSettings())
-    override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
-
-    override suspend fun setClipboardWatch(on: Boolean): CommandResult {
-        val done = call("setClipboardWatch $on")
-        osSettings.value = osSettings.value.copy(clipboardWatch = on)
-        return done
-    }
-
-    override suspend fun setGlobalHotkey(on: Boolean): CommandResult {
-        val done = call("setGlobalHotkey $on")
-        osSettings.value = osSettings.value.copy(globalHotkey = on)
-        return done
-    }
-
-    var runtime = RuntimeSettings()
-
-    override suspend fun runtimeSettings(): RuntimeSettings = runtime
-
-    override suspend fun setNotifications(on: Boolean): CommandResult {
-        val done = call("setNotifications $on")
-        runtime = runtime.copy(notifications = on)
-        return done
-    }
-
-    override suspend fun setBridgeOrigins(origins: Set<String>): CommandResult {
-        val done = call("setBridgeOrigins ${origins.sorted().joinToString(",")}")
-        if (done is CommandResult.Done) runtime = runtime.copy(bridgeOrigins = origins)
-        return done
-    }
-
-    override suspend fun setDebugLogging(on: Boolean): CommandResult {
-        val done = call("setDebugLogging $on")
-        runtime = runtime.copy(debugLogging = on)
-        return done
-    }
-
-    override suspend fun setYtDlpChannel(channel: YtDlpChannel): CommandResult {
-        val done = call("setYtDlpChannel $channel")
-        runtime = runtime.copy(ytDlpChannel = channel)
-        return done
-    }
-
-    override suspend fun setSystemTools(on: Boolean): CommandResult {
-        val done = call("setSystemTools $on")
-        runtime = runtime.copy(systemTools = on)
-        return done
-    }
-
-    override suspend fun setToolFolder(
-        tool: Tool,
-        folder: String?,
-    ): CommandResult {
-        val done = call("setToolFolder ${tool.id} ${folder ?: "-"}")
-        if (done is CommandResult.Done) {
-            runtime = runtime.copy(toolFolders = if (folder == null) runtime.toolFolders - tool else runtime.toolFolders + (tool to folder))
-        }
-        return done
-    }
-
-    var toolList: List<ToolStatus> = Tool.entries.map { ToolStatus(it, null) }
-    var toolUpdate = ToolUpdate.FETCHING
-
-    override suspend fun toolStatus(): List<ToolStatus> = toolList
-
-    override suspend fun updateTool(tool: Tool): ToolUpdate {
-        call("updateTool ${tool.id}")
-        return toolUpdate
-    }
-
-    /** What exporting a bundle answers: null for it worked. */
-    var diagnosticsError: String? = null
-    val bundles = mutableListOf<String>()
-
-    override suspend fun exportDiagnostics(target: String): String? {
-        call("exportDiagnostics")
-        bundles += target
-        return diagnosticsError
-    }
 }
+
+internal const val DEFAULT_CODE = "ABCD-EFGH-JKMN-PQRS"
+
+internal fun browser(
+    id: String,
+    label: String = "Firefox on Mac",
+    createdAt: Instant = Instant.fromEpochSeconds(1_000),
+    lastUsed: Instant = createdAt,
+) = PairedBrowser(id, label, createdAt, lastUsed)
 
 internal fun snapshot(
     id: Long,
@@ -663,6 +480,7 @@ internal fun snapshot(
     files: List<FileSnapshot> = emptyList(),
     torrent: TorrentSummary? = null,
     networkShare: Map<String, Long> = emptyMap(),
+    speedSamples: List<Long> = emptyList(),
     saveFolder: String? = null,
     kind: DownloadKind = if (torrent != null) DownloadKind.TORRENT else DownloadKind.DIRECT,
 ): DownloadSnapshot =
@@ -685,7 +503,7 @@ internal fun snapshot(
         downloaded = downloaded,
         total = total,
         speed = speed,
-        speedSamples = emptyList(),
+        speedSamples = speedSamples,
         lastFailure = attempts.lastOrNull { it.errorClass != null || it.message != null },
         attempts = attempts,
         mirrors = mirrors,
@@ -694,16 +512,3 @@ internal fun snapshot(
         torrent = torrent,
         networkShare = networkShare,
     )
-
-/** [FileActions] that only record what they were asked; [failure] is what each answers. */
-internal class FakeFiles(
-    var failure: String? = null,
-) : FileActions {
-    val done = mutableListOf<String>()
-
-    override fun open(path: java.nio.file.Path) = failure.also { done += "open $path" }
-
-    override fun reveal(path: java.nio.file.Path) = failure.also { done += "reveal $path" }
-
-    override fun copy(text: String) = failure.also { done += "copy $text" }
-}

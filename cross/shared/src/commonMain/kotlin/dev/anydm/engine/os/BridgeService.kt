@@ -15,7 +15,7 @@ import kotlin.time.Instant
  * the link without adding it and gives back what it found with a token; [confirm] redeems the token, once, within
  * [tokenLife], and adds the download exactly as it was read, with the headers, referrer and cookies of the first step. The
  * clock is the engine's, so tests run on virtual time. Cookies are sealed in the keychain when the download is added; a
- * refusal never repeats them.
+ * refusal never repeats them. Cookies are taken only from a paired browser ([Bridge.add]'s `authenticated`).
  */
 class BridgeService(
     private val engine: Engine,
@@ -28,12 +28,21 @@ class BridgeService(
         val link: String,
         val context: RequestContext?,
         val expires: Instant,
+        /** Whether a paired browser asked for it: then only a paired browser redeems it. */
+        val authenticated: Boolean,
     )
 
     private val lock = Mutex()
     private val pending = LinkedHashMap<String, Pending>()
 
-    override suspend fun add(request: Bridge.AddRequest): Bridge.AddReply {
+    override suspend fun add(
+        request: Bridge.AddRequest,
+        authenticated: Boolean,
+    ): Bridge.AddReply {
+        // Cookies are a login: they are taken only from a browser that proved it is paired, and a refusal asks nothing of the link.
+        if (!authenticated && carriesCookies(request)) {
+            return Bridge.AddReply.Refused(Bridge.Problem.UNAUTHORIZED, "cookies are taken only from a paired browser")
+        }
         // A page can't name a file on this machine for the app to open.
         LinkIntake.parse(request.url)?.let { if (it.link.startsWith("file:", ignoreCase = true)) return refusedAsNotALink() }
         val context =
@@ -65,7 +74,7 @@ class BridgeService(
                     val now = clock.now()
                     purge(now)
                     // The link as it was sent: a login in it goes to the keychain when it is added, not before.
-                    pending[token] = Pending(request.url, context, now + tokenLife)
+                    pending[token] = Pending(request.url, context, now + tokenLife, authenticated)
                     while (pending.size > MAX_PENDING) pending.remove(pending.keys.first())
                 }
                 Bridge.AddReply.Probed(token, probed.name, probed.size, probed.kind, probed.rangesSupported, probed.duplicate)
@@ -73,11 +82,22 @@ class BridgeService(
         }
     }
 
-    override suspend fun confirm(token: String): Bridge.ConfirmReply {
+    override suspend fun confirm(
+        token: String,
+        authenticated: Boolean,
+    ): Bridge.ConfirmReply {
         val found =
             lock.withLock {
                 purge(clock.now())
-                pending.remove(token)
+                val candidate = pending[token]
+                when {
+                    candidate == null -> null
+
+                    // A paired browser's token is not for anyone else to redeem, nor to use up.
+                    candidate.authenticated && !authenticated -> null
+
+                    else -> pending.remove(token)
+                }
             } ?: return Bridge.ConfirmReply.UnknownToken
         return when (val added = engine.addLink(found.link, EntryPoint.BRIDGE, found.context)) {
             is AddLinkResult.Added -> Bridge.ConfirmReply.Added(added.download.id)
@@ -96,6 +116,11 @@ class BridgeService(
         if (headers.isEmpty() && referrer == null && cookies == null) return null
         return RequestContext(headers, referrer = referrer, cookies = cookies)
     }
+
+    // Cookies as a field or as a Cookie header: the store seals both alike.
+    private fun carriesCookies(request: Bridge.AddRequest): Boolean =
+        !request.cookies.isNullOrBlank() ||
+            request.headers.any { (name, value) -> name.trim().equals("cookie", ignoreCase = true) && value.isNotBlank() }
 
     private fun refusedAsNotALink() = Bridge.AddReply.Refused(Bridge.Problem.NOT_A_LINK, "not a link anydm takes")
 

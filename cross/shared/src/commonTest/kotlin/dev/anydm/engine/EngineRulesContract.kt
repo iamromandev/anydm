@@ -87,7 +87,8 @@ abstract class EngineRulesContract : StoreTestBase() {
     private suspend fun EngineHarness.storeUsage(
         bytes: Long,
         network: String = "unknown",
-    ) = store.traffic.add(TrafficBatch(days = mapOf(Triple(today, network, DownloadKind.DIRECT) to bytes)), 0)
+        day: String = today,
+    ) = store.traffic.add(TrafficBatch(days = mapOf(Triple(day, network, DownloadKind.DIRECT) to bytes)), 0)
 
     private fun EngineHarness.reasons(id: DownloadId) = snapshot(id)!!.download.pauseReasons
 
@@ -151,6 +152,175 @@ abstract class EngineRulesContract : StoreTestBase() {
             runCurrent()
 
             asked.await().getValue("unknown").used shouldBeGreaterThanOrEqual traffic.bytes
+        }
+
+    @Test
+    fun resetAllowanceUsageZeroesTheStoredAndTheUnsavedBytesOfThatNetworkOnly() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Daily)))
+            h.engine.setNetworkPolicy("usb", NetworkPolicy(allowance = Allowance(2_000_000, AllowancePeriod.Daily)))
+            h.storeUsage(10_000)
+            h.storeUsage(1_500_000, "usb")
+            h.addJob()
+            advanceTimeBy(4.seconds) // the job's bytes are in the meter, not saved
+            runCurrent()
+            h.engine
+                .allowanceUsage()
+                .getValue("unknown")
+                .over shouldBe true
+
+            val result = h.engine.resetAllowanceUsage("unknown")
+
+            result shouldBe CommandResult.Done(null)
+            val usage = h.engine.allowanceUsage()
+            usage.getValue("unknown").used shouldBe 0L
+            usage.getValue("unknown").over shouldBe false
+            usage.getValue("usb").used shouldBe 1_500_000L
+        }
+
+    @Test
+    fun resetAllowanceUsageLiftsTheRulePauseOfAnAllowanceThatWasOver() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            h.storeUsage(70_000)
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Daily)))
+            h.engine.rules.value.because shouldBe setOf(RuleSource.ALLOWANCE)
+
+            h.engine.resetAllowanceUsage("unknown")
+
+            h.engine.rules.value.action shouldBe RuleAction.ALLOW
+        }
+
+    @Test
+    fun resetAllowanceUsageKeepsTheDaysOutsideThePeriod() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Daily)))
+            h.store.traffic.add(TrafficBatch(days = mapOf(Triple("2026-10-20", "unknown", DownloadKind.DIRECT) to 5_000L)), 0)
+            h.storeUsage(10_000)
+
+            h.engine.resetAllowanceUsage("unknown")
+
+            h.store.traffic.networkBytes("unknown", "2026-10-20", "2026-10-20") shouldBe 5_000L
+        }
+
+    @Test
+    fun resetAllowanceUsageOfANetworkWithoutAnAllowanceIsRefusedAndChangesNothing() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            h.storeUsage(10_000)
+
+            (h.engine.resetAllowanceUsage("unknown") is CommandResult.Invalid) shouldBe true
+
+            h.store.traffic.networkBytes("unknown", today, today) shouldBe 10_000L
+        }
+
+    @Test
+    fun resetAllowanceUsageOfAWeeklyAllowanceDropsTheWholeWeekAndNotTheDaysBefore() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            // Wednesday 21 October: the week that starts on Monday is the 19th to the 25th.
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Weekly(DayOfWeek.MONDAY))))
+            h.storeUsage(7_000, day = "2026-10-18")
+            h.storeUsage(5_000, day = "2026-10-19")
+            h.storeUsage(10_000)
+
+            h.engine
+                .allowanceUsage()
+                .getValue("unknown")
+                .used shouldBe 15_000L
+            h.engine.resetAllowanceUsage("unknown") shouldBe CommandResult.Done(null)
+
+            h.engine
+                .allowanceUsage()
+                .getValue("unknown")
+                .used shouldBe 0L
+            h.store.traffic.networkBytes("unknown", "2026-10-18", "2026-10-18") shouldBe 7_000L
+            h.store.traffic.networkBytes("unknown", "2026-10-19", "2026-10-25") shouldBe 0L
+        }
+
+    @Test
+    fun resetAllowanceUsageOfAMonthlyAllowanceDropsFromItsResetDayAndNotTheDaysBefore() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            h.engine.start()
+            // Resets on the 15th: the period is 15 October to 14 November.
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Monthly(15))))
+            h.storeUsage(7_000, day = "2026-10-14")
+            h.storeUsage(5_000, day = "2026-10-15")
+            h.storeUsage(10_000)
+
+            h.engine.resetAllowanceUsage("unknown") shouldBe CommandResult.Done(null)
+
+            h.engine
+                .allowanceUsage()
+                .getValue("unknown")
+                .used shouldBe 0L
+            h.store.traffic.networkBytes("unknown", "2026-10-14", "2026-10-14") shouldBe 7_000L
+            h.store.traffic.networkBytes("unknown", "2026-10-15", "2026-11-14") shouldBe 0L
+        }
+
+    @Test
+    fun resetAllowanceUsageLetsTheLimitBeToldAgainWhenItIsCrossedAgain() =
+        engineTest {
+            val h = harness()
+            val events = mutableListOf<EngineEvent>()
+            backgroundScope.launch { h.engine.events.collect { events += it } }
+            runCurrent()
+            h.engine.start()
+            h.engine.setNetworkPolicy("unknown", NetworkPolicy(allowance = Allowance(102_400, AllowancePeriod.Daily, warnPercent = 50)))
+            val id = h.addJob()
+            advanceTimeBy(8500.milliseconds)
+            runCurrent()
+            h.status(id) shouldBe DownloadStatus.PAUSED
+            events.filterIsInstance<EngineEvent.AllowanceWarning>().size shouldBe 1
+            events.filterIsInstance<EngineEvent.AllowanceReached>().size shouldBe 1
+
+            h.engine.resetAllowanceUsage("unknown")
+            advanceTimeBy(10.seconds) // the download goes on and crosses the same limit again
+            runCurrent()
+
+            h.status(id) shouldBe DownloadStatus.PAUSED
+            events.filterIsInstance<EngineEvent.AllowanceWarning>().size shouldBe 2
+            events.filterIsInstance<EngineEvent.AllowanceReached>().size shouldBe 2
+        }
+
+    @Test
+    fun resetAllowanceUsageOfAnotherNetworkKeepsTheLimitToldForThisOne() =
+        engineTest {
+            val h = harness(network = { "unknown" })
+            val events = mutableListOf<EngineEvent>()
+            backgroundScope.launch { h.engine.events.collect { events += it } }
+            runCurrent()
+            h.engine.start()
+            h.storeUsage(70_000)
+            val policy = NetworkPolicy(allowance = Allowance(60_000, AllowancePeriod.Daily))
+            h.engine.setNetworkPolicy("unknown", policy)
+            h.engine.setNetworkPolicy("usb", policy)
+            runCurrent()
+            events.filterIsInstance<EngineEvent.AllowanceReached>().size shouldBe 1
+
+            h.engine.resetAllowanceUsage("usb")
+            h.engine.setNetworkPolicy("unknown", policy)
+            runCurrent()
+
+            events.filterIsInstance<EngineEvent.AllowanceReached>().size shouldBe 1
+        }
+
+    @Test
+    fun resetAllowanceUsageRefusesABlankOrStarKey() =
+        engineTest {
+            val h = harness()
+            h.engine.start()
+
+            (h.engine.resetAllowanceUsage(" ") is CommandResult.Invalid) shouldBe true
+            (h.engine.resetAllowanceUsage("*") is CommandResult.Invalid) shouldBe true
         }
 
     @Test

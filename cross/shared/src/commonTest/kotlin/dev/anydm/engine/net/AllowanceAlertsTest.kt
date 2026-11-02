@@ -76,6 +76,32 @@ class AllowanceAlertsTest {
     }
 
     @Test
+    fun forgettingANetworkTellsItsLevelsAgain() {
+        val alerts = AllowanceAlerts()
+        alerts.crossed(status(1200), allowance).size shouldBe 2
+        alerts.forget("wifi")
+        alerts.crossed(status(1200), allowance).size shouldBe 2
+        alerts.crossed(status(1300), allowance) shouldBe emptyList()
+    }
+
+    @Test
+    fun forgettingANetworkLeavesTheOthersTold() {
+        val alerts = AllowanceAlerts()
+        alerts.crossed(status(1200), allowance).size shouldBe 2
+        alerts.crossed(status(1200, network = "eth"), allowance).size shouldBe 2
+        alerts.forget("wifi")
+        alerts.crossed(status(1200, network = "eth"), allowance) shouldBe emptyList()
+    }
+
+    @Test
+    fun forgettingAPrimedNetworkTellsItAfterwards() {
+        val alerts = AllowanceAlerts()
+        alerts.prime(status(1200), allowance)
+        alerts.forget("wifi")
+        alerts.crossed(status(1200), allowance).size shouldBe 2
+    }
+
+    @Test
     fun noAllowanceTellsNothing() {
         val alerts = AllowanceAlerts()
         alerts.crossed(null, null) shouldBe emptyList()

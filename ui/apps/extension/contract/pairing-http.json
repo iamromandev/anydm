@@ -1,0 +1,578 @@
+{
+    "note": "Read by the extension's tests (contract.test.ts, which asks FakeApp; FakeApp builds its answers from `answers` below) and by cross/shared/src/jvmTest/.../os/PairingHttpContractTest.kt, which asks the real BridgeServer with each case. Change it and both must still pass. The proofs themselves are pinned by pairing-vectors.json; the bodies of /add and /confirm answers by bridge.json.",
+    "format": {
+        "request": "Every case is a POST of a JSON body with `Content-Type: application/json` from an allowed extension origin to 127.0.0.1 on the port the app listens on. A string value that starts with `$` is a placeholder the test makes with its own implementation of the protocol (see `placeholders`); every other value is sent as it is.",
+        "answer": "A case's answer names an entry of `answers`. `status` is the HTTP status. `body` holds the exact values of the answer's JSON, `shape` the fields whose value varies, by type. The answer's JSON has exactly the fields of `body` and `shape` together, no more. `headers` (the same kind of types) are headers the answer must carry."
+    },
+    "types": {
+        "hex32": "32 lower-case hex characters",
+        "hex64": "64 lower-case hex characters",
+        "int": "a whole number",
+        "string": "a string",
+        "bool": "true or false",
+        "string-or-null": "a string or null",
+        "int-or-null": "a whole number or null"
+    },
+    "placeholders": {
+        "$proofE": "proofE for the body's nonceE and the code that is waiting",
+        "$id": "the id of the browser that was paired",
+        "$helloRequestProof": "the proof of a /hello request for the body's id and nonceE, made with the paired secret",
+        "$mac": "X-Anydm-Mac for this request's path, exact body text and X-Anydm-Counter, made with the secret and the nonce of the session that was opened",
+        "$token": "the token a signed /add answered with"
+    },
+    "given": {
+        "code-waiting": "The app is showing a pairing code that has not been used or burned.",
+        "paired": "A browser has paired (its id and secret are known to the test), and has not said hello.",
+        "session": "paired, and the browser has said hello: a session is open and no request has been signed in it.",
+        "signed-add-done": "session, and one signed /add was taken (counter 1 is spent, and its token is `$token`).",
+        "session-ran-out": "More than a session's life (60 s) has passed since the hello.",
+        "store-unreadable": "The app can't read its list of paired browsers. Only ever alone: it is the state before anything was read.",
+        "save-fails": "The app can't save a new pairing (with code-waiting).",
+        "throttled": "The limit of pairing tries a minute is used up (with code-waiting)."
+    },
+    "requests": {
+        "/pair": {
+            "bodyFields": [
+                "nonceE",
+                "proofE"
+            ],
+            "headers": []
+        },
+        "/hello": {
+            "bodyFields": [
+                "id",
+                "nonceE",
+                "proof"
+            ],
+            "headers": []
+        },
+        "/add": {
+            "bodyFields": [
+                "url",
+                "cookies",
+                "headers",
+                "referrer",
+                "pageUrl"
+            ],
+            "headers": [
+                "X-Anydm-Id",
+                "X-Anydm-Counter",
+                "X-Anydm-Mac"
+            ],
+            "note": "The headers are sent together or not at all, and only by a paired browser; without them the app takes the request as a stranger's, and refuses cookies. bodyFields are the ones the extension may send (bridge.json has the values)."
+        },
+        "/confirm": {
+            "bodyFields": [
+                "token"
+            ],
+            "headers": [
+                "X-Anydm-Id",
+                "X-Anydm-Counter",
+                "X-Anydm-Mac"
+            ]
+        }
+    },
+    "answers": {
+        "pair-paired": {
+            "status": 200,
+            "shape": {
+                "id": "hex32",
+                "nonceA": "hex32",
+                "proofA": "hex64"
+            }
+        },
+        "pair-bad-request": {
+            "status": 400,
+            "body": {
+                "error": "bad_request",
+                "message": "nonceE is 32 and proofE 64 lower-case hex characters"
+            }
+        },
+        "body-not-an-object": {
+            "status": 400,
+            "body": {
+                "error": "bad_request",
+                "message": "the body is not a JSON object"
+            }
+        },
+        "no-code": {
+            "status": 409,
+            "body": {
+                "error": "no_code",
+                "message": "no pairing code is waiting: start pairing in anydm"
+            }
+        },
+        "wrong-code": {
+            "status": 401,
+            "body": {
+                "error": "wrong_code",
+                "message": "not the code anydm is waiting for"
+            }
+        },
+        "too-many-attempts": {
+            "status": 429,
+            "body": {
+                "error": "too_many_attempts",
+                "message": "wait before trying again"
+            },
+            "shape": {
+                "retryAfterSeconds": "int"
+            },
+            "headers": {
+                "Retry-After": "int"
+            }
+        },
+        "not-saved": {
+            "status": 500,
+            "body": {
+                "error": "not_saved",
+                "message": "the pairing could not be saved"
+            }
+        },
+        "hello-ok": {
+            "status": 200,
+            "shape": {
+                "nonceA": "hex32",
+                "proof": "hex64"
+            }
+        },
+        "hello-bad-request": {
+            "status": 400,
+            "body": {
+                "error": "bad_request",
+                "message": "id and nonceE are 32 and proof is 64 lower-case hex characters"
+            }
+        },
+        "unpaired": {
+            "status": 401,
+            "body": {
+                "error": "unpaired",
+                "message": "this browser is not paired"
+            }
+        },
+        "store-unavailable": {
+            "status": 503,
+            "body": {
+                "error": "store_unavailable",
+                "message": "the paired browsers can't be read now; try again later"
+            }
+        },
+        "session-expired": {
+            "status": 401,
+            "body": {
+                "error": "session_expired",
+                "message": "say hello again"
+            }
+        },
+        "replay": {
+            "status": 401,
+            "body": {
+                "error": "replay",
+                "message": "the counter must go up"
+            }
+        },
+        "unauthorized": {
+            "status": 401,
+            "body": {
+                "error": "unauthorized",
+                "message": "the request is not signed as a paired browser's"
+            }
+        },
+        "cookies-unsigned": {
+            "status": 401,
+            "body": {
+                "error": "unauthorized",
+                "message": "cookies are taken only from a paired browser"
+            }
+        },
+        "add-ok": {
+            "status": 200,
+            "shape": {
+                "token": "hex32",
+                "name": "string-or-null",
+                "size": "int-or-null",
+                "kind": "string",
+                "rangesSupported": "bool",
+                "duplicate": "bool"
+            }
+        },
+        "confirm-ok": {
+            "status": 200,
+            "shape": {
+                "id": "int"
+            }
+        },
+        "unknown-token": {
+            "status": 410,
+            "body": {
+                "error": "unknown_token",
+                "message": "the token was used, ran out, or was never given"
+            }
+        }
+    },
+    "cases": [
+        {
+            "name": "pair-with-the-code",
+            "given": [
+                "code-waiting"
+            ],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proofE": "$proofE"
+                }
+            },
+            "answer": "pair-paired"
+        },
+        {
+            "name": "pair-fields-malformed",
+            "given": [],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "zz",
+                    "proofE": "zz"
+                }
+            },
+            "answer": "pair-bad-request"
+        },
+        {
+            "name": "pair-body-not-an-object",
+            "given": [],
+            "request": {
+                "path": "/pair",
+                "body": []
+            },
+            "answer": "body-not-an-object"
+        },
+        {
+            "name": "pair-with-no-code-waiting",
+            "given": [],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proofE": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "no-code"
+        },
+        {
+            "name": "pair-with-the-wrong-code",
+            "given": [
+                "code-waiting"
+            ],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proofE": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "wrong-code"
+        },
+        {
+            "name": "pair-too-often",
+            "given": [
+                "code-waiting",
+                "throttled"
+            ],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proofE": "$proofE"
+                }
+            },
+            "answer": "too-many-attempts"
+        },
+        {
+            "name": "pair-that-can-not-be-saved",
+            "given": [
+                "code-waiting",
+                "save-fails"
+            ],
+            "request": {
+                "path": "/pair",
+                "body": {
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proofE": "$proofE"
+                }
+            },
+            "answer": "not-saved"
+        },
+        {
+            "name": "hello-from-a-paired-browser",
+            "given": [
+                "paired"
+            ],
+            "request": {
+                "path": "/hello",
+                "body": {
+                    "id": "$id",
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proof": "$helloRequestProof"
+                }
+            },
+            "answer": "hello-ok"
+        },
+        {
+            "name": "hello-fields-malformed",
+            "given": [],
+            "request": {
+                "path": "/hello",
+                "body": {
+                    "id": "zz",
+                    "nonceE": "zz",
+                    "proof": "zz"
+                }
+            },
+            "answer": "hello-bad-request"
+        },
+        {
+            "name": "hello-body-not-an-object",
+            "given": [],
+            "request": {
+                "path": "/hello",
+                "body": []
+            },
+            "answer": "body-not-an-object"
+        },
+        {
+            "name": "hello-with-a-wrong-proof",
+            "given": [
+                "paired"
+            ],
+            "request": {
+                "path": "/hello",
+                "body": {
+                    "id": "$id",
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proof": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "unpaired"
+        },
+        {
+            "name": "hello-from-an-id-that-is-not-paired",
+            "given": [],
+            "request": {
+                "path": "/hello",
+                "body": {
+                    "id": "11111111111111111111111111111111",
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proof": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "unpaired"
+        },
+        {
+            "name": "hello-while-the-pairings-can-not-be-read",
+            "given": [
+                "store-unreadable"
+            ],
+            "request": {
+                "path": "/hello",
+                "body": {
+                    "id": "11111111111111111111111111111111",
+                    "nonceE": "00112233445566778899aabbccddeeff",
+                    "proof": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "store-unavailable"
+        },
+        {
+            "name": "signed-add-with-cookies",
+            "given": [
+                "session"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "cookies": "sid=abc",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "$mac"
+                }
+            },
+            "answer": "add-ok"
+        },
+        {
+            "name": "signed-confirm",
+            "given": [
+                "signed-add-done"
+            ],
+            "request": {
+                "path": "/confirm",
+                "body": {
+                    "token": "$token"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "2",
+                    "X-Anydm-Mac": "$mac"
+                }
+            },
+            "answer": "confirm-ok"
+        },
+        {
+            "name": "signed-by-an-id-that-is-not-paired",
+            "given": [],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "11111111111111111111111111111111",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "unpaired"
+        },
+        {
+            "name": "signed-before-any-hello",
+            "given": [
+                "paired"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "session-expired"
+        },
+        {
+            "name": "signed-after-the-session-ran-out",
+            "given": [
+                "session",
+                "session-ran-out"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "$mac"
+                }
+            },
+            "answer": "session-expired"
+        },
+        {
+            "name": "signed-with-a-wrong-mac",
+            "given": [
+                "session"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "unauthorized"
+        },
+        {
+            "name": "signed-with-only-some-of-the-headers",
+            "given": [],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "11111111111111111111111111111111"
+                }
+            },
+            "answer": "unauthorized"
+        },
+        {
+            "name": "signed-with-a-counter-already-used",
+            "given": [
+                "signed-add-done"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "$id",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "$mac"
+                }
+            },
+            "answer": "replay"
+        },
+        {
+            "name": "signed-while-the-pairings-can-not-be-read",
+            "given": [
+                "store-unreadable"
+            ],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "pageUrl": "https://example.com/downloads"
+                },
+                "headers": {
+                    "X-Anydm-Id": "11111111111111111111111111111111",
+                    "X-Anydm-Counter": "1",
+                    "X-Anydm-Mac": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "answer": "store-unavailable"
+        },
+        {
+            "name": "add-with-cookies-and-no-signature",
+            "given": [],
+            "request": {
+                "path": "/add",
+                "body": {
+                    "url": "https://files.example.com/a.zip",
+                    "cookies": "sid=abc",
+                    "pageUrl": "https://example.com/downloads"
+                }
+            },
+            "answer": "cookies-unsigned"
+        },
+        {
+            "name": "confirm-of-a-signed-add-without-a-signature",
+            "given": [
+                "signed-add-done"
+            ],
+            "request": {
+                "path": "/confirm",
+                "body": {
+                    "token": "$token"
+                }
+            },
+            "answer": "unknown-token"
+        }
+    ]
+}

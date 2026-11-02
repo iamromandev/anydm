@@ -33,6 +33,16 @@ class FormatTest {
     }
 
     @Test
+    fun `a rate reads in megabytes or megabits per second`() {
+        assertEquals("4.5 MB/s", formatRate(4 * mib + mib / 2, SpeedUnit.BYTES))
+        assertEquals("0 B/s", formatRate(0, SpeedUnit.BYTES))
+        assertEquals("8.0 Mbps", formatRate(1_000_000, SpeedUnit.BITS))
+        assertEquals("800.0 kbps", formatRate(100_000, SpeedUnit.BITS))
+        assertEquals("80 bps", formatRate(10, SpeedUnit.BITS))
+        assertEquals("1.6 Gbps", formatRate(200_000_000, SpeedUnit.BITS))
+    }
+
+    @Test
     fun `a downloading row shows its progress and eta`() {
         val s = snapshot(1, DOWNLOADING, total = 100 * mib, downloaded = 40 * mib, speed = mib)
         assertEquals(0.4f, progress(s))
@@ -73,5 +83,22 @@ class FormatTest {
         assertEquals("Downloading", statusLabel(snapshot(1, DOWNLOADING)))
         assertEquals("Paused (all)", statusLabel(snapshot(1, PAUSED, pauseReasons = setOf(PauseReason.GLOBAL))))
         assertEquals("Paused (disk full)", statusLabel(snapshot(1, PAUSED, pauseReasons = setOf(PauseReason.LOW_DISK))))
+    }
+
+    @Test
+    fun `a time ago is said in the biggest whole unit`() {
+        val now = kotlin.time.Instant.fromEpochSeconds(1_000_000)
+        assertEquals("just now", formatAgo(now, now - kotlin.time.Duration.parse("20s")))
+        assertEquals("just now", formatAgo(now, now + kotlin.time.Duration.parse("5s")))
+        assertEquals("5 min ago", formatAgo(now, now - kotlin.time.Duration.parse("5m")))
+        assertEquals("3 h ago", formatAgo(now, now - kotlin.time.Duration.parse("3h 20m")))
+        assertEquals("2 d ago", formatAgo(now, now - kotlin.time.Duration.parse("49h")))
+    }
+
+    @Test
+    fun `a countdown is minutes and two-digit seconds`() {
+        assertEquals("4:32", formatCountdown(272))
+        assertEquals("0:05", formatCountdown(5))
+        assertEquals("0:00", formatCountdown(-3))
     }
 }

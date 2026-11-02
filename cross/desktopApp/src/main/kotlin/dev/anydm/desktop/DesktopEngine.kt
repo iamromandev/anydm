@@ -5,49 +5,33 @@ import dev.anydm.engine.Engine
 import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
-import dev.anydm.engine.core.CategoryId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
-import dev.anydm.engine.core.ItemSelection
 import dev.anydm.engine.core.MirrorId
-import dev.anydm.engine.core.ProfileId
-import dev.anydm.engine.core.ProxyId
 import dev.anydm.engine.core.ScheduleRuleId
-import dev.anydm.engine.files.Category
 import dev.anydm.engine.files.NameCleaner
-import dev.anydm.engine.files.NewCategory
-import dev.anydm.engine.files.NewProfile
 import dev.anydm.engine.files.OsProfile
-import dev.anydm.engine.files.Profile
 import dev.anydm.engine.ftp.DefaultRemoteClients
 import dev.anydm.engine.ftp.FtpProtocol
 import dev.anydm.engine.ftp.JavaKeyringKeychain
 import dev.anydm.engine.ftp.KeychainCredentials
-import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.http.HttpProtocol
 import dev.anydm.engine.http.OkHttpTransport
-import dev.anydm.engine.log.AppInfo
-import dev.anydm.engine.log.DiagnosticsBundle
-import dev.anydm.engine.log.JvmDiagnosticsPlatform
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RotatingFileSink
 import dev.anydm.engine.media.SiteProtocol
 import dev.anydm.engine.media.YtDlpPlaylistSource
-import dev.anydm.engine.net.AfterQueueState
 import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.DefaultRouteNetwork
 import dev.anydm.engine.net.NetworkPolicy
-import dev.anydm.engine.net.NewProxy
 import dev.anydm.engine.net.NewScheduleRule
-import dev.anydm.engine.net.PasswordChange
-import dev.anydm.engine.net.ProxyChoice
-import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ScheduleRule
-import dev.anydm.engine.os.ClipboardLink
-import dev.anydm.engine.os.HotkeyStatus
-import dev.anydm.engine.os.OsSettings
+import dev.anydm.engine.os.BridgeServer
+import dev.anydm.engine.os.FilePairStore
+import dev.anydm.engine.os.secureBridgeService
 import dev.anydm.engine.platform.AppDirs
+import dev.anydm.engine.platform.Clipboard
 import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.DesktopProcessRunner
 import dev.anydm.engine.platform.FileResult
@@ -59,6 +43,7 @@ import dev.anydm.engine.protocol.Protocol
 import dev.anydm.engine.protocol.StepResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.store.NewDownload
+import dev.anydm.engine.store.Settings
 import dev.anydm.engine.store.Store
 import dev.anydm.engine.store.TransferSettings
 import dev.anydm.engine.store.openStore
@@ -66,25 +51,23 @@ import dev.anydm.engine.tools.DesktopPathFinder
 import dev.anydm.engine.tools.DesktopUnpacker
 import dev.anydm.engine.tools.GithubReleases
 import dev.anydm.engine.tools.Platform
-import dev.anydm.engine.tools.Tool
 import dev.anydm.engine.tools.ToolCatalog
 import dev.anydm.engine.tools.ToolManager
 import dev.anydm.engine.tools.ToolProtocol
-import dev.anydm.engine.tools.YtDlpChannel
 import dev.anydm.engine.tools.current
 import dev.anydm.engine.torrent.JnaSignalGuard
 import dev.anydm.engine.torrent.LibTorrentBackend
-import dev.anydm.engine.torrent.SeedRule
 import dev.anydm.engine.torrent.TorrentConfig
 import dev.anydm.engine.torrent.TorrentInfo
 import dev.anydm.engine.torrent.TorrentNatives
 import dev.anydm.engine.torrent.TorrentProtocol
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
-import dev.anydm.engine.log.ToolVersion as LoggedTool
 
 /**
  * The engine this machine runs, with every protocol it has: web files (HTTP/HTTPS), media pages and playlists (yt-dlp,
@@ -166,48 +149,53 @@ private suspend fun desktopEngine(
             proxyKeychain = keychain,
             keepAwake = keepAwakeForCurrentOs(runner, log),
             powerActions = powerActionsForCurrentOs(runner, log),
+            // The browsers paired with the extension: their secrets stay in a file only this user can read.
+            pairStore = FilePairStore(File(dirs.data.toString(), FilePairStore.FILE_NAME), log),
         )
-    val services = OsServices(engine, runner, dirs, log)
-    val bundle = DiagnosticsBundle(store.settings, JvmDiagnosticsPlatform(dirs.logs), Clock.System)
-    val diagnostics: suspend (String) -> String? = { target ->
-        val versions =
-            Tool.entries.map { tool ->
-                val found = tools.resolve(tool)
-                LoggedTool(
-                    tool.id,
-                    found?.version?.toString(),
-                    found
-                        ?.executables
-                        ?.values
-                        ?.firstOrNull()
-                        ?.toString(),
-                )
-            }
-        val app =
-            AppInfo(
-                "anydm",
-                System.getProperty("jpackage.app-version") ?: "dev",
-                System.getProperty("os.name"),
-                System.getProperty("java.version"),
-            )
-        when (val written = bundle.export(Path(target), app, versions)) {
-            is FileResult.Ok -> null
-            is FileResult.Failed -> written.detail ?: "${written.path} can't be written"
-            else -> "the bundle can't be written to $target"
-        }
-    }
+    val bridge = BridgeHost(engine, log)
     return engine.asSource(
         store,
         protocols.keys,
         onTransfer = { connections.set(it.connectionsPerDownload) },
-        hotkey = services.hotkeyStatus,
-        bridge = services.bridge,
-        clipboardLinks = services.clipboardLinks,
-        hotkeyPresses = services.hotkeyPresses,
-        onStart = services::start,
-        onStop = services::close,
-        diagnostics = diagnostics,
+        onStart = bridge::start,
+        onStop = bridge::close,
     )
+}
+
+/**
+ * The browser bridge beside the engine: the extension talks to it on a loopback port. No free port is logged, never a reason to
+ * stop the app. It answers only the origins in the engine's settings (the extension anydm ships by default), and knows
+ * the browsers paired with the engine ([Engine.bridgePairing]).
+ */
+internal class BridgeHost(
+    private val engine: Engine,
+    private val log: Log,
+) : AutoCloseable {
+    @Volatile
+    private var server: BridgeServer? = null
+
+    fun start() {
+        try {
+            server =
+                BridgeServer(secureBridgeService(engine), origins = ::allowedOrigins, pairing = engine.bridgePairing)
+                    .also { it.start() }
+        } catch (e: Exception) {
+            log.warn("bridge", e) { "the browser bridge is unavailable: ${e.message}" }
+        }
+    }
+
+    // An engine that can't be asked answers only the extension anydm ships: never "any extension".
+    private fun allowedOrigins(): Set<String> =
+        try {
+            runBlocking { engine.runtimeSettings().bridgeOrigins }
+        } catch (_: Exception) {
+            setOf(Settings.CHROME_EXTENSION_ORIGIN)
+        }
+
+    override fun close() {
+        server?.close()
+        server = null
+    }
 }
 
 // Torrents need libtorrent's native library for this machine, unpacked into the app's own data folder; without it they
@@ -256,8 +244,12 @@ internal class UnavailableSource(
     override val downloads = MutableStateFlow<List<DownloadSnapshot>>(emptyList())
     override val totalSpeed = MutableStateFlow(SpeedWindow.Empty)
     override val events = emptyFlow<EngineEvent>()
+    override val available = emptySet<DownloadKind>()
+    override val networks = MutableStateFlow(BondingState(emptyList()))
+    override val clipboard = Clipboard.None
+    override val transferLock = kotlinx.coroutines.sync.Mutex()
 
-    override suspend fun categories(): List<Category> = emptyList()
+    override fun freeSpace(folder: String): Long? = null
 
     override suspend fun start() = Unit
 
@@ -282,18 +274,11 @@ internal class UnavailableSource(
         allowDuplicate: Boolean,
     ) = stopped()
 
-    override suspend fun reprioritize(
-        id: DownloadId,
-        priority: Int,
-    ) = stopped()
-
     override suspend fun relink(
         id: DownloadId,
         mirrorId: MirrorId,
         url: String,
     ) = stopped()
-
-    override suspend fun stopSeeding(id: DownloadId) = stopped()
 
     override suspend fun pauseAll() = stopped()
 
@@ -305,23 +290,6 @@ internal class UnavailableSource(
         id: DownloadId,
         priorities: List<Int>,
     ) = stopped()
-
-    override suspend fun setSeedRules(
-        id: DownloadId,
-        ratio: SeedRule<Double>,
-        minutes: SeedRule<Int>,
-    ) = stopped()
-
-    override suspend fun recheckTorrent(id: DownloadId) = stopped()
-
-    override suspend fun reannounceTorrent(
-        id: DownloadId,
-        url: String?,
-    ) = stopped()
-
-    override val available = emptySet<DownloadKind>()
-
-    override suspend fun profiles() = stopped()
 
     override suspend fun probeLink(raw: String) = stopped()
 
@@ -337,83 +305,19 @@ internal class UnavailableSource(
         info: TorrentInfo?,
     ) = stopped()
 
-    override suspend fun addPlaylist(
-        url: String,
-        selection: ItemSelection,
-        template: NewDownload,
-    ) = stopped()
-
-    override suspend fun saveKeyLogin(
-        url: String,
-        login: SshKeyLogin,
-    ) = stopped()
-
     override suspend fun transferSettings() = stopped()
+
+    override suspend fun startPairing() = stopped()
+
+    override suspend fun cancelPairing(only: PairingCode?) = stopped()
+
+    override suspend fun pairedBrowsers() = stopped()
+
+    override suspend fun revokeBrowser(id: String) = stopped()
 
     override suspend fun applyTransferSettings(next: TransferSettings) = stopped()
 
     override suspend fun resetTransferSettings() = stopped()
-
-    override suspend fun addCategory(new: NewCategory) = stopped()
-
-    override suspend fun updateCategory(category: Category) = stopped()
-
-    override suspend fun deleteCategory(id: CategoryId) = stopped()
-
-    override suspend fun addProfile(new: NewProfile) = stopped()
-
-    override suspend fun updateProfile(profile: Profile) = stopped()
-
-    override suspend fun deleteProfile(id: ProfileId) = stopped()
-
-    override suspend fun defaultProfile() = stopped()
-
-    override suspend fun setDefaultProfile(id: ProfileId?) = stopped()
-
-    override suspend fun history(limit: Int) = stopped()
-
-    override suspend fun clearHistory() = stopped()
-
-    override suspend fun trafficByDay(
-        from: String,
-        to: String,
-    ) = stopped()
-
-    override suspend fun exportSettings() = stopped()
-
-    override suspend fun importSettings(text: String) = stopped()
-
-    override val networks = MutableStateFlow(BondingState(emptyList()))
-    override val osSettings = MutableStateFlow(OsSettings())
-    override val hotkeyStatus = MutableStateFlow<HotkeyStatus>(HotkeyStatus.Off)
-    override val afterQueue = MutableStateFlow(AfterQueueState.Idle)
-    override val keepAwake = MutableStateFlow(true)
-    override val bridge = MutableStateFlow<BridgeStatus>(BridgeStatus.Off)
-    override val clipboardLinks = emptyFlow<ClipboardLink>()
-    override val hotkeyPresses = emptyFlow<String>()
-
-    override suspend fun proxies() = stopped()
-
-    override suspend fun addProxy(
-        new: NewProxy,
-        password: String?,
-    ) = stopped()
-
-    override suspend fun updateProxy(
-        proxy: ProxyEntry,
-        password: PasswordChange,
-    ) = stopped()
-
-    override suspend fun removeProxy(id: ProxyId) = stopped()
-
-    override suspend fun proxyChoice() = stopped()
-
-    override suspend fun setProxyChoice(choice: ProxyChoice) = stopped()
-
-    override suspend fun setDownloadProxy(
-        id: DownloadId,
-        choice: ProxyChoice,
-    ) = stopped()
 
     override suspend fun networkRules() = stopped()
 
@@ -423,6 +327,13 @@ internal class UnavailableSource(
     ) = stopped()
 
     override suspend fun allowanceUsage(): Map<String, AllowanceStatus> = stopped()
+
+    override suspend fun trafficByDay(
+        from: String,
+        to: String,
+    ) = stopped()
+
+    override suspend fun resetAllowanceUsage(network: String) = stopped()
 
     override suspend fun scheduleRules() = stopped()
 
@@ -436,31 +347,4 @@ internal class UnavailableSource(
         key: String,
         enabled: Boolean,
     ) = stopped()
-
-    override suspend fun setClipboardWatch(on: Boolean) = stopped()
-
-    override suspend fun setGlobalHotkey(on: Boolean) = stopped()
-
-    override suspend fun runtimeSettings() = stopped()
-
-    override suspend fun setNotifications(on: Boolean) = stopped()
-
-    override suspend fun setBridgeOrigins(origins: Set<String>) = stopped()
-
-    override suspend fun setDebugLogging(on: Boolean) = stopped()
-
-    override suspend fun setYtDlpChannel(channel: YtDlpChannel) = stopped()
-
-    override suspend fun setSystemTools(on: Boolean) = stopped()
-
-    override suspend fun setToolFolder(
-        tool: Tool,
-        folder: String?,
-    ) = stopped()
-
-    override suspend fun toolStatus() = stopped()
-
-    override suspend fun updateTool(tool: Tool) = stopped()
-
-    override suspend fun exportDiagnostics(target: String) = stopped()
 }

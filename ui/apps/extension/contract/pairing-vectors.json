@@ -1,0 +1,201 @@
+{
+    "note": "Read by the extension's tests (phase 5c) and by cross/shared PairingVectorsTest.kt. Every expected value was made by an independent HMAC (Python hmac/hashlib), not by either implementation. Change it and both sides must still pass.",
+    "format": {
+        "text": "All text is UTF-8. Hex is lowercase, two digits per byte, of the raw bytes. '|' is the literal character 0x7C.",
+        "message": "A message to sign is the string made by joining its parts with '|'. Nonces, ids and hashes are written as their lowercase hex text; the counter and the port in decimal without leading zeros; the path as sent ('/add' or '/confirm', no query).",
+        "port": "The TCP port of the anydm server the extension is talking to: the one it dialed, which the app knows as the one it listens on. It ends the message of every proof except `secret`, so a proof made for one port is worthless on another (a relay on a different port cannot forward a pairing or a session to the real app, and the real app cannot be made to answer for it).",
+        "pairKey": "While pairing the HMAC key is the UTF-8 bytes of the canonical code (16 uppercase Crockford base32 characters, 80 bits).",
+        "sessionKey": "After pairing the HMAC key is the 32 raw bytes of `secret` (decode the hex).",
+        "nonce": "16 random bytes, sent as 32 lowercase hex characters (nonceE from the extension, nonceA from the app).",
+        "id": "16 random bytes from the app, 32 lowercase hex characters.",
+        "headers": "X-Anydm-Id: the id. X-Anydm-Counter: the counter, decimal. X-Anydm-Mac: the mac, 64 lowercase hex characters.",
+        "counter": "Integer from 1 to 9007199254740991, strictly greater than the one before in the same session (a session starts after each /hello).",
+        "bodyHash": "SHA-256 of the exact request body bytes as sent, lowercase hex.",
+        "inputs": "The code, the nonces and the id below are fixed inputs picked by hand (sequential bytes), not output of a random source, so that both sides get the same numbers. The Kotlin test hands them to the app through a scripted random source: the code as 16 alphabet indexes, then nonceA, then id, then the session's nonceA.",
+        "formulas": {
+            "proofE": "HMAC(code, 'anydm-pair-1|' + nonceE + '|' + port)",
+            "proofA": "HMAC(code, 'anydm-app-1|' + nonceE + '|' + nonceA + '|' + port)",
+            "secret": "HMAC(code, 'anydm-secret-1|' + nonceE + '|' + nonceA)",
+            "helloRequestProof": "HMAC(secret, 'anydm-hello-req-1|' + id + '|' + nonceE + '|' + port)",
+            "helloProof": "HMAC(secret, 'anydm-hello-1|' + nonceE + '|' + nonceA + '|' + port)",
+            "mac": "HMAC(secret, 'anydm-req-1|' + nonceA + '|' + counter + '|' + path + '|' + sha256hex(body) + '|' + port)"
+        }
+    },
+    "alphabet": "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
+    "codeNormalisation": [
+        {
+            "input": "7K3M9QX2VBHT4N6R",
+            "canonical": "7K3M9QX2VBHT4N6R"
+        },
+        {
+            "input": "7k3m9qx2vbht4n6r",
+            "canonical": "7K3M9QX2VBHT4N6R"
+        },
+        {
+            "input": "7K3M-9QX2-VBHT-4N6R",
+            "canonical": "7K3M9QX2VBHT4N6R"
+        },
+        {
+            "input": "7k3m 9qx2 vbht 4n6r",
+            "canonical": "7K3M9QX2VBHT4N6R"
+        },
+        {
+            "input": " \t7K3M 9QX2-VBHT 4N6R\r\n",
+            "canonical": "7K3M9QX2VBHT4N6R"
+        },
+        {
+            "input": "oil1-0o1l-ABCD-EFGH",
+            "canonical": "01110011ABCDEFGH"
+        },
+        {
+            "input": "0123456789ABCDEF",
+            "canonical": "0123456789ABCDEF"
+        },
+        {
+            "input": "GHJKMNPQRSTVWXYZ",
+            "canonical": "GHJKMNPQRSTVWXYZ"
+        },
+        {
+            "input": "7K3M9QX2VBHT4N6",
+            "canonical": null
+        },
+        {
+            "input": "7K3M9QX2VBHT4N6RA",
+            "canonical": null
+        },
+        {
+            "input": "7K3M9QX2VB",
+            "canonical": null
+        },
+        {
+            "input": "7K3M9QX2VBHT4N6U",
+            "canonical": null
+        },
+        {
+            "input": "7K3M9QX2VBHT4N6!",
+            "canonical": null
+        },
+        {
+            "input": "---- ----",
+            "canonical": null
+        },
+        {
+            "input": "",
+            "canonical": null
+        },
+        {
+            "input": "\u0131K3M9QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "7K3M9QX2VBHT4N6\u017f",
+            "canonical": null
+        },
+        {
+            "input": "\ufb013M9QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "7K3M\u00a09QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "7K3M\u20109QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "7K3M\u20139QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "\u212aK3M9QX2VBHT4N6R",
+            "canonical": null
+        },
+        {
+            "input": "\uff17K3M9QX2VBHT4N6R",
+            "canonical": null
+        }
+    ],
+    "pair": {
+        "code": "7K3M9QX2VBHT4N6R",
+        "port": 18403,
+        "nonceE": "000102030405060708090a0b0c0d0e0f",
+        "nonceA": "101112131415161718191a1b1c1d1e1f",
+        "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "proofE": "6ab2cc5efe80011a342d4788ad3aea87a3f735adf67dce6fcda425e91579d777",
+        "proofA": "e6c10a02f87795e16241efb8afa65f1ae7fb3f08549a0c9cce1652fd66500c65",
+        "secret": "f949f7251b94768e451de8fd9a0db3c3b4eaa34e48c863bccc8b12258bc7198b",
+        "messages": {
+            "proofE": "anydm-pair-1|000102030405060708090a0b0c0d0e0f|18403",
+            "proofA": "anydm-app-1|000102030405060708090a0b0c0d0e0f|101112131415161718191a1b1c1d1e1f|18403",
+            "secret": "anydm-secret-1|000102030405060708090a0b0c0d0e0f|101112131415161718191a1b1c1d1e1f"
+        }
+    },
+    "hello": {
+        "secret": "f949f7251b94768e451de8fd9a0db3c3b4eaa34e48c863bccc8b12258bc7198b",
+        "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "port": 18403,
+        "nonceE": "f0e1d2c3b4a5968778695a4b3c2d1e0f",
+        "nonceA": "202122232425262728292a2b2c2d2e2f",
+        "requestMessage": "anydm-hello-req-1|a1b2c3d4e5f60718293a4b5c6d7e8f90|f0e1d2c3b4a5968778695a4b3c2d1e0f|18403",
+        "requestProof": "e88699ca5467857bced6cd7ba7ed2136d7ad7ad4818b58a5ab68301c5de321ef",
+        "message": "anydm-hello-1|f0e1d2c3b4a5968778695a4b3c2d1e0f|202122232425262728292a2b2c2d2e2f|18403",
+        "proof": "15dfb3c3479ead1ab941230e0c4e88bfbe5732428b10d6d0345e3e3b3c921b93"
+    },
+    "requests": [
+        {
+            "name": "add",
+            "port": 18403,
+            "nonceA": "202122232425262728292a2b2c2d2e2f",
+            "counter": 1,
+            "path": "/add",
+            "body": "{\"url\":\"https://files.example.com/a.zip\",\"cookies\":\"sid=abc\"}",
+            "bodySha256": "c26447161a98638b428005eb0dbbec4f32a8d94838e426701bf8fe3cffabfb1b",
+            "message": "anydm-req-1|202122232425262728292a2b2c2d2e2f|1|/add|c26447161a98638b428005eb0dbbec4f32a8d94838e426701bf8fe3cffabfb1b|18403",
+            "mac": "067dae3f612d46f4cdd26773c14bd1872ff9de5fbd4f5cfdfb9e457a7587987b"
+        },
+        {
+            "name": "confirm",
+            "port": 18403,
+            "nonceA": "202122232425262728292a2b2c2d2e2f",
+            "counter": 2,
+            "path": "/confirm",
+            "body": "{\"token\":\"0123456789abcdef0123456789abcdef\"}",
+            "bodySha256": "75cf787a9a8ba2c5cfa778853c21f3c97800264445e8542a1658678e9ee3cfe1",
+            "message": "anydm-req-1|202122232425262728292a2b2c2d2e2f|2|/confirm|75cf787a9a8ba2c5cfa778853c21f3c97800264445e8542a1658678e9ee3cfe1|18403",
+            "mac": "d7d19e36d39b126374e2ca17d913935badedb2b94b4a0e84738da46f756655ee"
+        },
+        {
+            "name": "non-ascii body",
+            "port": 18403,
+            "nonceA": "202122232425262728292a2b2c2d2e2f",
+            "counter": 3,
+            "path": "/add",
+            "body": "{\"url\":\"https://example.com/üé\",\"pageUrl\":\"https://example.com/中\"}",
+            "bodySha256": "77c43e82189811472c5420bd273edb20c2b8164e3e38b20888757424d160ebc6",
+            "message": "anydm-req-1|202122232425262728292a2b2c2d2e2f|3|/add|77c43e82189811472c5420bd273edb20c2b8164e3e38b20888757424d160ebc6|18403",
+            "mac": "f6af77c71105cc267f231ad63b3a46a473384dde1bda5f778fa59d59efc38627"
+        },
+        {
+            "name": "empty body",
+            "port": 18403,
+            "nonceA": "202122232425262728292a2b2c2d2e2f",
+            "counter": 4,
+            "path": "/add",
+            "body": "",
+            "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "message": "anydm-req-1|202122232425262728292a2b2c2d2e2f|4|/add|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855|18403",
+            "mac": "3257fa55ca5b028a334fbb8a161f7be972281c9d947383e051f4ea3bfe47df8a"
+        }
+    ],
+    "otherPort": {
+        "note": "The same inputs with another port: the secret is the same, every other proof differs.",
+        "port": 18404,
+        "proofE": "b1a4a84a11111f8631bc81d8031f411586352eb57e0c239c93308264c41c3d58",
+        "proofA": "a56827daf15008fe38f5cf7dea11ab67b0af933bc82e1fd9deddc0f43dc7a61c",
+        "secret": "f949f7251b94768e451de8fd9a0db3c3b4eaa34e48c863bccc8b12258bc7198b",
+        "helloRequestProof": "0dce50991c2b8eb4ebf745645c66816aa0a239b472c14be7b3f99c2859b99d14",
+        "helloProof": "2c61f5c59d3c7a609add81831659596b954b8ea62ba4d21d4484e496f43cce0a",
+        "mac": "11d166d23d99eaccaabdef43710ed72c795b81fd641045658bce11a84d47f165"
+    }
+}

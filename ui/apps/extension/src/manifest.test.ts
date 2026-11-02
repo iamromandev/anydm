@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import contract from "../contract/bridge.json";
 import pkg from "../package.json";
+import { CAPTURE_ACCESS } from "./capture";
 import { chromeIdOf, manifestFor } from "./manifest";
 
 describe("manifestFor", () => {
@@ -10,7 +11,7 @@ describe("manifestFor", () => {
     ] as const) {
         const manifest = manifestFor(browser);
 
-        test(`${browser}: asks for the three permissions and no others`, () => {
+        test(`${browser}: asks for four permissions at install, and downloads only when capture is turned on`, () => {
             expect(
                 [
                     ...manifest.permissions,
@@ -19,13 +20,26 @@ describe("manifestFor", () => {
                 "activeTab",
                 "contextMenus",
                 "cookies",
+                "storage",
             ]);
-            expect(manifest.optional_permissions).toBeUndefined();
+            expect(manifest.optional_permissions).toEqual([
+                "downloads",
+            ]);
             expect(manifest.host_permissions).toEqual([
                 "http://127.0.0.1/*",
                 "http://localhost/*",
                 "<all_urls>",
             ]);
+        });
+
+        test(`${browser}: what capture asks for is what the manifest lets it ask for, and nothing it holds already`, () => {
+            for (const permission of CAPTURE_ACCESS.permissions) {
+                expect(manifest.optional_permissions).toContain(permission);
+                expect(manifest.permissions).not.toContain(permission);
+            }
+            for (const origin of CAPTURE_ACCESS.origins) {
+                expect(manifest.host_permissions).toContain(origin);
+            }
         });
 
         test(`${browser}: is a Manifest V3 extension at the package's version`, () => {

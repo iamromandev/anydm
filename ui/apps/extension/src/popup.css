@@ -78,3 +78,107 @@ button.primary {
     border-color: var(--accent);
     color: var(--accent-fg);
 }
+
+#pairing,
+#settings {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+#pairing h2,
+#settings h2 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+
+#settings h3 {
+    margin: 12px 0 6px;
+    font-size: 13px;
+}
+
+#pairing label,
+#settings label {
+    display: block;
+    margin-bottom: 4px;
+}
+
+#pairing input,
+#settings input {
+    font: inherit;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg);
+}
+
+#capture-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#settings #capture {
+    margin: 0;
+    padding: 0;
+}
+
+#min-size {
+    width: 6em;
+}
+
+#pairing p,
+#settings p {
+    margin: 4px 0;
+    color: var(--muted);
+}
+
+#pair-row {
+    display: flex;
+    gap: 8px;
+}
+
+#pair-code {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.05em;
+}
+
+#pair-status {
+    color: var(--fg);
+}
+
+#forget {
+    margin-top: 8px;
+}
+
+#host-error {
+    color: #c0392b;
+}
+
+#host-form {
+    display: flex;
+    gap: 8px;
+}
+
+#host-input {
+    flex: 1;
+    min-width: 0;
+}
+
+#hosts {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+}
+
+#hosts li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    overflow-wrap: anywhere;
+}

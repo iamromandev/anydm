@@ -136,6 +136,12 @@ tasks.named<Test>("jvmTest") {
     val bridgeContract = rootProject.layout.projectDirectory.file("../ui/apps/extension/contract/bridge.json")
     inputs.file(bridgeContract).withPropertyName("bridgeContract").withPathSensitivity(PathSensitivity.NONE)
     systemProperty("anydm.bridgeContract", bridgeContract.asFile.absolutePath)
+    // The HTTP of pairing (phase 5c): PairingHttpContractTest asks the real server with the cases the extension's tests ask its model of the app.
+    val pairingHttp = rootProject.layout.projectDirectory.file("../ui/apps/extension/contract/pairing-http.json")
+    inputs.file(pairingHttp).withPropertyName("pairingHttp").withPathSensitivity(PathSensitivity.NONE)
+    // The pairing proofs (phase 5a): PairingVectorsTest reads these vectors, which the extension's tests read as well.
+    val pairingVectors = rootProject.layout.projectDirectory.file("../ui/apps/extension/contract/pairing-vectors.json")
+    inputs.file(pairingVectors).withPropertyName("pairingVectors").withPathSensitivity(PathSensitivity.NONE)
     // BondingLiveTest runs only with -Pbonding.live[=url]: it needs two real networks.
     providers.gradleProperty("bonding.live").orNull?.let { systemProperty("bonding.live", it) }
     // The end-to-end tests run in real time against a child engine process: e2eTest runs them, check runs e2eTest.
