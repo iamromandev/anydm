@@ -20,6 +20,7 @@ import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 
 /**
  * The browser extension (#546) and the bridge agree (OSI-04): `ui/apps/extension/contract/bridge.json` holds the bodies the
@@ -32,12 +33,18 @@ class BridgeContractTest {
         var addReply: Bridge.AddReply = Bridge.AddReply.Probed("t".repeat(32), "a.zip", 5000, DownloadKind.DIRECT, true, false)
         var confirmReply: Bridge.ConfirmReply = Bridge.ConfirmReply.Added(DownloadId(7))
 
-        override suspend fun add(request: Bridge.AddRequest): Bridge.AddReply {
+        override suspend fun add(
+            request: Bridge.AddRequest,
+            authenticated: Boolean,
+        ): Bridge.AddReply {
             added += request
             return addReply
         }
 
-        override suspend fun confirm(token: String): Bridge.ConfirmReply = confirmReply
+        override suspend fun confirm(
+            token: String,
+            authenticated: Boolean,
+        ): Bridge.ConfirmReply = confirmReply
     }
 
     private val fixture: JsonObject =
@@ -51,7 +58,8 @@ class BridgeContractTest {
     private val bridge = FakeBridge()
 
     // The settings default, as the app wires it.
-    private val server = BridgeServer(bridge, { Settings().bridgeOrigins })
+    private val pairing = BridgePairing(InMemoryPairStore(), Clock.System)
+    private val server = BridgeServer(bridge, { Settings().bridgeOrigins }, pairing)
     private val port = server.start()
     private val client = OkHttpClient()
     private val json = "application/json".toMediaType()
@@ -218,7 +226,7 @@ class BridgeContractTest {
 
     @Test
     fun theFirefoxOriginIsAnsweredOnceTheUserAddsIt() {
-        val paired = BridgeServer(bridge, { setOf(chrome, firefox) })
+        val paired = BridgeServer(bridge, { setOf(chrome, firefox) }, pairing)
         val pairedPort = paired.start()
         try {
             val request =

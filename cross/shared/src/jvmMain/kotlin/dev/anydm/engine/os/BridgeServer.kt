@@ -27,12 +27,21 @@ import kotlin.time.Duration.Companion.seconds
  * A request is looked at in this order, and the first thing wrong ends it: its `Host` must be `127.0.0.1` or `localhost`
  * with this server's port (403, which stops a web page that got the address by DNS rebinding); its `Origin` must be a
  * browser extension's, and one in [origins] when that is not empty (403, which stops web pages); the path and method must be
- * one of `GET /ping`, `POST /add`, `POST /confirm` and `OPTIONS` for the preflight of those; the body must be
- * `application/json` (415) and at most [MAX_BODY] bytes (413). Every answer is JSON, and says nothing of what was sent.
+ * one of `GET /ping`, `POST /pair`, `POST /hello`, `POST /add`, `POST /confirm` and `OPTIONS` for the preflight of those; the
+ * body must be `application/json` (415) and at most [MAX_BODY] bytes (413). Every answer is JSON, and says nothing of what
+ * was sent.
+ *
+ * Who is talking: `/pair` and `/hello` are how a browser becomes paired and starts a session ([pairing] does the
+ * proofs). Every proof is bound to the port this server listens on, which is passed on from the socket that took the request
+ * and not read from the request, so a relay on another port gets proofs it can't use. `/add` and `/confirm` may carry
+ * `X-Anydm-Id`, `X-Anydm-Counter` and `X-Anydm-Mac`, which [pairing] checks against the body as it came: a request with none
+ * of them is an unknown caller, which the [bridge] is told ("not authenticated") and which may do what it always could except
+ * send cookies; a request with any that do not check out is refused (401) and never treated as an unknown caller.
  */
 class BridgeServer(
     private val bridge: Bridge,
     private val origins: () -> Set<String>,
+    private val pairing: BridgePairing,
     private val ports: IntRange = PORTS,
 ) : AutoCloseable {
     private var server: HttpServer? = null
@@ -116,6 +125,13 @@ class BridgeServer(
                 ?.lowercase()
         if (type != "application/json") return send(exchange, 415, error("unsupported_media_type", "send application/json"), origin)
         val body = readBody(exchange) ?: return send(exchange, 413, error("too_large", "at most $MAX_BODY bytes"), origin)
+        // Who sent it is settled before anything is read from it; the signature is over the bytes as they came.
+        val authenticated =
+            if (path == "/add" || path == "/confirm") {
+                credentials(exchange, path, body, origin, port) ?: return
+            } else {
+                false
+            }
         val parsed =
             try {
                 Json.parseToJsonElement(body.decodeToString()) as? JsonObject
@@ -125,10 +141,206 @@ class BridgeServer(
                 null
             } ?: return send(exchange, 400, error("bad_request", "the body is not a JSON object"), origin)
         when (path) {
-            "/add" -> add(exchange, parsed, origin)
-            else -> confirm(exchange, parsed, origin)
+            "/add" -> add(exchange, parsed, origin, authenticated)
+            "/confirm" -> confirm(exchange, parsed, origin, authenticated)
+            "/pair" -> pair(exchange, parsed, origin, port)
+            else -> hello(exchange, parsed, origin, port)
         }
     }
+
+    // True for a request signed by a paired browser, false for one with no credentials at all; null once a request was refused
+    // and answered. Partial or wrong credentials are never taken for none.
+    private fun credentials(
+        exchange: HttpExchange,
+        path: String,
+        body: ByteArray,
+        origin: String,
+        port: Int,
+    ): Boolean? {
+        val reply =
+            quick {
+                pairing.authenticate(
+                    header(exchange, "X-Anydm-Id"),
+                    header(exchange, "X-Anydm-Counter"),
+                    header(exchange, "X-Anydm-Mac"),
+                    path,
+                    body,
+                    port,
+                )
+            }
+        return when (reply) {
+            AuthReply.Anonymous -> {
+                false
+            }
+
+            is AuthReply.Ok -> {
+                true
+            }
+
+            AuthReply.Unpaired -> {
+                refuse(exchange, "unpaired", "this browser is not paired", origin)
+            }
+
+            AuthReply.SessionExpired -> {
+                refuse(exchange, "session_expired", "say hello again", origin)
+            }
+
+            AuthReply.Replay -> {
+                refuse(exchange, "replay", "the counter must go up", origin)
+            }
+
+            AuthReply.StoreUnavailable -> {
+                unavailable(exchange, origin)
+            }
+
+            AuthReply.BadMac, AuthReply.Malformed -> {
+                refuse(
+                    exchange,
+                    "unauthorized",
+                    "the request is not signed as a paired browser's",
+                    origin,
+                )
+            }
+        }
+    }
+
+    private fun refuse(
+        exchange: HttpExchange,
+        code: String,
+        message: String,
+        origin: String,
+    ): Boolean? {
+        send(exchange, 401, error(code, message), origin)
+        return null
+    }
+
+    // The pairings can't be read (anydm's file of paired browsers): a 503 and not a 401, so the extension keeps its secret and tries
+    // again later instead of taking itself for unpaired. Null like [refuse], for a request that was answered.
+    private fun unavailable(
+        exchange: HttpExchange,
+        origin: String,
+    ): Boolean? {
+        send(exchange, 503, error("store_unavailable", "the paired browsers can't be read now; try again later"), origin)
+        return null
+    }
+
+    // The value of a header that is there once; null if it is not there; an empty text, which no credential can be, if it is
+    // there twice.
+    private fun header(
+        exchange: HttpExchange,
+        name: String,
+    ): String? {
+        val values = exchange.requestHeaders[name] ?: return null
+        return values.singleOrNull() ?: ""
+    }
+
+    private fun pair(
+        exchange: HttpExchange,
+        body: JsonObject,
+        origin: String,
+        port: Int,
+    ) {
+        val reply =
+            quick {
+                pairing.pair(
+                    origin,
+                    exchange.requestHeaders.getFirst("User-Agent"),
+                    body.string("nonceE", required = false),
+                    body.string("proofE", required = false),
+                    port,
+                )
+            }
+        when (reply) {
+            is PairReply.Paired -> {
+                send(
+                    exchange,
+                    200,
+                    buildJsonObject {
+                        put("id", reply.id)
+                        put("nonceA", reply.nonceA)
+                        put("proofA", reply.proofA)
+                    },
+                    origin,
+                )
+            }
+
+            PairReply.Malformed -> {
+                send(exchange, 400, error("bad_request", "nonceE is 32 and proofE 64 lower-case hex characters"), origin)
+            }
+
+            PairReply.NoCode -> {
+                send(exchange, 409, error("no_code", "no pairing code is waiting: start pairing in anydm"), origin)
+            }
+
+            PairReply.WrongProof -> {
+                send(exchange, 401, error("wrong_code", "not the code anydm is waiting for"), origin)
+            }
+
+            is PairReply.Throttled -> {
+                val seconds = ((reply.retryAfter.inWholeMilliseconds + 999) / 1000).coerceAtLeast(1)
+                exchange.responseHeaders.add("Retry-After", seconds.toString())
+                send(
+                    exchange,
+                    429,
+                    buildJsonObject {
+                        put("error", "too_many_attempts")
+                        put("message", "wait before trying again")
+                        put("retryAfterSeconds", seconds)
+                    },
+                    origin,
+                )
+            }
+
+            PairReply.NotSaved -> {
+                send(exchange, 500, error("not_saved", "the pairing could not be saved"), origin)
+            }
+        }
+    }
+
+    private fun hello(
+        exchange: HttpExchange,
+        body: JsonObject,
+        origin: String,
+        port: Int,
+    ) {
+        val reply =
+            quick {
+                pairing.hello(
+                    body.string("id", required = false),
+                    body.string("nonceE", required = false),
+                    body.string("proof", required = false),
+                    port,
+                )
+            }
+        when (reply) {
+            is HelloReply.Ok -> {
+                send(
+                    exchange,
+                    200,
+                    buildJsonObject {
+                        put("nonceA", reply.nonceA)
+                        put("proof", reply.proof)
+                    },
+                    origin,
+                )
+            }
+
+            HelloReply.Malformed -> {
+                send(exchange, 400, error("bad_request", "id and nonceE are 32 and proof is 64 lower-case hex characters"), origin)
+            }
+
+            HelloReply.Unpaired -> {
+                send(exchange, 401, error("unpaired", "this browser is not paired"), origin)
+            }
+
+            HelloReply.StoreUnavailable -> {
+                unavailable(exchange, origin)
+            }
+        }
+    }
+
+    // For the quick, in-memory (and small file) work of pairing: it takes no time worth a limit.
+    private fun <T> quick(block: suspend () -> T): T = runBlocking { block() }
 
     private fun originAllowed(origin: String): Boolean {
         if (!origin.matches(Settings.EXTENSION_ORIGIN)) return false
@@ -156,6 +368,7 @@ class BridgeServer(
         exchange: HttpExchange,
         body: JsonObject,
         origin: String,
+        authenticated: Boolean,
     ) {
         val url = body.string("url", required = true) ?: return send(exchange, 400, error("bad_request", "url is needed"), origin)
         val headers = mutableListOf<Pair<String, String>>()
@@ -180,7 +393,7 @@ class BridgeServer(
             } catch (_: TypeMismatch) {
                 return send(exchange, 400, error("bad_request", "cookies, referrer and pageUrl are strings"), origin)
             }
-        when (val reply = call { bridge.add(request) }) {
+        when (val reply = call { bridge.add(request, authenticated) }) {
             null -> {
                 send(exchange, 504, error("timeout", "the link did not answer in time"), origin)
             }
@@ -211,9 +424,10 @@ class BridgeServer(
         exchange: HttpExchange,
         body: JsonObject,
         origin: String,
+        authenticated: Boolean,
     ) {
         val token = body.string("token", required = true) ?: return send(exchange, 400, error("bad_request", "token is needed"), origin)
-        when (val reply = call { bridge.confirm(token) }) {
+        when (val reply = call { bridge.confirm(token, authenticated) }) {
             null -> {
                 send(exchange, 504, error("timeout", "adding did not finish in time"), origin)
             }
@@ -257,6 +471,7 @@ class BridgeServer(
             Bridge.Problem.UNREADABLE -> 502
             Bridge.Problem.UNAVAILABLE -> 503
             Bridge.Problem.DUPLICATE -> 409
+            Bridge.Problem.UNAUTHORIZED -> 401
         }
 
     private fun preflight(
@@ -276,7 +491,7 @@ class BridgeServer(
         headers.add("Access-Control-Allow-Origin", origin)
         headers.add("Vary", "Origin")
         headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        headers.add("Access-Control-Allow-Headers", "Content-Type")
+        headers.add("Access-Control-Allow-Headers", "Content-Type, X-Anydm-Id, X-Anydm-Counter, X-Anydm-Mac")
         // Chrome asks before a page reaches a private address (Private Network Access); the extension is allowed to.
         if (exchange.requestHeaders.getFirst("Access-Control-Request-Private-Network").equals("true", ignoreCase = true)) {
             headers.add("Access-Control-Allow-Private-Network", "true")
@@ -335,6 +550,6 @@ class BridgeServer(
         private const val DRAIN = 1L shl 20
         private const val MAX_HEADERS = 64
         private val CALL_LIMIT = 30.seconds
-        private val ROUTES = mapOf("/ping" to "GET", "/add" to "POST", "/confirm" to "POST")
+        private val ROUTES = mapOf("/ping" to "GET", "/pair" to "POST", "/hello" to "POST", "/add" to "POST", "/confirm" to "POST")
     }
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 
 /**
@@ -128,6 +129,23 @@ internal class RuleKeeper(
             allowanceUsageOf(stored, days, now, zone, known + current) { name, start, end ->
                 meter.pendingBytes(name, start, end) + if (name == current) unsaved else 0L
             }
+        }
+
+    /**
+     * Starts [name]'s allowance usage over: the stored bytes of its current period are forgotten (the days before it stay),
+     * and its warning and limit are told again when crossed again. The caller saves the unsaved bytes first, so none is left
+     * to count. False, with nothing changed, for a network with no allowance.
+     */
+    suspend fun resetUsage(name: String): Boolean =
+        lock.withLock {
+            val stored = rules.networkRules()
+            val allowance = stored.policyFor(name).allowance ?: return@withLock false
+            val period = periodOf(allowance.period, clock.now().toLocalDateTime(timeZone()).date)
+            traffic.clearNetwork(name, period.from.toString(), period.to.toString())
+            cachedKey = null
+            cachedBytes = 0L
+            alerts.forget(name)
+            true
         }
 
     private suspend fun load() {

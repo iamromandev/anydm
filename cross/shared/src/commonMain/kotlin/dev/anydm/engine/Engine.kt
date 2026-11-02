@@ -85,10 +85,16 @@ import dev.anydm.engine.net.epochMinute
 import dev.anydm.engine.net.withProxy
 import dev.anydm.engine.net.withProxyForNew
 import dev.anydm.engine.os.AddLinkResult
+import dev.anydm.engine.os.BridgePairing
 import dev.anydm.engine.os.EntryPoint
+import dev.anydm.engine.os.InMemoryPairStore
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
 import dev.anydm.engine.os.OsSettings
+import dev.anydm.engine.os.PairStore
+import dev.anydm.engine.os.PairedBrowsers
+import dev.anydm.engine.os.PairingOffer
+import dev.anydm.engine.os.RevokeResult
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.platform.FileSystem
 import dev.anydm.engine.platform.KeepAwake
@@ -246,6 +252,8 @@ class Engine(
     networkLister: NetworkLister = NetworkLister.None,
     /** Tells whether a connection can be tied to a network (BND-02); the desktop passes DesktopNetworks. Without one, none can. */
     networkBinder: NetworkBinder = NetworkBinder.None,
+    /** Where the browsers paired with the bridge are kept; the desktop passes a file in its data folder. By default they are forgotten at the end of the run. */
+    pairStore: PairStore = InMemoryPairStore(),
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
@@ -297,6 +305,12 @@ class Engine(
 
     /** The machine's networks, which of them are on, and which are in use (BND-01); the list fills at start and follows the network. */
     val networks: StateFlow<BondingState> = bonding.state
+
+    /**
+     * Who may talk to the browser bridge as a paired browser. The bridge server asks it to check each request; a UI
+     * uses [startPairing], [pairedBrowsers] and [revokeBrowser] and not this.
+     */
+    val bridgePairing = BridgePairing(pairStore, clock, monotonic, log = log)
 
     private val engineJob = SupervisorJob()
     private val scope = CoroutineScope(dispatcher + engineJob + CoroutineExceptionHandler { _, e -> failed(e) })
@@ -1407,6 +1421,34 @@ class Engine(
             CommandResult.Done(null)
         }
 
+    /**
+     * Starts pairing a browser: a code to type into the extension (16 characters, shown in groups of four), good for two
+     * minutes and for one pairing. A new code replaces the last. The code is a secret, shown to the user and nowhere else.
+     * Ask the offer for its [PairingOffer.state] to tell the user what became of it: still waiting, too many tries at the
+     * moment, used, burned by wrong tries, or run out.
+     */
+    suspend fun startPairing(): PairingOffer = command { bridgePairing.startPairing() }
+
+    /**
+     * Ends the code that [startPairing] made, if it is still waiting: the user left the screen that shows it, and it must not
+     * stay good for the rest of its two minutes. The offer's [PairingOffer.state] is then expired, and a browser
+     * that tries the code is told there is none. Does nothing when no code is waiting.
+     */
+    suspend fun cancelPairing(only: PairingOffer? = null): Unit = command { bridgePairing.cancelPairing(only) }
+
+    /**
+     * The browsers paired with the bridge, oldest first, or [PairedBrowsers.Unavailable] while the file that holds them can't
+     * be read: not "none paired", and asking again may work.
+     */
+    suspend fun pairedBrowsers(): PairedBrowsers = command { bridgePairing.browsers() }
+
+    /**
+     * Takes a browser away at once: it can't start a session or use the one it has. It must be paired again with a new code.
+     * [RevokeResult.STORE_UNAVAILABLE] when the file that holds the pairings can't be read: nothing was changed, and the answer
+     * is not "not found".
+     */
+    suspend fun revokeBrowser(id: String): RevokeResult = command { bridgePairing.revoke(id) }
+
     /** The settings the OS, bridge, tool and diagnostics sections of the settings screen show (#609). */
     suspend fun runtimeSettings(): RuntimeSettings = command { store.settings.load().runtime() }
 
@@ -1645,6 +1687,25 @@ class Engine(
                 bonding.state.value.networks
                     .mapTo(mutableSetOf()) { it.info.key }
             withContext(publisher) { keeper.allowanceUsage(known) }
+        }
+
+    /**
+     * Starts the data usage of [network] over: what it used in its current allowance period is forgotten (unsaved bytes are
+     * saved first, then dropped with the rest), so a pause the allowance caused lifts, and its warning and limit are told
+     * again when crossed again. Its bytes of earlier periods stay. Invalid, with nothing changed, for a blank key or `*` and
+     * for a network with no allowance (it has no usage to start over).
+     */
+    suspend fun resetAllowanceUsage(network: String): CommandResult =
+        command {
+            if (network.isBlank() || network == "*") return@command CommandResult.Invalid("network key must not be blank or *: $network")
+            val reset =
+                withContext(publisher) {
+                    flushTraffic()
+                    keeper.resetUsage(network)
+                }
+            if (!reset) return@command CommandResult.Invalid("network has no data limit: $network")
+            rulesChanged()
+            CommandResult.Done(null)
         }
 
     /** The transfer and file settings, categories and profiles as JSON (#608): no proxies, cookies or logins. */

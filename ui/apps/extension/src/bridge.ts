@@ -46,11 +46,21 @@ export type ConfirmOutcome = Added | Refused | Unreachable;
 const PING_MS = 1500;
 
 /** The app gives up on a link after 30 s. */
-const CALL_MS = 35_000;
+export const CALL_MS = 35_000;
 
-const base = (port: number) => `http://127.0.0.1:${port}`;
+/**
+ * What `/pair` and `/hello` get. The app answers them from memory and a small file, so a program that takes longer is not worth
+ * waiting for: the queue of requests (`client.ts`) is one at a time, and a program that answered `/ping` and then said nothing
+ * would hold everything else for as long as it is waited for. Only `/add` and `/confirm`, where the app reads a link, wait long.
+ */
+export const HANDSHAKE_MS = 4_000;
 
-async function readJson(response: Response): Promise<unknown> {
+const deadlineOf = (path: string) =>
+    path === "/add" || path === "/confirm" ? CALL_MS : HANDSHAKE_MS;
+
+export const base = (port: number) => `http://127.0.0.1:${port}`;
+
+export async function readJson(response: Response): Promise<unknown> {
     try {
         return await response.json();
     } catch {
@@ -67,6 +77,8 @@ async function ping(
         const response = await fetchFn(`${base(port)}/ping`, {
             credentials: "omit",
             cache: "no-store",
+            // Nothing that answers a ping is sent anywhere else: a redirect would send the request to another address.
+            redirect: "error",
             signal: AbortSignal.timeout(timeoutMs),
         });
         const body = (await readJson(response)) as
@@ -85,15 +97,15 @@ async function ping(
 }
 
 /**
- * Finds anydm: every port is asked at once, so a search takes as long as the slowest port is allowed to, not the sum. A
- * bridge that answers this browser wins over one that refuses it, and [preferred] (the port that worked last) wins over
- * the rest.
+ * Every port that answers like anydm, all asked at once, so a search takes as long as the slowest port is allowed to, not the
+ * sum. A bridge that answers this browser comes before one that refuses it, and [preferred] (the port that worked last)
+ * before the rest. Answering like anydm proves nothing: any program can say `{"app":"anydm"}`.
  */
-export async function findBridge(
+export async function findBridges(
     fetchFn: Fetch,
     preferred?: number,
     options: { timeoutMs?: number } = {},
-): Promise<Found | null> {
+): Promise<Found[]> {
     const timeoutMs = options.timeoutMs ?? PING_MS;
     const ports = [
         ...PORTS,
@@ -103,23 +115,52 @@ export async function findBridge(
     const found = (
         await Promise.all(ports.map((port) => ping(fetchFn, port, timeoutMs)))
     ).filter((f): f is Found => f !== null);
-    return found.find((f) => f.allowed) ?? found[0] ?? null;
+    return [
+        ...found.filter((f) => f.allowed),
+        ...found.filter((f) => !f.allowed),
+    ];
 }
 
-async function post(
+/** The first of [findBridges]: one that answers this browser, else one that refuses it. */
+export async function findBridge(
+    fetchFn: Fetch,
+    preferred?: number,
+    options: { timeoutMs?: number } = {},
+): Promise<Found | null> {
+    return (await findBridges(fetchFn, preferred, options))[0] ?? null;
+}
+
+/** What answered a POST: its status and its JSON, which is undefined when it was not JSON. */
+export interface Reply {
+    status: number;
+    body: unknown;
+}
+
+/** Headers for a signed request, made from its path and the exact text that is sent. */
+export type Signer = (
+    path: string,
+    text: string,
+) => Promise<Record<string, string>>;
+
+/** POSTs [text] as JSON; null when nothing answered. [headers] are added to the JSON content type. */
+export async function postText(
     fetchFn: Fetch,
     port: number,
     path: string,
-    body: unknown,
-): Promise<{ status: number; body: unknown } | null> {
+    text: string,
+    headers: Record<string, string> = {},
+): Promise<Reply | null> {
     try {
         const response = await fetchFn(`${base(port)}${path}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            headers: { "Content-Type": "application/json", ...headers },
+            body: text,
             credentials: "omit",
             cache: "no-store",
-            signal: AbortSignal.timeout(CALL_MS),
+            // The signature and the cookies are for this address and port only: a redirect (a program on the port can send
+            // one) would carry the body to wherever it names.
+            redirect: "error",
+            signal: AbortSignal.timeout(deadlineOf(path)),
         });
         return { status: response.status, body: await readJson(response) };
     } catch {
@@ -127,7 +168,27 @@ async function post(
     }
 }
 
-function refused(status: number, body: unknown): Refused {
+// The text is made once, so what is signed is what is sent. A signer that fails sends nothing.
+async function post(
+    fetchFn: Fetch,
+    port: number,
+    path: string,
+    body: unknown,
+    sign?: Signer,
+): Promise<Reply | null> {
+    const text = JSON.stringify(body);
+    let headers: Record<string, string> = {};
+    if (sign) {
+        try {
+            headers = await sign(path, text);
+        } catch {
+            return null;
+        }
+    }
+    return postText(fetchFn, port, path, text, headers);
+}
+
+export function refused(status: number, body: unknown): Refused {
     const parsed = (body ?? {}) as { error?: unknown; message?: unknown };
     return {
         kind: "refused",
@@ -142,8 +203,9 @@ export async function addLink(
     fetchFn: Fetch,
     port: number,
     body: unknown,
+    sign?: Signer,
 ): Promise<AddOutcome> {
-    const answer = await post(fetchFn, port, "/add", body);
+    const answer = await post(fetchFn, port, "/add", body, sign);
     if (answer === null) return { kind: "unreachable" };
     const reply = answer.body as Record<string, unknown> | undefined;
     if (answer.status === 200 && typeof reply?.token === "string") {
@@ -165,8 +227,9 @@ export async function confirmLink(
     fetchFn: Fetch,
     port: number,
     token: string,
+    sign?: Signer,
 ): Promise<ConfirmOutcome> {
-    const answer = await post(fetchFn, port, "/confirm", { token });
+    const answer = await post(fetchFn, port, "/confirm", { token }, sign);
     if (answer === null) return { kind: "unreachable" };
     const reply = answer.body as Record<string, unknown> | undefined;
     if (answer.status === 200 && typeof reply?.id === "number") {

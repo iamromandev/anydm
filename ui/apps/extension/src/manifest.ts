@@ -33,6 +33,12 @@ export function manifestFor(browser: Browser) {
             "contextMenus",
             "cookies",
             "activeTab",
+            "storage",
+        ],
+        // Asked for when the user turns capture on (`popup.ts`), not at install: it is what lets the extension see that a
+        // download began and cancel the browser's copy once anydm has it. See `capture.ts`.
+        optional_permissions: [
+            "downloads",
         ],
         host_permissions: [
             "http://127.0.0.1/*",

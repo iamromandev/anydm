@@ -28,6 +28,8 @@ export function describeFailure(
             action: "retry",
         };
     }
+    const refusal = pairingRefusal(outcome);
+    if (refusal) return refusal;
     switch (outcome.status) {
         case 400:
             return {
@@ -83,6 +85,39 @@ export function describeFailure(
     }
 }
 
+// What the app says of this browser's pairing, which is not about the link. The two that mean the session ended or was cut
+// are only seen after the one hello that puts them right has failed too.
+function pairingRefusal(outcome: Refused): Failure | undefined {
+    if (outcome.status === 503 && outcome.error === "store_unavailable") {
+        return {
+            text: "anydm can't read its list of paired browsers just now. Try again in a moment.",
+            action: "retry",
+        };
+    }
+    if (outcome.status !== 401) return undefined;
+    switch (outcome.error) {
+        case "unpaired":
+            return {
+                text: "anydm does not know this browser (any more). Pair it again in the toolbar window, or forget the pairing there.",
+                action: undefined,
+            };
+        case "unverified":
+            return {
+                text: "What answers on anydm's port could not prove it is the anydm this browser is paired with, so nothing was sent to it.",
+                action: "retry",
+            };
+        case "session_expired":
+        case "unauthorized":
+        case "replay":
+            return {
+                text: "anydm could not check this browser's signature. Try again.",
+                action: "retry",
+            };
+        default:
+            return undefined;
+    }
+}
+
 function reason(message: string): string {
     const clean = message.replace(/\s+/g, " ").trim();
     if (clean === "") return ".";
@@ -95,10 +130,10 @@ export function formatSize(size: number | null): string {
     if (size === null) return "unknown size";
     const units = [
         "B",
-        "KB",
-        "MB",
-        "GB",
-        "TB",
+        "KiB",
+        "MiB",
+        "GiB",
+        "TiB",
     ];
     let value = size;
     let unit = 0;

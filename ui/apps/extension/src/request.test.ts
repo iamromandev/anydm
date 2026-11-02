@@ -27,6 +27,21 @@ describe("buildAddBody", () => {
         );
     });
 
+    test("the SameSite setting is for choosing cookies, and never goes into the body", () => {
+        const { body } = buildAddBody({
+            url: "https://a.test/f",
+            userAgent: "UA",
+            cookies: [
+                { name: "a", value: "1", sameSite: "strict" },
+                { name: "b", value: "2", sameSite: "lax" },
+            ],
+        });
+
+        expect(body.cookies).toBe("a=1; b=2");
+        expect(JSON.stringify(body)).not.toContain("strict");
+        expect(JSON.stringify(body)).not.toContain("sameSite");
+    });
+
     test("keeps the value of a cookie as the browser has it", () => {
         const { body } = buildAddBody({
             url: "https://a.test/f",

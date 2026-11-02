@@ -12,6 +12,59 @@
             <div id="lines"></div>
             <code id="origin" hidden></code>
             <div id="buttons"></div>
+            <section id="pairing" hidden>
+                <h2>Pair with anydm</h2>
+                <p id="pair-status"></p>
+                <p id="pair-help"></p>
+                <form id="pair-form" autocomplete="off">
+                    <label for="pair-code">Pairing code from anydm</label>
+                    <div id="pair-row">
+                        <input
+                            id="pair-code"
+                            name="anydm-pairing-code"
+                            type="text"
+                            autocomplete="off"
+                            autocapitalize="characters"
+                            spellcheck="false"
+                            maxlength="40"
+                            placeholder="XXXX-XXXX-XXXX-XXXX"
+                        />
+                        <button type="submit" id="pair-button">Pair</button>
+                    </div>
+                </form>
+                <p id="pair-message" role="status"></p>
+                <button id="forget" type="button" hidden>
+                    Forget this pairing
+                </button>
+            </section>
+            <section id="settings" hidden>
+                <h2>Browser downloads</h2>
+                <label id="capture-row" for="capture">
+                    <input id="capture" type="checkbox" />
+                    <span id="capture-label"></span>
+                </label>
+                <p id="capture-hint"></p>
+                <p id="capture-note" role="status"></p>
+                <p id="pairing-note"></p>
+                <h2>Leave to the browser</h2>
+                <label for="min-size" id="size-label"></label>
+                <input id="min-size" type="number" min="0" step="any" />
+                <p id="size-hint"></p>
+                <p id="limits-note"></p>
+                <h3 id="hosts-label"></h3>
+                <form id="host-form">
+                    <input
+                        id="host-input"
+                        type="text"
+                        placeholder="example.com"
+                        aria-label="Site to exclude"
+                    />
+                    <button type="submit">Add</button>
+                </form>
+                <p id="host-error" role="alert" hidden></p>
+                <p id="hosts-empty"></p>
+                <ul id="hosts"></ul>
+            </section>
         </main>
         <script src="popup.js"></script>
     </body>

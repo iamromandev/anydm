@@ -1,83 +1,146 @@
 package dev.anydm.desktop
 
-import dev.anydm.engine.net.BindStatus
-import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
-import dev.anydm.engine.queue.CommandResult
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
-data class NetworksState(
-    val message: String? = null,
+/** One line of the networks menu. */
+data class NetworkRow(
+    val key: String,
+    /** What to call it: the name a person gave, else [osName]. */
+    val name: String,
+    /** The name the OS gives it, shown as a tag beside the name. */
+    val osName: String,
+    val kind: NetworkKind,
+    val colorId: String,
+    /** Bytes per second it carries now; null when it is idle. */
+    val speed: Long?,
+    val up: Boolean,
 )
 
-fun bindingLabel(status: BindStatus): String =
-    when (status) {
-        BindStatus.UNKNOWN -> "Unknown"
-        BindStatus.ISOLATED -> "Isolated"
-        BindStatus.BEST_EFFORT -> "Best effort"
-        BindStatus.UNSUPPORTED -> "Not usable"
-    }
+data class NetworksState(
+    val open: Boolean = false,
+    val rows: List<NetworkRow> = emptyList(),
+)
 
-/** What a binding capability means for downloads on that network. */
-fun bindingHelp(status: BindStatus): String =
-    when (status) {
-        BindStatus.UNKNOWN -> {
-            "Not checked yet."
-        }
-
-        BindStatus.ISOLATED -> {
-            "The system keeps this network's traffic on it."
-        }
-
-        BindStatus.BEST_EFFORT -> {
-            "Only the source address is set, so without routing rules for it the traffic may still leave by the default route (Linux)."
-        }
-
-        BindStatus.UNSUPPORTED -> {
-            "This network can't be used: nothing can be bound to it here, so it is listed but never used."
-        }
-    }
-
-fun canSwitch(network: BondedNetwork): Boolean = network.status != BindStatus.UNSUPPORTED
-
-fun bondingSummary(state: BondingState): String =
-    when {
-        state.networks.isEmpty() -> "No networks found."
-        state.bonded -> "Downloads are shared across ${state.active.size} networks."
-        else -> "Turn on two or more networks that are up to share downloads across them."
-    }
-
-/** The networks section (#609): which networks bonding uses. The engine's network list is live, so this only sends the switches. */
+/**
+ * The networks menu: a row for each network the engine lists, whether the menu is open, and where a row's chevron and the
+ * "Speed & data limits" link go ([onOpenLimits], a network key or null for the general page; the limits dialog is built apart).
+ */
 class NetworksModel(
-    private val source: EngineSource,
-    private val scope: CoroutineScope,
+    source: EngineSource,
+    looks: StateFlow<NetworkLooks>,
+    scope: CoroutineScope,
+    private val onOpenLimits: (String?) -> Unit = {},
 ) {
-    private val ui = MutableStateFlow(NetworksState())
-    val state: StateFlow<NetworksState> = ui.asStateFlow()
-    val networks: StateFlow<BondingState> get() = source.networks
+    private val open = MutableStateFlow(false)
 
-    fun enable(
-        key: String,
-        on: Boolean,
-    ) {
-        scope.launch {
-            try {
-                when (val result = source.setNetworkEnabled(key, on)) {
-                    is CommandResult.Done -> ui.update { it.copy(message = null) }
-                    is CommandResult.Invalid -> ui.update { it.copy(message = result.reason) }
-                    else -> ui.update { it.copy(message = result.toString()) }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: IllegalStateException) {
-                ui.update { it.copy(message = "The download engine has stopped, so nothing was changed.") }
-            }
-        }
+    val state: StateFlow<NetworksState> =
+        combine(source.networks, looks, open) { networks, looks, open -> NetworksState(open, rowsOf(networks, looks)) }
+            .stateIn(scope, SharingStarted.Eagerly, NetworksState(false, rowsOf(source.networks.value, looks.value)))
+
+    fun open() = open.update { true }
+
+    fun close() = open.update { false }
+
+    fun toggle() = open.update { !it }
+
+    /** Closes the menu and goes to the limits of [key], or the general limits for null. */
+    fun openLimits(key: String?) {
+        close()
+        onOpenLimits(key)
     }
+
+    private fun rowsOf(
+        networks: BondingState,
+        looks: NetworkLooks,
+    ): List<NetworkRow> =
+        networks.networks.sortedBy { it.info.key }.map { net ->
+            val key = net.info.key
+            NetworkRow(
+                key = key,
+                name = looks.nameOf(key, net.info.name),
+                osName = net.info.name,
+                kind = kindOf(net.info),
+                colorId = looks.colorIds[key] ?: SWATCH_IDS.first(),
+                speed = net.speed?.toLong()?.takeIf { it > 0 },
+                up = net.info.up,
+            )
+        }
+}
+
+/** What the rename and color popover holds while it is open: a draft, and why it can't be saved yet. */
+data class NetworkEdit(
+    val key: String,
+    /** Which part of the screen opened it (the menu, a chip, the table): only that part draws it. */
+    val anchor: String,
+    val osName: String,
+    val name: String,
+    val colorId: String,
+    /** The person touched a swatch: whatever it shows when saved is their pick, even if it is the one it started on. */
+    val colorTouched: Boolean = false,
+    val error: String? = null,
+)
+
+/**
+ * Renames and recolors a network. The popover is a draft that [save] writes (Done, Enter or a click away) and [cancel] throws
+ * away (Escape). One popover is open at a time, for whichever part of the screen opened it.
+ */
+class NetworkEditor(
+    private val visuals: NetworkVisuals,
+    private val looks: StateFlow<NetworkLooks>,
+) {
+    private val current = MutableStateFlow<NetworkEdit?>(null)
+    val editing: StateFlow<NetworkEdit?> = current.asStateFlow()
+
+    fun start(
+        key: String,
+        anchor: String,
+        osName: String,
+    ) {
+        val now = looks.value
+        current.value =
+            NetworkEdit(key, anchor, osName, name = now.nameOf(key, osName), colorId = now.colorIds[key] ?: SWATCH_IDS.first())
+    }
+
+    fun setName(raw: String) = current.update { it?.copy(name = raw.take(MAX_NETWORK_NAME), error = null) }
+
+    fun setColor(id: String) = current.update { it?.copy(colorId = id, colorTouched = true, error = null) }
+
+    /** Writes the draft and closes; false (and open) when the name is refused or could not be written. */
+    fun save(): Boolean {
+        val edit = current.value ?: return true
+        val now = looks.value
+        var failure: String? = null
+        if (edit.name.trim() != now.nameOf(edit.key, edit.osName)) {
+            failure = reason(visuals.rename(edit.key, edit.name))
+        }
+        // A color nobody touched is left as it is (automatic, or the pin it has), so a plugged-in network can still move it.
+        if (failure == null && edit.colorTouched) {
+            failure = reason(visuals.pick(edit.key, edit.colorId))
+        }
+        if (failure != null) {
+            current.update { it?.copy(error = failure) }
+            return false
+        }
+        current.value = null
+        return true
+    }
+
+    fun cancel() {
+        current.value = null
+    }
+
+    private fun reason(result: VisualsResult): String? =
+        when (result) {
+            VisualsResult.Saved -> null
+            is VisualsResult.Invalid -> result.reason
+            is VisualsResult.NotSaved -> result.reason
+        }
 }

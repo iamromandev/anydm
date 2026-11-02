@@ -101,6 +101,66 @@ describe("describeFailure", () => {
     });
 });
 
+describe("describeFailure: the pairing", () => {
+    test("an app that can't read its paired browsers asks to try again, not to pair", () => {
+        const failure = describeFailure(
+            refusedBy(503, "store_unavailable"),
+            "add",
+        );
+
+        expect(failure.text).toContain("can't read");
+        expect(failure.action).toBe("retry");
+    });
+
+    test("another 503 keeps its own words", () => {
+        expect(
+            describeFailure(refusedBy(503, "unavailable"), "add").text,
+        ).toContain("can't take this kind of link");
+    });
+
+    test("an app that does not know this browser says so, with no button that loops", () => {
+        const failure = describeFailure(refusedBy(401, "unpaired"), "add");
+
+        expect(failure.text).toContain("does not know");
+        expect(failure.action).toBeUndefined();
+    });
+
+    test("something that could not prove itself is told, and can be tried again", () => {
+        const failure = describeFailure(refusedBy(401, "unverified"), "add");
+
+        expect(failure.text).toContain("prove");
+        expect(failure.action).toBe("retry");
+    });
+
+    test("a session that stayed lost after the one hello is asked to be tried again", () => {
+        for (const error of [
+            "session_expired",
+            "unauthorized",
+            "replay",
+        ]) {
+            const failure = describeFailure(refusedBy(401, error), "confirm");
+
+            expect(failure.text).toContain("signature");
+            expect(failure.action).toBe("retry");
+        }
+    });
+
+    test("another 401 is a plain problem", () => {
+        expect(
+            describeFailure(refusedBy(401, "whatever"), "add").text,
+        ).toContain("had a problem");
+    });
+
+    test("none of it repeats what the app said", () => {
+        const failure = describeFailure(
+            refusedBy(401, "unpaired", "secret: abc123"),
+            "add",
+        );
+
+        expect(failure.text).not.toContain("abc123");
+    });
+});
+
 describe("formatSize", () => {
     test("says unknown size when the server did not tell", () => {
         expect(formatSize(null)).toBe("unknown size");
@@ -109,8 +169,8 @@ describe("formatSize", () => {
     test("uses the largest unit that keeps the number small", () => {
         expect(formatSize(0)).toBe("0 B");
         expect(formatSize(1023)).toBe("1023 B");
-        expect(formatSize(5000)).toBe("4.9 KB");
-        expect(formatSize(4_400_000)).toBe("4.2 MB");
-        expect(formatSize(3 * 1024 ** 3)).toBe("3.0 GB");
+        expect(formatSize(5000)).toBe("4.9 KiB");
+        expect(formatSize(4_400_000)).toBe("4.2 MiB");
+        expect(formatSize(3 * 1024 ** 3)).toBe("3.0 GiB");
     });
 });

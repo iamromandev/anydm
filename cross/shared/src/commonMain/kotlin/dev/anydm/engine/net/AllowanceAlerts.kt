@@ -34,6 +34,11 @@ internal class AllowanceAlerts {
         allowance: Allowance?,
     ): List<EngineEvent> = levels(status, allowance).mapNotNull { (key, event) -> if (told.add(key)) event else null }
 
+    /** Forgets what was told for [network]: its levels are told again when crossed again (its usage was reset). */
+    fun forget(network: String) {
+        told.removeAll { it.network == network }
+    }
+
     private fun levels(
         status: AllowanceStatus?,
         allowance: Allowance?,

@@ -68,6 +68,14 @@ internal class SqlTrafficStore(
         to: String,
     ): Long = withContext(io) { queries.networkBytesBetween(network, from, to).executeAsOne() }
 
+    override suspend fun clearNetwork(
+        network: String,
+        from: String,
+        to: String,
+    ) {
+        withContext(writeContext) { queries.clearNetworkDays(network, from, to) }
+    }
+
     override suspend fun speedDays(
         from: String,
         to: String,

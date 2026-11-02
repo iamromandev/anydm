@@ -68,10 +68,12 @@ abstract class BridgeServiceTest : StoreTestBase() {
         bridgeTest { f ->
             val token =
                 f.bridge
-                    .add(request(cookies = "sid=abc", headers = listOf("X-A" to "1"), pageUrl = "https://example.com/dl"))
-                    .token()
+                    .add(
+                        request(cookies = "sid=abc", headers = listOf("X-A" to "1"), pageUrl = "https://example.com/dl"),
+                        authenticated = true,
+                    ).token()
 
-            val added = f.bridge.confirm(token).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+            val added = f.bridge.confirm(token, authenticated = true).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
 
             val context =
                 f.h.store.downloads
@@ -163,7 +165,7 @@ abstract class BridgeServiceTest : StoreTestBase() {
                 .shouldBeInstanceOf<Bridge.AddReply.Refused>()
                 .problem shouldBe Bridge.Problem.BAD_REQUEST
             f.bridge
-                .add(request(cookies = "a=b\r\nX: y"))
+                .add(request(cookies = "a=b\r\nX: y"), authenticated = true)
                 .shouldBeInstanceOf<Bridge.AddReply.Refused>()
                 .problem shouldBe Bridge.Problem.BAD_REQUEST
             f.h.protocol.linkProbe = StepResult.Failed(ErrorClass.GONE, "HTTP 404")
@@ -191,9 +193,9 @@ abstract class BridgeServiceTest : StoreTestBase() {
     @Test
     fun cookiesSentAsAHeaderEndUpSealedLikeAnyOther() =
         bridgeTest { f ->
-            val token = f.bridge.add(request(headers = listOf("Cookie" to "sid=abc"))).token()
+            val token = f.bridge.add(request(headers = listOf("Cookie" to "sid=abc")), authenticated = true).token()
 
-            val added = f.bridge.confirm(token).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+            val added = f.bridge.confirm(token, authenticated = true).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
 
             val context =
                 f.h.store.downloads
@@ -265,5 +267,134 @@ abstract class BridgeServiceTest : StoreTestBase() {
             repeat(BridgeService.MAX_PENDING) { f.bridge.add(request("https://example.com/${it + 1}.zip")) }
 
             f.bridge.confirm(first) shouldBe Bridge.ConfirmReply.UnknownToken
+        }
+
+    // ---- who may send cookies ----
+
+    @Test
+    fun cookiesFromAnUnknownCallerAreRefusedBeforeAnythingIsAskedOfTheLink() =
+        bridgeTest { f ->
+            val reply = f.bridge.add(request(cookies = "sid=abc"), authenticated = false)
+
+            reply.shouldBeInstanceOf<Bridge.AddReply.Refused>().problem shouldBe Bridge.Problem.UNAUTHORIZED
+            f.h.protocol.probedLinks shouldBe emptyList()
+        }
+
+    @Test
+    fun aCookieHeaderIsACookieAndSoIsRefusedToo() =
+        bridgeTest { f ->
+            for (name in listOf("Cookie", "cookie", "COOKIE")) {
+                f.bridge
+                    .add(request(headers = listOf("X-A" to "1", name to "sid=abc")), authenticated = false)
+                    .shouldBeInstanceOf<Bridge.AddReply.Refused>()
+                    .problem shouldBe Bridge.Problem.UNAUTHORIZED
+            }
+            f.h.protocol.probedLinks shouldBe emptyList()
+        }
+
+    @Test
+    fun theRefusalNeverRepeatsTheCookies() =
+        bridgeTest { f ->
+            val reply =
+                f.bridge
+                    .add(
+                        request(cookies = "sid=topsecret"),
+                        authenticated = false,
+                    ).shouldBeInstanceOf<Bridge.AddReply.Refused>()
+
+            reply.toString() shouldNotContain "topsecret"
+        }
+
+    @Test
+    fun anUnknownCallerWithoutCookiesStillAddsAsBefore() =
+        bridgeTest { f ->
+            val token =
+                f.bridge
+                    .add(request(headers = listOf("X-A" to "1"), pageUrl = "https://example.com/dl", cookies = "  "), authenticated = false)
+                    .token()
+
+            val added = f.bridge.confirm(token, authenticated = false).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+
+            f.h.store.downloads
+                .context(added.id)!!
+                .cookies shouldBe null
+            f.h.engine.downloads.value.size shouldBe 1
+        }
+
+    @Test
+    fun aPairedBrowserMaySendCookies() =
+        bridgeTest { f ->
+            val token = f.bridge.add(request(cookies = "sid=abc"), authenticated = true).token()
+
+            val added = f.bridge.confirm(token, authenticated = true).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+
+            f.h.store.downloads
+                .context(added.id)!!
+                .cookies shouldBe "sid=abc"
+        }
+
+    @Test
+    fun aTokenOfAPairedBrowserIsNotRedeemedByAnUnknownCallerAndStaysGood() =
+        bridgeTest { f ->
+            val token = f.bridge.add(request(cookies = "sid=abc"), authenticated = true).token()
+
+            f.bridge.confirm(token, authenticated = false) shouldBe Bridge.ConfirmReply.UnknownToken
+            f.h.engine.downloads.value shouldBe emptyList()
+
+            f.bridge.confirm(token, authenticated = true).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+        }
+
+    @Test
+    fun aTokenOfAnUnknownCallerIsRedeemedByAnyone() =
+        bridgeTest { f ->
+            val first = f.bridge.add(request("https://example.com/1.zip"), authenticated = false).token()
+            val second = f.bridge.add(request("https://example.com/2.zip"), authenticated = false).token()
+
+            f.bridge.confirm(first, authenticated = false).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+            f.bridge.confirm(second, authenticated = true).shouldBeInstanceOf<Bridge.ConfirmReply.Added>()
+        }
+
+    // ---- the engine's side of pairing ----
+
+    @Test
+    fun theEngineStartsPairingListsBrowsersAndRevokesThem() =
+        bridgeTest { f ->
+            val peer = PairingPeer()
+            val offer = f.h.engine.startPairing()
+            offer.state() shouldBe PairingState.WAITING
+            val attempt = peer.attempt(offer.code)
+            val reply =
+                f.h.engine.bridgePairing
+                    .pair("chrome-extension://abc", "Mozilla/5.0 Firefox/131.0", attempt.nonceE, attempt.proofE, peer.port)
+                    .shouldBeInstanceOf<PairReply.Paired>()
+            peer.accept(offer.code, attempt, reply) shouldBe true
+            offer.state() shouldBe PairingState.PAIRED
+
+            val listed =
+                f.h.engine
+                    .listedBrowsers()
+                    .single()
+
+            listed.id shouldBe reply.id
+            listed.label shouldBe "Firefox 131"
+            f.h.engine.revokeBrowser(reply.id) shouldBe RevokeResult.REVOKED
+            f.h.engine.listedBrowsers() shouldBe emptyList()
+            f.h.engine.revokeBrowser(reply.id) shouldBe RevokeResult.NOT_FOUND
+        }
+
+    @Test
+    fun theEngineCancelsPairingSoTheCodeNoLongerPairsAnything() =
+        bridgeTest { f ->
+            val peer = PairingPeer()
+            val offer = f.h.engine.startPairing()
+            val attempt = peer.attempt(offer.code)
+
+            f.h.engine.cancelPairing()
+
+            offer.state() shouldBe PairingState.EXPIRED
+            f.h.engine.bridgePairing
+                .pair("chrome-extension://abc", "Mozilla/5.0 Firefox/131.0", attempt.nonceE, attempt.proofE, peer.port) shouldBe
+                PairReply.NoCode
+            f.h.engine.listedBrowsers() shouldBe emptyList()
         }
 }

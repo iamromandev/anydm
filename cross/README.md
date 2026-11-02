@@ -84,74 +84,77 @@ own, with the engine in `shared/`; no server is needed.
     (the library's hook thread is not a daemon, so the process would stay alive with a system-wide key hook). Ship the jar as it
     is, not merged into an uber jar: it is LGPL. Tests use fakes: none touches the real clipboard or installs a real key hook, and only that the library loads on
     this JDK is checked against the real system.
-- `desktopApp/` — the Compose Desktop app, built in [#604](https://github.com/iamromandev/anydm/issues/604); it drives
-  the engine directly. In place so far: the shell (window, theme, sidebar with live counts, status bar, menu bar,
-  banners, a first-run welcome) and the download list (#606): sorting, a text filter, expandable collections,
-  multi-selection with keys, a context menu and toolbar for every job command, the remove and relink dialogs, a detail
-  pane for one selected job, and open / show in folder / copy path for finished files. `AppModel` holds the state every
-  screen reads and takes the commands; the list logic (`Rows.kt`, `Commands.kt`, `Format.kt`) is plain Kotlin with
-  its own tests. Adding downloads (#607): `openDesktopSource` wires every protocol (HTTP/HTTPS, media pages and playlists
-  through yt-dlp, which the tool manager fetches into the cache folder, torrents through libtorrent unpacked into the data
-  folder, FTP/FTPS/SFTP) with logins in the system keychain; a part that can't be set up is left out and its links show as
-  unavailable. The add dialog (`AddModel`, `AddForm.kt`) reads each pasted link before it is added (batch patterns such as
-  `[1-10]` expand), and takes the category, profile, folder, start, media format and login for all of them;
-  `AppModel.openAdd(links)` opens it with links in it. Transfer and file settings (#608): the Settings screen
-  (`SettingsModel`, `SettingsForm.kt`) edits the default folder, clash policy, disk reserve, retries, history, pacing,
-  connections, speed limits, slow mode, seeding, the queue and what happens after it, through
-  `Engine.applyTransferSettings` so each applies without a restart; it adds, edits and orders categories and profiles,
-  shows the history and 30 days of traffic, resets to defaults, and exports or imports the lot as JSON
-  (`SettingsBackup.kt`: no proxies, cookies or logins). Network, OS and tool settings (#609): six more sections of the
-  Settings screen, each with its own presenter in `SettingsPanels` (`ProxyModel`, `RulesModel`, `NetworksModel`,
-  `OsModel`, `ToolsModel`, `DiagnosticsModel`). They have no Save: each change goes to the engine at once, which applies it
-  to running downloads. Proxies are saved with their password in the keychain, chosen globally, per profile (the profile
-  editor) and per download (the detail pane's Proxy tab). Network rules edit the default and per-network limits, data
-  allowances, metered handling and the weekly schedule. Networks switch bonding on per network and show whether the OS can
-  bind to it (`BEST_EFFORT` on Linux). The system section holds notifications, clipboard watch, the global hotkey and its
-  status, and the browser bridge origins. Tools shows yt-dlp, ffmpeg and Deno, fetches the newest (`Engine.updateTool`),
-  and takes a folder to use instead (`Settings.toolFolders`). Diagnostics switches debug logging (live) and exports the
-  bundle (`DiagnosticsBundle`); the desktop engine now writes `anydm.log` to the logs folder. OS integration (#610): `main(args)`
-  asks `FileSingleInstance` first, so a second launch hands its arguments (`LinkRouter`: magnet, `.torrent`, web, FTP, SFTP,
-  `anydm://add`; the rest is dropped) to the running window, which opens them in the add review. The tray (`TrayMenu`:
-  show or hide, open, pause or resume all, quit) and the window choices (`WindowModel`: close to the tray, start hidden or
-  with `--hidden`; both only where a tray exists) live in `AppPrefs`. `OsServices` runs `NotificationRelay`,
-  `ClipboardWatch` (a "link copied" offer), the global `HotkeyService` (opens the add review with the clipboard) and the
-  `BridgeServer` beside the engine, each following its setting; `OsSignals` carries their state to the status bar
-  (keep-awake, after-queue countdown, bridge port, hotkey) and the permission notice (macOS Accessibility, Linux Wayland).
-  A notification click can't reach the app through osascript or notify-send, so clicking the tray icon opens the row of the
-  last finished or failed download.
-  Packaging and links (#611): `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point.
-  The installed runtime is cut down to the JDK modules listed in `desktopApp/build.gradle.kts` (`suggestRuntimeModules`
-  lists what the class path needs), one libtorrent native for the build's OS, and the JVM flags the engine needs
-  (`--add-opens java.base/java.net` and `java.io` for binding, `--enable-native-access` for SQLite, JNA, libtorrent and
-  JNativeHook, whose natives sit inside their jars and are unpacked at run time). `make cross-smoke` proves it: it builds the
-  app image and starts it with `--self-check`, which opens the engine on a throwaway home folder, downloads a file from a
-  server on the machine and compares it, and checks that torrents loaded; the exit code is the answer. On macOS with a
-  Homebrew JDK, Compose refuses to package unless you add `compose.desktop.packaging.checkJdkVendor=false` to your own
-  `~/.gradle/gradle.properties` (or pass it with `-P`).
+- `desktopApp/` — the Compose Desktop app, which drives the engine directly (no server in between). Its look and layout follow
+  [Plexo](https://github.com/anmolkapil/plexo) (see Credits below): a home screen with the downloads in cards grouped by state
+  (Downloading, Queued, Paused, Needs attention, Finished), a networks pill in the header, a full-page detail view for one
+  download, and a footer with free disk space, Slow mode and the speed unit (MB/s or Mbps). The screens:
+  - Home (`HomeScreen`, `HomeModel`): filter, multi-select with Cmd/Ctrl+A, bulk pause, resume and remove, "Clear finished"
+    (keeps the files); paste a link with Cmd/Ctrl+V or drop a `.torrent`.
+  - New download (`NewDownloadDialog`): web, FTP, magnet or `.torrent`; reads the link first (name, size, torrent file tree with
+    checkboxes), the folder and which networks to use (each with its own color and a pencil to rename it).
+  - Detail (`DetailScreen`, `DetailModel`): throughput graph, per-network table, chunk map for web downloads, peers and pieces for
+    torrents, the combine diagram, Open / Show in folder / Move to Trash.
+  - Networks (`NetworksMenu`, `NetworkEdit`): switch a network on or off, rename it, pick its color.
+  - Limits (`LimitsDialog`, `LimitsModel`): the total speed limit, Slow mode, downloads at once, a download schedule (stored as
+    pause rules, so it needs no engine change), and per network a speed limit and a daily, weekly or monthly data limit with
+    "Reset data usage".
+  - Browsers (`PairBrowserDialog`, `PairBrowserModel`): pairs the browser extension with the app. The dialog shows a one-time
+    code (16 characters in groups of four, good for two minutes, with a Copy button that takes the code off the clipboard
+    again when the dialog goes); you type it into the extension's popup. The code never crosses the wire, only proofs made
+    with it do; a paired browser then signs its requests, which is what lets the extension send cookies for the download.
+    The list shows each paired browser with Revoke. The protocol is `BridgePairing` in `shared` (`engine/os`).
+  The engine is the same one as before (`openDesktopSource`: HTTP/HTTPS, yt-dlp media, libtorrent, FTP/SFTP, logins in the
+  keychain), behind a small `EngineSource` that the tests replace with `FakeSource`. The new window has no Settings screen, tray,
+  clipboard watch, global hotkey or notifications: the engine still has those services, this app does not start them. The data
+  folder holds `network-visuals.json` (the names and colors given to networks) beside the engine's own data; theme and speed unit
+  are kept with `java.util.prefs`. A second launch hands its arguments (links, `.torrent` files) to the running window and raises it.
 
-  What each installer writes, and how to remove it:
+  Fonts: Manrope and Roboto Mono, bundled under the SIL Open Font License; the license texts are in
+  `desktopApp/src/main/resources/fonts/LICENSES.md`.
 
-  | OS | `.torrent` | `magnet:` and `anydm://` | Removing |
-  | --- | --- | --- | --- |
-  | macOS (dmg) | `CFBundleDocumentTypes` in the app's `Info.plist` | `CFBundleURLTypes` in the same file; macOS reads it when the app is in Applications and has been opened once. Links reach the running app as Apple events (`OpenEvents`) | Delete the app |
-  | Windows (msi) | File association by the installer | Not by the installer: Settings, System, "Open magnet and anydm:// links with anydm" writes `HKCU\Software\Classes\magnet` and `\anydm` (per user, no administrator rights) | The same screen's "Stop opening links with anydm", or delete those two keys; uninstalling removes the app, not the keys |
-  | Linux (deb) | `MimeType` in the installed `.desktop` file | Not by the installer: the same button writes `~/.local/share/applications/anydm-links.desktop` and makes it the default with `xdg-mime` for the two schemes and for `.torrent` files | "Stop opening links with anydm", or delete that file (a stale default may stay in `~/.config/mimeapps.list`; desktops skip a missing file); uninstalling removes the app, not the file |
+  Run and test (from `cross/`, or with the `make` targets from the repository root):
 
-  On Windows 8 and later the app picked under Settings, Apps, Default apps wins over the registry key; the Links row says so
-  when it sees that choice. The packaging smoke test is not in CI yet (a matrix job running `make cross-smoke` on each OS is
-  the follow-up, with `xvfb-run` on Linux).
+  ```bash
+  ./gradlew :desktopApp:run                                   # make cross-run
+  ./gradlew :desktopApp:run -Panydm.userHome=/tmp/anydm-try   # make cross-run CROSS_HOME=/tmp/anydm-try
+  ./gradlew :desktopApp:test                                  # make cross-test (also runs :shared:allTests)
+  ```
 
-  Installers are unsigned: macOS will ask you to allow the app in Privacy & Security (or `xattr -cr anydm.app`), and Windows
-  SmartScreen shows "unknown publisher". Signing and notarization are a follow-up for when the credentials exist. There is no
-  auto-update and no telemetry.
+  `-Panydm.userHome=<folder>` runs the app with that folder as `user.home`, so the engine's data, logs and downloads stay out
+  of your own. (The theme and speed unit, kept with `java.util.prefs`, may still land in the real home on macOS, which can
+  ignore `user.home`.)
 
-  Per-OS checklist, by hand (the tray, native notifications, the hotkey permission and link registration need a desktop):
-  1. Install the package; start anydm from the launcher; the window opens and `anydm.log` appears in the logs folder.
-  2. Settings, System: the Links row says what it can do on this OS; on Windows and Linux press the button.
-  3. Click a `magnet:` link in a browser: anydm comes forward with the add review; the same for an `anydm://add?url=…` link
-     and a double-click on a `.torrent`.
-  4. With anydm already running, repeat 3: no second window appears, the running one takes the link.
-  5. Quit from the tray; uninstall; remove the link registration as the table says; confirm `magnet:` links no longer open it.
+  Packaging: `make cross-package` builds an unsigned dmg / msi / deb of whatever the app is at that point. The installed
+  runtime is cut down to the JDK modules listed in `desktopApp/build.gradle.kts` (`suggestRuntimeModules` lists what the class
+  path needs), one libtorrent native for the build's OS, and the JVM flags the engine needs (`--add-opens java.base/java.net`
+  and `java.io` for binding, `--enable-native-access` for SQLite, JNA and libtorrent, whose natives sit inside their jars and
+  are unpacked at run time). `make cross-smoke` proves it: it builds the app image and starts it with `--self-check`, which
+  opens the engine on a throwaway home folder, downloads a file from a server on the machine and compares it, and checks that
+  torrents loaded; the exit code is the answer. On macOS with a Homebrew JDK, Compose refuses to package unless you add
+  `compose.desktop.packaging.checkJdkVendor=false` to your own `~/.gradle/gradle.properties` (or pass it with `-P`).
+
+  What each installer writes:
+
+  | OS | `.torrent` | `magnet:` and `anydm://` |
+  | --- | --- | --- |
+  | macOS (dmg) | `CFBundleDocumentTypes` in the app's `Info.plist` | `CFBundleURLTypes` in the same file; macOS reads it when the app is in Applications and has been opened once. Links reach the running app as Apple events (`OpenEvents`) |
+  | Windows (msi) | File association by the installer | Not registered: the settings screen that wrote the per-user registry keys is gone with the old window |
+  | Linux (deb) | `MimeType` in the installed `.desktop` file | Not registered, for the same reason |
+
+  The packaging smoke test is not in CI yet (a matrix job running `make cross-smoke` on each OS is the follow-up, with
+  `xvfb-run` on Linux). Installers are unsigned: macOS will ask you to allow the app in Privacy & Security (or
+  `xattr -cr anydm.app`), and Windows SmartScreen shows "unknown publisher". There is no auto-update and no telemetry.
+  The by-hand checks for the screens, the pairing and the packaged app are in one list in the task notes of the Plexo parity
+  work (`docs/conf/tasks/plexo-parity/status.md`, not tracked in git).
+
+  Credits: the design of this window (layout, color tokens, how networks are shown and combined, the Limits dialog) is modeled on [Plexo](https://github.com/anmolkapil/plexo) (MIT licensed, "Copyright (c) 2026 Anmol Kapil"). It is a design reference only:
+  no Plexo code was copied, the app is written from scratch on this engine. The bundled fonts, Manrope and Roboto Mono, are
+  used under the SIL Open Font License 1.1 (see above).
+
+  Known limits: Firefox cannot pair with the desktop app yet. Firefox gives each install its own `moz-extension://` origin, the
+  app answers only the origins in `bridgeOrigins` (the Chrome extension's, by default), and the new window has no settings
+  screen: nothing in it can edit that list (`Engine.setBridgeOrigins` exists, but no screen calls it). Follow-up: an app-side
+  way to allow a Firefox extension origin.
 
 The app icon is drawn by `desktopApp/icons/make_icons.py`; after changing it, run
 `uv run --no-project --with pillow python icons/make_icons.py` from `desktopApp/`.
@@ -160,7 +163,8 @@ Needs JDK 25. The Gradle wrapper is committed, so there is nothing else to insta
 
 ```bash
 make cross-check     # ktlint, tests, compile
-make cross-run       # open the app
+make cross-test      # shared and desktop app tests
+make cross-run       # open the app (CROSS_HOME=<folder> for a throwaway home)
 make cross-package   # dmg / msi / deb for this OS
 make cross-smoke     # build the app image and run its self-check
 ```

@@ -9,9 +9,23 @@ import dev.anydm.engine.core.DownloadKind
  * exactly as it was read. The HTTP side only speaks this, so it is tested without an engine.
  */
 interface Bridge {
-    suspend fun add(request: AddRequest): AddReply
+    /**
+     * Reads the link of [request]. [authenticated] says the request came from a paired browser that signed it: only
+     * such a request may carry cookies. The default is the safe one, an unknown caller.
+     */
+    suspend fun add(
+        request: AddRequest,
+        authenticated: Boolean = false,
+    ): AddReply
 
-    suspend fun confirm(token: String): ConfirmReply
+    /**
+     * Adds what a token stands for. A token given to a paired browser is redeemed only by a paired browser ([authenticated]);
+     * one given to an unknown caller by anyone.
+     */
+    suspend fun confirm(
+        token: String,
+        authenticated: Boolean = false,
+    ): ConfirmReply
 
     /** What the extension sends to [add]: the link and what the page's request carried. */
     data class AddRequest(
@@ -40,6 +54,9 @@ interface Bridge {
 
         /** The link is already in the list. */
         DUPLICATE,
+
+        /** The request holds something only a paired browser may send (its cookies). */
+        UNAUTHORIZED,
     }
 
     sealed interface AddReply {

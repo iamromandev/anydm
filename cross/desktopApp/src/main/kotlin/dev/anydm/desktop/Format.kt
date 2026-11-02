@@ -77,3 +77,39 @@ internal fun statusLabel(s: DownloadSnapshot): String {
         else -> label
     }
 }
+
+/** A speed in the unit the user chose: 1024-based bytes (`4.5 MB/s`) or decimal bits (`36.0 Mbps`). */
+internal fun formatRate(
+    bytesPerSecond: Long,
+    unit: SpeedUnit,
+): String {
+    if (unit == SpeedUnit.BYTES) return formatSpeed(bytesPerSecond)
+    var value = bytesPerSecond * 8.0
+    val units = listOf("bps", "kbps", "Mbps", "Gbps")
+    var index = 0
+    while (value >= 1000 && index < units.lastIndex) {
+        value /= 1000
+        index++
+    }
+    return if (index == 0) "${value.toLong()} bps" else "%.1f %s".format(value, units[index])
+}
+
+/** How long before [now] [then] was: `just now`, `5 min ago`, `3 h ago`, `2 d ago`. */
+internal fun formatAgo(
+    now: kotlin.time.Instant,
+    then: kotlin.time.Instant,
+): String {
+    val seconds = (now - then).inWholeSeconds
+    return when {
+        seconds < 60 -> "just now"
+        seconds < 3600 -> "${seconds / 60} min ago"
+        seconds < 86_400 -> "${seconds / 3600} h ago"
+        else -> "${seconds / 86_400} d ago"
+    }
+}
+
+/** Seconds as `m:ss`; never below `0:00`. */
+internal fun formatCountdown(seconds: Long): String {
+    val left = seconds.coerceAtLeast(0)
+    return "${left / 60}:${(left % 60).toString().padStart(2, '0')}"
+}

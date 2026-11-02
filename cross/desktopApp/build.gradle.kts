@@ -18,6 +18,8 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.coroutines.swing)
+    // network-visuals.json: the app reads and writes it with the JSON tree API (no generated serializers).
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.compose.ui.test)
@@ -120,16 +122,21 @@ compose.desktop {
         mainClass = "dev.anydm.desktop.MainKt"
         // Binding a connection to one network (#544) reads the socket's native handle by reflection.
         jvmArgs +=
-            listOf(
+            listOfNotNull(
+                // `-Panydm.userHome=<folder>` sets `user.home` for a try-out run, so what the engine keeps under it stays out of
+                // the real home. The theme and speed unit (`ViewPrefs`, `java.util.prefs`) may still land in the real one on macOS: it can
+                // ignore `user.home`.
+                providers.gradleProperty("anydm.userHome").orNull?.let { "-Duser.home=$it" },
                 "--add-opens=java.base/java.net=ALL-UNNAMED",
                 "--add-opens=java.base/java.io=ALL-UNNAMED",
-                // SQLite, libtorrent, JNA and JNativeHook load native libraries; newer JDKs warn, then refuse, without this.
+                // SQLite, libtorrent and JNA load native libraries; newer JDKs warn, then refuse, without this. (The engine's global hotkey
+                // library, JNativeHook, is on the class path through :shared but this app does not start it.)
                 "--enable-native-access=ALL-UNNAMED",
             )
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             // The runtime is cut down to the modules asked for here. The browser bridge (OSI-01) is the JDK's own HTTP server;
-            // SQLite goes through java.sql; the window choices use java.prefs; JNA and libtorrent4j want jdk.unsupported;
+            // SQLite goes through java.sql; the theme and speed unit (ViewPrefs) use java.prefs; JNA and libtorrent4j want jdk.unsupported;
             // OkHttp checks host names with javax.naming; sshj and the keychain libraries use GSS and java.management.
             // `suggestRuntimeModules` lists what the class path needs; `smokePackagedApp` proves the result starts.
             modules(
@@ -149,7 +156,9 @@ compose.desktop {
             description = "anydm desktop client"
             vendor = "anydm"
             // Opening a .torrent with the app: the installer writes the association (macOS Info.plist, Windows registry,
-            // Linux .desktop file). magnet: and anydm:// are registered below on macOS and by the app itself elsewhere.
+            // Linux .desktop file). magnet: and anydm:// are declared below, on macOS only. On Windows and Linux the app does not
+            // register them yet (the link-handler settings of the old window went with it); a first-launch argument or a handed-over
+            // second launch still reaches the new-download dialog (OpenEvents, PendingOpens).
             fileAssociation("application/x-bittorrent", "torrent", "BitTorrent file")
             macOS {
                 bundleID = "dev.anydm.desktop"

@@ -40,6 +40,30 @@ abstract class TrafficStoreContract : StoreTestBase() {
         }
 
     @Test
+    fun clearNetworkDropsOnlyThatNetworksDaysInRange() =
+        runTest {
+            val traffic = newStore().traffic
+            traffic.add(
+                TrafficBatch(
+                    days =
+                        mapOf(
+                            Triple("2026-10-20", "wifi", DownloadKind.DIRECT) to 100L,
+                            Triple("2026-10-21", "wifi", DownloadKind.TORRENT) to 200L,
+                            Triple("2026-10-22", "wifi", DownloadKind.DIRECT) to 7L,
+                            Triple("2026-10-21", "eth", DownloadKind.DIRECT) to 1000L,
+                        ),
+                    daysUp = mapOf(Triple("2026-10-21", "wifi", DownloadKind.TORRENT) to 50L),
+                ),
+                pruneBefore = 0,
+            )
+
+            traffic.clearNetwork("wifi", "2026-10-21", "2026-10-22")
+
+            traffic.networkBytes("wifi", "2026-10-01", "2026-10-31") shouldBe 100L
+            traffic.networkBytes("eth", "2026-10-01", "2026-10-31") shouldBe 1000L
+        }
+
+    @Test
     fun addAccumulates() =
         runTest {
             val traffic = newStore().traffic
