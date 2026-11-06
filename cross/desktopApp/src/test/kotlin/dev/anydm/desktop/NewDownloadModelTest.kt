@@ -102,7 +102,8 @@ internal class NewDownloadModelTest {
         address: String,
         enabled: Boolean = true,
         up: Boolean = true,
-    ) = BondedNetwork(NetworkInfo(key, name, up, listOf(address)), enabled, BindStatus.ISOLATED, null, false)
+        speed: Double? = null,
+    ) = BondedNetwork(NetworkInfo(key, name, up, listOf(address)), enabled, BindStatus.ISOLATED, speed, false)
 
     // Resolving a link
 
@@ -792,11 +793,167 @@ internal class NewDownloadModelTest {
         }
 
     @Test
-    fun `networks are read only here and the dialog says where they are switched`() =
+    fun `a network row carries the OS name, speed, whether it is up and whether the user switched it on`() =
         dialog { d ->
+            d.source.networks.value =
+                BondingState(
+                    listOf(
+                        network("en0", "Wi-Fi", "192.168.1.5", speed = 2_000_000.0),
+                        network("usb0", "USB", "172.20.10.2", enabled = false, up = false, speed = 0.0),
+                    ),
+                )
+            d.looks.value = NetworkLooks(names = mapOf("en0" to "Home"))
+            val (wifi, usb) = d.state.chips
+            assertEquals("Home", wifi.name)
+            assertEquals("Wi-Fi", wifi.osName)
+            assertEquals(2_000_000L, wifi.speed)
+            assertTrue(wifi.up && wifi.enabled && wifi.on)
+            assertNull(usb.speed)
+            assertTrue(!usb.up && !usb.enabled && !usb.on)
+        }
+
+    @Test
+    fun `the networks section shows for one network and says the switch is for all downloads`() =
+        dialog { d ->
+            d.source.networks.value = BondingState(emptyList())
+            assertTrue(d.state.chips.isEmpty())
             assertNull(d.state.networksNote)
+            assertFalse(d.state.noNetworkOn)
             d.source.networks.value = BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5")))
-            assertEquals("Networks are switched for all downloads in the Networks menu.", d.state.networksNote)
+            assertEquals(1, d.state.chips.size)
+            assertEquals(NETWORK_SWITCH_HINT, d.state.networksNote)
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            assertEquals(NETWORK_SWITCH_HINT, d.state.networksNote)
+        }
+
+    @Test
+    fun `switching a network goes to the engine and the row follows what it says`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals(listOf("setNetworkEnabled usb0 false"), d.source.calls)
+            assertFalse(
+                d.state.chips
+                    .single { it.key == "usb0" }
+                    .enabled,
+            )
+            assertNull(d.state.networkError)
+        }
+
+    @Test
+    fun `a switch the engine refuses says so and leaves the row as it was`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            d.source.results["setNetworkEnabled usb0 false"] = CommandResult.NotFound
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals("The network could not be switched.", d.state.networkError)
+            assertTrue(
+                d.state.chips
+                    .single { it.key == "usb0" }
+                    .enabled,
+            )
+            d.source.results.remove("setNetworkEnabled usb0 false")
+            d.model.setNetworkEnabled("usb0", false)
+            assertNull(d.state.networkError)
+        }
+
+    @Test
+    fun `switching a network that is off back on goes to the engine`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(
+                    listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2", enabled = false)),
+                )
+            d.model.setNetworkEnabled("usb0", true)
+            assertEquals(listOf("setNetworkEnabled usb0 true"), d.source.calls)
+            assertTrue(
+                d.state.chips
+                    .single { it.key == "usb0" }
+                    .enabled,
+            )
+        }
+
+    @Test
+    fun `an older failure that finishes after a newer success for the same network shows no error`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            val older = CompletableDeferred<Unit>()
+            d.source.gates["setNetworkEnabled usb0 false"] = older
+            d.source.results["setNetworkEnabled usb0 false"] = CommandResult.NotFound
+            d.model.setNetworkEnabled("usb0", false)
+            d.model.setNetworkEnabled("usb0", true)
+            assertNull(d.state.networkError)
+            older.complete(Unit)
+            assertNull(d.state.networkError)
+        }
+
+    @Test
+    fun `a failure for one network is not wiped by a success for another`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            d.source.results["setNetworkEnabled usb0 false"] = CommandResult.NotFound
+            d.model.setNetworkEnabled("usb0", false)
+            d.model.setNetworkEnabled("en0", false)
+            assertEquals("The network could not be switched.", d.state.networkError)
+        }
+
+    @Test
+    fun `the error goes when the network is gone or the engine reports the state asked for, and does not come back`() =
+        dialog { d ->
+            val two = listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2"))
+            d.source.networks.value = BondingState(two)
+            d.source.results["setNetworkEnabled usb0 false"] = CommandResult.NotFound
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals("The network could not be switched.", d.state.networkError)
+            // The engine reports the state that was asked for.
+            d.source.networks.value = BondingState(listOf(two[0], two[1].copy(enabled = false)))
+            assertNull(d.state.networkError)
+            d.source.networks.value = BondingState(two)
+            assertNull(d.state.networkError)
+            // A failed switch, then the section is hidden, then it is back.
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals("The network could not be switched.", d.state.networkError)
+            d.source.networks.value = BondingState(listOf(two[0]))
+            d.source.networks.value = BondingState(two)
+            assertNull(d.state.networkError)
+        }
+
+    @Test
+    fun `a command that throws something else says the network could not be switched`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            d.source.commandThrows = java.io.IOException("boom")
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals("The network could not be switched.", d.state.networkError)
+        }
+
+    @Test
+    fun `a switch with the engine stopped says so`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            d.source.refuseAll = true
+            d.model.setNetworkEnabled("usb0", false)
+            assertEquals("The engine has stopped.", d.state.networkError)
+        }
+
+    @Test
+    fun `with every network off or down the form says no network is on`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2")))
+            assertFalse(d.state.noNetworkOn)
+            d.source.networks.value =
+                BondingState(
+                    listOf(network("en0", "Wi-Fi", "192.168.1.5", enabled = false), network("usb0", "USB", "172.20.10.2", up = false)),
+                )
+            assertTrue(d.state.noNetworkOn)
         }
 
     @Test

@@ -18,12 +18,14 @@ import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
 import dev.anydm.engine.queue.CommandResult
+import dev.anydm.engine.queue.RemoveFiles
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -314,13 +316,31 @@ internal class HomeModelTest {
         }
 
     @Test
-    fun `bulk remove of completed rows only needs no question`() =
+    fun `bulk remove of completed rows still asks first`() =
         home { source, model ->
             source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a"), snapshot(2, COMPLETED, name = "b"))
             model.selectAll()
             model.askRemoveSelected()
+            assertTrue(model.state.value.confirmRemove)
+            assertTrue(source.calls.isEmpty(), "nothing is removed before the answer")
+        }
+
+    @Test
+    fun `remove with the trash answer sends TRASH for every selected row`() =
+        home { source, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a"), snapshot(2, FAILED, name = "b"))
+            model.selectAll()
+            model.askRemoveSelected()
+            model.confirmRemoveSelected(RemoveFiles.TRASH)
+            assertEquals(setOf("remove 1 TRASH", "remove 2 TRASH"), source.calls.toSet())
+        }
+
+    @Test
+    fun `remove with nothing selected does not ask`() =
+        home { source, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a"))
+            model.askRemoveSelected()
             assertFalse(model.state.value.confirmRemove)
-            assertEquals(setOf("remove 1 KEEP", "remove 2 KEEP"), source.calls.toSet())
         }
 
     @Test
@@ -547,4 +567,382 @@ internal class HomeModelTest {
             assertEquals("DIR", rows.getValue(6).badge)
             assertEquals("TORRENT", rows.getValue(7).badge)
         }
+
+    // Queue order and the row menu.
+
+    private fun queuedIds(model: HomeModel) =
+        model.state.value.groups
+            .first { it.kind == GroupKind.QUEUED }
+            .rows
+            .map { it.id.value }
+
+    @Test
+    fun `queued rows list by priority then by id`() =
+        home { source, model ->
+            source.downloads.value =
+                listOf(
+                    snapshot(1, QUEUED, name = "a", priority = 0),
+                    snapshot(2, QUEUED, name = "b", priority = 5),
+                    snapshot(4, QUEUED, name = "d", priority = 0),
+                    snapshot(3, PENDING, name = "c", priority = 0),
+                )
+            assertEquals(listOf(2L, 1L, 3L, 4L), queuedIds(model))
+        }
+
+    private fun menuHome(
+        existing: Set<Path> = emptySet(),
+        block: suspend TestScope.(FakeSource, FakeFileActions, HomeModel) -> Unit,
+    ) = runTest(UnconfinedTestDispatcher()) {
+        val source = FakeSource()
+        val files = FakeFileActions()
+        block(source, files, HomeModel(source, backgroundScope, files, exists = { it in existing }))
+    }
+
+    private fun queuedThree(source: FakeSource) {
+        source.downloads.value = (1L..3L).map { snapshot(it, QUEUED, name = "f$it") }
+    }
+
+    @Test
+    fun `right-click on an unselected row selects only it and opens its menu`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a"), snapshot(2, COMPLETED, name = "b"))
+            model.toggle(id(1))
+            model.openMenu(id(2))
+            assertEquals(setOf(id(2)), model.state.value.selection)
+            assertEquals(
+                listOf(id(2)),
+                model.state.value.menu
+                    ?.ids,
+            )
+        }
+
+    @Test
+    fun `right-click on a selected row keeps the whole selection`() =
+        menuHome { source, _, model ->
+            source.downloads.value = (1L..3L).map { snapshot(it, COMPLETED, name = "f$it") }
+            model.selectAll()
+            model.openMenu(id(2))
+            assertEquals(3, model.state.value.selection.size)
+            assertEquals(
+                3,
+                model.state.value.menu
+                    ?.ids
+                    ?.size,
+            )
+            val actions =
+                model.state.value.menu!!
+                    .actions
+            assertTrue(MenuAction.REMOVE in actions)
+            assertFalse(MenuAction.OPEN in actions || MenuAction.REVEAL in actions || MenuAction.COPY_LINK in actions)
+        }
+
+    @Test
+    fun `the menu closes when the selection changes or closeMenu is called`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a"), snapshot(2, COMPLETED, name = "b"))
+            model.openMenu(id(1))
+            model.toggle(id(2))
+            assertNull(model.state.value.menu)
+            model.openMenu(id(1))
+            model.closeMenu()
+            assertNull(model.state.value.menu)
+        }
+
+    @Test
+    fun `a completed row's menu offers open reveal copy and remove, open enabled only when the file exists`() =
+        menuHome(existing = setOf(Path.of("/dl/a.bin"))) { source, _, model ->
+            source.downloads.value =
+                listOf(
+                    snapshot(
+                        1,
+                        COMPLETED,
+                        name = "a.bin",
+                        saveFolder = "/dl",
+                        mirrors = listOf(Mirror(MirrorId(1), id(1), "http://h/a.bin", 0)),
+                    ),
+                    snapshot(2, COMPLETED, name = "gone.bin", saveFolder = "/dl"),
+                )
+            model.openMenu(id(1))
+            val menu = model.state.value.menu!!
+            assertEquals(setOf(MenuAction.OPEN, MenuAction.REVEAL, MenuAction.COPY_LINK, MenuAction.REMOVE), menu.actions)
+            assertTrue(menu.openable)
+            assertTrue(menu.locatable)
+            model.openMenu(id(2))
+            val gone = model.state.value.menu!!
+            assertFalse(gone.openable)
+            assertFalse(gone.locatable)
+            assertTrue(MenuAction.OPEN in gone.actions, "shown, but disabled")
+            assertFalse(MenuAction.COPY_LINK in gone.actions, "no link to copy")
+        }
+
+    @Test
+    fun `a downloading row has pause and no file or move items`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, DOWNLOADING, name = "a"))
+            model.openMenu(id(1))
+            assertEquals(
+                setOf(MenuAction.PAUSE, MenuAction.REMOVE),
+                model.state.value.menu!!
+                    .actions,
+            )
+        }
+
+    @Test
+    fun `paused and failed rows offer resume and retry`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, PAUSED, name = "a"), snapshot(2, FAILED, name = "b"))
+            model.openMenu(id(1))
+            assertTrue(
+                MenuAction.RESUME in
+                    model.state.value.menu!!
+                        .actions,
+            )
+            model.openMenu(id(2))
+            assertTrue(
+                MenuAction.RETRY in
+                    model.state.value.menu!!
+                        .actions,
+            )
+        }
+
+    @Test
+    fun `move items depend on the queue position`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            val moves = setOf(MenuAction.MOVE_TOP, MenuAction.MOVE_UP, MenuAction.MOVE_DOWN)
+            model.openMenu(id(1))
+            assertEquals(
+                setOf(MenuAction.MOVE_DOWN),
+                model.state.value.menu!!
+                    .actions
+                    .intersect(moves),
+            )
+            model.openMenu(id(2))
+            assertEquals(
+                moves,
+                model.state.value.menu!!
+                    .actions
+                    .intersect(moves),
+            )
+            model.openMenu(id(3))
+            assertEquals(
+                setOf(MenuAction.MOVE_TOP, MenuAction.MOVE_UP),
+                model.state.value.menu!!
+                    .actions
+                    .intersect(moves),
+            )
+        }
+
+    @Test
+    fun `open calls the file action for a completed row and closes the menu`() =
+        menuHome(existing = setOf(Path.of("/dl/a.bin"))) { source, files, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a.bin", saveFolder = "/dl"))
+            model.openMenu(id(1))
+            model.perform(MenuAction.OPEN)
+            assertEquals(listOf("open /dl/a.bin"), files.calls)
+            assertNull(model.state.value.menu)
+        }
+
+    @Test
+    fun `open reports a problem in the banner`() =
+        menuHome { source, files, model ->
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a.bin", saveFolder = "/dl"))
+            files.problem = "a.bin is no longer there."
+            model.openMenu(id(1))
+            model.perform(MenuAction.OPEN)
+            assertEquals("a.bin is no longer there.", model.state.value.message)
+        }
+
+    @Test
+    fun `reveal on the selected download shows the nearest folder that exists`() =
+        menuHome(existing = setOf(Path.of("/dl"))) { source, files, model ->
+            source.downloads.value = listOf(snapshot(1, DOWNLOADING, name = "a.bin", saveFolder = "/dl"))
+            model.openMenu(id(1))
+            model.reveal()
+            assertEquals(listOf("reveal /dl"), files.calls)
+        }
+
+    @Test
+    fun `copy link copies the first mirror and reports a problem`() =
+        menuHome { source, files, model ->
+            source.downloads.value =
+                listOf(
+                    snapshot(
+                        1,
+                        DOWNLOADING,
+                        name = "a",
+                        mirrors = listOf(Mirror(MirrorId(1), id(1), "http://h/a", 0), Mirror(MirrorId(2), id(1), "http://i/a", 1)),
+                    ),
+                )
+            model.openMenu(id(1))
+            model.perform(MenuAction.COPY_LINK)
+            assertEquals(listOf("copy http://h/a"), files.calls)
+            assertNull(model.state.value.message)
+            files.problem = "no clipboard"
+            model.openMenu(id(1))
+            model.copyLink()
+            assertEquals("no clipboard", model.state.value.message)
+        }
+
+    @Test
+    fun `perform pause resume retry and remove act on the selection`() =
+        menuHome { source, _, model ->
+            source.downloads.value =
+                listOf(snapshot(1, DOWNLOADING, name = "a"), snapshot(2, PAUSED, name = "b"), snapshot(3, FAILED, name = "c"))
+            model.selectAll()
+            model.openMenu(id(1))
+            model.perform(MenuAction.PAUSE)
+            model.perform(MenuAction.RESUME)
+            model.perform(MenuAction.RETRY)
+            assertEquals(listOf("pause 1", "resume 2", "retry 3"), source.calls)
+            model.perform(MenuAction.REMOVE)
+            assertTrue(model.state.value.confirmRemove)
+        }
+
+    @Test
+    fun `move to top renumbers so the row is first`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            model.moveToTop(id(3))
+            assertEquals(listOf(3L, 1L, 2L), queuedIds(model))
+            val priority = source.downloads.value.associate { it.download.id.value to it.download.priority }
+            assertTrue(priority.getValue(3) > priority.getValue(1))
+            assertTrue(priority.getValue(1) > priority.getValue(2))
+            assertEquals(listOf("reprioritize 3 2", "reprioritize 1 1"), source.calls, "only the rows that changed")
+        }
+
+    @Test
+    fun `move up and move down swap with the neighbour`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            model.moveUp(id(3))
+            assertEquals(listOf(1L, 3L, 2L), queuedIds(model))
+            model.moveDown(id(1))
+            assertEquals(listOf(3L, 1L, 2L), queuedIds(model))
+        }
+
+    @Test
+    fun `moving the first row up or the last row down does nothing, as does moving a row that is not queued`() =
+        menuHome { source, _, model ->
+            source.downloads.value =
+                listOf(snapshot(1, QUEUED, name = "a"), snapshot(2, QUEUED, name = "b"), snapshot(3, DOWNLOADING, name = "c"))
+            model.moveUp(id(1))
+            model.moveDown(id(2))
+            model.moveToTop(id(1))
+            model.moveToTop(id(3))
+            assertTrue(source.calls.isEmpty())
+        }
+
+    @Test
+    fun `a failed move shows the could-not-be-moved banner`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            source.results["reprioritize 3 2"] = CommandResult.Invalid("no")
+            model.moveToTop(id(3))
+            assertEquals("1 of 2 downloads could not be moved.", model.state.value.message)
+        }
+
+    @Test
+    fun `a move on a stopped engine says so`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            source.refuseAll = true
+            model.moveUp(id(3))
+            assertEquals("The engine has stopped.", model.state.value.message)
+        }
+
+    @Test
+    fun `double-click opens a completed or seeding row but no other`() =
+        menuHome { source, files, model ->
+            source.downloads.value =
+                listOf(
+                    snapshot(1, COMPLETED, name = "a", saveFolder = "/dl"),
+                    snapshot(2, SEEDING, name = "b", saveFolder = "/dl"),
+                    snapshot(3, DOWNLOADING, name = "c", saveFolder = "/dl"),
+                )
+            model.openFile(id(1))
+            model.openFile(id(2))
+            model.openFile(id(3))
+            assertEquals(listOf("open /dl/a", "open /dl/b"), files.calls)
+        }
+
+    @Test
+    fun `moving with gapped priorities renumbers from the lowest and sends the moved row first`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, QUEUED, name = "a", priority = 10), snapshot(2, QUEUED, name = "b", priority = 0))
+            model.moveDown(id(1))
+            assertEquals(listOf(2L, 1L), queuedIds(model))
+            assertEquals(listOf("reprioritize 1 0", "reprioritize 2 1"), source.calls)
+        }
+
+    @Test
+    fun `move down on a middle row swaps with the next`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            model.moveDown(id(2))
+            assertEquals(listOf(1L, 3L, 2L), queuedIds(model))
+        }
+
+    @Test
+    fun `equal priority rows get distinct priorities after a move`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            model.moveUp(id(3))
+            val priorities = source.downloads.value.map { it.download.priority }
+            assertEquals(3, priorities.toSet().size)
+            assertEquals(listOf(1L, 3L, 2L), queuedIds(model))
+        }
+
+    @Test
+    fun `move items on a multi-selection do nothing`() =
+        menuHome { source, _, model ->
+            queuedThree(source)
+            model.selectAll()
+            model.openMenu(id(2))
+            MenuAction.entries.filter { it.name.startsWith("MOVE") }.forEach { model.perform(it) }
+            assertTrue(source.calls.isEmpty())
+        }
+
+    @Test
+    fun `open and reveal on a multi-selection do nothing`() =
+        menuHome(existing = setOf(Path.of("/dl/f1"), Path.of("/dl/f2"))) { source, files, model ->
+            source.downloads.value = (1L..2L).map { snapshot(it, COMPLETED, name = "f$it", saveFolder = "/dl") }
+            model.selectAll()
+            model.openMenu(id(1))
+            model.perform(MenuAction.OPEN)
+            model.openMenu(id(1))
+            model.perform(MenuAction.REVEAL)
+            assertTrue(files.calls.isEmpty())
+        }
+
+    @Test
+    fun `every menu action closes the menu`() =
+        menuHome { source, _, model ->
+            source.downloads.value = listOf(snapshot(1, QUEUED, name = "a"), snapshot(2, QUEUED, name = "b"))
+            for (action in MenuAction.entries) {
+                model.openMenu(id(1))
+                model.perform(action)
+                assertNull(model.state.value.menu, "$action leaves the menu open")
+                model.dismissRemove()
+            }
+        }
+
+    @Test
+    fun `the disk is checked when the menu opens, not on every state change`() {
+        var checks = 0
+        runTest(UnconfinedTestDispatcher()) {
+            val source = FakeSource()
+            val model = HomeModel(source, backgroundScope, FakeFileActions(), exists = { checks++ >= 0 })
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a", saveFolder = "/dl"))
+            model.openMenu(id(1))
+            val after = checks
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "a", saveFolder = "/dl", downloaded = 5))
+            model.state.value
+            assertEquals(after, checks)
+            assertTrue(
+                model.state.value.menu!!
+                    .openable,
+            )
+        }
+    }
 }

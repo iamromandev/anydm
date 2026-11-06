@@ -1,16 +1,12 @@
 package dev.anydm.desktop
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -20,204 +16,128 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.anydm.engine.core.DownloadKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The New download dialogs, laid over the window while any is open: the one on show, with "1 of 3" to move between several.
- * It holds the window's key shortcuts (the paste shortcut must paste into the field, not open another dialog) for as long as
- * it is shown.
+ * The form of a new download: the link field with "Open .torrent", what the link turned out to be, a torrent's files, the folder,
+ * the networks (each switchable, with a link to the limits) and the warnings. [onFieldFocus] tells whether a text field of the form (the link or the file name) has the
+ * focus (the paste shortcut is the field's own while one has).
  */
 @Composable
-fun NewDownloadHost(
-    host: NewDownloads,
-    pickers: Pickers,
-    editor: NetworkEditor,
-    keys: WindowKeys,
-) {
-    val stack by host.state.collectAsState()
-    val entry = stack.current ?: return
-    BlockWindowKeys(keys)
-    // One dialog at a time on show, each its own state: switching shows another dialog's field and files.
-    androidx.compose.runtime.key(entry.id) {
-        val state by entry.model.state.collectAsState()
-        LaunchedEffect(state.done) { if (state.done) host.close(entry.id) }
-        NewDownloadDialog(
-            entry.model,
-            state,
-            pickers,
-            editor,
-            keys,
-            position = stack.shown,
-            count = stack.entries.size,
-            onShow = host::show,
-            onClose = { host.close(entry.id) },
-        )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
-@Composable
-fun NewDownloadDialog(
+fun NewDownloadForm(
     model: NewDownloadModel,
     state: NewDownloadState,
     pickers: Pickers,
     editor: NetworkEditor,
     keys: WindowKeys,
-    position: Int,
-    count: Int,
-    onShow: (Int) -> Unit,
-    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFieldFocus: (Boolean) -> Unit = {},
+    unit: SpeedUnit = SpeedUnit.BYTES,
+    onLimits: () -> Unit = {},
 ) {
     val colors = Plexo.colors
     val scope = rememberCoroutineScope()
-    val shape = RoundedCornerShape(12.dp)
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
-            // The window behind is out of reach: a click on the scrim goes nowhere (the dialog is closed by its own buttons).
-            .pointerInput(Unit) { detectTapGestures { } }
-            .onPreviewKeyEvent {
-                if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
-                    onClose()
-                    true
-                } else {
-                    false
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier
-                .width(560.dp)
-                .heightIn(max = 620.dp)
-                .clip(shape)
-                .background(colors.bgSecondary)
-                .border(0.5.dp, colors.border, shape)
-                .pointerInput(Unit) { detectTapGestures { } }
-                .semantics { contentDescription = "New download" },
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Txt("New download", Plexo.type.title, Modifier.weight(1f).padding(vertical = 4.dp))
-                if (count > 1) {
-                    IconButton(Glyph.CHEVRON_LEFT, "Previous download", { if (position > 0) onShow(position - 1) })
-                    Txt("${position + 1} of $count", Plexo.type.detail, Modifier.width(56.dp), color = colors.textSecondary)
-                    IconButton(Glyph.CHEVRON_RIGHT, "Next download", { if (position < count - 1) onShow(position + 1) })
-                }
+    // Either text field having the focus counts; the name field goes with its row, so its focus is cleared when it does.
+    var linkFocused by remember { mutableStateOf(false) }
+    var nameFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(linkFocused, nameFocused) { onFieldFocus(linkFocused || nameFocused) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            LinkField(state, model, Modifier.weight(1f)) { linkFocused = it }
+            PButton(
+                "Open .torrent",
+                {
+                    scope.launch {
+                        val chosen = withContext(Dispatchers.IO) { pickers.torrentFile() }
+                        if (chosen != null) model.fill(chosen.toString())
+                    }
+                },
+                glyph = Glyph.FOLDER,
+                modifier = Modifier.height(36.dp),
+            )
+        }
+        when (val link = state.link) {
+            LinkState.Checking -> {
+                Txt("Checking the link…", Plexo.type.detail, color = colors.textSecondary)
             }
-            Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.border))
-            Column(
-                Modifier.weight(1f, fill = false).padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
+
+            is LinkState.Failed -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    LinkField(state, model, Modifier.weight(1f))
-                    PButton(
-                        "Open .torrent",
-                        {
-                            scope.launch {
-                                val chosen = withContext(Dispatchers.IO) { pickers.torrentFile() }
-                                if (chosen != null) model.fill(chosen.toString())
-                            }
-                        },
-                        glyph = Glyph.FOLDER,
-                        modifier = Modifier.height(36.dp),
-                    )
+                    GlyphIcon(Glyph.ALERT, colors.danger, size = 16.dp)
+                    Txt(link.message, Plexo.type.hint, color = colors.danger, maxLines = 3)
                 }
-                when (val link = state.link) {
-                    LinkState.Checking -> {
-                        Txt("Checking the link…", Plexo.type.detail, color = colors.textSecondary)
-                    }
-
-                    is LinkState.Failed -> {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            GlyphIcon(Glyph.ALERT, colors.danger, size = 16.dp)
-                            Txt(link.message, Plexo.type.hint, color = colors.danger, maxLines = 3)
-                        }
-                    }
-
-                    is LinkState.Ready -> {
-                        ReadyRow(state, link, model)
-                    }
-
-                    LinkState.Idle -> {
-                        // Nothing to say before there is a link.
-                    }
-                }
-                if (state.files.isNotEmpty()) FileTree(state, model)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FormLabel("Save to")
-                    Txt(state.saveFolderShown, Plexo.type.speed.copy(fontWeight = null), Modifier.weight(1f))
-                    PButton("Change", {
-                        scope.launch {
-                            val chosen = withContext(Dispatchers.IO) { pickers.folder() }
-                            if (chosen != null) model.setSaveFolder(chosen.toString())
-                        }
-                    })
-                }
-                if (state.chips.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        FormLabel("Networks", Modifier.padding(top = 6.dp))
-                        FlowRow(
-                            Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            for (chip in state.chips) Chip(chip, editor, keys)
-                        }
-                    }
-                    state.networksNote?.let { Txt(it, Plexo.type.detail, color = colors.textTertiary, maxLines = 2) }
-                }
-                state.connectionNote?.let { Txt(it, Plexo.type.hint, color = colors.textSecondary, maxLines = 2) }
-                state.subnetWarning?.let { Warning(it) }
-                if (state.duplicate && state.error == null) Warning("This is already in your list or was downloaded before.")
             }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(colors.bgSecondary)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.weight(1f)) { state.error?.let { Txt(it, Plexo.type.hint, color = colors.danger, maxLines = 2) } }
-                PButton("Cancel", onClose)
-                PButton(state.startLabel, model::start, kind = ButtonKind.PRIMARY, enabled = state.canStart)
+
+            is LinkState.Ready -> {
+                ReadyRow(state, link, model) { nameFocused = it }
+            }
+
+            LinkState.Idle -> {
+                // Nothing to say before there is a link.
             }
         }
+        if (state.files.isNotEmpty()) FileTree(state, model)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            FormLabel("Save to")
+            Txt(state.saveFolderShown, Plexo.type.speed.copy(fontWeight = null), Modifier.weight(1f))
+            PButton("Change", {
+                scope.launch {
+                    val chosen = withContext(Dispatchers.IO) { pickers.folder() }
+                    if (chosen != null) model.setSaveFolder(chosen.toString())
+                }
+            })
+        }
+        if (state.chips.isNotEmpty()) NetworkPicker(state, model, editor, keys, unit, onLimits)
+        state.connectionNote?.let { Txt(it, Plexo.type.hint, color = colors.textSecondary, maxLines = 2) }
+        state.subnetWarning?.let { Warning(it) }
+        if (state.duplicate && state.error == null) Warning("This is already in your list or was downloaded before.")
+        state.error?.let { Txt(it, Plexo.type.hint, color = colors.danger, maxLines = 2) }
     }
 }
+
+/** What the kind of link is called in the badge. */
+internal fun kindLabel(kind: DownloadKind): String =
+    when (kind) {
+        DownloadKind.DIRECT -> "HTTP file"
+        DownloadKind.SITE -> "Site"
+        DownloadKind.TORRENT -> "Torrent"
+        DownloadKind.FTP -> "FTP file"
+        DownloadKind.TOOL -> "Tool"
+    }
 
 @Composable
 private fun FormLabel(
@@ -241,6 +161,7 @@ private fun LinkField(
     state: NewDownloadState,
     model: NewDownloadModel,
     modifier: Modifier,
+    onFocus: (Boolean) -> Unit,
 ) {
     val colors = Plexo.colors
     val focus = remember { FocusRequester() }
@@ -275,6 +196,7 @@ private fun LinkField(
                     Modifier
                         .fillMaxWidth()
                         .focusRequester(focus)
+                        .onFocusChanged { onFocus(it.isFocused) }
                         .semantics { contentDescription = "Link" }
                         .onPreviewKeyEvent {
                             if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) {
@@ -301,8 +223,10 @@ private fun ReadyRow(
     state: NewDownloadState,
     ready: LinkState.Ready,
     model: NewDownloadModel,
+    onFocus: (Boolean) -> Unit,
 ) {
     val colors = Plexo.colors
+    DisposableEffect(Unit) { onDispose { onFocus(false) } }
     val torrent = ready.torrent
     val badge =
         if (torrent != null && torrent.files.size > 1) {
@@ -331,13 +255,18 @@ private fun ReadyRow(
                     singleLine = true,
                     textStyle = Plexo.type.rowName.copy(color = colors.text),
                     cursorBrush = SolidColor(colors.accent),
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "File name" },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { onFocus(it.isFocused) }
+                            .semantics { contentDescription = "File name" },
                 )
             }
             val size = state.selectedSize?.let { formatBytes(it) } ?: "size unknown"
             val meta = listOfNotNull(torrent?.let { fileCount(state.selectedCount, it.files.size) }, size).joinToString(" · ")
             Txt(meta, Plexo.type.detail, color = colors.textSecondary)
         }
+        Txt(kindLabel(ready.kind), Plexo.type.hint, color = colors.textSecondary)
     }
 }
 
@@ -400,29 +329,106 @@ private fun FileTree(
     }
 }
 
-// A network the download would use (or not), in its own color, with a pencil to rename and recolor it.
-@Composable
-private fun Chip(
+// What a row says under the name: down, switched off, its speed while it carries bytes, else Idle.
+internal fun networkStatus(
     chip: NetworkChip,
+    unit: SpeedUnit,
+): String =
+    when {
+        !chip.up -> "Not connected"
+        !chip.enabled -> "Off"
+        else -> chip.speed?.let { formatRate(it, unit) } ?: "Idle"
+    }
+
+// Four rows and the three rules between them.
+private val PickerRowsMax = 4 * 44 + 3
+
+// The networks, one switchable row each (the engine's switch, for all downloads), with the note, what went wrong, the warning
+// when none is on and the link to the limits. A long list scrolls inside its box.
+@Composable
+private fun NetworkPicker(
+    state: NewDownloadState,
+    model: NewDownloadModel,
     editor: NetworkEditor,
     keys: WindowKeys,
+    unit: SpeedUnit,
+    onLimits: () -> Unit,
+) {
+    val colors = Plexo.colors
+    val shape = RoundedCornerShape(10.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Txt("Networks", Plexo.type.hint, color = colors.textSecondary)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = PickerRowsMax.dp)
+                .clip(shape)
+                .background(colors.bgSecondary)
+                .border(0.5.dp, colors.border, shape)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            state.chips.forEachIndexed { index, chip ->
+                if (index > 0) Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.border))
+                NetworkRow(chip, model, editor, keys, unit)
+            }
+        }
+        state.networksNote?.let { Txt(it, Plexo.type.detail, color = colors.textTertiary, maxLines = 2) }
+        state.networkError?.let { Txt(it, Plexo.type.hint, color = colors.danger, maxLines = 2) }
+        if (state.noNetworkOn) Warning("No network is on. Downloads wait until one is switched on.")
+        Txt(
+            "Speed & data limits",
+            Plexo.type.button,
+            Modifier.clickable(role = Role.Button, onClick = onLimits),
+            color = colors.accent,
+        )
+    }
+}
+
+@Composable
+private fun NetworkRow(
+    chip: NetworkChip,
+    model: NewDownloadModel,
+    editor: NetworkEditor,
+    keys: WindowKeys,
+    unit: SpeedUnit,
 ) {
     val colors = Plexo.colors
     val solid = LocalNetworkLooks.current.swatches(colors)[chip.key]?.solid ?: colors.accent
-    val shape = RoundedCornerShape(50)
+    val tagShape = RoundedCornerShape(4.dp)
     Row(
         Modifier
-            .height(28.dp)
-            .clip(shape)
-            .background(if (chip.on) solid.copy(alpha = 0.16f) else Color.Transparent)
-            .border(0.5.dp, if (chip.on) solid.copy(alpha = 0.42f) else colors.border, shape)
-            .semantics { contentDescription = "${chip.name}, ${if (chip.on) "in use" else "not in use"}" }
-            .padding(start = 10.dp, end = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .fillMaxWidth()
+            .height(44.dp)
+            .padding(horizontal = 14.dp)
+            .semantics { testTag = "network-row-${chip.key}" },
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(solid))
-        Txt(chip.name, Plexo.type.hint, Modifier.widthIn(max = 160.dp), color = if (chip.on) colors.text else colors.textSecondary)
-        NetworkEditPencil(editor, "chip", chip.key, chip.name, chip.name, keys, size = 20.dp, glyphSize = 12.dp)
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (chip.on) solid else colors.iconMutedStrong))
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Txt(chip.name, Plexo.type.rowName, Modifier.weight(1f, fill = false))
+            NetworkEditPencil(editor, "picker", chip.key, chip.name, chip.osName, keys, size = 20.dp, glyphSize = 12.dp)
+            Box(
+                Modifier
+                    .widthIn(max = 110.dp)
+                    .clip(tagShape)
+                    .background(colors.bgTertiary)
+                    .border(0.5.dp, colors.border, tagShape)
+                    .padding(horizontal = 6.dp),
+            ) {
+                Txt("${chip.kind.tag} · ${chip.key}", Plexo.type.badge, color = colors.textTertiary)
+            }
+        }
+        Txt(
+            networkStatus(chip, unit),
+            Plexo.type.speed.copy(textAlign = TextAlign.End),
+            color = if (chip.on && chip.speed != null) solid else colors.textTertiary,
+        )
+        PSwitch(
+            chip.enabled,
+            { model.setNetworkEnabled(chip.key, it) },
+            "Use ${chip.name}",
+            Modifier.semantics { testTag = "network-switch-${chip.key}" },
+        )
     }
 }

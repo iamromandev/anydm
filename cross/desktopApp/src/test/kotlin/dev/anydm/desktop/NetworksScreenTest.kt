@@ -67,6 +67,7 @@ internal class NetworksScreenTest {
                     MemoryViewPrefs(),
                     keys,
                     files = FakeFileActions(),
+                    navigator = Navigator().apply { downloads() },
                     pickers = FakePickers(),
                     visuals = visuals,
                     onOpenLimits = { limits += it },

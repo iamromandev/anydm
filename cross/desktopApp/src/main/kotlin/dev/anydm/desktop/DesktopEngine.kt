@@ -274,6 +274,11 @@ internal class UnavailableSource(
         allowDuplicate: Boolean,
     ) = stopped()
 
+    override suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ) = stopped()
+
     override suspend fun relink(
         id: DownloadId,
         mirrorId: MirrorId,

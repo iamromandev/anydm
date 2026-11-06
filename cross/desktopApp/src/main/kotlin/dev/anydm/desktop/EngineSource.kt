@@ -97,6 +97,12 @@ interface EngineSource {
         allowDuplicate: Boolean,
     ): CommandResult
 
+    /** Sets the priority of [id]: higher runs first. */
+    suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ): CommandResult
+
     suspend fun relink(
         id: DownloadId,
         mirrorId: MirrorId,
@@ -256,6 +262,11 @@ fun Engine.asSource(
             id: DownloadId,
             allowDuplicate: Boolean,
         ) = engine.retry(id, allowDuplicate)
+
+        override suspend fun reprioritize(
+            id: DownloadId,
+            priority: Int,
+        ) = engine.reprioritize(id, priority)
 
         override suspend fun relink(
             id: DownloadId,

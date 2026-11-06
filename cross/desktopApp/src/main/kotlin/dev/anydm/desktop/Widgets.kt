@@ -215,8 +215,9 @@ fun <T> Segmented(
 }
 
 /**
- * A question laid over the whole window: [title], [body], and two choices. Escape or a click outside answers no. The card
- * eats clicks so they don't fall through to the scrim.
+ * A question laid over the whole window: [title], [body], and two choices, or three with [secondaryText] (shown between the
+ * dismiss and the confirm button). Escape or a click outside answers no. The card eats clicks so they don't fall through to
+ * the scrim.
  */
 @Composable
 fun ConfirmDialog(
@@ -228,6 +229,9 @@ fun ConfirmDialog(
     destructive: Boolean = false,
     dismissText: String = "Cancel",
     maxBodyLines: Int = 4,
+    secondaryText: String? = null,
+    onSecondary: () -> Unit = {},
+    cardWidth: Dp = 400.dp,
 ) {
     val colors = Plexo.colors
     val focus = remember { FocusRequester() }
@@ -250,7 +254,7 @@ fun ConfirmDialog(
     ) {
         Column(
             Modifier
-                .width(400.dp)
+                .width(cardWidth)
                 .clip(RoundedCornerShape(12.dp))
                 .background(colors.bgSecondary)
                 .border(0.5.dp, colors.border, RoundedCornerShape(12.dp))
@@ -263,6 +267,7 @@ fun ConfirmDialog(
             Txt(body, Plexo.type.hint, color = colors.textSecondary, maxLines = maxBodyLines)
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 PButton(dismissText, onCancel)
+                if (secondaryText != null) PButton(secondaryText, onSecondary)
                 PButton(confirmText, onConfirm, kind = if (destructive) ButtonKind.DESTRUCTIVE else ButtonKind.PRIMARY)
             }
         }

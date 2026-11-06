@@ -88,7 +88,7 @@ private fun PairHost(
     PairBrowserDialog(model.second, files, keys, onClose)
 }
 
-/** What the window's screens share: the list, footer and networks models, the networks' looks, and the dialogs. */
+/** What the window's screens share: the list, footer and networks models, the networks' looks, and the landing page's form. */
 private class AppModels(
     val scope: CoroutineScope,
     val home: HomeModel,
@@ -96,15 +96,15 @@ private class AppModels(
     val looks: NetworkLooksModel,
     val editor: NetworkEditor,
     val networks: NetworksModel,
-    val dialogs: NewDownloads,
+    val landing: LandingSession,
 )
 
 /**
- * The window's content: the home screen or a download's page in the theme the user chose, or what went wrong when the
- * engine could not start. Opening a row goes to its page ([navigator]), and the page's back control (or Esc) returns to the
- * list. New download dialogs open over either, for what [opens] hands over (links and `.torrent` paths from a paste, a drop,
- * launch arguments, File > Add) and for the header button; [visuals] keeps the names and colors of networks and [onOpenLimits]
- * is where a network's chevron and the "Speed & data limits" link lead.
+ * The window's content: the landing page, the downloads list or a download's page in the theme the user chose, or what went
+ * wrong when the engine could not start. Opening a row goes to its page ([navigator]), and the page's back control (or Esc)
+ * returns one step towards the landing page. What [opens] hands over (links and `.torrent` paths from a paste, a drop, launch
+ * arguments, File > Add) and the header button go to the landing page, its field filled with the first link; [visuals] keeps the names and colors of
+ * networks and [onOpenLimits] is where a network's chevron and the "Speed & data limits" link lead.
  */
 @Composable
 fun App(
@@ -140,15 +140,25 @@ fun App(
                 looks,
                 editor,
                 NetworksModel(source, looks.looks, own) { limits(it) },
-                NewDownloads(own) { initial, scope -> NewDownloadModel(source, looks.looks, scope, initial) },
+                LandingSession(own) { prefill, scope -> NewDownloadModel(source, looks.looks, scope, prefill = prefill) },
             )
         }
     DisposableEffect(models) { onDispose { models.scope.cancel() } }
     val footer by models.footer.state.collectAsState()
     val engine by source.state.collectAsState()
     val failed = engine as? EngineState.Failed
-    // Opens are taken only while the dialogs can be shown; with the engine failed they wait, not vanish into a hidden stack.
-    if (opens != null && failed == null) LaunchedEffect(opens, models) { for (request in opens.requests) models.dialogs.open(request) }
+    // Every way in with a link: the landing page, its field filled.
+    val openLink: (List<String>) -> Unit =
+        remember(models, navigator) {
+            { inputs ->
+                models.landing.open(inputs)
+                navigator.landing()
+            }
+        }
+    // Opens are taken only while the landing page can be shown; with the engine failed they wait.
+    if (opens != null && failed == null) {
+        LaunchedEffect(opens, models, openLink) { for (request in opens.requests) openLink(request) }
+    }
     ReleaseKeysOnBlur(keys)
     val looks by models.looks.looks.collectAsState()
     PlexoTheme(footer.theme) {
@@ -159,13 +169,28 @@ fun App(
                 } else {
                     val route by navigator.route.collectAsState()
                     when (val page = route) {
-                        Route.Home -> {
+                        Route.Landing -> {
+                            LandingScreen(
+                                models.landing,
+                                models.home,
+                                source,
+                                pickers,
+                                models.editor,
+                                keys,
+                                navigator::downloads,
+                                unit = footer.unit,
+                                onLimits = { models.networks.openLimits(null) },
+                            )
+                        }
+
+                        Route.Downloads -> {
                             HomeScreen(
                                 source,
                                 models.home,
                                 models.footer,
-                                models.dialogs::open,
+                                openLink,
                                 navigator::open,
+                                navigator::back,
                                 keys,
                                 networks = models.networks to models.editor,
                                 onBrowsers = { pairRequest = ++requests },
@@ -181,11 +206,10 @@ fun App(
                                 navigator::back,
                                 keys,
                                 naming = models.looks.looks to models.editor,
-                                onNewDownload = models.dialogs::open,
+                                onNewDownload = openLink,
                             )
                         }
                     }
-                    NewDownloadHost(models.dialogs, pickers, models.editor, keys)
                     pairRequest?.let { id -> PairHost(source, id, files, keys) { pairRequest = null } }
                     limitsRequest?.let { request ->
                         LimitsHost(source, request, footer.unit, models.footer, models.networks, keys) { limitsRequest = null }

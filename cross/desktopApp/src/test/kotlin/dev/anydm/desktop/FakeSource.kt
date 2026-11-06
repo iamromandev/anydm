@@ -100,6 +100,9 @@ internal class FakeSource(
     /** While set, every command waits for it after it is recorded: a command still in flight. */
     var gate: CompletableDeferred<Unit>? = null
 
+    /** Holds the command with this text until completed, whatever the [gate]. */
+    val gates = mutableMapOf<String, CompletableDeferred<Unit>>()
+
     /** While set, [start] waits for it: an engine still starting. */
     var startGate: CompletableDeferred<Unit>? = null
 
@@ -120,6 +123,7 @@ internal class FakeSource(
         commandThrows?.let { throw it }
         synchronized(calls) { calls += text }
         gate?.await()
+        gates[text]?.await()
         synchronized(calls) { finished += text }
         return results[text] ?: CommandResult.Done(null)
     }
@@ -139,6 +143,20 @@ internal class FakeSource(
         id: DownloadId,
         allowDuplicate: Boolean,
     ) = call(if (allowDuplicate) "retry ${id.value} anyway" else "retry ${id.value}")
+
+    override suspend fun reprioritize(
+        id: DownloadId,
+        priority: Int,
+    ): CommandResult {
+        val done = call("reprioritize ${id.value} $priority")
+        if (done is CommandResult.Done) {
+            downloads.value =
+                downloads.value.map {
+                    if (it.download.id == id) it.copy(download = it.download.copy(priority = priority)) else it
+                }
+        }
+        return done
+    }
 
     override suspend fun relink(
         id: DownloadId,
@@ -445,8 +463,10 @@ internal class FakeSource(
         enabled: Boolean,
     ): CommandResult {
         val done = call("setNetworkEnabled $key $enabled")
-        networks.value =
-            BondingState(networks.value.networks.map { if (it.info.key == key) it.copy(enabled = enabled) else it })
+        if (done is CommandResult.Done) {
+            networks.value =
+                BondingState(networks.value.networks.map { if (it.info.key == key) it.copy(enabled = enabled) else it })
+        }
         return done
     }
 }

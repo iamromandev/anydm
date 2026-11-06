@@ -416,7 +416,19 @@ internal class PairBrowserScreenTest {
     fun `the header's Browsers button opens the dialog and Done puts it away`() =
         runComposeUiTest {
             val keys = WindowKeys()
-            setContent { App(FakeSource(), MemoryViewPrefs(), keys, files = FakeFileActions(), pickers = FakePickers()) }
+            setContent {
+                App(
+                    FakeSource(),
+                    MemoryViewPrefs(),
+                    keys,
+                    files = FakeFileActions(),
+                    navigator =
+                        Navigator().apply {
+                            downloads()
+                        },
+                    pickers = FakePickers(),
+                )
+            }
             until { has("Browsers") }
             onNodeWithText("Browsers").performClick()
             until { hasDesc("Browsers dialog") }

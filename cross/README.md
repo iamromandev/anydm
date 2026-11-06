@@ -88,9 +88,9 @@ own, with the engine in `shared/`; no server is needed.
   [Plexo](https://github.com/anmolkapil/plexo) (see Credits below): a home screen with the downloads in cards grouped by state
   (Downloading, Queued, Paused, Needs attention, Finished), a networks pill in the header, a full-page detail view for one
   download, and a footer with free disk space, Slow mode and the speed unit (MB/s or Mbps). The screens:
-  - Home (`HomeScreen`, `HomeModel`): filter, multi-select with Cmd/Ctrl+A, bulk pause, resume and remove, "Clear finished"
+  - Downloads (`HomeScreen`, `HomeModel`): filter, multi-select with Cmd/Ctrl+A, bulk pause, resume and remove, "Clear finished"
     (keeps the files); paste a link with Cmd/Ctrl+V or drop a `.torrent`.
-  - New download (`NewDownloadDialog`): web, FTP, magnet or `.torrent`; reads the link first (name, size, torrent file tree with
+  - Landing (`LandingScreen`, `NewDownloadForm`, `NewDownloadModel`): the page the window opens on, one link field: web, FTP, magnet, site or `.torrent`; reads the link first (name, size, torrent file tree with
     checkboxes), the folder and which networks to use (each with its own color and a pencil to rename it).
   - Detail (`DetailScreen`, `DetailModel`): throughput graph, per-network table, chunk map for web downloads, peers and pieces for
     torrents, the combine diagram, Open / Show in folder / Move to Trash.
