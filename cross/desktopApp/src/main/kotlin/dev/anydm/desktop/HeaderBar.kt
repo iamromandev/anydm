@@ -43,6 +43,8 @@ fun HeaderBar(
     onNetworks: () -> Unit,
     onMenuOpen: (Boolean) -> Unit,
     onNewDownload: () -> Unit,
+    /** Leaves the list for the landing page. */
+    onBack: () -> Unit,
     /** Opens the dialog that pairs browsers. */
     onBrowsers: () -> Unit = {},
     /** What opens under the networks pill: the networks menu. */
@@ -57,6 +59,7 @@ fun HeaderBar(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        IconButton(Glyph.CHEVRON_LEFT, "Back", onBack)
         FilterMenu(state.filter, state.counts, onFilter, onMenuOpen)
         state.summary?.let { Txt(it, Plexo.type.detail.copy(fontSize = Plexo.type.detail.fontSize), color = colors.textTertiary) }
         Spacer(Modifier.weight(1f))

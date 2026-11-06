@@ -34,6 +34,7 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -45,14 +46,16 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import dev.anydm.engine.core.DownloadId
+import dev.anydm.engine.queue.RemoveFiles
 import kotlinx.coroutines.launch
 import java.net.URI
 import java.nio.file.Path
 
 /**
- * The downloads list with its header, footer and dialogs. [onNewDownload] opens the new-download dialog, with the links or
- * `.torrent` paths to fill it in (none for a blank one); [onOpen] opens a download's page. The shortcuts (paste, select all,
- * Esc, Delete) are set on [keys], which the window feeds.
+ * The downloads list with its header, footer and dialogs. [onNewDownload] opens the landing page, with the
+ * links or `.torrent` paths to fill it in (none for a blank one); [onOpen] opens a download's page and [onBack]
+ * returns to the landing page. The shortcuts (paste, select all, Esc, Delete) are set on [keys], which the window
+ * feeds.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -62,6 +65,7 @@ fun HomeScreen(
     footer: FooterModel,
     onNewDownload: (List<String>) -> Unit,
     onOpen: (DownloadId) -> Unit,
+    onBack: () -> Unit,
     keys: WindowKeys = WindowKeys(),
     /** The networks menu and the rename popover it uses; none, and the pill does nothing. */
     networks: Pair<NetworksModel, NetworkEditor>? = null,
@@ -73,22 +77,28 @@ fun HomeScreen(
     val footerState by footer.state.collectAsState()
     val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
+    var menuAt by remember { mutableStateOf(Offset.Zero) }
     val swatches = LocalNetworkLooks.current.swatches(colors)
     val total = state.groups.sumOf { it.rows.size }
     val latest by rememberUpdatedState(state)
     val menuIsOpen by rememberUpdatedState(menuOpen)
     // The handler outlives a composition's lambdas: it asks for the newest one when a key comes.
     val newDownload by rememberUpdatedState(onNewDownload)
+    val back by rememberUpdatedState(onBack)
     DisposableEffect(keys, model, source) {
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val now = latest
             // A menu or a dialog has its own keys.
-            if (event.type != KeyEventType.KeyDown || menuIsOpen || now.confirmClear || now.confirmRemove) return@handler false
+            if (event.type != KeyEventType.KeyDown || menuIsOpen || now.menu != null || now.confirmClear ||
+                now.confirmRemove
+            ) {
+                return@handler false
+            }
             val command = if (IsMac) event.isMetaPressed else event.isCtrlPressed
             when {
                 command && event.key == Key.V -> {
-                    // Not gated on a repeat: a key-up lost to the OS must not swallow the next paste, and a dialog for the same
-                    // link is not opened twice.
+                    // Not gated on a repeat: a key-up lost to the OS must not swallow the next paste, and the landing page takes the
+                    // same link only once.
                     scope.launch {
                         val link = clipboardLink(source.clipboard)
                         if (link != null) newDownload(listOf(link))
@@ -103,6 +113,12 @@ fun HomeScreen(
 
                 event.key == Key.Escape && now.selection.isNotEmpty() -> {
                     model.clearSelection()
+                    true
+                }
+
+                event.key == Key.Escape -> {
+                    // A held key repeats: one press goes back once.
+                    if (!keys.repeating) back()
                     true
                 }
 
@@ -126,7 +142,7 @@ fun HomeScreen(
             .background(colors.bg)
             .dropTorrents { paths ->
                 val torrents = droppedTorrents(paths)
-                // Several torrents dropped together open one dialog.
+                // Several torrents dropped together go to the landing page at once.
                 if (torrents.isNotEmpty()) onNewDownload(torrents)
                 torrents.isNotEmpty()
             },
@@ -139,6 +155,7 @@ fun HomeScreen(
                     model::setFilter,
                     onNetworks = { networks?.first?.toggle() },
                     onMenuOpen = { menuOpen = it },
+                    onBack = onBack,
                     onNewDownload = { onNewDownload(emptyList()) },
                     onBrowsers = onBrowsers,
                     networksMenu = { networks?.let { (menu, editor) -> NetworksMenu(menu, editor, footerState.unit, keys) } },
@@ -174,6 +191,11 @@ fun HomeScreen(
                                         onSelect = { model.toggle(row.id) },
                                         onOpen = { onOpen(row.id) },
                                         onAction = { model.perform(row.id) },
+                                        onMenu = { at ->
+                                            menuAt = at
+                                            model.openMenu(row.id)
+                                        },
+                                        onOpenFile = { model.openFile(row.id) },
                                     )
                                 }
                             }
@@ -192,16 +214,24 @@ fun HomeScreen(
                 onCancel = model::dismissClearFinished,
             )
         }
+        state.menu?.let { menu ->
+            RowMenu(menu, menuAt, onAction = model::perform, onDismiss = model::closeMenu)
+        }
         if (state.confirmRemove) {
             ConfirmDialog(
                 title = "Remove from list?",
                 body =
-                    "This takes ${downloads(state.selection.size)} off the list, stopping any that are still running. " +
-                        "Files already on disk stay where they are.",
-                confirmText = "Remove",
-                onConfirm = model::confirmRemoveSelected,
+                    "Remove from list takes ${downloads(state.selection.size)} off the list, stopping any that are still running; " +
+                        "files already on disk stay where they are. " +
+                        "Move files to Trash also puts what they downloaded in the Trash.",
+                confirmText = "Move files to Trash",
+                onConfirm = { model.confirmRemoveSelected(RemoveFiles.TRASH) },
                 onCancel = model::dismissRemove,
                 destructive = true,
+                maxBodyLines = 6,
+                secondaryText = "Remove from list",
+                onSecondary = { model.confirmRemoveSelected(RemoveFiles.KEEP) },
+                cardWidth = 480.dp,
             )
         }
     }

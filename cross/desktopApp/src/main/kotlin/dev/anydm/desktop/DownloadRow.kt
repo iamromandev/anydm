@@ -1,8 +1,9 @@
 package dev.anydm.desktop
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -20,19 +21,34 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** One download as a row: select box, type badge, name, progress, detail line, speed, its button and the way into its page. */
+/**
+ * One download as a row: select box, type badge, name, progress, detail line, speed, its button and the way into its page.
+ * A right-click asks for the menu ([onMenu], with the pointer's position in the window); a double-click on the name asks to
+ * open the file ([onOpenFile]); a single click opens the page ([onOpen]).
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DownloadRow(
     row: HomeRow,
@@ -41,11 +57,15 @@ fun DownloadRow(
     onSelect: () -> Unit,
     onOpen: () -> Unit,
     onAction: () -> Unit,
+    onMenu: (Offset) -> Unit = {},
+    onOpenFile: () -> Unit = {},
 ) {
     val colors = Plexo.colors
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
     val shape = RoundedCornerShape(PlexoRadius)
+    var frame by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val menu by rememberUpdatedState(onMenu)
     Row(
         Modifier
             .fillMaxWidth()
@@ -59,7 +79,19 @@ fun DownloadRow(
                 },
             ).hoverable(source)
             .semantics { testTag = "row-${row.id.value}" }
-            .padding(horizontal = 8.dp, vertical = 12.dp),
+            .onGloballyPositioned { frame = it }
+            .pointerInput(Unit) {
+                // Watches without taking the press, so the row's other clicks still work.
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                            val at = event.changes.first().position
+                            menu(frame?.takeIf { it.isAttached }?.localToWindow(at) ?: at)
+                        }
+                    }
+                }
+            }.padding(horizontal = 8.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -67,7 +99,7 @@ fun DownloadRow(
         Row(
             Modifier
                 .weight(1f)
-                .clickable(role = Role.Button, onClick = onOpen),
+                .combinedClickable(role = Role.Button, onDoubleClick = onOpenFile, onClick = onOpen),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

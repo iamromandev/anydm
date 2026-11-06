@@ -13,6 +13,7 @@ import dev.anydm.engine.torrent.TorrentInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** What is known about the link in the field. */
@@ -56,12 +58,20 @@ data class TorrentFileRow(
     val selected: Boolean,
 )
 
-/** A network as the dialog shows it: whether this download would use it ([on]), by the engine's own switch. */
+/**
+ * A network as the form shows it: its [name] (the user's, else [osName]), [speed] while it carries bytes, whether the OS lists
+ * it [up], whether the user switched it on ([enabled], the engine's switch for all downloads) and whether downloads would use
+ * it now ([on]).
+ */
 data class NetworkChip(
     val key: String,
     val name: String,
+    val osName: String,
     val colorId: String,
     val kind: NetworkKind,
+    val speed: Long?,
+    val up: Boolean,
+    val enabled: Boolean,
     val on: Boolean,
 )
 
@@ -79,6 +89,10 @@ data class NewDownloadState(
     val saveFolderShown: String = "",
     val chips: List<NetworkChip> = emptyList(),
     val networksNote: String? = null,
+    /** Chips are listed and none is in use. */
+    val noNetworkOn: Boolean = false,
+    /** Why the last network switch failed. */
+    val networkError: String? = null,
     val subnetWarning: String? = null,
     val connectionNote: String? = null,
     val duplicate: Boolean = false,
@@ -100,14 +114,21 @@ private data class Draft(
     val starting: Boolean = false,
     val error: String? = null,
     val done: Boolean = false,
+    /** Failed network switches by key: the state asked for and why it failed. */
+    val switchErrors: Map<String, SwitchError> = emptyMap(),
+)
+
+private data class SwitchError(
+    val wanted: Boolean,
+    val message: String,
 )
 
 /**
  * One New download dialog: the link in the field and what the engine makes of it (a file's name and size, or a torrent's file
  * tree), where it will be saved, the networks in use and what the user starts. A link typed in is looked at after
  * [debounceMillis] of quiet; one filled in (opened with, pasted, a picked .torrent) at once. [start] adds the download and sets
- * [NewDownloadState.done]. Which networks carry a download is the engine's switch for all downloads, so the chips here only
- * show it ([subnet] tells which subnet a network is on, for the shared-subnet warning).
+ * [NewDownloadState.done]. Which networks carry a download is the engine's switch for all downloads, so the rows here switch it ([subnet] tells which subnet a network is on, for the shared-subnet warning). A blank form reads the clipboard for a link
+ * unless [prefill] is off.
  */
 class NewDownloadModel(
     private val source: EngineSource,
@@ -117,6 +138,7 @@ class NewDownloadModel(
     private val homeFolder: String = System.getProperty("user.home").orEmpty(),
     private val debounceMillis: Long = 600,
     private val subnet: (NetworkInfo) -> String? = { subnetOf(it) },
+    prefill: Boolean = true,
 ) {
     private val draft = MutableStateFlow(Draft())
     private val starting = AtomicBoolean(false)
@@ -125,6 +147,7 @@ class NewDownloadModel(
     // and its job change together, under [lock].
     private val lock = Any()
     private var job: Job? = null
+    private val switchCounts = HashMap<String, Int>()
 
     @Volatile
     private var generation = 0
@@ -135,6 +158,7 @@ class NewDownloadModel(
             .stateIn(scope, SharingStarted.Eagerly, build(Draft(), source.networks.value.networks, looks.value))
 
     init {
+        scope.launch { source.networks.collect { dropSettledErrors(it.networks) } }
         scope.launch {
             val folder =
                 try {
@@ -150,7 +174,7 @@ class NewDownloadModel(
         }
         if (initial.isNotBlank()) {
             fill(initial)
-        } else {
+        } else if (prefill) {
             // A link on the clipboard is most likely what the dialog was opened for.
             scope.launch {
                 val link = clipboardLink(source.clipboard)
@@ -292,6 +316,58 @@ class NewDownloadModel(
 
     fun setSaveFolder(path: String) = draft.update { it.copy(saveFolder = path) }
 
+    /**
+     * Switches [key] on or off for all downloads (the engine's switch); the rows follow what the engine reports. Only the latest
+     * switch of a network sets or clears its error, and the error goes once the engine reports what was asked for.
+     */
+    fun setNetworkEnabled(
+        key: String,
+        enabled: Boolean,
+    ) {
+        val mine =
+            synchronized(switchCounts) {
+                val next = (switchCounts[key] ?: 0) + 1
+                switchCounts[key] = next
+                next
+            }
+        scope.launch {
+            val message =
+                try {
+                    // What was asked for runs to its answer even when the form is left meanwhile.
+                    val result = withContext(NonCancellable) { source.setNetworkEnabled(key, enabled) }
+                    if (result is CommandResult.Done) null else "The network could not be switched."
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: IllegalStateException) {
+                    "The engine has stopped."
+                } catch (_: Exception) {
+                    "The network could not be switched."
+                }
+            // Judged inside the update, so a newer switch that finished meanwhile is not overwritten by this older answer.
+            draft.update {
+                if (synchronized(switchCounts) { switchCounts[key] } != mine) return@update it
+                val errors = if (message == null) it.switchErrors - key else it.switchErrors + (key to SwitchError(enabled, message))
+                it.copy(switchErrors = errors)
+            }
+            // The engine may already report what was asked for: nothing is left to say, now or when it changes back.
+            dropSettledErrors(source.networks.value.networks)
+        }
+    }
+
+    // An error is dropped once its network is gone, there are no networks, or the engine reports the state that was asked for.
+    private fun dropSettledErrors(networks: List<BondedNetwork>) {
+        draft.update { d ->
+            if (d.switchErrors.isEmpty()) return@update d
+            val kept =
+                if (networks.isEmpty()) {
+                    emptyMap()
+                } else {
+                    d.switchErrors.filter { (key, error) -> networks.any { it.info.key == key && it.enabled != error.wanted } }
+                }
+            if (kept.size == d.switchErrors.size) d else d.copy(switchErrors = kept)
+        }
+    }
+
     /** Adds the download; the dialog is [NewDownloadState.done] when the engine took it. */
     fun start() {
         // One reading of the draft is all that is judged and all that is added, so an edit meanwhile can't split the two.
@@ -420,14 +496,22 @@ class NewDownloadModel(
         val chosen = files.filter { it.selected }
         val duplicate = (ready?.duplicate ?: false) || draft.refusedAsDuplicate
         val chips =
-            networks.sortedBy { it.info.key }.map { net ->
-                NetworkChip(
-                    net.info.key,
-                    looks.nameOf(net.info.key, net.info.name),
-                    looks.colorIds[net.info.key] ?: SWATCH_IDS.first(),
-                    kindOf(net.info),
-                    net.active,
-                )
+            if (networks.isEmpty()) {
+                emptyList()
+            } else {
+                networks.sortedBy { it.info.key }.map { net ->
+                    NetworkChip(
+                        net.info.key,
+                        looks.nameOf(net.info.key, net.info.name),
+                        net.info.name,
+                        looks.colorIds[net.info.key] ?: SWATCH_IDS.first(),
+                        kindOf(net.info),
+                        net.speed?.toLong()?.takeIf { it > 0 },
+                        net.info.up,
+                        net.enabled,
+                        net.active,
+                    )
+                }
             }
         val sorted = networks.sortedBy { it.info.key }
         val inUse = sorted.filter { it.active }
@@ -445,7 +529,14 @@ class NewDownloadModel(
             saveFolder = saveFolder,
             saveFolderShown = toDisplayPath(saveFolder, homeFolder),
             chips = chips,
-            networksNote = if (chips.isEmpty()) null else "Networks are switched for all downloads in the Networks menu.",
+            networksNote = if (chips.isEmpty()) null else NETWORK_SWITCH_HINT,
+            noNetworkOn = chips.isNotEmpty() && chips.none { it.on },
+            networkError =
+                draft.switchErrors.entries
+                    .sortedBy { it.key }
+                    .firstOrNull { (key, error) -> chips.any { it.key == key && it.enabled != error.wanted } }
+                    ?.value
+                    ?.message,
             subnetWarning = subnetWarning(networks, inUse, looks),
             connectionNote =
                 when {

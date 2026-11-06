@@ -16,19 +16,27 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
 import dev.anydm.engine.core.DownloadStatus.FAILED
@@ -55,33 +63,48 @@ internal class HomeScreenTest {
         val source: FakeSource,
         val prefs: MemoryViewPrefs,
         val opened: MutableList<List<String>>,
+        val backs: MutableList<Unit>,
         val scope: CoroutineScope,
         val window: FocusRequester,
         val keys: WindowKeys,
+        val files: FakeFileActions,
+        val routed: MutableList<DownloadId>,
     )
 
     private fun ComposeUiTest.show(
         source: FakeSource = FakeSource(),
         prefs: MemoryViewPrefs = MemoryViewPrefs(),
+        files: FakeFileActions = FakeFileActions(),
+        exists: (java.nio.file.Path) -> Boolean = { true },
         configure: (FakeSource) -> Unit = {},
     ): Shown {
         configure(source)
         val scope = CoroutineScope(Dispatchers.Unconfined + Job())
-        val model = HomeModel(source, scope)
+        val model = HomeModel(source, scope, files, exists = exists)
+        val routed = mutableListOf<DownloadId>()
         val footer = FooterModel(source, prefs, scope)
         val opened = mutableListOf<List<String>>()
+        val backs = mutableListOf<Unit>()
         val keys = WindowKeys()
         val window = FocusRequester()
         setContent {
             // Stands in for the window, which hands every key to the shortcuts before the focused part sees it.
             Box(Modifier.focusRequester(window).focusTarget().onPreviewKeyEvent { keys.dispatch(it) }) {
                 PlexoTheme(prefs.theme) {
-                    HomeScreen(source, model, footer, onNewDownload = { opened += it }, onOpen = {}, keys = keys)
+                    HomeScreen(
+                        source,
+                        model,
+                        footer,
+                        onNewDownload = { opened += it },
+                        onOpen = { routed += it },
+                        onBack = { backs += Unit },
+                        keys = keys,
+                    )
                 }
             }
             LaunchedEffect(Unit) { window.requestFocus() }
         }
-        return Shown(source, prefs, opened, scope, window, keys)
+        return Shown(source, prefs, opened, backs, scope, window, keys, files, routed)
     }
 
     private fun network(key: String) = BondedNetwork(NetworkInfo(key, key, true, emptyList()), true, BindStatus.ISOLATED, null, false)
@@ -222,7 +245,7 @@ internal class HomeScreenTest {
             onNodeWithText("Cancel").performClick()
             assertTrue(shown.source.calls.isEmpty())
             onNodeWithText("Remove").performClick()
-            onAllNodesWithText("Remove")[1].performClick()
+            onNodeWithText("Remove from list").performClick()
             waitForIdle()
             assertEquals(listOf("remove 1 KEEP"), shown.source.calls)
             shown.scope.cancel()
@@ -267,7 +290,7 @@ internal class HomeScreenTest {
             waitUntil(timeoutMillis = 5_000) { shown.opened.isNotEmpty() }
             waitForIdle()
             Thread.sleep(100)
-            // The dialogs stack skips a link that is already open; the screen itself never swallows a paste.
+            // The landing page skips a link that is already in its field; the screen itself never swallows a paste.
             waitUntil(timeoutMillis = 5_000) { shown.opened.size == 3 }
             assertEquals(3, shown.opened.size)
             shown.scope.cancel()
@@ -289,7 +312,7 @@ internal class HomeScreenTest {
             setContent {
                 Box(Modifier.focusRequester(window).focusTarget().onPreviewKeyEvent { keys.dispatch(it) }) {
                     PlexoTheme(prefs.theme) {
-                        HomeScreen(source, model, footer, onNewDownload = sink, onOpen = {}, keys = keys)
+                        HomeScreen(source, model, footer, onNewDownload = sink, onOpen = {}, onBack = {}, keys = keys)
                     }
                 }
                 LaunchedEffect(Unit) { window.requestFocus() }
@@ -329,7 +352,44 @@ internal class HomeScreenTest {
         }
 
     @Test
-    fun `Delete removes completed rows at once and shortcuts wait while a dialog is open`() =
+    fun `the back control asks to leave the list`() =
+        runComposeUiTest {
+            val shown = show()
+            onNodeWithContentDescription("Back").performClick()
+            assertEquals(1, shown.backs.size)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `Escape with nothing selected leaves the list, with a selection it only clears it`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = two() }
+            press(shown, Key.A, command = true)
+            press(shown, Key.Escape)
+            assertTrue(shown.backs.isEmpty())
+            press(shown, Key.Escape)
+            assertEquals(1, shown.backs.size)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a held Escape leaves the list once, not again on every repeat`() =
+        runComposeUiTest {
+            val shown = show()
+
+            fun esc() = shown.keys.dispatch(KeyEvent(Key.Escape, KeyEventType.KeyDown))
+            runOnIdle {
+                esc()
+                esc()
+                esc()
+                shown.keys.dispatch(KeyEvent(Key.Escape, KeyEventType.KeyUp))
+            }
+            assertEquals(1, shown.backs.size)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `Delete asks even for completed rows and shortcuts wait while a dialog is open`() =
         runComposeUiTest {
             val shown = show { it.downloads.value = listOf(snapshot(2, COMPLETED, name = "report.pdf", size = 5 * mib)) }
             onNodeWithText("Clear finished list").performClick()
@@ -339,7 +399,207 @@ internal class HomeScreenTest {
             press(shown, Key.A, command = true)
             press(shown, Key.Backspace)
             waitForIdle()
+            onNodeWithText("Remove from list?").assertIsDisplayed()
+            assertTrue(shown.source.calls.isEmpty(), "nothing is removed before the answer")
+            shown.scope.cancel()
+        }
+
+    private fun finished() = snapshot(2, COMPLETED, name = "report.pdf", size = 5 * mib, saveFolder = "/dl")
+
+    private fun ComposeUiTest.rightClickRow(id: Long) = onNodeWithTag("row-$id").performMouseInput { rightClick() }
+
+    @Test
+    fun `right-click on a row opens its menu`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            onNodeWithTag("menu-OPEN").assertDoesNotExist()
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").assertIsDisplayed().assertIsEnabled()
+            onNodeWithTag("menu-REVEAL").assertIsDisplayed()
+            onNodeWithTag("menu-REMOVE").assertIsDisplayed()
+            assertTrue(shown.routed.isEmpty(), "the page did not open")
+            assertTrue(shown.source.calls.isEmpty())
+            assertTrue(shown.files.calls.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a menu item runs its engine command and closes the menu`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = two() }
+            rightClickRow(1)
+            onNodeWithTag("menu-PAUSE").performClick()
+            waitForIdle()
+            assertEquals(listOf("pause 1"), shown.source.calls)
+            onNodeWithTag("menu-PAUSE").assertDoesNotExist()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a menu item can run a file action`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").performClick()
+            waitForIdle()
+            assertEquals(1, shown.files.calls.count { it.startsWith("open ") })
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `an item that cannot work now is disabled`() =
+        runComposeUiTest {
+            val shown = show(exists = { false }) { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").assertIsNotEnabled()
+            onNodeWithTag("menu-REVEAL").assertIsNotEnabled()
+            onNodeWithTag("menu-REMOVE").assertIsEnabled()
+            onNodeWithTag("menu-OPEN").performClick()
+            assertTrue(shown.files.calls.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `double-click on a completed row opens its file and stays on the list`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            onNodeWithText("report.pdf").performMouseInput { doubleClick() }
+            waitForIdle()
+            assertEquals(1, shown.files.calls.count { it.startsWith("open ") })
+            assertTrue(shown.routed.isEmpty(), "the page did not open")
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `double-click on a running row opens no file`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = two() }
+            onNodeWithText("Project.zip").performMouseInput { doubleClick() }
+            waitForIdle()
+            assertTrue(shown.files.calls.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a single click on the name still opens the page`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            onNodeWithText("report.pdf").performClick()
+            // A single click waits out the double-click window.
+            mainClock.advanceTimeBy(1_000)
+            waitForIdle()
+            assertEquals(listOf(DownloadId(2)), shown.routed)
+            assertTrue(shown.files.calls.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `the remove dialog has three answers and Trash reaches the engine`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-REMOVE").performClick()
+            onNodeWithText("Remove from list?").assertIsDisplayed()
+            onNodeWithText("Cancel").assertIsDisplayed()
+            onNodeWithText("Remove from list").assertIsDisplayed()
+            onNodeWithText("Move files to Trash").performClick()
+            waitForIdle()
+            assertEquals(listOf("remove 2 TRASH"), shown.source.calls)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `Remove from list in the dialog keeps the files`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-REMOVE").performClick()
+            onNodeWithText("Remove from list").performClick()
+            waitForIdle()
             assertEquals(listOf("remove 2 KEEP"), shown.source.calls)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `Escape closes the menu and does nothing else`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").assertIsDisplayed()
+            press(shown, Key.Escape)
+            waitForIdle()
+            onNodeWithTag("menu-OPEN").assertDoesNotExist()
+            onNodeWithText("1 selected").assertIsDisplayed()
+            assertTrue(shown.backs.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `the window's Escape key is ignored while the menu is open`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            runOnIdle { shown.keys.dispatch(KeyEvent(Key.Escape, KeyEventType.KeyDown)) }
+            waitForIdle()
+            assertTrue(shown.backs.isEmpty())
+            onNodeWithText("1 selected").assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `Escape sent to the popup itself closes the menu`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").performKeyInput { pressKey(Key.Escape) }
+            waitForIdle()
+            onNodeWithTag("menu-OPEN").assertDoesNotExist()
+            assertTrue(shown.backs.isEmpty())
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a click outside the menu closes it and keeps the selection`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = listOf(finished()) }
+            rightClickRow(2)
+            onNodeWithTag("menu-OPEN").assertIsDisplayed()
+            onAllNodes(isRoot())[0].performMouseInput {
+                click(
+                    androidx.compose.ui.geometry
+                        .Offset(width - 2f, height - 2f),
+                )
+            }
+            waitForIdle()
+            onNodeWithTag("menu-OPEN").assertDoesNotExist()
+            onNodeWithText("1 selected").assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `right-click inside a selection keeps it and Remove applies to all of it`() =
+        runComposeUiTest {
+            val shown =
+                show { it.downloads.value = listOf(finished(), snapshot(3, COMPLETED, name = "b.pdf", size = 5, saveFolder = "/dl")) }
+            press(shown, Key.A, command = true)
+            onNodeWithText("2 selected").assertIsDisplayed()
+            rightClickRow(2)
+            onNodeWithText("2 selected").assertIsDisplayed()
+            onNodeWithTag("menu-REMOVE").performClick()
+            onNodeWithText("Move files to Trash").performClick()
+            waitForIdle()
+            assertEquals(listOf("remove 2 TRASH", "remove 3 TRASH"), shown.source.calls)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `window shortcuts wait while the menu is open`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = two() }
+            rightClickRow(1)
+            runOnIdle { shown.keys.dispatch(KeyEvent(Key.Delete, KeyEventType.KeyDown)) }
+            waitForIdle()
+            onNodeWithText("Remove from list?").assertDoesNotExist()
             shown.scope.cancel()
         }
 

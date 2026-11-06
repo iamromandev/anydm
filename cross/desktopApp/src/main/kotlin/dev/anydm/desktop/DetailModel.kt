@@ -352,9 +352,7 @@ class DetailModel(
     fun reveal() =
         withOutput { path ->
             val base = snapshot()?.download?.saveFolder?.let { Path.of(it) }
-            var target: Path = path
-            while (!exists(target) && target != base) target = target.parent ?: break
-            files.reveal(if (exists(target)) target else base ?: target)
+            files.reveal(revealTarget(path, base, exists))
         }
 
     fun copyLink() {
@@ -679,6 +677,17 @@ class DetailModel(
     private companion object {
         const val NORMAL_PRIORITY = 4
     }
+}
+
+/** What to show in the file manager for [path]: itself if it exists, else the nearest parent that does, up to [base]. */
+internal fun revealTarget(
+    path: Path,
+    base: Path?,
+    exists: (Path) -> Boolean,
+): Path {
+    var target = path
+    while (!exists(target) && target != base) target = target.parent ?: break
+    return if (exists(target)) target else base ?: target
 }
 
 internal fun linkOf(snapshot: DownloadSnapshot): String? = snapshot.mirrors.firstOrNull()?.url ?: snapshot.download.sourceUrl
