@@ -3,6 +3,7 @@ package dev.anydm.desktop
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,13 +20,18 @@ import androidx.compose.ui.platform.WindowInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -227,5 +233,53 @@ internal class WindowKeysTest {
             keys.dispatch(down(Key.V))
 
             assertTrue(keys.repeating)
+        }
+
+    // An update dialog is a surface the window's shortcuts must stand aside for, and must give back when it is gone.
+    @Test
+    fun `an update notice blocks the window's shortcuts while it is shown and gives them back when dismissed`() =
+        runComposeUiTest {
+            val keys = WindowKeys()
+            keys.handler = { true }
+            val controls = FakeUpdateControls()
+            val session = UpdateSession(controls, FakeFileActions(), CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined)
+            setContent {
+                PlexoTheme(ThemeChoice.DARK) {
+                    LaunchedEffect(session) { session.collectEvents() }
+                    UpdateDialogs(session, keys)
+                }
+            }
+            assertFalse(keys.blocked)
+            assertTrue(keys.dispatch(down(Key.A)))
+
+            controls.emit(UpdateEvent.UpToDate)
+            onNodeWithTag("update-notice-dialog").assertIsDisplayed()
+            assertTrue(keys.blocked)
+            assertFalse(keys.dispatch(down(Key.Backspace)))
+
+            onNodeWithTag("update-notice-ok").performClick()
+            onNodeWithTag("update-notice-dialog").assertDoesNotExist()
+            assertFalse(keys.blocked)
+            assertTrue(keys.dispatch(down(Key.A)))
+        }
+
+    @Test
+    fun `the restart question blocks the window's shortcuts until it is answered`() =
+        runComposeUiTest {
+            val keys = WindowKeys()
+            keys.handler = { true }
+            val controls = FakeUpdateControls(UpdateState.Ready(Version.parse("1.2.0")!!, Path.of("anydm-1.2.0.dmg")))
+            controls.unconfirmed = RestartResult.NeedsConfirmation(2)
+            val session = UpdateSession(controls, FakeFileActions(), CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined)
+            setContent { PlexoTheme(ThemeChoice.DARK) { UpdateDialogs(session, keys) } }
+
+            session.restart()
+            onNodeWithTag("update-confirm-dialog").assertIsDisplayed()
+            assertTrue(keys.blocked)
+            assertFalse(keys.dispatch(down(Key.A)))
+
+            session.dismiss()
+            onNodeWithTag("update-confirm-dialog").assertDoesNotExist()
+            assertFalse(keys.blocked)
         }
 }

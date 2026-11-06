@@ -197,4 +197,39 @@ abstract class TorrentStoreContract : StoreTestBase() {
 
             shouldThrow<IllegalArgumentException> { store.torrents.setPriorities(job.id, listOf(9)) }
         }
+
+    @Test
+    fun customTrackersRoundTripInOrderWithoutDuplicates() =
+        runTest {
+            val store = newStore()
+            val job = store.downloads.add(torrentJob())
+            store.torrents.customTrackers(job.id) shouldBe emptyList()
+
+            store.torrents.setCustomTrackers(job.id, listOf("udp://b:1/announce", "http://a/announce", "udp://b:1/announce")) shouldBe true
+
+            store.torrents.customTrackers(job.id) shouldBe listOf("udp://b:1/announce", "http://a/announce")
+        }
+
+    @Test
+    fun customTrackersAreReplacedAndCleared() =
+        runTest {
+            val store = newStore()
+            val job = store.downloads.add(torrentJob())
+            store.torrents.setCustomTrackers(job.id, listOf("udp://a:1/announce"))
+
+            store.torrents.setCustomTrackers(job.id, listOf("udp://c:2/announce")) shouldBe true
+            store.torrents.customTrackers(job.id) shouldBe listOf("udp://c:2/announce")
+
+            store.torrents.setCustomTrackers(job.id, emptyList()) shouldBe true
+            store.torrents.customTrackers(job.id) shouldBe emptyList()
+        }
+
+    @Test
+    fun customTrackersOfAJobWithNoTorrentRow() =
+        runTest {
+            val store = newStore()
+
+            store.torrents.customTrackers(DownloadId(99)) shouldBe emptyList()
+            store.torrents.setCustomTrackers(DownloadId(99), listOf("udp://a:1/announce")) shouldBe false
+        }
 }

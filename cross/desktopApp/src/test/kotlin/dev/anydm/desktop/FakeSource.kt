@@ -7,6 +7,7 @@ import dev.anydm.engine.EngineState
 import dev.anydm.engine.FileSnapshot
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.Attempt
 import dev.anydm.engine.core.CategoryId
@@ -91,6 +92,12 @@ internal class FakeSource(
     /** What [torrentDetail] answers for a job that has its own entry, instead of [torrent]. */
     val torrentById = mutableMapOf<Long, TorrentDetailResult>()
 
+    /** What [addTorrentTrackers] and [reannounceTorrent] answer. */
+    var trackerAction: TorrentActionResult = TorrentActionResult.Done
+
+    /** Thrown by [addTorrentTrackers] and [reannounceTorrent] once set. */
+    var trackerActionThrows: Throwable? = null
+
     /** Thrown by the plain commands (pause, resume, ...) once set. */
     var commandThrows: Throwable? = null
 
@@ -172,6 +179,21 @@ internal class FakeSource(
         call("torrentDetail ${id.value}")
         detailThrows?.let { throw it }
         return torrentById[id.value] ?: torrent
+    }
+
+    override suspend fun addTorrentTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): TorrentActionResult {
+        call("addTrackers ${id.value} $urls")
+        trackerActionThrows?.let { throw it }
+        return trackerAction
+    }
+
+    override suspend fun reannounceTorrent(id: DownloadId): TorrentActionResult {
+        call("reannounce ${id.value}")
+        trackerActionThrows?.let { throw it }
+        return trackerAction
     }
 
     override suspend fun setTorrentFiles(

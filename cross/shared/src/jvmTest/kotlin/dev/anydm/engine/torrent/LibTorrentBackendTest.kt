@@ -77,12 +77,14 @@ class LibTorrentBackendTest {
         path: File,
         tracker: String? = null,
         more: List<String> = emptyList(),
+        private: Boolean = false,
     ): ByteArray {
         runBlocking { natives.load() }
         return TorrentBuilder()
             .path(path)
             .pieceSize(32 * 1024)
             .flags(TorrentBuilder.V1_ONLY)
+            .setPrivate(private)
             .also { if (tracker != null) it.addTracker(tracker) }
             .also { builder -> more.forEachIndexed { i, url -> builder.addTracker(url, i + 1) } }
             .generate()
@@ -107,7 +109,8 @@ class LibTorrentBackendTest {
         names: List<String> = info.files.map { it.path },
         sequential: Boolean = false,
         resume: ByteArray? = null,
-    ) = AddTorrent(info, Path(to.toString()), priorities, sequential, names, resume)
+        customTrackers: List<String> = emptyList(),
+    ) = AddTorrent(info, Path(to.toString()), priorities, sequential, names, resume, customTrackers)
 
     private suspend fun finish(running: RunningTorrent): TorrentProgress =
         withTimeout(60.seconds) {
@@ -950,6 +953,168 @@ class LibTorrentBackendTest {
             } finally {
                 server.stop(0)
             }
+        }
+
+    @Test
+    fun addedTrackersAreListedAsCustomAndTheTorrentsOwnAreNot() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 52)
+            val own = "http://127.0.0.1:1/announce"
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = own)))
+
+            seeding.addTrackers(listOf("udp://127.0.0.1:2/announce", "http://127.0.0.1:3/announce"))
+
+            val trackers = seeding.detail().trackers
+            trackers.map { it.url }.toSet() shouldBe setOf(own, "udp://127.0.0.1:2/announce", "http://127.0.0.1:3/announce")
+            trackers.filter { it.custom }.map { it.url }.toSet() shouldBe
+                setOf("udp://127.0.0.1:2/announce", "http://127.0.0.1:3/announce")
+            trackers.single { it.url == own }.custom shouldBe false
+            seeding.remove()
+        }
+
+    @Test
+    fun aTrackerTheTorrentAlreadyHasOrWasJustAddedIsNotAddedTwice() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 53)
+            val own = "http://127.0.0.1:1/announce"
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = own)))
+
+            seeding.addTrackers(listOf(own, "udp://127.0.0.1:2/announce", "udp://127.0.0.1:2/announce"))
+            seeding.addTrackers(listOf("udp://127.0.0.1:2/announce"))
+
+            val trackers = seeding.detail().trackers
+            trackers.map { it.url }.sorted() shouldBe listOf(own, "udp://127.0.0.1:2/announce").sorted()
+            trackers.single { it.url == own }.custom shouldBe false
+            seeding.remove()
+        }
+
+    @Test
+    fun customTrackersGivenAtAddAreAppliedAndStillCustomAfterARestart() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 54)
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce"))
+            val custom = listOf("udp://127.0.0.1:2/announce")
+            val first = ok(seeder.add(addRequest(info, seedDir, customTrackers = custom)))
+            first
+                .detail()
+                .trackers
+                .filter { it.custom }
+                .map { it.url } shouldBe custom
+            val resume = first.saveResume()
+            first.remove()
+
+            // The same torrent started again, with what the store held for it.
+            val again = ok(seeder.add(addRequest(info, seedDir, resume = resume, customTrackers = custom)))
+
+            again
+                .detail()
+                .trackers
+                .filter { it.custom }
+                .map { it.url } shouldBe custom
+            again
+                .detail()
+                .trackers
+                .single { !it.custom }
+                .url shouldBe "http://127.0.0.1:1/announce"
+            again.remove()
+        }
+
+    @Test
+    fun aPrivateTorrentIsFlaggedPrivateInItsDetail() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 56)
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce", private = true)))
+
+            seeding.detail().isPrivate shouldBe true
+            seeding.remove()
+        }
+
+    @Test
+    fun aPublicTorrentIsNotFlaggedPrivateInItsDetail() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 57)
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = "http://127.0.0.1:1/announce")))
+
+            seeding.detail().isPrivate shouldBe false
+            seeding.remove()
+        }
+
+    @Test
+    fun customTrackersGivenToAPrivateTorrentAreNotAdded() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 59)
+            val own = "http://127.0.0.1:1/announce"
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = own, private = true))
+
+            val running = ok(seeder.add(addRequest(info, seedDir, customTrackers = listOf("udp://127.0.0.1:2/announce"))))
+
+            val trackers = running.detail().trackers
+            trackers.map { it.url } shouldBe listOf(own)
+            trackers.none { it.custom } shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun addingTrackersToAPrivateRunningTorrentAddsNone() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 60)
+            val own = "http://127.0.0.1:1/announce"
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"), tracker = own, private = true)))
+
+            seeding.addTrackers(listOf("udp://127.0.0.1:2/announce"))
+
+            val trackers = seeding.detail().trackers
+            trackers.map { it.url } shouldBe listOf(own)
+            trackers.none { it.custom } shouldBe true
+            seeding.remove()
+        }
+
+    @Test
+    fun aPrivateTorrentsMetadataSaysPrivateAndAPublicOnesDoesNot() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 61)
+
+            infoOf(torrentOf(File(seedDir, "data.bin"), private = true)).isPrivate shouldBe true
+            infoOf(torrentOf(File(seedDir, "data.bin"))).isPrivate shouldBe false
+        }
+
+    @Test
+    fun aRunningTorrentKnowsWhetherItIsPrivate() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 62)
+            val priv = seed(infoOf(torrentOf(File(seedDir, "data.bin"), private = true)))
+            priv.isPrivate shouldBe true
+            priv.remove()
+            val pub = seed(infoOf(torrentOf(File(seedDir, "data.bin"))))
+            pub.isPrivate shouldBe false
+            pub.remove()
+        }
+
+    @Test
+    fun aStoredTrackerThatIsTheTorrentsOwnIsNotCustomAfterARestart() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 58)
+            val own = "http://127.0.0.1:1/announce"
+            val info = infoOf(torrentOf(File(seedDir, "data.bin"), tracker = own))
+
+            val running = ok(seeder.add(addRequest(info, seedDir, customTrackers = listOf(own, "udp://127.0.0.1:2/announce"))))
+
+            val trackers = running.detail().trackers
+            trackers.single { it.url == own }.custom shouldBe false
+            trackers.single { it.url == "udp://127.0.0.1:2/announce" }.custom shouldBe true
+            running.remove()
+        }
+
+    @Test
+    fun addingTrackersToATorrentThatLeftTheSessionDoesNothing() =
+        runBlocking<Unit> {
+            file("data.bin", 64 * 1024, 55)
+            val seeding = seed(infoOf(torrentOf(File(seedDir, "data.bin"))))
+            seeding.remove()
+
+            seeding.addTrackers(listOf("udp://127.0.0.1:2/announce"))
+
+            seeding.detail().trackers shouldBe emptyList()
         }
 
     @Test

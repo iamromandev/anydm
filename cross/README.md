@@ -168,3 +168,36 @@ make cross-run       # open the app (CROSS_HOME=<folder> for a throwaway home)
 make cross-package   # dmg / msi / deb for this OS
 make cross-smoke     # build the app image and run its self-check
 ```
+
+## Releasing
+
+The app updates itself from this repository's GitHub releases (`desktopApp/.../Updater.kt`), and
+`.github/workflows/release.yml` makes them. To cut a release:
+
+1. Set `appVersion` in `desktopApp/build.gradle.kts` to `X.Y.Z` (it is the version of the installers
+   and of the running app) and merge that.
+2. Tag the merge commit `vX.Y.Z` and push the tag, only on a commit whose CI run is green: the
+   release workflow does not run the test suite, it only builds, smoke-tests and publishes. For a
+   trial run use `vX.Y.Z-rc.N` (the same `X.Y.Z`): it is published as a prerelease, which the
+   updater ignores.
+
+The workflow fails early if the tag is not `vX.Y.Z` / `vX.Y.Z-rc.N` or does not match `appVersion`.
+It then builds `:desktopApp:packageDistributionForCurrentOS` (what `make cross-package` runs) on
+macOS, Windows and Ubuntu runners and starts each packaged app with `--self-check`
+(`:desktopApp:smokePackagedApp`, what `make cross-smoke` runs) before anything is uploaded. The
+runners are pinned (`macos-15`, `windows-2022`, `ubuntu-24.04`), Gradle's dependency cache is off for
+this build, and one run per tag goes at a time. It publishes `anydm-X.Y.Z.dmg`, `anydm-X.Y.Z.msi`,
+`anydm_X.Y.Z-1_amd64.deb` and `SHA2-256SUMS` (lowercase hex, `<64 hex>  <name>` per line) to the
+release, which stays a draft until every asset is up. The updater expects those plain names and
+that sums format. The macOS dmg is built on an Apple silicon runner and its name carries no
+architecture, so the updater does not offer it to an Intel Mac: Intel Macs get no in-app update
+from this pipeline, only "Get anydm X from the website…" with the link to the release page. (A
+Windows PC on ARM is offered the x64 `.msi`, which runs under emulation.) The workflow cannot be
+run locally; the first tag is its real test. Rerunning it for the same tag replaces the assets.
+
+Trust: updates are verified by checksum only. `SHA2-256SUMS` and the installers come from the same
+release, so anyone who controls the release (the repository, a maintainer's account or the release
+job) can replace both, and the sums then match; they catch corruption, truncation and a damaged
+download, not a malicious release. The installers are not code-signed or notarized by this workflow.
+A follow-up, if wanted, is a detached Ed25519 signature over `SHA2-256SUMS` (private key as a
+GitHub secret, public key embedded in the app).

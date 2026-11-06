@@ -32,6 +32,7 @@ import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.torrent.PieceMap
 import dev.anydm.engine.torrent.TorrentDetail
+import dev.anydm.engine.torrent.TorrentPeer
 import dev.anydm.engine.torrent.TorrentSummary
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -718,6 +719,101 @@ internal class DetailModelTest {
             assertEquals(8, state.chunks.chunks)
             assertEquals(4, state.chunks.cells.count { it.fill == 1f })
             assertEquals(0, state.peers)
+        }
+
+    private fun peer(
+        address: String,
+        down: Long = 0,
+        seed: Boolean = false,
+    ) = TorrentPeer(address, "qBittorrent", 0.5, down, 10, 0, 0, seed)
+
+    @Test
+    fun `a torrent keeps its peers fastest download first`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "t", total = 100, torrent = torrentSummary(), networkShare = mapOf("en0" to 10L)),
+        ) { source, _, model ->
+            source.torrent =
+                TorrentDetailResult.Detail(
+                    TorrentDetail(listOf(peer("a", 5), peer("b", 50), peer("c", 20)), emptyList(), PieceMap.Empty),
+                )
+            second(2)
+            assertEquals(
+                listOf("b", "c", "a"),
+                model.state.value.peerList
+                    .map { it.address },
+            )
+            assertEquals(3, model.state.value.peers)
+        }
+
+    @Test
+    fun `a torrent with no peers has an empty list`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "t", total = 100, torrent = torrentSummary(), networkShare = mapOf("en0" to 10L)),
+        ) { source, _, model ->
+            source.torrent = TorrentDetailResult.Detail(TorrentDetail(emptyList(), emptyList(), PieceMap.Empty))
+            second(2)
+            assertEquals(emptyList(), model.state.value.peerList)
+        }
+
+    @Test
+    fun `pausing a torrent clears its peers when the engine no longer has it`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "t", total = 100, torrent = torrentSummary(), networkShare = mapOf("en0" to 10L)),
+        ) { source, _, model ->
+            source.torrent =
+                TorrentDetailResult.Detail(TorrentDetail(listOf(peer("a", 5), peer("b", 50)), emptyList(), PieceMap.Empty))
+            second(2)
+            assertEquals(2, model.state.value.peerList.size)
+
+            source.torrent = TorrentDetailResult.NotInSession
+            source.downloads.value = listOf(snapshot(1, PAUSED, name = "t", total = 100, torrent = torrentSummary(peers = 0)))
+            second(2)
+
+            assertEquals(emptyList(), model.state.value.peerList)
+            assertEquals(0, model.state.value.peers)
+        }
+
+    @Test
+    fun `a paused torrent whose answer is a detail keeps what the detail says`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "t", total = 100, torrent = torrentSummary(), networkShare = mapOf("en0" to 10L)),
+        ) { source, _, model ->
+            source.torrent = TorrentDetailResult.Detail(TorrentDetail(listOf(peer("a", 5)), emptyList(), PieceMap.Empty))
+            second(2)
+
+            source.downloads.value = listOf(snapshot(1, PAUSED, name = "t", total = 100, torrent = torrentSummary()))
+            second(2)
+
+            assertEquals(
+                listOf("a"),
+                model.state.value.peerList
+                    .map { it.address },
+            )
+        }
+
+    @Test
+    fun `the peers table and the trackers dialog open and close`() =
+        detail(snapshot(1, DOWNLOADING, name = "t", total = 100, torrent = torrentSummary())) { _, _, model ->
+            val closed = model.state.value
+            assertFalse(closed.peersOpen)
+            assertFalse(closed.trackersOpen)
+            assertTrue(closed.isTorrent)
+            model.togglePeers()
+            assertTrue(model.state.value.peersOpen)
+            model.togglePeers()
+            assertFalse(model.state.value.peersOpen)
+            model.openTrackers()
+            assertTrue(model.state.value.trackersOpen)
+            model.closeTrackers()
+            assertFalse(model.state.value.trackersOpen)
+        }
+
+    @Test
+    fun `a seeding torrent has the trackers button, a plain download does not`() =
+        detail(snapshot(1, SEEDING, name = "t", total = 100, torrent = torrentSummary())) { source, _, model ->
+            assertTrue(model.state.value.isTorrent)
+            source.downloads.value = listOf(snapshot(1, COMPLETED, name = "t", size = 100))
+            assertFalse(model.state.value.isTorrent)
         }
 
     // Torrent files

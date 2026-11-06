@@ -97,6 +97,7 @@ private class AppModels(
     val editor: NetworkEditor,
     val networks: NetworksModel,
     val landing: LandingSession,
+    val binding: BindingNotice,
 )
 
 /**
@@ -117,7 +118,13 @@ fun App(
     pickers: Pickers = remember { DesktopPickers() },
     visuals: NetworkVisuals = remember { NetworkVisuals(null) },
     onOpenLimits: (String?) -> Unit = {},
+    /** What the update button drives; none (an app without a version), and there is no button. */
+    updates: UpdateControls? = null,
 ) {
+    val uiScope = rememberCoroutineScope()
+    val updateSession = remember(updates, files) { updates?.let { UpdateSession(it, files, uiScope) } }
+    // The results of manual checks come once, whatever screen is up.
+    if (updateSession != null) LaunchedEffect(updateSession) { updateSession.collectEvents() }
     // The Limits dialog is open for this request (the page it opens on), if any; a new request is a new dialog.
     var limitsRequest by remember { mutableStateOf<LimitsRequest?>(null) }
     var requests by remember { mutableStateOf(0L) }
@@ -141,12 +148,14 @@ fun App(
                 editor,
                 NetworksModel(source, looks.looks, own) { limits(it) },
                 LandingSession(own) { prefill, scope -> NewDownloadModel(source, looks.looks, scope, prefill = prefill) },
+                BindingNotice(source, own),
             )
         }
     DisposableEffect(models) { onDispose { models.scope.cancel() } }
     val footer by models.footer.state.collectAsState()
     val engine by source.state.collectAsState()
     val failed = engine as? EngineState.Failed
+    val bindingShown by models.binding.visible.collectAsState()
     // Every way in with a link: the landing page, its field filled.
     val openLink: (List<String>) -> Unit =
         remember(models, navigator) {
@@ -194,6 +203,7 @@ fun App(
                                 keys,
                                 networks = models.networks to models.editor,
                                 onBrowsers = { pairRequest = ++requests },
+                                updates = updateSession,
                             )
                         }
 
@@ -214,6 +224,9 @@ fun App(
                     limitsRequest?.let { request ->
                         LimitsHost(source, request, footer.unit, models.footer, models.networks, keys) { limitsRequest = null }
                     }
+                    updateSession?.let { UpdateDialogs(it, keys) }
+                    // Last, so it is on top of the other dialogs and its focus is what the user sees.
+                    if (bindingShown) BindingDialog(keys, models.binding::dismiss)
                 }
             }
         }

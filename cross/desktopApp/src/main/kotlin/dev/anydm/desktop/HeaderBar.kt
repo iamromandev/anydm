@@ -49,6 +49,8 @@ fun HeaderBar(
     onBrowsers: () -> Unit = {},
     /** What opens under the networks pill: the networks menu. */
     networksMenu: @Composable () -> Unit = {},
+    /** The update button, left of Browsers; none when the app has no version to compare. */
+    updates: @Composable () -> Unit = {},
 ) {
     val colors = Plexo.colors
     Row(
@@ -63,6 +65,7 @@ fun HeaderBar(
         FilterMenu(state.filter, state.counts, onFilter, onMenuOpen)
         state.summary?.let { Txt(it, Plexo.type.detail.copy(fontSize = Plexo.type.detail.fontSize), color = colors.textTertiary) }
         Spacer(Modifier.weight(1f))
+        updates()
         PButton("Browsers", onBrowsers)
         Box {
             NetworksPill(state.pill, unit, onNetworks)

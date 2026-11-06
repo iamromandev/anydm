@@ -68,6 +68,27 @@ internal class SqlTorrentStore(
         requireSeedRules(ratio, minutes)
         return withContext(writeContext) { queries.setSeedRules(storedRatio(ratio), storedMinutes(minutes), id).value > 0 }
     }
+
+    override suspend fun customTrackers(id: DownloadId): List<String> =
+        withContext(io) {
+            queries
+                .customTrackers(id)
+                .executeAsOneOrNull()
+                ?.custom_trackers
+                ?.lines()
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+        }
+
+    override suspend fun setCustomTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): Boolean {
+        val stored = urls.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        return withContext(writeContext) {
+            queries.setCustomTrackers(stored.joinToString("\n").ifEmpty { null }, id).value > 0
+        }
+    }
 }
 
 private const val FILE_DONE_BYTES = 8

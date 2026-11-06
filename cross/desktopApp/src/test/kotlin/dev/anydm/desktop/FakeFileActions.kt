@@ -21,6 +21,8 @@ internal class FakeFileActions : FileActions {
 
     override fun copy(text: String) = record("copy", text)
 
+    override fun openUrl(url: String) = record("openUrl", url)
+
     override fun clearCopied(text: String) {
         record("clearCopied", text)
     }

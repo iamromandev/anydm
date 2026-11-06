@@ -8,6 +8,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.torrent.PieceMap
+import dev.anydm.engine.torrent.TorrentPeer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -134,6 +135,12 @@ data class DetailState(
     /** There is nothing to draw in [chart]: no samples were kept for this download. */
     val noSpeedHistory: Boolean = false,
     val peers: Int? = null,
+    /** The peers of the last look at the torrent, fastest download first. */
+    val peerList: List<TorrentPeer> = emptyList(),
+    val peersOpen: Boolean = false,
+    /** It is a torrent, whatever it is doing: its page has the Trackers button. */
+    val isTorrent: Boolean = false,
+    val trackersOpen: Boolean = false,
     val files: List<TorrentFileLine> = emptyList(),
     val filesOpen: Boolean = false,
     val uploaded: Long? = null,
@@ -159,6 +166,9 @@ private data class DetailLocal(
     val peak: Long = 0,
     val pieces: PieceMap? = null,
     val peerCount: Int? = null,
+    val peerList: List<TorrentPeer> = emptyList(),
+    val peersOpen: Boolean = false,
+    val trackersOpen: Boolean = false,
     val filesOpen: Boolean = false,
     /** File ticks sent and not yet seen in the engine's list, by torrent file index. */
     val fileOverlay: Map<Int, Boolean> = emptyMap(),
@@ -258,7 +268,17 @@ class DetailModel(
             val result = source.torrentDetail(id)
             if (result is TorrentDetailResult.Detail) {
                 detailStatus = status
-                local.update { it.copy(pieces = result.detail.pieces, peerCount = result.detail.peers.size) }
+                local.update {
+                    it.copy(
+                        pieces = result.detail.pieces,
+                        peerCount = result.detail.peers.size,
+                        peerList = result.detail.peers.sortedByDescending { peer -> peer.downloadRate },
+                    )
+                }
+            } else if (!moving) {
+                // A torrent that stopped (paused, queued) and is no longer in the session has no peers; what the last poll
+                // showed is out of date.
+                local.update { it.copy(peerCount = null, peerList = emptyList()) }
             }
         } catch (e: CancellationException) {
             throw e
@@ -367,6 +387,15 @@ class DetailModel(
     ) = command("switch the network") { source.setNetworkEnabled(key, enabled) }
 
     fun toggleFiles() = local.update { it.copy(filesOpen = !it.filesOpen) }
+
+    fun togglePeers() = local.update { it.copy(peersOpen = !it.peersOpen) }
+
+    /** The model of this torrent's Trackers dialog; its commands run in [scope]. */
+    fun newTrackersModel(scope: CoroutineScope) = TrackersModel(source, id, scope)
+
+    fun openTrackers() = local.update { it.copy(trackersOpen = true) }
+
+    fun closeTrackers() = local.update { it.copy(trackersOpen = false) }
 
     /**
      * Ticks or unticks a torrent file; at least one stays ticked. The tick shows at once and stays until the engine's list
@@ -577,6 +606,10 @@ class DetailModel(
             chartMeasured = chartResult.measured,
             noSpeedHistory = chart.all { it.values.isEmpty() },
             peers = if (torrent) local.peerCount ?: snapshot.torrent?.peers else null,
+            peerList = if (torrent) local.peerList else emptyList(),
+            peersOpen = local.peersOpen,
+            isTorrent = torrent,
+            trackersOpen = local.trackersOpen,
             files = lines,
             filesOpen = local.filesOpen,
             uploaded = snapshot.torrent?.uploaded,

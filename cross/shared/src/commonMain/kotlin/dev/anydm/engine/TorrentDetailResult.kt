@@ -12,6 +12,12 @@ sealed interface TorrentDetailResult {
     data object NotInSession : TorrentDetailResult
 
     /**
+     * Like [NotInSession], and the torrent is private (its stored metadata says so), so no trackers can be added to it even
+     * while it is stopped.
+     */
+    data object PrivateNotInSession : TorrentDetailResult
+
+    /**
      * [priorities] are the stored file priorities in torrent order (empty: every file is selected, none was chosen);
      * [seedRatio] and [seedMinutes] are the torrent's own seeding limits.
      */
@@ -23,7 +29,7 @@ sealed interface TorrentDetailResult {
     ) : TorrentDetailResult
 }
 
-/** What [Engine.recheckTorrent] and [Engine.reannounceTorrent] did. */
+/** What [Engine.recheckTorrent], [Engine.reannounceTorrent] and [Engine.addTorrentTrackers] did. */
 sealed interface TorrentActionResult {
     /** The engine has no torrent service. */
     data object Unavailable : TorrentActionResult
@@ -32,4 +38,7 @@ sealed interface TorrentActionResult {
     data object NotInSession : TorrentActionResult
 
     data object Done : TorrentActionResult
+
+    /** The torrent is private, so trackers can't be added to it ([Engine.addTorrentTrackers] only). */
+    data object Private : TorrentActionResult
 }

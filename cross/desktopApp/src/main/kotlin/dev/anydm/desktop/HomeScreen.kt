@@ -71,6 +71,8 @@ fun HomeScreen(
     networks: Pair<NetworksModel, NetworkEditor>? = null,
     /** Opens the Browsers (pairing) dialog. */
     onBrowsers: () -> Unit = {},
+    /** The update button's session; none, and the header shows no button. */
+    updates: UpdateSession? = null,
 ) {
     val colors = Plexo.colors
     val state by model.state.collectAsState()
@@ -158,6 +160,7 @@ fun HomeScreen(
                     onBack = onBack,
                     onNewDownload = { onNewDownload(emptyList()) },
                     onBrowsers = onBrowsers,
+                    updates = { updates?.let { UpdateIndicator(it, onMenuOpen = { open -> menuOpen = open }) } },
                     networksMenu = { networks?.let { (menu, editor) -> NetworksMenu(menu, editor, footerState.unit, keys) } },
                 )
             } else {

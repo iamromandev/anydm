@@ -67,6 +67,8 @@ class TorrentTracker(
     val fails: Int = 0,
     val updating: Boolean = false,
     val nextAnnounceSeconds: Long? = null,
+    /** The user added it to this torrent (it is not one of the torrent's own). */
+    val custom: Boolean = false,
 )
 
 /** Which pieces the torrent has: bit `i % 8` of byte `i / 8` of [have] is piece `i`. */
@@ -83,11 +85,15 @@ class PieceMap(
     }
 }
 
-/** The heavy lists, read on demand for the torrent being looked at: the fastest [peers] (at most [MAX_DETAIL_PEERS]), its [trackers] and its [pieces]. */
+/**
+ * The heavy lists, read on demand for the torrent being looked at: the fastest [peers] (at most [MAX_DETAIL_PEERS]), its
+ * [trackers] and its [pieces]. [isPrivate] is the torrent's private flag (false while only a magnet's metadata is pending).
+ */
 class TorrentDetail(
     val peers: List<TorrentPeer>,
     val trackers: List<TorrentTracker>,
     val pieces: PieceMap,
+    val isPrivate: Boolean = false,
 ) {
     companion object {
         /** A torrent that is not in the session. */

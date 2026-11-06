@@ -12,9 +12,12 @@ import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import dev.anydm.engine.http.OkHttpTransport
 import dev.anydm.engine.os.FileSingleInstance
 import dev.anydm.engine.os.SingleInstance
 import dev.anydm.engine.platform.desktopAppDirs
+import dev.anydm.engine.tools.Platform
+import dev.anydm.engine.tools.current
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -62,6 +65,31 @@ fun main(args: Array<String>) {
                 }
             }
         }
+        // The update button exists only when the build knows its own version; the updater runs on the window's thread.
+        val updater =
+            remember {
+                AppVersion.current?.let { version ->
+                    val platform = Platform.current()
+                    val transport = OkHttpTransport()
+                    Updater(
+                        scope = closing,
+                        current = version,
+                        releases = AppReleases(transport, platform),
+                        transport = transport,
+                        files = DiskUpdateFiles(),
+                        opener = DesktopFileActions(),
+                        prefs = prefs,
+                        activeDownloads = { runningDownloads(source.downloads.value) },
+                        quit = quit,
+                        installerExtension = AppReleases.installerExtension(platform.os),
+                    )
+                }
+            }
+        DisposableEffect(updater) {
+            updater?.start()
+            onDispose { updater?.stop() }
+        }
+        val updates = remember(updater) { updater?.let(::UpdaterControls) }
         val keys = remember { WindowKeys() }
         val windowState = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
@@ -93,7 +121,7 @@ fun main(args: Array<String>) {
                     Item("Quit", shortcut = KeyShortcut(Key.Q, ctrl = !IsMac, meta = IsMac), onClick = quit)
                 }
             }
-            App(source, prefs, keys, opens = pending, visuals = visuals)
+            App(source, prefs, keys, opens = pending, visuals = visuals, updates = updates)
         }
     }
 }

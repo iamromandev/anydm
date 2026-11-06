@@ -25,6 +25,15 @@ dependencies {
     testImplementation(libs.compose.ui.test)
 }
 
+// The one place the app's version is written: the installers (packageVersion below) and the running app (the app-version.txt
+// resource, read by AppVersion) both take it from here, so the update check compares the version that was installed.
+val appVersion = "1.0.0"
+
+tasks.processResources {
+    inputs.property("appVersion", appVersion)
+    filesMatching("app-version.txt") { expand("appVersion" to appVersion) }
+}
+
 // BIN-05: the installer carries libtorrent's native for the OS it is built on and nothing else.
 val nativeOs = rootProject.extra["libtorrentNativeOs"] as String
 
@@ -152,7 +161,7 @@ compose.desktop {
                 "jdk.unsupported",
             )
             packageName = "anydm"
-            packageVersion = "1.0.0"
+            packageVersion = appVersion
             description = "anydm desktop client"
             vendor = "anydm"
             // Opening a .torrent with the app: the installer writes the association (macOS Info.plist, Windows registry,

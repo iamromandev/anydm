@@ -7,6 +7,7 @@ import dev.anydm.engine.EngineEvent
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.InspectResult
 import dev.anydm.engine.SpeedWindow
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
@@ -114,6 +115,18 @@ interface EngineSource {
     suspend fun resumeAll(): CommandResult
 
     suspend fun torrentDetail(id: DownloadId): TorrentDetailResult
+
+    /**
+     * Adds tracker [urls] to torrent [id]. [TorrentActionResult.NotInSession] for a torrent that is not running still means
+     * the engine saved them for the next start; [TorrentActionResult.Private] means refused.
+     */
+    suspend fun addTorrentTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): TorrentActionResult
+
+    /** Asks all trackers of torrent [id] for peers now. */
+    suspend fun reannounceTorrent(id: DownloadId): TorrentActionResult
 
     /** Sets the torrent's file priorities in torrent order (0 skips a file, 4 is Normal). */
     suspend fun setTorrentFiles(
@@ -279,6 +292,13 @@ fun Engine.asSource(
         override suspend fun resumeAll() = engine.resumeAll()
 
         override suspend fun torrentDetail(id: DownloadId) = engine.torrentDetail(id)
+
+        override suspend fun addTorrentTrackers(
+            id: DownloadId,
+            urls: List<String>,
+        ) = engine.addTorrentTrackers(id, urls)
+
+        override suspend fun reannounceTorrent(id: DownloadId) = engine.reannounceTorrent(id, null)
 
         override suspend fun setTorrentFiles(
             id: DownloadId,

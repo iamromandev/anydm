@@ -45,12 +45,51 @@ interface TorrentService {
         url: String?,
     ): Boolean
 
+    /**
+     * Adds the announce trackers [urls] to job [id]'s torrent and keeps them for it, so it has them again after a restart.
+     * The list is cleaned first (see [TorrentProtocol.addTrackers]) and the same list goes to the store and the torrent.
+     * A tracker it already has is not added again. A private torrent is refused ([AddTrackersResult.PRIVATE]) and nothing is
+     * kept: a running one by its own flag, a stopped one by the metadata stored with its row.
+     *
+     * The stored list holds at most 200 addresses. Past that a new address is still given to the running torrent (it applies
+     * live) but is not kept, so it is gone after the next start.
+     *
+     * [AddTrackersResult.NOT_IN_SESSION] means the torrent isn't running or seeding right now. If the job has a torrent row
+     * the URLs are still kept and applied at the next start, so a caller treats that as "saved", not as a failure to retry;
+     * only a job with no torrent row keeps nothing. If the stored metadata cannot be read, a private torrent may get URLs
+     * stored, but they are never applied: the backend skips them at start, and the start also clears them.
+     */
+    suspend fun addTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): AddTrackersResult
+
     /** The latest summary and file progress of every torrent in the session, running or seeding, by job (TOR-07). A copy. */
     suspend fun live(): Map<DownloadId, TorrentLive>
 
     /** The peer list, trackers and piece map of job [id]'s torrent; null when it is not in the session (TOR-07). */
     suspend fun detail(id: DownloadId): TorrentDetail?
 
+    /**
+     * Whether job [id]'s torrent is private: from the running torrent, or when it is not in the session from the metadata
+     * stored for it. False when that is not known (no torrent row, unreadable metadata).
+     */
+    suspend fun isPrivate(id: DownloadId): Boolean
+
     /** What each seed moved since the last call; the first call after a (re)add counts from the add (TOR-09). */
     suspend fun seedTraffic(): List<SeedSample>
+}
+
+/** What [TorrentService.addTrackers] did. */
+enum class AddTrackersResult {
+    /** The torrent is in the session: the trackers were kept and given to it. */
+    ADDED,
+
+    /**
+     * The torrent is not in the session: the trackers were kept for the next start if the job has a torrent row, else dropped.
+     */
+    NOT_IN_SESSION,
+
+    /** The torrent is private (running, or by its stored metadata): its trackers are its own, so nothing was kept or added. */
+    PRIVATE,
 }

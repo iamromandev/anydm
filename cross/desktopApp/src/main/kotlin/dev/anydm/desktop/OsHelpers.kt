@@ -17,6 +17,9 @@ interface FileActions {
 
     fun copy(text: String): String?
 
+    /** Opens the web address [url] (http or https only) in the default browser. */
+    fun openUrl(url: String): String?
+
     /**
      * Takes [text] off the clipboard, if it is still what the clipboard holds: something the user copied since is left alone.
      * For a secret that [copy] put there. Best effort; nothing is told if it can't.
@@ -43,6 +46,17 @@ class DesktopFileActions : FileActions {
             }
             null
         }
+
+    override fun openUrl(url: String): String? {
+        val uri = webAddress(url) ?: return "That is not a web address."
+        return try {
+            if (!desktop(Desktop.Action.BROWSE)) return "This system can't open web pages from anydm."
+            Desktop.getDesktop().browse(uri)
+            null
+        } catch (e: Exception) {
+            "The page could not be opened: ${e.message ?: e::class.simpleName}"
+        }
+    }
 
     override fun copy(text: String): String? =
         try {
@@ -80,6 +94,13 @@ class DesktopFileActions : FileActions {
 }
 
 private const val CLIPBOARD_WAIT_MS = 500L
+
+/** [url] as a URI when it is an http or https address with a host; anything else is not one to hand to the browser. */
+private fun webAddress(url: String): java.net.URI? {
+    val uri = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase()
+    return uri.takeIf { (scheme == "https" || scheme == "http") && !it.host.isNullOrEmpty() }
+}
 
 /**
  * Runs [work] on a thread of its own and waits for it at most [waitMillis] (so a call made when the app is quitting has done its

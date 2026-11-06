@@ -405,6 +405,7 @@ class LibTorrentBackend(
                     )
                 },
             metadata = bytes,
+            isPrivate = info.isPrivate,
         )
     }
 
@@ -515,19 +516,28 @@ class LibTorrentBackend(
                 return StepResult.Failed(null, "can't start the torrent: ${e.message}")
             } ?: return StepResult.Failed(ErrorClass.TRANSIENT, "the torrent didn't start")
         val torrentFiles = request.info.files
+        var customOnStart: Set<String> = emptySet()
         live({}) {
             // Not auto-managed: libtorrent's own queue would hold all but 3 torrents back, whatever the engine's limit says.
             handle.unsetFlags(TorrentFlags.AUTO_MANAGED)
             // libtorrent4j's session doesn't read the trackers out of the .torrent: give it the ones it doesn't have (a resume
             // blob may already carry them).
-            val known = readTrackers(handle).map { it.url }.toSet()
-            for ((url, tier) in trackersOf(request.info.metadata)) {
+            val known = readTrackers(handle).map { it.url }.toMutableSet()
+            val own = trackersOf(request.info.metadata)
+            for ((url, tier) in own) {
                 if (url !in known) handle.addTracker(AnnounceEntry(url).also { it.tier(tier.toShort()) })
+            }
+            // The ones the user added earlier (the resume blob may carry them already). A private torrent's trackers are its
+            // own: it takes none from outside, whatever was stored for it. The flag is read from the metadata the torrent was
+            // added with, not from the handle (which has none for a moment and would let the URLs through).
+            if (!info.isPrivate) {
+                for (url in request.customTrackers) if (known.add(url)) handle.addTracker(AnnounceEntry(url))
+                customOnStart = request.customTrackers.toSet() - own.map { it.first }.toSet()
             }
             request.fileNames.forEachIndexed { i, name -> if (name != torrentFiles[i].path) handle.renameFile(i, name) }
             handle.resume()
         }
-        return StepResult.Ok(Running(manager, handle, hash.toHex()))
+        return StepResult.Ok(Running(manager, handle, hash.toHex(), customOnStart, info.isPrivate))
     }
 
     /** The parameters saved in [blob], or null when it can't be read or is for another torrent than [hash]. */
@@ -591,7 +601,12 @@ class LibTorrentBackend(
         private val manager: SessionManager,
         private val handle: TorrentHandle,
         private val hash: String,
+        initialCustom: Set<String>,
+        override val isPrivate: Boolean,
     ) : RunningTorrent {
+        // The trackers the user added: the ones put back at the start and the ones added since.
+        private val custom: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().also { it.addAll(initialCustom) }
+
         private val gone = TorrentProgress(0, 0, false, TorrentError(TorrentErrorKind.LOST, "the torrent left the session"))
 
         /** What it had uploaded before this add (from resume data): libtorrent's own all-time counter only catches up when a peer leaves. */
@@ -641,6 +656,29 @@ class LibTorrentBackend(
                 }
                 val index = readTrackers(handle).indexOfFirst { it.url == url }
                 if (index >= 0) handle.forceReannounce(0, index, TorrentHandle.IGNORE_MIN_INTERVAL)
+            }
+
+        override fun addTrackers(urls: List<String>) =
+            live({}) {
+                // A private torrent takes no trackers from outside, whoever asks.
+                if (isPrivate || !handle.isValid) return@live
+                // Removing is asynchronous: the handle can still look valid for a moment and then refuse a read or an add. Only
+                // those native calls are guarded; the bookkeeping around them is not.
+                val known =
+                    try {
+                        readTrackers(handle).map { it.url }.toMutableSet()
+                    } catch (e: RuntimeException) {
+                        return@live
+                    }
+                for (url in urls) {
+                    if (!known.add(url)) continue
+                    try {
+                        handle.addTracker(AnnounceEntry(url))
+                    } catch (e: RuntimeException) {
+                        return@live
+                    }
+                    custom += url
+                }
             }
 
         override fun setSequential(on: Boolean) =
@@ -793,9 +831,10 @@ class LibTorrentBackend(
                                 it.fails,
                                 it.updating,
                                 if (now == null) null else secondsUntil(it.nextAnnounceAt, now),
+                                it.url in custom,
                             )
                         }
-                    TorrentDetail(peers, trackers, PieceMap(count, have))
+                    TorrentDetail(peers, trackers, PieceMap(count, have), isPrivate)
                 } finally {
                     Reference.reachabilityFence(status)
                 }

@@ -60,6 +60,22 @@ class TorrentProbe(
 
 private const val MAX_RENAMES = 10_000
 
+/** The most tracker addresses one add takes, and the longest address. */
+private const val MAX_TRACKERS_PER_ADD = 50
+private const val MAX_TRACKER_LENGTH = 2048
+private const val MAX_STORED_TRACKERS = 200
+
+/**
+ * [urls] as they are kept and given to a torrent: trimmed, blanks and addresses with a control character (a newline, a tab)
+ * or over [MAX_TRACKER_LENGTH] characters dropped, repeats removed, at most [MAX_TRACKERS_PER_ADD].
+ */
+internal fun cleanTrackerUrls(urls: List<String>): List<String> =
+    urls
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it.length <= MAX_TRACKER_LENGTH && it.none { c -> c.isISOControl() } }
+        .distinct()
+        .take(MAX_TRACKERS_PER_ADD)
+
 private const val SUPPORTED = "a torrent address must be a magnet link, an http(s) address of a .torrent file, or a file:/// path"
 
 /**
@@ -135,6 +151,22 @@ class TorrentProtocol(
     override suspend fun detail(id: DownloadId): TorrentDetail? =
         (handles.get(id) ?: seeds.handle(id))?.let { withContext(Dispatchers.Default) { it.detail() } }
 
+    // The running torrent's own flag, else the stored metadata: a stopped torrent is as private as it was when it ran.
+    override suspend fun isPrivate(id: DownloadId): Boolean {
+        val handle = handles.get(id) ?: seeds.handle(id)
+        return if (handle != null) handle.isPrivate else storedPrivate(id)
+    }
+
+    private suspend fun storedPrivate(id: DownloadId): Boolean {
+        val metadata = torrents.get(id)?.metadata ?: return false
+        return withContext(Dispatchers.Default) {
+            when (val read = backend.metadataOfBytes(metadata)) {
+                is StepResult.Ok -> read.value.isPrivate
+                is StepResult.Failed -> false
+            }
+        }
+    }
+
     override suspend fun recheck(id: DownloadId): Boolean {
         val handle = handles.get(id) ?: seeds.handle(id) ?: return false
         withContext(Dispatchers.Default) { handle.recheck() }
@@ -148,6 +180,53 @@ class TorrentProtocol(
         val handle = handles.get(id) ?: seeds.handle(id) ?: return false
         withContext(Dispatchers.Default) { handle.reannounce(url) }
         return true
+    }
+
+    /** One lock per torrent for the read-modify-write of its stored trackers, so two adds at once can't lose one. */
+    private val trackerLocks = mutableMapOf<DownloadId, Mutex>()
+    private val trackerLocksGuard = Mutex()
+
+    private suspend fun trackerLock(id: DownloadId): Mutex = trackerLocksGuard.withLock { trackerLocks.getOrPut(id) { Mutex() } }
+
+    /**
+     * The list is cleaned once ([cleanTrackerUrls]) and that same list goes to the store and to the live torrent. A private
+     * torrent is refused before anything is kept: a running one by its own flag, a stopped one by the metadata stored with
+     * its row. The URLs are kept before the live torrent is touched, so what the user added survives a restart even when
+     * the torrent is not in the session right now; a job with no torrent row keeps nothing and is reported as not in the
+     * session. The stored list holds at most 200 addresses: past that a new URL is still given to the running
+     * torrent, but is not kept, so it is gone at the next start.
+     */
+    override suspend fun addTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): AddTrackersResult {
+        val clean = cleanTrackerUrls(urls)
+        val handle = handles.get(id) ?: seeds.handle(id)
+        // The flag the torrent started with: detail() swallows a failed read and would say "public".
+        if (if (handle != null) handle.isPrivate else storedPrivate(id)) return AddTrackersResult.PRIVATE
+        val kept =
+            trackerLock(id).withLock {
+                torrents.setCustomTrackers(id, (torrents.customTrackers(id) + clean).distinct().take(MAX_STORED_TRACKERS))
+            }
+        if (!kept || handle == null) return AddTrackersResult.NOT_IN_SESSION
+        withContext(Dispatchers.Default) { handle.addTrackers(clean) }
+        return AddTrackersResult.ADDED
+    }
+
+    /**
+     * A private torrent takes no outside trackers, and the backend skips the stored ones at start. A list stored before the
+     * engine could tell it was private (an older version, or metadata that could not be read then) is cleared here, so it is
+     * not kept either. Not worth failing the job for: the backend skips the list whatever the store says.
+     */
+    private suspend fun dropTrackersOfPrivate(
+        id: DownloadId,
+        handle: RunningTorrent,
+    ) {
+        if (!handle.isPrivate) return
+        quietly {
+            if (torrents.customTrackers(id).isEmpty()) return@quietly
+            trackerLock(id).withLock { torrents.setCustomTrackers(id, emptyList()) }
+        }
     }
 
     private suspend fun record(
@@ -339,6 +418,7 @@ class TorrentProtocol(
                 fileNames = probe.info.files.map { it.path },
                 // A changed file choice has dropped it (Task 6): what is stored matches what is asked for.
                 resume = torrents.get(id)?.resume,
+                customTrackers = torrents.customTrackers(id),
             )
         val handle =
             when (val added = backend.add(request)) {
@@ -352,6 +432,8 @@ class TorrentProtocol(
         var up = 0L
         var savedAt = TimeSource.Monotonic.markNow()
         try {
+            // Inside the try: a cancel during the store read must still take the torrent out of the session.
+            dropTrackersOfPrivate(id, handle)
             while (true) {
                 val progress = handle.progress()
                 io.progress(progress.wantedDone)
@@ -443,7 +525,16 @@ class TorrentProtocol(
                 return StepResult.Failed(null, "the seeded file is gone: $name")
             }
         }
-        val request = AddTorrent(info, Path(folder), priorities, sequential = false, fileNames = names, resume = row.resume)
+        val request =
+            AddTorrent(
+                info,
+                Path(folder),
+                priorities,
+                sequential = false,
+                fileNames = names,
+                resume = row.resume,
+                customTrackers = torrents.customTrackers(id),
+            )
         val handle =
             when (val added = backend.add(request)) {
                 // The session didn't come up (no library on this machine), or the job's proxy can't be used (NET-15) right now:
@@ -457,8 +548,12 @@ class TorrentProtocol(
                     added.value
                 }
             }
-        own(info.infoHash, id)
-        seeds.add(id, handle, up = 0, down = 0)
+        // The seed holds the torrent first: a cancel in the store read below must not leave a torrent nobody holds.
+        withContext(NonCancellable) {
+            own(info.infoHash, id)
+            seeds.add(id, handle, up = 0, down = 0)
+        }
+        dropTrackersOfPrivate(id, handle)
         return StepResult.Ok(Unit)
     }
 

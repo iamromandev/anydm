@@ -31,6 +31,8 @@ enum class Glyph {
     FOLDER,
     PENCIL,
     ALERT,
+    ARROW_UP,
+    SPINNER,
 }
 
 @Composable
@@ -122,6 +124,25 @@ private fun DrawScope.draw(
             line(listOf(p(8f, 2.2f), p(14.2f, 13.2f), p(1.8f, 13.2f)), closed = true)
             line(listOf(p(8f, 6.4f), p(8f, 9.4f)))
             drawCircle(tint, radius = 0.7f * unit, center = p(8f, 11.4f))
+        }
+
+        Glyph.ARROW_UP -> {
+            line(listOf(p(8f, 13f), p(8f, 3f)))
+            line(listOf(p(3.8f, 7f), p(8f, 2.8f), p(12.2f, 7f)))
+        }
+
+        Glyph.SPINNER -> {
+            drawArc(
+                tint,
+                startAngle = 0f,
+                sweepAngle = 270f,
+                useCenter = false,
+                topLeft = p(2.5f, 2.5f),
+                size =
+                    androidx.compose.ui.geometry
+                        .Size(11f * unit, 11f * unit),
+                style = stroke,
+            )
         }
 
         Glyph.CLOSE -> {

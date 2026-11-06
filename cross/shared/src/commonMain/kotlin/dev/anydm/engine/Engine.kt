@@ -139,6 +139,7 @@ import dev.anydm.engine.tools.ToolManager
 import dev.anydm.engine.tools.ToolStatus
 import dev.anydm.engine.tools.ToolUpdate
 import dev.anydm.engine.tools.YtDlpChannel
+import dev.anydm.engine.torrent.AddTrackersResult
 import dev.anydm.engine.torrent.MAX_FILE_PRIORITY
 import dev.anydm.engine.torrent.SeedEnd
 import dev.anydm.engine.torrent.SeedRule
@@ -875,7 +876,11 @@ class Engine(
     /** The peers, trackers and piece map of torrent job [id] (TOR-07), for the one being looked at. */
     suspend fun torrentDetail(id: DownloadId): TorrentDetailResult {
         val service = torrents ?: return TorrentDetailResult.Unavailable
-        val detail = command { service.detail(id) } ?: return TorrentDetailResult.NotInSession
+        val detail =
+            command { service.detail(id) } ?: run {
+                val private = command { service.isPrivate(id) }
+                return if (private) TorrentDetailResult.PrivateNotInSession else TorrentDetailResult.NotInSession
+            }
         val row = command { store.torrents.get(id) } ?: return TorrentDetailResult.Detail(detail)
         return TorrentDetailResult.Detail(detail, row.priorities, row.seedRatio, row.seedMinutes)
     }
@@ -893,6 +898,28 @@ class Engine(
     ): TorrentActionResult {
         val service = torrents ?: return TorrentActionResult.Unavailable
         return if (command { service.reannounce(id, url) }) TorrentActionResult.Done else TorrentActionResult.NotInSession
+    }
+
+    /**
+     * Adds the announce trackers [urls] to torrent job [id] and keeps them for it across restarts. The list is cleaned first
+     * (trimmed, blanks and entries with control characters or over 2048 characters dropped, repeats removed, at most 50), a
+     * tracker the torrent already has is not added again, and a link that is not a tracker address is the caller's to refuse.
+     *
+     * [TorrentActionResult.NotInSession] for a torrent that has a row (not running or seeding right now) still keeps the URLs:
+     * they are applied at the next start, so a caller shows that as saved, with no retry prompt. [TorrentActionResult.Private]
+     * is a private torrent, running or stopped (read from its stored metadata): nothing is kept. The kept list holds at most 200
+     * addresses; past that a new address applies to the running torrent but is not kept.
+     */
+    suspend fun addTorrentTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): TorrentActionResult {
+        val service = torrents ?: return TorrentActionResult.Unavailable
+        return when (command { service.addTrackers(id, urls) }) {
+            AddTrackersResult.ADDED -> TorrentActionResult.Done
+            AddTrackersResult.NOT_IN_SESSION -> TorrentActionResult.NotInSession
+            AddTrackersResult.PRIVATE -> TorrentActionResult.Private
+        }
     }
 
     /** Reads a torrent without adding it (TOR-02): its name and files, for a choice of which to download. */

@@ -623,6 +623,40 @@ abstract class EngineTorrentContract : StoreTestBase() {
         }
 
     @Test
+    fun torrentDetailOfAStoppedPrivateTorrentSaysSo() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                service.privateTorrents += id
+
+                h.engine.torrentDetail(id) shouldBe TorrentDetailResult.PrivateNotInSession
+
+                // Running, the live detail wins.
+                service.details[id] = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+                h.engine.torrentDetail(id).shouldBeInstanceOf<TorrentDetailResult.Detail>()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun addTorrentTrackersToAStoppedPrivateTorrentIsRefused() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                service.privateTorrents += id
+
+                h.engine.addTorrentTrackers(id, listOf("udp://t:1/announce")) shouldBe TorrentActionResult.Private
+
+                service.trackersAdded shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
     fun torrentDetailCarriesTheTrackersFields() =
         runTest {
             val h = started()
@@ -721,12 +755,47 @@ abstract class EngineTorrentContract : StoreTestBase() {
         }
 
     @Test
+    fun addTorrentTrackersReachesTheRunningTorrent() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                h.engine.addTorrentTrackers(id, listOf("udp://t:1/announce")) shouldBe TorrentActionResult.NotInSession
+
+                service.running += id
+
+                h.engine.addTorrentTrackers(id, listOf("udp://t:1/announce", "http://u/announce")) shouldBe TorrentActionResult.Done
+                service.trackersAdded shouldBe listOf(id to listOf("udp://t:1/announce", "http://u/announce"))
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun addTorrentTrackersToAPrivateTorrentIsRefused() =
+        runTest {
+            val h = started()
+            try {
+                val id = h.torrent()
+                service.running += id
+                service.privateTorrents += id
+
+                h.engine.addTorrentTrackers(id, listOf("udp://t:1/announce")) shouldBe TorrentActionResult.Private
+
+                service.trackersAdded shouldBe emptyList()
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
     fun recheckAndReannounceWithoutAServiceAreUnavailable() =
         runTest {
             val bare = started(torrents = null)
             try {
                 bare.engine.recheckTorrent(DownloadId(1)) shouldBe TorrentActionResult.Unavailable
                 bare.engine.reannounceTorrent(DownloadId(1), null) shouldBe TorrentActionResult.Unavailable
+                bare.engine.addTorrentTrackers(DownloadId(1), listOf("udp://t:1/announce")) shouldBe TorrentActionResult.Unavailable
             } finally {
                 bare.engine.stop()
             }

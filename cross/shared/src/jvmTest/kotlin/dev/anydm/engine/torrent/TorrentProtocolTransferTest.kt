@@ -1,5 +1,6 @@
 package dev.anydm.engine.torrent
 
+import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.ErrorClass
 import dev.anydm.engine.core.File
@@ -603,5 +604,243 @@ class TorrentProtocolTransferTest {
             backend.added.size shouldBe 2
             backend.added[0].removed shouldBe 1
             backend.added[1].removed shouldBe 0
+        }
+
+    private val announce = "udp://a:1/announce"
+
+    @Test
+    fun addTrackersReachesARunningDownloadAndIsKept() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+
+            protocol.addTrackers(id, listOf(announce, "http://b/announce")) shouldBe AddTrackersResult.ADDED
+
+            backend.added.single().trackersAdded shouldBe listOf(listOf(announce, "http://b/announce"))
+            store.torrents.customTrackers(id) shouldBe listOf(announce, "http://b/announce")
+        }
+
+    @Test
+    fun addTrackersAreKeptForATorrentWithARowThatIsNotInTheSession() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            val id = transfer.download.id
+
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+
+            store.torrents.customTrackers(id) shouldBe listOf(announce)
+            backend.added shouldBe emptyList()
+        }
+
+    @Test
+    fun addTrackersCleansTheListOnceAndGivesTheSameListToTheStoreAndTheTorrent() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+
+            val messy =
+                listOf(
+                    "  $announce  ",
+                    "",
+                    "   ",
+                    "http://b/an\nnounce",
+                    "http://c/\tx",
+                    "http://d/a\u0000b",
+                    announce,
+                    "http://ok/announce",
+                )
+
+            protocol.addTrackers(id, messy) shouldBe AddTrackersResult.ADDED
+
+            backend.added.single().trackersAdded shouldBe listOf(listOf(announce, "http://ok/announce"))
+            store.torrents.customTrackers(id) shouldBe listOf(announce, "http://ok/announce")
+        }
+
+    @Test
+    fun addTrackersTakesAtMostFiftyAddressesAtATime() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            val many = (1..60).map { "udp://t$it:1/announce" }
+
+            protocol.addTrackers(id, many) shouldBe AddTrackersResult.ADDED
+
+            backend.added.single().trackersAdded shouldBe listOf(many.take(50))
+            store.torrents.customTrackers(id) shouldBe many.take(50)
+        }
+
+    @Test
+    fun addTrackersDropsAddressesOver2048CharactersAndKeepsOnesAtTheLimit() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            val atLimit = "http://" + "a".repeat(2048 - "http://".length)
+            val over = atLimit + "a"
+
+            protocol.addTrackers(id, listOf(over, atLimit)) shouldBe AddTrackersResult.ADDED
+
+            backend.added.single().trackersAdded shouldBe listOf(listOf(atLimit))
+            store.torrents.customTrackers(id) shouldBe listOf(atLimit)
+        }
+
+    @Test
+    fun addTrackersToAPrivateTorrentIsRefusedAndNothingIsKept() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            backend.added.single().detailData = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.PRIVATE
+
+            backend.added.single().trackersAdded shouldBe emptyList()
+            store.torrents.customTrackers(id) shouldBe emptyList()
+        }
+
+    @Test
+    fun addTrackersToAStoppedPrivateTorrentIsRefusedFromItsStoredMetadataAndNothingIsKept() =
+        runBlocking<Unit> {
+            val transfer = prepared(backend.torrent("Priv", "priv.bin" to 50L, isPrivate = true))
+            val id = transfer.download.id
+
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.PRIVATE
+
+            store.torrents.customTrackers(id) shouldBe emptyList()
+            backend.added shouldBe emptyList()
+        }
+
+    @Test
+    fun addTrackersToAStoppedPublicTorrentStillKeepsThem() =
+        runBlocking<Unit> {
+            val transfer = prepared(backend.torrent("Pub", "pub.bin" to 50L))
+
+            protocol.addTrackers(transfer.download.id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+
+            store.torrents.customTrackers(transfer.download.id) shouldBe listOf(announce)
+        }
+
+    @Test
+    fun addTrackersAsksTheRunningTorrentForItsPrivateFlagNotItsDetail() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            // detail() says public (as it does when its read fails); the flag the torrent started with says private.
+            backend.added.single().privateOverride = true
+
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.PRIVATE
+
+            backend.added.single().trackersAdded shouldBe emptyList()
+            store.torrents.customTrackers(id) shouldBe emptyList()
+        }
+
+    @Test
+    fun isPrivateReadsTheStoredMetadataOfAStoppedTorrentAndIsFalseWhenUnknown() =
+        runBlocking<Unit> {
+            val private = prepared(backend.torrent("Priv", "priv.bin" to 50L, isPrivate = true))
+            val public = prepared(backend.torrent("Pub", "pub.bin" to 50L))
+
+            protocol.isPrivate(private.download.id) shouldBe true
+            protocol.isPrivate(public.download.id) shouldBe false
+            protocol.isPrivate(DownloadId(999)) shouldBe false
+        }
+
+    @Test
+    fun isPrivateOfARunningTorrentIsItsOwnFlag() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            backend.added.single().privateOverride = true
+
+            protocol.isPrivate(transfer.download.id) shouldBe true
+        }
+
+    @Test
+    fun aTransferCancelledWhileItDropsTheTrackersOfAPrivateTorrentStillLeavesTheSession() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            val id = transfer.download.id
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+            backend.detailOnAdd = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+            failing.slowTrackerReads = 300.milliseconds
+
+            val running = async(Dispatchers.Default) { protocol.transfer(transfer, CollectingIo()) }
+            // Past the first read (building the request): the torrent is added and the drop is reading.
+            withTimeout(5.seconds) { while (backend.added.isEmpty()) delay(1) }
+            running.cancelAndJoin()
+
+            backend.added.single().removed shouldBe 1
+            protocol.detail(id) shouldBe null
+        }
+
+    @Test
+    fun theStoredTrackersOfAPrivateTorrentAreDroppedWhenItStarts() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            val id = transfer.download.id
+            // Kept while the private torrent was not running, so no handle could say it was private.
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+            backend.detailOnAdd = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            store.torrents.customTrackers(id) shouldBe emptyList()
+        }
+
+    @Test
+    fun theStoredTrackersOfAPublicTorrentAreKeptWhenItStarts() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            val id = transfer.download.id
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            store.torrents.customTrackers(id) shouldBe listOf(announce)
+        }
+
+    @Test
+    fun theStoredTrackerListStopsAtTwoHundred() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+
+            repeat(5) { round -> protocol.addTrackers(id, (1..50).map { "udp://t$round-$it:1/announce" }) }
+
+            store.torrents.customTrackers(id).size shouldBe 200
+        }
+
+    @Test
+    fun addTrackersToAJobWithNoTorrentRowKeepsNothingAndIsNotDone() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            store.downloads.remove(id)
+
+            protocol.addTrackers(id, listOf(announce)) shouldBe AddTrackersResult.NOT_IN_SESSION
+
+            backend.added.single().trackersAdded shouldBe emptyList()
+        }
+
+    @Test
+    fun twoAddsAtOnceBothSurvive() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            protocol.transfer(transfer, CollectingIo())
+            val id = transfer.download.id
+            failing.slowTrackerReads = 100.milliseconds
+
+            val first = async(Dispatchers.Default) { protocol.addTrackers(id, listOf("udp://a:1/announce")) }
+            val second = async(Dispatchers.Default) { protocol.addTrackers(id, listOf("udp://b:1/announce")) }
+            first.await()
+            second.await()
+
+            store.torrents.customTrackers(id).toSet() shouldBe setOf("udp://a:1/announce", "udp://b:1/announce")
         }
 }
