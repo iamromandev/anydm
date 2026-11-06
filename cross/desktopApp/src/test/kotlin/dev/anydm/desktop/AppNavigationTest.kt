@@ -12,8 +12,10 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
@@ -23,6 +25,10 @@ import androidx.compose.ui.test.withKeyDown
 import dev.anydm.engine.EngineState
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
+import dev.anydm.engine.net.BindStatus
+import dev.anydm.engine.net.BondedNetwork
+import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.NetworkInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -160,5 +166,50 @@ internal class AppNavigationTest {
             waitForIdle()
             assertEquals(listOf("https://example.com/a.zip"), opens.requests.tryReceive().getOrNull())
             assertNull(opens.requests.tryReceive().getOrNull())
+        }
+
+    @Test
+    fun `the binding notice shows once for unsupported networks and Got it removes it for good`() =
+        runComposeUiTest {
+            val source = FakeSource()
+
+            fun net(key: String) = BondedNetwork(NetworkInfo(key, key, true, emptyList()), true, BindStatus.UNSUPPORTED, null, false)
+            source.networks.value = BondingState(listOf(net("en0"), net("en1")))
+            setContent { App(source, MemoryViewPrefs(), files = FakeFileActions()) }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("binding-dialog").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithTag("binding-ok").performClick()
+            onNodeWithTag("binding-dialog").assertDoesNotExist()
+
+            source.networks.value = BondingState(listOf(net("en0")))
+            source.networks.value = BondingState(listOf(net("en0"), net("en2")))
+            waitForIdle()
+            Thread.sleep(300)
+            waitForIdle()
+            onNodeWithTag("binding-dialog").assertDoesNotExist()
+        }
+
+    @Test
+    fun `the downloads header shows the update button when the app has an updater`() =
+        runComposeUiTest {
+            val controls = FakeUpdateControls()
+            setContent { App(FakeSource(), MemoryViewPrefs(), files = FakeFileActions(), navigator = onDownloads(), updates = controls) }
+            onNodeWithTag("update-button").assertIsDisplayed()
+        }
+
+    @Test
+    fun `the downloads header has no update button without an updater`() =
+        runComposeUiTest {
+            setContent { App(FakeSource(), MemoryViewPrefs(), files = FakeFileActions(), navigator = onDownloads()) }
+            onNodeWithText("Browsers").assertIsDisplayed()
+            onNodeWithTag("update-button").assertDoesNotExist()
+        }
+
+    @Test
+    fun `a manual check's result shows on whatever page is open`() =
+        runComposeUiTest {
+            val controls = FakeUpdateControls()
+            setContent { App(FakeSource(), MemoryViewPrefs(), files = FakeFileActions(), updates = controls) }
+            controls.emit(UpdateEvent.UpToDate)
+            onNodeWithText("You're up to date").assertIsDisplayed()
         }
 }

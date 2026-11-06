@@ -1,5 +1,6 @@
 package dev.anydm.engine.torrent
 
+import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
@@ -116,6 +117,34 @@ class TorrentDetailEndToEndTest : TorrentEngineTestBase() {
             val after = awaitSnapshot(id) { it.download.status == DownloadStatus.PAUSED }
             after.downloaded shouldBe before
             after.files.single().written shouldBe before
+        }
+
+    @Test
+    fun addedTrackersAreStillCustomAfterAnEngineRestart() =
+        runBlocking<Unit> {
+            val (_, made) = single(size = mib, seed = 16)
+            seed(made)
+            newEngine(settings = { it.copy(seedRatio = 100.0) })
+            val id = add(made)
+            await(id, DownloadStatus.SEEDING)
+            val added = "udp://127.0.0.1:9/announce"
+
+            engine!!.addTorrentTrackers(id, listOf("  $added  ", "", added)) shouldBe TorrentActionResult.Done
+            store!!.torrents.customTrackers(id) shouldBe listOf(added)
+            engine!!.stop()
+
+            newEngine()
+            await(id, DownloadStatus.SEEDING)
+
+            // the seed is taken up again a moment after the job shows SEEDING
+            var detail: TorrentDetail? = null
+            repeat(100) {
+                if (detail == null) {
+                    detail = (engine!!.torrentDetail(id) as? TorrentDetailResult.Detail)?.detail
+                    delay(100)
+                }
+            }
+            detail!!.trackers.filter { it.custom }.map { it.url } shouldBe listOf(added)
         }
 
     @Test

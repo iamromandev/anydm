@@ -44,6 +44,14 @@ internal class OsHelpersTest {
         }
     }
 
+    @Test
+    fun `only web addresses are opened in the browser`() {
+        val actions = DesktopFileActions()
+        for (url in listOf("file:///etc/passwd", "javascript:alert(1)", "not a url", "", "ftp://example.com/x", "https:///nohost")) {
+            assertNotNull(actions.openUrl(url), url)
+        }
+    }
+
     private fun Clipboard.text(): String? =
         if (isDataFlavorAvailable(DataFlavor.stringFlavor)) getData(DataFlavor.stringFlavor) as String else null
 

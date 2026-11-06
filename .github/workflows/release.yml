@@ -1,0 +1,151 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (or vX.Y.Z-rc.N for a prerelease) builds the desktop installers on each OS and publishes them, with a
+# SHA2-256SUMS file, as a GitHub release. The app's updater (cross/desktopApp, Updater/AppReleases) reads exactly these assets:
+# keep the names and the sums format. How to cut a release: cross/README.md.
+on:
+    push:
+        tags: ['v*']
+
+# Nothing here writes by default; only the publish job is given contents: write.
+permissions:
+    contents: read
+
+# One run per tag at a time; a rerun waits for the one before it instead of racing it on the release's assets.
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    # The tag must be the version the app is built as (appVersion in cross/desktopApp/build.gradle.kts): the installers and the
+    # running app take their version from there, and the updater compares it with the tag.
+    verify:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        outputs:
+            version: ${{ steps.tag.outputs.version }}
+            prerelease: ${{ steps.tag.outputs.prerelease }}
+        steps:
+            - uses: actions/checkout@v4
+            - id: tag
+              env:
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  set -euo pipefail
+                  if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-rc(\.[0-9]+)?)?$ ]]; then
+                      echo "::error::The tag '$TAG' is not vX.Y.Z or vX.Y.Z-rc.N"
+                      exit 1
+                  fi
+                  version="${BASH_REMATCH[1]}"
+                  prerelease=false
+                  if [[ -n "${BASH_REMATCH[2]}" ]]; then prerelease=true; fi
+                  built="$(sed -nE 's/^val appVersion = "([^"]+)".*/\1/p' cross/desktopApp/build.gradle.kts)"
+                  if [[ "$built" != "$version" ]]; then
+                      echo "::error::The tag '$TAG' is version $version but appVersion in cross/desktopApp/build.gradle.kts is '$built'"
+                      exit 1
+                  fi
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+    # `make cross-package` on each OS: :desktopApp:packageDistributionForCurrentOS, then `make cross-smoke` (the packaged app starts
+    # with --self-check) before anything is uploaded. (Gradle is called directly because the Windows runner has no make.) The runners
+    # are pinned: windows-2022 because the .msi needs the WiX 3 toolset, which that image carries; macos-15 because it is an Apple
+    # silicon image, and the dmg (whose name carries no architecture) must not change CPU under a moving `-latest`: AppReleases refuses
+    # an arch-less dmg to Intel Macs on that basis. ubuntu-24.04 is x64, like the amd64 deb.
+    package:
+        needs: verify
+        timeout-minutes: 60
+        strategy:
+            fail-fast: true
+            matrix:
+                os: [macos-15, windows-2022, ubuntu-24.04]
+        runs-on: ${{ matrix.os }}
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - uses: actions/checkout@v4
+            # No `cache: gradle`: what ships is built from a clean dependency download, not from a cache an earlier job wrote.
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 25
+            - working-directory: cross
+              run: ./gradlew :desktopApp:packageDistributionForCurrentOS
+            # The jlink runtime may lack a module or a native library only the packaged app would miss (see ci.yml for the libraries).
+            - name: Install the libraries and virtual display the smoke check needs (Linux)
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y xvfb libx11-6 libx11-xcb1 libxt6t64 libxtst6 libxi6 libxinerama1 libxkbcommon-x11-0 libxkbfile1
+            - name: Smoke-test the packaged app
+              working-directory: cross
+              run: |
+                  if [[ "$RUNNER_OS" == "Linux" ]]; then
+                      xvfb-run -a ./gradlew :desktopApp:smokePackagedApp
+                  else
+                      ./gradlew :desktopApp:smokePackagedApp
+                  fi
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: installer-${{ matrix.os }}
+                  path: |
+                      cross/desktopApp/build/compose/binaries/main/dmg/*.dmg
+                      cross/desktopApp/build/compose/binaries/main/msi/*.msi
+                      cross/desktopApp/build/compose/binaries/main/deb/*.deb
+                  if-no-files-found: error
+                  retention-days: 7
+
+    publish:
+        needs: [verify, package]
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        permissions:
+            contents: write
+        env:
+            TAG: ${{ github.ref_name }}
+            VERSION: ${{ needs.verify.outputs.version }}
+            PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+            GH_TOKEN: ${{ github.token }}
+            GH_REPO: ${{ github.repository }}
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  path: dist
+                  pattern: installer-*
+                  merge-multiple: true
+            # The updater picks installers by these exact names; anything else in dist means a build went wrong.
+            - name: Check the installers and write SHA2-256SUMS
+              working-directory: dist
+              run: |
+                  set -euo pipefail
+                  expected=("anydm-$VERSION.dmg" "anydm-$VERSION.msi" "anydm_$VERSION-1_amd64.deb")
+                  for name in "${expected[@]}"; do
+                      if [[ ! -f "$name" ]]; then
+                          echo "::error::Missing installer $name"
+                          ls -l
+                          exit 1
+                      fi
+                  done
+                  if [[ "$(ls | wc -l | tr -d ' ')" != "${#expected[@]}" ]]; then
+                      echo "::error::Unexpected files next to the installers"
+                      ls -l
+                      exit 1
+                  fi
+                  # '<64 lowercase hex>  <name>' per line: the format the updater reads (it accepts lowercase only).
+                  sha256sum "${expected[@]}" > SHA2-256SUMS
+                  if [[ "$(grep -cE '^[0-9a-f]{64}  [A-Za-z0-9._-]+$' SHA2-256SUMS)" != "${#expected[@]}" ]]; then
+                      echo "::error::SHA2-256SUMS is not in the expected format"
+                      cat SHA2-256SUMS
+                      exit 1
+                  fi
+                  cat SHA2-256SUMS
+            # A draft until every asset is up, so the updater never sees a release without its sums.
+            - name: Publish the release
+              run: |
+                  set -euo pipefail
+                  if ! gh release view "$TAG" > /dev/null 2>&1; then
+                      gh release create "$TAG" --draft --verify-tag --title "anydm $VERSION" --generate-notes
+                  fi
+                  gh release upload "$TAG" dist/* --clobber
+                  gh release edit "$TAG" --draft=false --prerelease="$PRERELEASE"

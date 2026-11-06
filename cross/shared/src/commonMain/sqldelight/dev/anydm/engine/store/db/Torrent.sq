@@ -4,7 +4,8 @@ import dev.anydm.engine.core.DownloadId;
 -- none until its metadata arrives); `priorities` is one number 0 to 7 per file in torrent order, comma-separated, 0 for a
 -- file the user skips, '' for all files at the default. `resume` is libtorrent's resume data. `seed_ratio` and
 -- `seed_minutes` are the torrent's own seeding limits: NULL takes the global setting, 0 means no limit. `file_done` is the
--- bytes done of each file, 8 bytes big-endian per file in torrent order.
+-- bytes done of each file, 8 bytes big-endian per file in torrent order. `custom_trackers` is the announce URLs the user added,
+-- one per line, NULL for none; they are put back on the torrent each time it starts.
 CREATE TABLE torrent (
     download_id INTEGER AS DownloadId NOT NULL PRIMARY KEY REFERENCES download(id) ON DELETE CASCADE,
     metadata BLOB,
@@ -13,7 +14,8 @@ CREATE TABLE torrent (
     resume BLOB,
     seed_ratio REAL,
     seed_minutes INTEGER,
-    file_done BLOB
+    file_done BLOB,
+    custom_trackers TEXT
 );
 
 put:
@@ -39,3 +41,9 @@ UPDATE torrent SET file_done = ? WHERE download_id = ?;
 
 setSeedRules:
 UPDATE torrent SET seed_ratio = ?, seed_minutes = ? WHERE download_id = ?;
+
+customTrackers:
+SELECT custom_trackers FROM torrent WHERE download_id = ?;
+
+setCustomTrackers:
+UPDATE torrent SET custom_trackers = ? WHERE download_id = ?;

@@ -1,0 +1,2 @@
+-- Version 22 to 23 (cross-plexo-torrent-screens): the trackers the user added to a torrent, one URL per line, NULL for none.
+ALTER TABLE torrent ADD COLUMN custom_trackers TEXT;

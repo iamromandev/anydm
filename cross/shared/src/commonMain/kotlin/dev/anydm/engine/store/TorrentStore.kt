@@ -85,4 +85,13 @@ interface TorrentStore {
         ratio: SeedRule<Double>,
         minutes: SeedRule<Int>,
     ): Boolean
+
+    /** The trackers the user added to this torrent, in the order added; empty if none or the job has no torrent row. */
+    suspend fun customTrackers(id: DownloadId): List<String>
+
+    /** Replaces the user's added trackers (duplicates dropped, order kept). False if the job has no torrent row. */
+    suspend fun setCustomTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): Boolean
 }

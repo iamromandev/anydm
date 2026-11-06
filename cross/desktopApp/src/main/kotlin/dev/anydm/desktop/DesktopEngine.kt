@@ -291,6 +291,13 @@ internal class UnavailableSource(
 
     override suspend fun torrentDetail(id: DownloadId) = stopped()
 
+    override suspend fun addTorrentTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ) = stopped()
+
+    override suspend fun reannounceTorrent(id: DownloadId) = stopped()
+
     override suspend fun setTorrentFiles(
         id: DownloadId,
         priorities: List<Int>,

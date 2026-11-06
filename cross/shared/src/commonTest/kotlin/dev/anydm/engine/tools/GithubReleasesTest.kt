@@ -75,6 +75,54 @@ class GithubReleasesTest {
         }
 
     @Test
+    fun theRepositoryAndTheAssetAreParameters() =
+        runTest {
+            val transport = FakeTransport(stableTag(tag = "2026.11.01", repo = "me/app"))
+            val releases = GithubReleases(transport, repoOf = { "me/app" }, assetOf = { "yt-dlp_macos" })
+
+            val release = releases.latest(YtDlpChannel.NIGHTLY, linux)
+
+            release shouldBe Release("2026.11.01", "https://github.com/me/app/releases/download/2026.11.01/yt-dlp_macos", "b".repeat(64))
+        }
+
+    @Test
+    fun parseSumReadsBothSeparatorsAndRejectsTheRest() {
+        parseSum("${"a".repeat(64)}  file.bin") shouldBe ("a".repeat(64) to "file.bin")
+        parseSum("${"a".repeat(64)} *file.bin") shouldBe ("a".repeat(64) to "file.bin")
+        parseSum("${"A".repeat(64)}  file.bin") shouldBe null
+        parseSum("abc  file.bin") shouldBe null
+        parseSum("${"a".repeat(64)}  ") shouldBe null
+    }
+
+    @Test
+    fun readCappedReadsABodyUpToTheCapAndRefusesALargerOne() =
+        runTest {
+            val transport = FakeTransport { response(200, body = BytesBody(ByteArray(100_000) { 'x'.code.toByte() })) }
+
+            readCapped(transport, "https://h/sums", max = 100_000)!!.length shouldBe 100_000
+            readCapped(transport, "https://h/sums", max = 99_999) shouldBe null
+            readCapped(transport, "https://h/sums", max = 20_000) shouldBe null
+            readCapped(FakeTransport { response(404) }, "https://h/sums") shouldBe null
+        }
+
+    @Test
+    fun aSumsFileOverTheCapHasNoRelease() =
+        runTest {
+            val huge = sums + "\n" + "#".repeat((1 shl 20) + 1)
+
+            GithubReleases(FakeTransport(stableTag(sumsText = huge))).latest(YtDlpChannel.STABLE, linux) shouldBe null
+        }
+
+    @Test
+    fun readCappedRefusesAFinalAddressTheCallerDoesNotAccept() =
+        runTest {
+            val transport = FakeTransport { response(200, finalUrl = "http://evil/sums") }
+
+            readCapped(transport, "https://h/sums", acceptFinalUrl = { it.startsWith("https://") }) shouldBe null
+            readCapped(transport, "https://h/sums")!!.length shouldBe 1024
+        }
+
+    @Test
     fun aPlatformWithoutAnAssetHasNoRelease() =
         runTest {
             GithubReleases(FakeTransport(stableTag())).latest(YtDlpChannel.STABLE, Platform(OsFamily.WINDOWS, Arch.ARM64)) shouldBe null

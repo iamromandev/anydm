@@ -13,6 +13,8 @@ class AddTorrent(
     val fileNames: List<String>,
     /** libtorrent's resume data from an earlier [RunningTorrent.saveResume], or null to check the files (TOR-06). */
     val resume: ByteArray? = null,
+    /** The trackers the user added to this torrent earlier, put back on it as it starts. */
+    val customTrackers: List<String> = emptyList(),
 )
 
 /**
@@ -47,6 +49,9 @@ class TorrentProgress(
 
 /** One torrent in the session. Its calls come from the transfer's own coroutine; nothing here runs engine code on a library thread. */
 interface RunningTorrent {
+    /** Whether the torrent is private, as its metadata says; fixed for as long as it runs. */
+    val isPrivate: Boolean
+
     fun progress(): TorrentProgress
 
     /** New priorities for the files, one per file in torrent order. */
@@ -85,6 +90,12 @@ interface RunningTorrent {
      * A [url] the torrent doesn't have, or a tracker with no live endpoint (an untried backup tier, a disabled one), is ignored.
      */
     fun reannounce(url: String? = null)
+
+    /**
+     * Adds announce trackers the torrent doesn't have yet (the ones it has, and repeats, are ignored); they are reported with
+     * [TorrentTracker.custom] set. Nothing happens once the torrent is gone.
+     */
+    fun addTrackers(urls: List<String>)
 
     /** The peer list, trackers and piece map; [TorrentDetail.Empty] once the torrent is gone. */
     fun detail(): TorrentDetail

@@ -571,4 +571,87 @@ class TorrentProtocolSeedingTest {
             protocol.recheck(DownloadId(99)) shouldBe false
             protocol.reannounce(DownloadId(99), null) shouldBe false
         }
+
+    @Test
+    fun addTrackersKeepsThemAndReachesTheSeedsTorrent() =
+        runBlocking<Unit> {
+            val (transfer, _) = finalized(ratio(5.0))
+            val id = transfer.download.id
+
+            protocol.addTrackers(id, listOf("udp://a:1/announce", "http://b/announce")) shouldBe AddTrackersResult.ADDED
+            protocol.addTrackers(id, listOf("http://b/announce", "wss://c/announce")) shouldBe AddTrackersResult.ADDED
+
+            backend.added.single().trackersAdded shouldBe
+                listOf(listOf("udp://a:1/announce", "http://b/announce"), listOf("http://b/announce", "wss://c/announce"))
+            store.torrents.customTrackers(id) shouldBe listOf("udp://a:1/announce", "http://b/announce", "wss://c/announce")
+        }
+
+    @Test
+    fun addTrackersToATorrentNotInTheSessionIsRefused() =
+        runBlocking<Unit> {
+            protocol.addTrackers(DownloadId(99), listOf("udp://a:1/announce")) shouldBe AddTrackersResult.NOT_IN_SESSION
+        }
+
+    @Test
+    fun theStoredCustomTrackersGoWithTheTorrentWhenItStarts() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            store.torrents.setCustomTrackers(transfer.download.id, listOf("udp://a:1/announce"))
+
+            protocol.transfer(transfer, CollectingIo()) shouldBe StepResult.Ok(Unit)
+
+            backend.added
+                .single()
+                .request.customTrackers shouldBe listOf("udp://a:1/announce")
+        }
+
+    @Test
+    fun theStoredCustomTrackersGoWithASeedWhenItIsResumed() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            store.torrents.setCustomTrackers(transfer.download.id, listOf("udp://a:1/announce"))
+            stored(transfer, "Pack/a.bin", "Pack/b.bin")
+            fs.put(Path(folder, "Pack/b.bin"), ByteArray(300))
+
+            protocol.resumeSeeding(transfer.download) shouldBe StepResult.Ok(Unit)
+
+            backend.added
+                .single()
+                .request.customTrackers shouldBe listOf("udp://a:1/announce")
+            protocol.stopSeeding(transfer.download.id) shouldBe true
+        }
+
+    @Test
+    fun aSeedResumeCancelledWhileItDropsTheTrackersLeavesTheTorrentHeldAsASeed() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            store.torrents.setCustomTrackers(transfer.download.id, listOf("udp://a:1/announce"))
+            stored(transfer, "Pack/a.bin", "Pack/b.bin")
+            fs.put(Path(folder, "Pack/b.bin"), ByteArray(300))
+            backend.detailOnAdd = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+            resumeStore.slowTrackerReads = 300.milliseconds
+
+            val resuming = async(Dispatchers.Default) { protocol.resumeSeeding(transfer.download) }
+            withTimeout(5.seconds) { while (backend.added.isEmpty()) delay(1) }
+            resuming.cancelAndJoin()
+
+            // Not leaked: the session's torrent is one the protocol holds, so it can be stopped.
+            protocol.stopSeeding(transfer.download.id) shouldBe true
+            backend.added.single().removed shouldBe 1
+        }
+
+    @Test
+    fun theStoredTrackersOfAPrivateSeedAreDroppedWhenItIsResumed() =
+        runBlocking<Unit> {
+            val transfer = prepared()
+            store.torrents.setCustomTrackers(transfer.download.id, listOf("udp://a:1/announce"))
+            stored(transfer, "Pack/a.bin", "Pack/b.bin")
+            fs.put(Path(folder, "Pack/b.bin"), ByteArray(300))
+            backend.detailOnAdd = TorrentDetail(emptyList(), emptyList(), PieceMap.Empty, isPrivate = true)
+
+            protocol.resumeSeeding(transfer.download) shouldBe StepResult.Ok(Unit)
+
+            store.torrents.customTrackers(transfer.download.id) shouldBe emptyList()
+            protocol.stopSeeding(transfer.download.id) shouldBe true
+        }
 }

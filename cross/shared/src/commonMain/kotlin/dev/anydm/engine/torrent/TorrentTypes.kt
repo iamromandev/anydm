@@ -11,13 +11,15 @@ data class TorrentFile(
 
 /**
  * What a torrent's metadata says (TOR-02): [name], the [infoHash] in lowercase hex, the [files] in torrent order, and the
- * `.torrent` bytes themselves ([metadata]) so they can be stored. Two infos are equal when their hashes are.
+ * `.torrent` bytes themselves ([metadata]) so they can be stored, and whether the torrent is [isPrivate] (its metadata says
+ * it takes no trackers or peer sources from outside). Two infos are equal when their hashes are.
  */
 class TorrentInfo(
     val name: String,
     val infoHash: String,
     val files: List<TorrentFile>,
     val metadata: ByteArray,
+    val isPrivate: Boolean = false,
 ) {
     /** All files' bytes. */
     val total: Long get() = files.map { it.size.coerceAtLeast(0) }.saturatingSum()

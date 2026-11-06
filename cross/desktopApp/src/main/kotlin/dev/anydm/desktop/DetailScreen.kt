@@ -60,6 +60,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -126,7 +128,7 @@ fun DetailScreen(
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val now = latest
             // A dialog has its own keys, and a text field in it must get every one of them.
-            if (event.type != KeyEventType.KeyDown || now.confirm != null || now.fixLinkOpen) return@handler false
+            if (event.type != KeyEventType.KeyDown || now.confirm != null || now.fixLinkOpen || now.trackersOpen) return@handler false
             val command = if (IsMac) event.isMetaPressed else event.isCtrlPressed
             when {
                 event.key == Key.Escape -> {
@@ -206,6 +208,7 @@ private fun DetailHeader(
             Txt("Downloads", Plexo.type.title.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium), color = colors.textSecondary)
         }
         Spacer(Modifier.weight(1f))
+        if (state.isTorrent) PButton("Trackers", model::openTrackers, Modifier.semantics { testTag = "trackers-open" })
         when (state.kind) {
             DetailKind.ACTIVE, DetailKind.TORRENT -> {
                 PButton("Cancel download", model::askCancel, kind = ButtonKind.DESTRUCTIVE)
@@ -310,6 +313,7 @@ private fun ActiveBody(
             }
         }
         FileInfo(state, model)
+        if (state.peersOpen) PeersTable(state, unit)
         if (state.filesOpen) TorrentFiles(state, model)
         Box(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp)) {
             ChunkMapView(
@@ -380,7 +384,24 @@ private fun FileInfo(
                 }
                 state.peers?.let {
                     dot()
-                    Txt("$it ${if (it == 1) "peer" else "peers"}", Plexo.type.speed.copy(fontWeight = null), color = colors.textSecondary)
+                    val shape = RoundedCornerShape(4.dp)
+                    Row(
+                        Modifier
+                            .clip(shape)
+                            .background(if (state.peersOpen) colors.bgTertiary else Color.Transparent)
+                            .clickable(role = Role.Button, onClick = model::togglePeers)
+                            .semantics { testTag = "peers-toggle" }
+                            .padding(horizontal = 5.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Txt(
+                            "$it ${if (it == 1) "peer" else "peers"}",
+                            Plexo.type.speed.copy(fontWeight = null),
+                            color = colors.textSecondary,
+                        )
+                        GlyphIcon(if (state.peersOpen) Glyph.CHEVRON_DOWN else Glyph.CHEVRON_RIGHT, colors.textSecondary, size = 10.dp)
+                    }
                 }
                 if (state.kind == DetailKind.TORRENT && state.files.size > 1) {
                     dot()
@@ -481,6 +502,72 @@ private fun FileBadge(
             val type = Plexo.type.badge.let { if (state.badge.length > 4) it.copy(fontSize = it.fontSize * 0.8f) else it }
             Txt(state.badge, type, color = colors.textSecondary)
         }
+    }
+}
+
+/** The peers of a torrent, fastest download first as the model sorts them; seeds are marked. */
+@Composable
+private fun PeersTable(
+    state: DetailState,
+    unit: SpeedUnit,
+) {
+    val colors = Plexo.colors
+    val shape = RoundedCornerShape(9.dp)
+    Column(
+        Modifier
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp)
+            .fillMaxWidth()
+            .heightIn(max = 220.dp)
+            .clip(shape)
+            .border(0.5.dp, colors.border, shape)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .semantics {
+                testTag = "peers-table"
+                contentDescription = "Peers"
+            },
+    ) {
+        if (state.peerList.isEmpty()) {
+            Txt("No peers connected.", Plexo.type.hint, Modifier.padding(vertical = 4.dp), color = colors.textSecondary)
+            return@Column
+        }
+        PeerLine("ADDRESS", "CLIENT", "DONE", "DOWN", "UP", "", colors.textTertiary, Plexo.type.badge)
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            for (peer in state.peerList) {
+                Box(Modifier.semantics(mergeDescendants = true) { testTag = "peer-${peer.address}" }) {
+                    PeerLine(
+                        peer.address,
+                        peer.client,
+                        "${(peer.progress * 100).toInt().coerceIn(0, 100)}%",
+                        formatRate(peer.downloadRate, unit),
+                        formatRate(peer.uploadRate, unit),
+                        if (peer.seed) "Seed" else "",
+                        colors.text,
+                        Plexo.type.detail,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PeerLine(
+    address: String,
+    client: String,
+    done: String,
+    down: String,
+    up: String,
+    seed: String,
+    color: Color,
+    style: TextStyle,
+) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Txt(address, style, Modifier.weight(2f), color = color)
+        Txt(client, style, Modifier.weight(2f), color = color)
+        Txt(done, style.copy(textAlign = TextAlign.End), Modifier.width(44.dp), color = color)
+        Txt(down, style.copy(textAlign = TextAlign.End), Modifier.width(84.dp), color = color)
+        Txt(up, style.copy(textAlign = TextAlign.End), Modifier.width(84.dp), color = color)
+        Txt(seed, style, Modifier.width(36.dp), color = Plexo.colors.accent)
     }
 }
 
@@ -856,6 +943,7 @@ private fun DetailDialogs(
         null -> {}
     }
     if (state.fixLinkOpen) FixLinkDialog(state, model)
+    if (state.trackersOpen) TrackersDialog(rememberTrackersModel(model), model::closeTrackers)
 }
 
 /** Asks for a new link to the same file; it carries on from where the download stopped. */

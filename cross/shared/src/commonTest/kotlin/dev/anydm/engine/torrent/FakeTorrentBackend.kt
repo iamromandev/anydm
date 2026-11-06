@@ -21,6 +21,7 @@ internal class FakeTorrentBackend : TorrentBackend {
     fun torrent(
         name: String,
         vararg files: Pair<String, Long>,
+        isPrivate: Boolean = false,
         hash: String =
             name
                 .padEnd(40, 'a')
@@ -29,7 +30,18 @@ internal class FakeTorrentBackend : TorrentBackend {
                 .map { if (it in '0'..'9' || it in 'a'..'f') it else 'b' }
                 .joinToString(""),
     ): TorrentInfo =
-        TorrentInfo(name, hash, files.mapIndexed { i, (path, size) -> TorrentFile(i, path, size) }, hash.encodeToByteArray()).also {
+        TorrentInfo(
+            name,
+            hash,
+            files.mapIndexed {
+                i,
+                (path, size),
+                ->
+                TorrentFile(i, path, size)
+            },
+            hash.encodeToByteArray(),
+            isPrivate,
+        ).also {
             known[hash] =
                 it
         }
@@ -56,10 +68,16 @@ internal class FakeTorrentBackend : TorrentBackend {
     var addFailure: StepResult.Failed? = null
     val added = mutableListOf<FakeRunning>()
 
+    /** What [RunningTorrent.detail] answers for every torrent added from now on (a private torrent: set `isPrivate`). */
+    var detailOnAdd: TorrentDetail = TorrentDetail.Empty
+
     override suspend fun add(request: AddTorrent): StepResult<RunningTorrent> {
         calls += "add"
         addFailure?.let { return it }
-        return StepResult.Ok(FakeRunning(request, script).also { added += it })
+        val running = FakeRunning(request, script)
+        running.detailData = detailOnAdd
+        added += running
+        return StepResult.Ok(running)
     }
 
     /** The limits last given to [setSessionLimits]: download, then upload. */
@@ -122,12 +140,24 @@ internal class FakeRunning(
     var rechecks = 0
     val reannounces = mutableListOf<String?>()
 
+    /** What [isPrivate] answers instead of the private flag of [detailData] (to tell the flag from a [detail] read). */
+    var privateOverride: Boolean? = null
+
+    override val isPrivate: Boolean get() = privateOverride ?: detailData.isPrivate
+
     override fun recheck() {
         rechecks++
     }
 
     override fun reannounce(url: String?) {
         reannounces += url
+    }
+
+    /** Each call to [addTrackers], in order. */
+    val trackersAdded = mutableListOf<List<String>>()
+
+    override fun addTrackers(urls: List<String>) {
+        trackersAdded += urls
     }
 
     override fun live(): TorrentLiveStats = if (removed > 0) TorrentLiveStats.None else liveStats

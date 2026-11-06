@@ -119,14 +119,32 @@ internal class ThemeTest {
     }
 
     @Test
+    fun `automatic updates are on by default and the choice round trips through the preferences store`() {
+        val node = Preferences.userRoot().node("dev/anydm/desktop-test-${System.nanoTime()}")
+        try {
+            val prefs = PreferencesViewPrefs(node)
+            assertEquals(true, prefs.autoUpdate)
+            prefs.autoUpdate = false
+            assertEquals(false, PreferencesViewPrefs(node).autoUpdate)
+            prefs.autoUpdate = true
+            assertEquals(true, PreferencesViewPrefs(node).autoUpdate)
+            assertEquals(true, MemoryViewPrefs().autoUpdate)
+        } finally {
+            node.removeNode()
+        }
+    }
+
+    @Test
     fun `an unreadable stored choice falls back to the defaults`() {
         val node = Preferences.userRoot().node("dev/anydm/desktop-test-${System.nanoTime()}")
         try {
             node.put("theme", "sepia")
             node.put("speedUnit", "furlongs")
+            node.put("autoUpdate", "maybe")
             val prefs = PreferencesViewPrefs(node)
             assertEquals(ThemeChoice.DARK, prefs.theme)
             assertEquals(SpeedUnit.BYTES, prefs.speedUnit)
+            assertEquals(true, prefs.autoUpdate)
         } finally {
             node.removeNode()
         }

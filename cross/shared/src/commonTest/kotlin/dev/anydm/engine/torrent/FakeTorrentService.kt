@@ -44,6 +44,8 @@ internal class FakeTorrentService : TorrentService {
 
     override suspend fun detail(id: DownloadId): TorrentDetail? = details[id]
 
+    override suspend fun isPrivate(id: DownloadId): Boolean = id in privateTorrents
+
     /** The jobs [recheck] reached, and the job and url of each [reannounce] (null: all trackers). */
     val rechecked = mutableListOf<DownloadId>()
     val reannounced = mutableListOf<Pair<DownloadId, String?>>()
@@ -61,6 +63,22 @@ internal class FakeTorrentService : TorrentService {
         if (id !in running) return false
         reannounced += id to url
         return true
+    }
+
+    /** The jobs whose torrent is private: [addTrackers] refuses them. */
+    val privateTorrents = mutableSetOf<DownloadId>()
+
+    /** The job and urls of each [addTrackers] that reached a running torrent. */
+    val trackersAdded = mutableListOf<Pair<DownloadId, List<String>>>()
+
+    override suspend fun addTrackers(
+        id: DownloadId,
+        urls: List<String>,
+    ): AddTrackersResult {
+        if (id in privateTorrents) return AddTrackersResult.PRIVATE
+        if (id !in running) return AddTrackersResult.NOT_IN_SESSION
+        trackersAdded += id to urls
+        return AddTrackersResult.ADDED
     }
 
     override suspend fun inspect(source: String): StepResult<TorrentInfo> {
