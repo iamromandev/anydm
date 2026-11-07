@@ -24,6 +24,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -37,8 +40,10 @@ fun TopBar(
     filter: Filter,
     onFilter: (Filter) -> Unit,
     downloadingCount: Int,
-    network: NetworkInfo,
+    networks: List<Network>,
     unit: SpeedUnit,
+    onNetworksClick: () -> Unit,
+    onChipBounds: (Rect) -> Unit,
     onNewDownload: () -> Unit = {},
 ) {
     val c = colors
@@ -84,7 +89,7 @@ fun TopBar(
             )
         }
         Spacer(Modifier.weight(1f))
-        NetworkChip(network, unit)
+        NetworkChip(networks, unit, onNetworksClick, onChipBounds)
         Spacer(Modifier.width(12.dp))
         Row(
             Modifier
@@ -104,30 +109,33 @@ fun TopBar(
 
 @Composable
 private fun NetworkChip(
-    network: NetworkInfo,
+    networks: List<Network>,
     unit: SpeedUnit,
+    onClick: () -> Unit,
+    onBounds: (Rect) -> Unit,
 ) {
     val c = colors
     Row(
         Modifier
             .testTag("network-chip")
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
             .height(36.dp)
             .border(1.dp, c.border, RoundedCornerShape(Radius))
             .background(c.surface, RoundedCornerShape(Radius))
-            .clickable(role = Role.Button) {}
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(7.dp).background(c.success, CircleShape))
         Text(
-            if (network.count == 1) "1 network" else "${network.count} networks",
+            networkLabel(enabledCount(networks)),
             color = c.text,
             fontSize = 13.sp,
             maxLines = 1,
         )
         Text(
-            formatSpeed(network.bytesPerSec, unit),
+            formatSpeed(totalSpeed(networks), unit),
             color = c.textSecondary,
             fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
