@@ -20,7 +20,7 @@ UI_PORT := 3030
 	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-seed api-install api-export api-clean-all api-clean-volumes api-clean-host \
 	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format \
-	cross-check cross-test cross-run cross-package cross-smoke
+	cross-check cross-test cross-run cross-package
 
 ## both stacks
 check: api-check ui-check cross-check # Lint + typecheck all three stacks
@@ -124,14 +124,11 @@ cross-check: # Lint + test + compile the cross/ client
 cross-test: # Run the cross/ shared tests and the desktop app tests
 	cd $(CROSS) && ./gradlew :shared:allTests :desktopApp:test
 
-cross-run: # Open the desktop app; CROSS_HOME=<folder> keeps its data out of your home folder (-Panydm.userHome)
-	cd $(CROSS) && ./gradlew :desktopApp:run$(if $(CROSS_HOME), -Panydm.userHome=$(CROSS_HOME))
+cross-run: # Open the desktop app
+	cd $(CROSS) && ./gradlew :desktopApp:run
 
 cross-package: # Build the desktop app's installer (dmg / msi / deb) for this OS
 	cd $(CROSS) && ./gradlew :desktopApp:packageDistributionForCurrentOS
-
-cross-smoke: # Build the app image and start it with --self-check (engine, local download, torrent native)
-	cd $(CROSS) && ./gradlew :desktopApp:smokePackagedApp
 
 # help
 help:

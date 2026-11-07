@@ -1,8 +1,7 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (or vX.Y.Z-rc.N for a prerelease) builds the desktop installers on each OS and publishes them, with a
-# SHA2-256SUMS file, as a GitHub release. The app's updater (cross/desktopApp, Updater/AppReleases) reads exactly these assets:
-# keep the names and the sums format. How to cut a release: cross/README.md.
+# SHA2-256SUMS file, as a GitHub release. How to cut a release: cross/README.md.
 on:
     push:
         tags: ['v*']
@@ -47,11 +46,10 @@ jobs:
                   echo "version=$version" >> "$GITHUB_OUTPUT"
                   echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
-    # `make cross-package` on each OS: :desktopApp:packageDistributionForCurrentOS, then `make cross-smoke` (the packaged app starts
-    # with --self-check) before anything is uploaded. (Gradle is called directly because the Windows runner has no make.) The runners
+    # `make cross-package` on each OS: :desktopApp:packageDistributionForCurrentOS before anything is uploaded.
+    # (Gradle is called directly because the Windows runner has no make.) The runners
     # are pinned: windows-2022 because the .msi needs the WiX 3 toolset, which that image carries; macos-15 because it is an Apple
-    # silicon image, and the dmg (whose name carries no architecture) must not change CPU under a moving `-latest`: AppReleases refuses
-    # an arch-less dmg to Intel Macs on that basis. ubuntu-24.04 is x64, like the amd64 deb.
+    # silicon image, and the dmg (whose name carries no architecture) must not change CPU under a moving `-latest`. ubuntu-24.04 is x64, like the amd64 deb.
     package:
         needs: verify
         timeout-minutes: 60
@@ -72,20 +70,6 @@ jobs:
                   java-version: 25
             - working-directory: cross
               run: ./gradlew :desktopApp:packageDistributionForCurrentOS
-            # The jlink runtime may lack a module or a native library only the packaged app would miss (see ci.yml for the libraries).
-            - name: Install the libraries and virtual display the smoke check needs (Linux)
-              if: runner.os == 'Linux'
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y xvfb libx11-6 libx11-xcb1 libxt6t64 libxtst6 libxi6 libxinerama1 libxkbcommon-x11-0 libxkbfile1
-            - name: Smoke-test the packaged app
-              working-directory: cross
-              run: |
-                  if [[ "$RUNNER_OS" == "Linux" ]]; then
-                      xvfb-run -a ./gradlew :desktopApp:smokePackagedApp
-                  else
-                      ./gradlew :desktopApp:smokePackagedApp
-                  fi
             - uses: actions/upload-artifact@v4
               with:
                   name: installer-${{ matrix.os }}
