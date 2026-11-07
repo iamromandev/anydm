@@ -397,7 +397,7 @@ internal class LandingScreenTest {
             onNodeWithTag("network-switch-usb0").assertIsOn()
             onNodeWithText("Idle").assertIsDisplayed()
             onNodeWithText("WIFI · en0").assertIsDisplayed()
-            until { has("Wi-Fi and USB Tethering share a subnet", substring = true) }
+            until { has("Wi-Fi and USB share a subnet", substring = true) }
         }
 
     @Test
@@ -487,14 +487,14 @@ internal class LandingScreenTest {
         }
 
     @Test
-    fun `with every network off the form warns that downloads wait`() =
+    fun `with every network off the form says downloads use the system's default connection`() =
         runComposeUiTest {
             showApp()
             until { has(NETWORK_SWITCH_HINT) }
-            assertTrue(!has("No network is on. Downloads wait until one is switched on."))
+            assertTrue(!has("No network is on, so downloads use your system's default connection."))
             onNodeWithTag("network-switch-en0").performClick()
             onNodeWithTag("network-switch-usb0").performClick()
-            until { has("No network is on. Downloads wait until one is switched on.") }
+            until { has("No network is on, so downloads use your system's default connection.") }
         }
 
     @Test
@@ -514,7 +514,7 @@ internal class LandingScreenTest {
             until { has("Save to") }
             onAllNodes(
                 androidx.compose.ui.test
-                    .hasContentDescription("Edit USB Tethering"),
+                    .hasContentDescription("Edit USB"),
             )[0].performClick()
             until { has("NAME") }
             onNodeWithContentDescription("Network name").performClick()

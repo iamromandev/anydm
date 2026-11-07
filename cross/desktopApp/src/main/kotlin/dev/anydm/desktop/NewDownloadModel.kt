@@ -89,7 +89,7 @@ data class NewDownloadState(
     val saveFolderShown: String = "",
     val chips: List<NetworkChip> = emptyList(),
     val networksNote: String? = null,
-    /** Chips are listed and none is in use. */
+    /** Two or more networks are listed and none is in use. */
     val noNetworkOn: Boolean = false,
     /** Why the last network switch failed. */
     val networkError: String? = null,
@@ -530,7 +530,7 @@ class NewDownloadModel(
             saveFolderShown = toDisplayPath(saveFolder, homeFolder),
             chips = chips,
             networksNote = if (chips.isEmpty()) null else NETWORK_SWITCH_HINT,
-            noNetworkOn = chips.isNotEmpty() && chips.none { it.on },
+            noNetworkOn = chips.size >= 2 && chips.none { it.on },
             networkError =
                 draft.switchErrors.entries
                     .sortedBy { it.key }

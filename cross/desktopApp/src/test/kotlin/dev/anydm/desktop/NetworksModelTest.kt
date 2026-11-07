@@ -139,9 +139,9 @@ internal class NetworksModelTest {
     @Test
     fun `editing starts from the name and color the network has now`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             val edit = assertNotNull(s.editor.editing.value)
-            assertEquals("USB Tethering", edit.name)
+            assertEquals("USB", edit.name)
             assertEquals("amber", edit.colorId)
             assertEquals("menu", edit.anchor)
         }
@@ -149,7 +149,7 @@ internal class NetworksModelTest {
     @Test
     fun `save renames and recolors, and the popover closes`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setName("  Pixel ")
             s.editor.setColor("rose")
             assertTrue(s.editor.save())
@@ -160,7 +160,7 @@ internal class NetworksModelTest {
     @Test
     fun `an empty name keeps the popover open with a reason and saves nothing`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setName("   ")
             s.editor.setColor("rose")
             assertFalse(s.editor.save())
@@ -177,7 +177,7 @@ internal class NetworksModelTest {
     @Test
     fun `cancel throws the draft away`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setName("Pixel")
             s.editor.cancel()
             assertNull(s.editor.editing.value)
@@ -190,7 +190,7 @@ internal class NetworksModelTest {
     @Test
     fun `saving without a change writes nothing, and the color stays automatic`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             assertTrue(s.editor.save())
             assertTrue(
                 s.visuals.prefs.value
@@ -201,7 +201,7 @@ internal class NetworksModelTest {
     @Test
     fun `picking the swatch a network was automatically given pins it`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setColor("amber")
             assertTrue(s.editor.save())
             assertEquals(
@@ -214,7 +214,7 @@ internal class NetworksModelTest {
     @Test
     fun `a color touched and put back on the shown one still pins it`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setColor("rose")
             s.editor.setColor("amber")
             assertTrue(s.editor.save())
@@ -228,7 +228,7 @@ internal class NetworksModelTest {
     @Test
     fun `renaming alone does not pin the color`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setName("Pixel")
             assertTrue(s.editor.save())
             assertNull(
@@ -240,7 +240,7 @@ internal class NetworksModelTest {
     @Test
     fun `the name field can't hold more than forty characters`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.setName("x".repeat(60))
             assertEquals(
                 MAX_NETWORK_NAME,
@@ -275,7 +275,7 @@ internal class NetworksModelTest {
     @Test
     fun `only one popover is open at a time`() =
         menu { s ->
-            s.editor.start("usb0", "menu", "USB Tethering")
+            s.editor.start("usb0", "menu", "USB")
             s.editor.start("en0", "table", "Wi-Fi")
             assertEquals(
                 "en0",

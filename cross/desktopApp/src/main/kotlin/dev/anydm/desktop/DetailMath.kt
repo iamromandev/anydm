@@ -151,10 +151,13 @@ fun timeSaved(
 }
 
 /** The short line that names what limits a download's speed (#634). */
-fun limitText(limit: SpeedLimit): String =
+fun limitText(
+    limit: SpeedLimit,
+    looks: NetworkLooks = NetworkLooks(),
+): String =
     when (limit) {
         SpeedLimit.SlowMode -> "Limited by slow mode"
         SpeedLimit.SpeedCap -> "Limited by your speed limit"
-        is SpeedLimit.DataLimit -> "${limit.network} reached its data limit"
+        is SpeedLimit.DataLimit -> "${looks.nameOf(limit.key, limit.network)} reached its data limit"
         is SpeedLimit.Unreachable -> "${limit.network} can't reach the server"
     }

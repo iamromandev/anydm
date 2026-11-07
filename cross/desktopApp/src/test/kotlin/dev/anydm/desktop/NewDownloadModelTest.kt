@@ -957,6 +957,21 @@ internal class NewDownloadModelTest {
         }
 
     @Test
+    fun `one network that is off does not say no network is on`() =
+        dialog { d ->
+            d.source.networks.value = BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5", enabled = false)))
+            assertFalse(d.state.noNetworkOn)
+        }
+
+    @Test
+    fun `two networks with one on do not say no network is on`() =
+        dialog { d ->
+            d.source.networks.value =
+                BondingState(listOf(network("en0", "Wi-Fi", "192.168.1.5"), network("usb0", "USB", "172.20.10.2", enabled = false)))
+            assertFalse(d.state.noNetworkOn)
+        }
+
+    @Test
     fun `two networks in use on one subnet bring a warning with their names`() =
         dialog { d ->
             d.source.networks.value =
