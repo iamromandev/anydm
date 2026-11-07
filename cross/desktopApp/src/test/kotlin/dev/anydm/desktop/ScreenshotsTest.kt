@@ -1,12 +1,17 @@
 package dev.anydm.desktop
 
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import java.io.File
 import javax.imageio.ImageIO
@@ -25,8 +30,10 @@ class ScreenshotsTest {
         width: Int,
         height: Int,
         link: String? = null,
+        act: ComposeUiTest.() -> Unit = {},
     ) = runDesktopComposeUiTest(width, height) {
         setContent { HomeScreen(state, dark) }
+        act()
         if (link != null) {
             onNodeWithTag("new-download").performClick()
             onNodeWithTag("url-field").performTextInput(link)
@@ -59,4 +66,30 @@ class ScreenshotsTest {
             shot("dialog-magnet-$theme-900x600", populatedSample(), dark, 900, 600, magnet)
         }
     }
+
+    @Test
+    fun captureNetworksMenu() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            shot("networks-open-$theme-1280x800", populatedSample(), dark, 1280, 800) { openNetworks() }
+            shot("networks-off-$theme-1280x800", populatedSample(), dark, 1280, 800) {
+                openNetworks()
+                onNodeWithTag("network-dot-usb").performClick()
+            }
+            shot("networks-rename-$theme-1280x800", populatedSample(), dark, 1280, 800) {
+                openNetworks()
+                onNodeWithTag("network-rename-wifi").performClick()
+                onNodeWithTag("network-rename-field").performTextReplacement("Home office")
+            }
+            shot("networks-rename-error-$theme-1280x800", populatedSample(), dark, 1280, 800) {
+                openNetworks()
+                onNodeWithTag("network-rename-wifi").performClick()
+                onNodeWithTag("network-rename-field").performTextReplacement("usb tethering")
+                onNodeWithTag("network-rename-field").performKeyInput { pressKey(Key.Enter) }
+            }
+            shot("networks-open-$theme-900x600", populatedSample(), dark, 900, 600) { openNetworks() }
+            shot("networks-empty-$theme-1280x800", emptySample(), dark, 1280, 800) { openNetworks() }
+        }
+    }
+
+    private fun ComposeUiTest.openNetworks() = onNodeWithTag("network-chip").performClick()
 }

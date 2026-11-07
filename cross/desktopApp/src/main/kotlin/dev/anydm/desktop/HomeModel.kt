@@ -11,16 +11,10 @@ data class DownloadItem(
     val status: DownloadStatus,
 )
 
-data class NetworkInfo(
-    val count: Int,
-    val bytesPerSec: Long,
-)
-
 data class HomeState(
     val downloads: List<DownloadItem>,
-    val network: NetworkInfo,
+    val networks: List<Network>,
     val freeBytes: Long,
-    val networkNames: List<String> = listOf("Wi-Fi"),
 )
 
 enum class Filter(

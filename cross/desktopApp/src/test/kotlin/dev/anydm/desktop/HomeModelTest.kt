@@ -18,9 +18,26 @@ class HomeModelTest {
                     item("b", DownloadStatus.Paused),
                     item("c", DownloadStatus.Finished),
                 ),
-            network = NetworkInfo(1, 10),
+            networks = listOf(Network("w", "Wi-Fi", NetworkKind.WiFi, true, 10)),
             freeBytes = 1000,
         )
+
+    @Test
+    fun populatedSampleSumsToExactly14MBps() {
+        val nets = populatedSample().networks
+        assertEquals(listOf("Wi-Fi", "USB Tethering"), nets.map { it.name })
+        assertEquals(14L * 1024 * 1024, totalSpeed(nets))
+        assertEquals("7.1 MB/s", formatSpeed(nets[0].bytesPerSec, SpeedUnit.MBps))
+        assertEquals("6.9 MB/s", formatSpeed(nets[1].bytesPerSec, SpeedUnit.MBps))
+    }
+
+    @Test
+    fun emptySampleHasOneIdleWifi() {
+        val nets = emptySample().networks
+        assertEquals(1, nets.size)
+        assertEquals(NetworkKind.WiFi, nets[0].kind)
+        assertEquals(0L, nets[0].bytesPerSec)
+    }
 
     @Test
     fun allKeepsEverything() {

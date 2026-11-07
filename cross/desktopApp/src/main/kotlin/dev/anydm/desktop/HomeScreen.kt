@@ -5,6 +5,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -18,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -25,9 +27,16 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,11 +53,16 @@ fun HomeScreen(
     var unit by remember { mutableStateOf(SpeedUnit.MBps) }
     var slow by remember { mutableStateOf(false) }
     var dark by remember { mutableStateOf(initialDark) }
+    val networks = remember { mutableStateListOf<Network>().apply { addAll(initial.networks) } }
+    var networksOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var chipBounds by remember { mutableStateOf(Rect.Zero) }
+    var menuBounds by remember { mutableStateOf(Rect.Zero) }
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val homeFocus = remember { FocusRequester() }
-    LaunchedEffect(dialogOpen) { if (!dialogOpen) homeFocus.requestFocus() }
+    LaunchedEffect(dialogOpen, networksOpen) { if (!dialogOpen && !networksOpen) homeFocus.requestFocus() }
 
     val state = initial.copy(downloads = downloads.toList())
     val visible = filtered(state, filter)
@@ -83,16 +97,27 @@ fun HomeScreen(
         Box(
             Modifier
                 .fillMaxSize()
-                .focusRequester(homeFocus)
+                .pointerInput(networksOpen) {
+                    if (networksOpen) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                val p = e.changes.firstOrNull { it.pressed && !it.previousPressed }?.position
+                                if (p != null && !menuBounds.contains(p) && !chipBounds.contains(p)) networksOpen = false
+                            }
+                        }
+                    }
+                }.focusRequester(homeFocus)
                 .onPreviewKeyEvent { e ->
                     val paste = e.type == KeyEventType.KeyDown && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
-                    if (!paste || dialogOpen) {
+                    if (!paste || dialogOpen || renaming) {
                         false
                     } else {
                         scope.launch {
                             val link = pasteLink(clipboardText(), dialogOpen)
                             if (link != null) {
                                 dialogInitial = link
+                                networksOpen = false
                                 dialogOpen = true
                             }
                         }
@@ -111,11 +136,14 @@ fun HomeScreen(
                     filter,
                     { filter = it },
                     downloads.count { it.status == DownloadStatus.Downloading },
-                    initial.network,
+                    networks,
                     unit,
+                    { networksOpen = !networksOpen && !dialogOpen },
+                    { chipBounds = it },
                     {
                         if (!dialogOpen) {
                             dialogInitial = ""
+                            networksOpen = false
                             dialogOpen = true
                         }
                     },
@@ -163,10 +191,30 @@ fun HomeScreen(
                 }
                 Footer(initial.freeBytes, slow, { slow = it }, unit, { unit = it }, dark) { dark = !dark }
             }
+            if (networksOpen && !dialogOpen) {
+                val density = LocalDensity.current
+                NetworksMenu(
+                    networks,
+                    { next ->
+                        networks.clear()
+                        networks.addAll(next)
+                    },
+                    unit,
+                    { networksOpen = false },
+                    onEditingChange = { renaming = it },
+                    modifier =
+                        Modifier
+                            .offset {
+                                val width = with(density) { NetworksMenuWidth.roundToPx() }
+                                val gap = with(density) { 6.dp.roundToPx() }
+                                IntOffset((chipBounds.right.toInt() - width).coerceAtLeast(0), chipBounds.bottom.toInt() + gap)
+                            }.onGloballyPositioned { menuBounds = it.boundsInRoot() },
+                )
+            }
             if (dialogOpen) {
                 NewDownloadDialog(
                     dialogInitial,
-                    initial.networkNames,
+                    networks.filter { it.enabled },
                     onCancel = { dialogOpen = false },
                     onDownload = { preview, ticked ->
                         downloads.add(newDownloadItem(preview, ticked, nextId(downloads)))

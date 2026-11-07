@@ -62,7 +62,7 @@ private val streamOptions = listOf("auto" to "Auto", "4" to "4", "8" to "8", "16
 @Composable
 fun NewDownloadDialog(
     initialText: String,
-    networkNames: List<String>,
+    networks: List<Network>,
     onCancel: () -> Unit,
     onDownload: (Preview, Set<String>) -> Unit,
 ) {
@@ -127,10 +127,10 @@ fun NewDownloadDialog(
                 }
                 OptionRow("Networks") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        networkNames.forEachIndexed { i, n -> NetworkPill(n, if (i == 0) c.success else c.accent) }
+                        networks.forEach { n -> NetworkPill(n.name, if (n.kind == NetworkKind.WiFi) c.success else c.accent) }
                     }
                 }
-                if (networkNames.size >= 2 && preview?.parallel == true) {
+                if (networks.size >= 2 && preview?.parallel == true) {
                     OptionRow("Streams") {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             streamOptions.forEach { (key, label) -> StreamButton(key, label, streams == key) { streams = key } }
