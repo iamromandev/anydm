@@ -188,3 +188,31 @@ fun ThemeIcon(
         }
     }
 }
+
+@Composable
+fun CloseIcon(color: Color) {
+    Canvas(Modifier.size(12.dp)) {
+        val w = size.width
+        val st = 1.6f * density
+        drawLine(color, Offset(w * .15f, w * .15f), Offset(w * .85f, w * .85f), st, StrokeCap.Round)
+        drawLine(color, Offset(w * .85f, w * .15f), Offset(w * .15f, w * .85f), st, StrokeCap.Round)
+    }
+}
+
+@Composable
+fun FolderIcon(color: Color) {
+    Canvas(Modifier.size(16.dp)) {
+        val w = size.width
+        val p =
+            androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * .1f, w * .25f)
+                lineTo(w * .4f, w * .25f)
+                lineTo(w * .5f, w * .36f)
+                lineTo(w * .9f, w * .36f)
+                lineTo(w * .9f, w * .8f)
+                lineTo(w * .1f, w * .8f)
+                close()
+            }
+        drawPath(p, color, style = Stroke(width = 1.3f * density, cap = StrokeCap.Round))
+    }
+}

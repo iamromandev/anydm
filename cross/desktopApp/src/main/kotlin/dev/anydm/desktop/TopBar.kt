@@ -39,6 +39,7 @@ fun TopBar(
     downloadingCount: Int,
     network: NetworkInfo,
     unit: SpeedUnit,
+    onNewDownload: () -> Unit = {},
 ) {
     val c = colors
     Row(
@@ -90,7 +91,7 @@ fun TopBar(
                 .testTag("new-download")
                 .height(36.dp)
                 .background(c.accent, RoundedCornerShape(Radius))
-                .clickable(role = Role.Button) {}
+                .clickable(role = Role.Button, onClick = onNewDownload)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

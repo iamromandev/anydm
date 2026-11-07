@@ -20,6 +20,7 @@ data class HomeState(
     val downloads: List<DownloadItem>,
     val network: NetworkInfo,
     val freeBytes: Long,
+    val networkNames: List<String> = listOf("Wi-Fi"),
 )
 
 enum class Filter(
