@@ -58,6 +58,8 @@ fun PButton(
     glyph: Glyph? = null,
     hint: String? = null,
     enabled: Boolean = true,
+    /** The footer's height (26 dp) instead of the usual 32 dp. */
+    compact: Boolean = false,
 ) {
     val colors = Plexo.colors
     val source = remember { MutableInteractionSource() }
@@ -72,7 +74,7 @@ fun PButton(
     val shape = RoundedCornerShape(PlexoRadius)
     Row(
         modifier
-            .height(32.dp)
+            .height(if (compact) 26.dp else 32.dp)
             .clip(shape)
             .background(fill)
             .let { if (edge != null) it.border(BorderStroke(0.5.dp, edge), shape) else it }

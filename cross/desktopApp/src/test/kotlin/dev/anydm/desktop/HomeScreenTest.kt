@@ -22,6 +22,10 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -167,6 +171,36 @@ internal class HomeScreenTest {
                 }
             onNodeWithText("2 networks").assertIsDisplayed()
             onNodeWithText("5.0 MB/s").assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `the top bar holds Back, the filter, the pill and New download, and Browsers is not in it`() =
+        runComposeUiTest {
+            val shown =
+                show {
+                    it.downloads.value = two()
+                    it.networks.value = BondingState(listOf(network("en0"), network("en7")))
+                }
+
+            fun inBar(text: String) = hasText(text) and hasAnyAncestor(hasTestTag("top-bar"))
+            onNode(hasContentDescription("Back") and hasAnyAncestor(hasTestTag("top-bar"))).assertIsDisplayed()
+            onNode(inBar("All downloads")).assertIsDisplayed()
+            onNode(inBar("2 networks")).assertIsDisplayed()
+            onNode(inBar("New download")).assertIsDisplayed()
+            onNode(inBar("Browsers")).assertDoesNotExist()
+            onNode(hasText("Browsers") and hasAnyAncestor(hasTestTag("footer"))).assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a selection replaces the top bar`() =
+        runComposeUiTest {
+            val shown = show { it.downloads.value = two() }
+            onNodeWithTag("top-bar").assertIsDisplayed()
+            onNodeWithContentDescription("Select all downloading downloads").performClick()
+            onNodeWithTag("top-bar").assertDoesNotExist()
+            onNodeWithContentDescription("Selected downloads").assertIsDisplayed()
             shown.scope.cancel()
         }
 

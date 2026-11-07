@@ -1,6 +1,10 @@
 package dev.anydm.desktop
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertContentDescriptionEquals
@@ -16,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 internal class UpdateIndicatorTest {
@@ -28,12 +33,21 @@ internal class UpdateIndicatorTest {
         theme: ThemeChoice = ThemeChoice.DARK,
         onMenuOpen: (Boolean) -> Unit = {},
         keys: WindowKeys = WindowKeys(),
+        upward: Boolean = false,
     ) {
         val session = UpdateSession(controls, files, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined)
         setContent {
             PlexoTheme(theme) {
                 LaunchedEffect(session) { session.collectEvents() }
-                UpdateIndicator(session, onMenuOpen)
+                if (upward) {
+                    // As in the footer: at the bottom of the window.
+                    Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.BottomEnd,
+                    ) { UpdateIndicator(session, onMenuOpen, upward = true) }
+                } else {
+                    UpdateIndicator(session, onMenuOpen)
+                }
                 UpdateDialogs(session, keys)
             }
         }
@@ -80,6 +94,18 @@ internal class UpdateIndicatorTest {
             onNodeWithTag("update-menu-check").assertIsDisplayed()
             onNodeWithText("Check for Updates…").assertIsDisplayed()
             onNodeWithTag("update-menu-auto").assertIsOn()
+        }
+
+    @Test
+    fun `opened upward the menu sits above the button inside the window`() =
+        runComposeUiTest {
+            show(FakeUpdateControls(), upward = true)
+            onNodeWithTag("update-button").performClick()
+            val button = onNodeWithTag("update-button").fetchSemanticsNode().boundsInRoot
+            val menu = onNodeWithTag("update-menu").fetchSemanticsNode().boundsInRoot
+            assertTrue(menu.bottom <= button.top, "menu $menu should end above button $button")
+            assertTrue(menu.top >= 0f, "menu $menu should start inside the window")
+            assertTrue(menu.right <= button.right + 1f, "menu $menu should line up with the button's right edge")
         }
 
     @Test

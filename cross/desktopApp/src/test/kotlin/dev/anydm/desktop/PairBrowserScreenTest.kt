@@ -9,6 +9,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -413,7 +414,7 @@ internal class PairBrowserScreenTest {
         }
 
     @Test
-    fun `the header's Browsers button opens the dialog and Done puts it away`() =
+    fun `the footer's Browsers button opens the dialog and Done puts it away`() =
         runComposeUiTest {
             val keys = WindowKeys()
             setContent {
@@ -430,7 +431,7 @@ internal class PairBrowserScreenTest {
                 )
             }
             until { has("Browsers") }
-            onNodeWithText("Browsers").performClick()
+            onNode(hasText("Browsers") and hasAnyAncestor(hasTestTag("footer"))).performClick()
             until { hasDesc("Browsers dialog") }
             until { keys.blocked }
             onNodeWithText("Done").performClick()

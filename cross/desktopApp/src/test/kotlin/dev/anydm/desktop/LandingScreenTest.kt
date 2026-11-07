@@ -21,6 +21,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -51,10 +52,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 internal class LandingScreenTest {
     private val mib = 1024L * 1024
     private val link = "https://example.com/files/Project.zip"
@@ -495,6 +497,64 @@ internal class LandingScreenTest {
             onNodeWithTag("network-switch-en0").performClick()
             onNodeWithTag("network-switch-usb0").performClick()
             until { has("No network is on, so downloads use your system's default connection.") }
+        }
+
+    // The top bar
+
+    private fun ComposeUiTest.inBar(text: String) = hasText(text) and hasAnyAncestor(hasTestTag("top-bar"))
+
+    @Test
+    fun `the top bar shows anydm and the pill, and no New download, Browsers or update button`() =
+        runComposeUiTest {
+            showApp()
+            until { has("2 networks") }
+            onNode(inBar("anydm")).assertIsDisplayed()
+            onNode(inBar("2 networks")).assertIsDisplayed()
+            onNode(hasText("New download")).assertDoesNotExist()
+            onNode(hasText("Browsers")).assertDoesNotExist()
+            onNodeWithTag("update-button").assertDoesNotExist()
+        }
+
+    @Test
+    fun `the pill opens the networks menu and its limits link opens the limits`() =
+        runComposeUiTest {
+            val shown = showApp()
+            until { has("2 networks") }
+            onNodeWithContentDescription("Networks menu").assertDoesNotExist()
+            onNode(inBar("2 networks")).performClick()
+            onNodeWithContentDescription("Networks menu").assertIsDisplayed()
+            onNode(hasText("Speed & data limits") and hasAnyAncestor(hasContentDescription("Networks menu"))).performClick()
+            until { shown.limits == listOf<String?>(null) }
+        }
+
+    private fun pasteKey() =
+        androidx.compose.ui.input.key.KeyEvent(
+            Key.V,
+            KeyEventType.KeyDown,
+            isMetaPressed = IsMac,
+            isCtrlPressed = !IsMac,
+        )
+
+    @Test
+    fun `the paste shortcut waits while the networks menu is open`() =
+        runComposeUiTest {
+            val shown = showApp()
+            shown.source.clipboardText = link
+            until { has("2 networks") }
+            onNode(inBar("2 networks")).performClick()
+            onNodeWithContentDescription("Networks menu").assertIsDisplayed()
+            // The window hands the key to the shortcuts before the popup that has the focus sees it.
+            runOnIdle { assertFalse(shown.keys.dispatch(pasteKey())) }
+            waitForIdle()
+            onNodeWithContentDescription("Link").assertTextEquals("")
+        }
+
+    @Test
+    fun `with no networks the pill says No network`() =
+        runComposeUiTest {
+            showApp { it.networks.value = BondingState(emptyList()) }
+            until { has("No network") }
+            onNode(inBar("No network")).assertIsDisplayed()
         }
 
     @Test

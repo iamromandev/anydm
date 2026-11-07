@@ -71,7 +71,7 @@ fun HomeScreen(
     networks: Pair<NetworksModel, NetworkEditor>? = null,
     /** Opens the Browsers (pairing) dialog. */
     onBrowsers: () -> Unit = {},
-    /** The update button's session; none, and the header shows no button. */
+    /** The update button's session; none, and the footer shows no button. */
     updates: UpdateSession? = null,
     /** Opens the Limits dialog, for a row's limit line. */
     onLimits: (String?) -> Unit = {},
@@ -161,8 +161,6 @@ fun HomeScreen(
                     onMenuOpen = { menuOpen = it },
                     onBack = onBack,
                     onNewDownload = { onNewDownload(emptyList()) },
-                    onBrowsers = onBrowsers,
-                    updates = { updates?.let { UpdateIndicator(it, onMenuOpen = { open -> menuOpen = open }) } },
                     networksMenu = { networks?.let { (menu, editor) -> NetworksMenu(menu, editor, footerState.unit, keys) } },
                 )
             } else {
@@ -209,7 +207,10 @@ fun HomeScreen(
                     }
                 }
             }
-            Footer(footerState, footer)
+            Footer(footerState, footer) {
+                updates?.let { UpdateIndicator(it, onMenuOpen = { open -> menuOpen = open }, upward = true) }
+                PButton("Browsers", onBrowsers, compact = true)
+            }
         }
         if (state.confirmClear) {
             ConfirmDialog(

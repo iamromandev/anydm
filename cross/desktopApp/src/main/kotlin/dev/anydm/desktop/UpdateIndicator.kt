@@ -57,7 +57,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 
 /**
- * The header's update button: an icon and, for some states, a word beside it; its tooltip repeats the [UpdateIndicatorModel] label.
+ * The update button: an icon and, for some states, a word beside it; its tooltip repeats the [UpdateIndicatorModel] label.
  * A click opens the menu of what can be done now. [onMenuOpen] tells the window to hold its shortcuts while the menu is up.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -65,6 +65,8 @@ import androidx.compose.ui.window.PopupProperties
 fun UpdateIndicator(
     session: UpdateSession,
     onMenuOpen: (Boolean) -> Unit = {},
+    /** For a button in the footer: opens the menu above it, and the button is as tall as the footer's other controls. */
+    upward: Boolean = false,
 ) {
     val colors = Plexo.colors
     val state by session.controls.state.collectAsState()
@@ -91,7 +93,7 @@ fun UpdateIndicator(
         ) {
             Row(
                 Modifier
-                    .height(32.dp)
+                    .height(if (upward) 26.dp else 32.dp)
                     .clip(RoundedCornerShape(PlexoRadius))
                     .clickable(role = Role.Button) { open = true }
                     .padding(horizontal = 8.dp)
@@ -109,7 +111,7 @@ fun UpdateIndicator(
             }
         }
         if (open) {
-            UpdateMenu(state, auto, session, onDismiss = { open = false })
+            UpdateMenu(state, auto, session, upward, onDismiss = { open = false })
         }
     }
 }
@@ -126,13 +128,15 @@ private fun UpdateMenu(
     state: UpdateState,
     auto: Boolean,
     session: UpdateSession,
+    upward: Boolean,
     onDismiss: () -> Unit,
 ) {
     val colors = Plexo.colors
     val controls = session.controls
+    val gap = with(LocalDensity.current) { 36.dp.roundToPx() }
     Popup(
-        alignment = Alignment.TopEnd,
-        offset = IntOffset(0, with(LocalDensity.current) { 36.dp.roundToPx() }),
+        alignment = if (upward) Alignment.BottomEnd else Alignment.TopEnd,
+        offset = IntOffset(0, if (upward) -gap else gap),
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {

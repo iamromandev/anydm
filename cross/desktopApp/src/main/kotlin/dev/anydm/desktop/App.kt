@@ -214,6 +214,7 @@ fun App(
                                 navigator::downloads,
                                 unit = footer.unit,
                                 onLimits = { models.networks.openLimits(null) },
+                                networks = models.networks,
                             )
                         }
 

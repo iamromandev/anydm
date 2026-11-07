@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -25,6 +27,8 @@ import androidx.compose.ui.unit.dp
 fun Footer(
     state: FooterState,
     model: FooterModel,
+    /** Controls a screen adds before Slow mode, such as Browsers and the update button. */
+    extras: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = Plexo.colors
     Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.footerBorder))
@@ -32,13 +36,15 @@ fun Footer(
         Modifier
             .fillMaxWidth()
             .background(colors.bgSecondary)
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .testTag("footer"),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Txt(state.freeSpace?.let { "${formatBytes(it)} free" } ?: "", Plexo.type.footer, Modifier.weight(1f), color = colors.textTertiary)
         state.message?.let { Txt(it, Plexo.type.footer, color = colors.danger) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            extras()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Txt("Slow mode", Plexo.type.footer, color = colors.textTertiary)
                 PSwitch(state.slowMode, { model.toggleSlowMode() }, "Slow mode")

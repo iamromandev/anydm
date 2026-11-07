@@ -49,15 +49,14 @@ fun LandingScreen(
     onDownloads: () -> Unit,
     unit: SpeedUnit = SpeedUnit.BYTES,
     onLimits: () -> Unit = {},
+    /** The networks menu under the top bar's pill; none, and the pill does nothing. */
+    networks: NetworksModel? = null,
 ) {
     val colors = Plexo.colors
     val scope = rememberCoroutineScope()
     val entry by session.model.collectAsState()
-    val count =
-        home.state
-            .collectAsState()
-            .value.groups
-            .sumOf { it.rows.size }
+    val homeState by home.state.collectAsState()
+    val count = homeState.groups.sumOf { it.rows.size }
     var fieldFocused by remember { mutableStateOf(false) }
     val focused by rememberUpdatedState(fieldFocused)
     DisposableEffect(keys, source, session) {
@@ -74,40 +73,70 @@ fun LandingScreen(
         keys.handler = handler
         onDispose { if (keys.handler === handler) keys.handler = null }
     }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(colors.bg)
-            .dropTorrents(session::dropped),
-        contentAlignment = Alignment.Center,
-    ) {
-        // One form at a time on show: a new model after a start shows a blank field.
-        androidx.compose.runtime.key(entry.id) {
-            val model = entry.model
-            val state by model.state.collectAsState()
-            // Also true when the page is shown again after it was left mid-start: the start finished meanwhile.
-            LaunchedEffect(state.done) {
-                if (state.done) {
-                    session.reset()
-                    onDownloads()
+    Column(Modifier.fillMaxSize().background(colors.bg).dropTorrents(session::dropped)) {
+        LandingBar(
+            homeState.pill,
+            unit,
+            onNetworks = { networks?.toggle() },
+            menu = { networks?.let { NetworksMenu(it, editor, unit, keys) } },
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            // One form at a time on show: a new model after a start shows a blank field.
+            androidx.compose.runtime.key(entry.id) {
+                val model = entry.model
+                val state by model.state.collectAsState()
+                // Also true when the page is shown again after it was left mid-start: the start finished meanwhile.
+                LaunchedEffect(state.done) {
+                    if (state.done) {
+                        session.reset()
+                        onDownloads()
+                    }
                 }
-            }
-            Column(
-                Modifier
-                    .widthIn(max = 560.dp)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Txt("What do you want to get?", Plexo.type.title)
-                NewDownloadForm(model, state, pickers, editor, keys, onFieldFocus = { fieldFocused = it }, unit = unit, onLimits = onLimits)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("Downloads ($count)", onDownloads, kind = ButtonKind.GHOST)
-                    Box(Modifier.weight(1f))
-                    PButton(state.startLabel, model::start, kind = ButtonKind.PRIMARY, enabled = state.canStart)
+                Column(
+                    Modifier
+                        .widthIn(max = 560.dp)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Txt("What do you want to get?", Plexo.type.title)
+                    NewDownloadForm(
+                        model,
+                        state,
+                        pickers,
+                        editor,
+                        keys,
+                        onFieldFocus = { fieldFocused = it },
+                        unit = unit,
+                        onLimits = onLimits,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PButton("Downloads ($count)", onDownloads, kind = ButtonKind.GHOST)
+                        Box(Modifier.weight(1f))
+                        PButton(state.startLabel, model::start, kind = ButtonKind.PRIMARY, enabled = state.canStart)
+                    }
                 }
             }
         }
     }
+}
+
+/** The landing page's top bar: the app's name on the left, the networks pill and its menu on the right. */
+@Composable
+private fun LandingBar(
+    pill: NetworksPill,
+    unit: SpeedUnit,
+    onNetworks: () -> Unit,
+    menu: @Composable () -> Unit,
+) {
+    TopBar(
+        start = { Txt("anydm", Plexo.type.menu) },
+        end = { NetworksControl(pill, unit, onNetworks, menu) },
+    )
 }

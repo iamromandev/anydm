@@ -7,10 +7,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -33,7 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 internal class AppNavigationTest {
     private val mib = 1024L * 1024
 
@@ -189,19 +194,65 @@ internal class AppNavigationTest {
         }
 
     @Test
-    fun `the downloads header shows the update button when the app has an updater`() =
+    fun `the downloads footer shows the update button when the app has an updater`() =
         runComposeUiTest {
             val controls = FakeUpdateControls()
             setContent { App(FakeSource(), MemoryViewPrefs(), files = FakeFileActions(), navigator = onDownloads(), updates = controls) }
-            onNodeWithTag("update-button").assertIsDisplayed()
+            onNode(hasTestTag("update-button") and hasAnyAncestor(hasTestTag("footer"))).assertIsDisplayed()
+            onNode(hasTestTag("update-button") and hasAnyAncestor(hasTestTag("top-bar"))).assertDoesNotExist()
         }
 
     @Test
-    fun `the downloads header has no update button without an updater`() =
+    fun `the downloads footer has no update button without an updater and keeps Browsers`() =
         runComposeUiTest {
             setContent { App(FakeSource(), MemoryViewPrefs(), files = FakeFileActions(), navigator = onDownloads()) }
-            onNodeWithText("Browsers").assertIsDisplayed()
+            onNode(hasText("Browsers") and hasAnyAncestor(hasTestTag("footer"))).assertIsDisplayed()
+            onNode(hasText("Browsers") and hasAnyAncestor(hasTestTag("top-bar"))).assertDoesNotExist()
             onNodeWithTag("update-button").assertDoesNotExist()
+        }
+
+    @Test
+    fun `the downloads footer is as tall as the detail footer even with Browsers and the update button`() =
+        runComposeUiTest {
+            val source =
+                FakeSource().apply {
+                    downloads.value =
+                        listOf(
+                            snapshot(1, DOWNLOADING, name = "a.bin", total = 10, downloaded = 1),
+                        )
+                }
+            val navigator = onDownloads()
+            setContent {
+                App(source, MemoryViewPrefs(), files = FakeFileActions(), navigator = navigator, updates = FakeUpdateControls())
+            }
+            onNodeWithTag("update-button").assertIsDisplayed()
+            val home = onNodeWithTag("footer").fetchSemanticsNode().boundsInRoot.height
+            runOnIdle { navigator.open(DownloadId(1)) }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Browsers").fetchSemanticsNodes().isEmpty() }
+            val detail = onNodeWithTag("footer").fetchSemanticsNode().boundsInRoot.height
+            assertEquals(detail, home)
+        }
+
+    @Test
+    fun `window shortcuts wait while the footer's update menu is open`() =
+        runComposeUiTest {
+            val source =
+                FakeSource().apply {
+                    downloads.value =
+                        listOf(
+                            snapshot(1, DOWNLOADING, name = "a.bin", total = 10, downloaded = 1),
+                        )
+                }
+            val navigator = onDownloads()
+            val keys = WindowKeys()
+            setContent {
+                App(source, MemoryViewPrefs(), keys, files = FakeFileActions(), navigator = navigator, updates = FakeUpdateControls())
+            }
+            onNodeWithTag("update-button").performClick()
+            onNodeWithTag("update-menu").assertIsDisplayed()
+            runOnIdle { keys.dispatch(KeyEvent(Key.Escape, KeyEventType.KeyDown)) }
+            waitForIdle()
+            assertEquals(Route.Downloads, navigator.route.value)
         }
 
     @Test

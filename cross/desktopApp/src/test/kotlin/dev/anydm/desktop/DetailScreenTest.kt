@@ -105,6 +105,16 @@ internal class DetailScreenTest {
         return Shown(source, files, keys, scope, window, backs, limits)
     }
 
+    @Test
+    fun `the footer has no Browsers and no update button`() =
+        runComposeUiTest {
+            val shown = show(snapshot(1, DOWNLOADING, name = "Project.zip", total = 10, downloaded = 1))
+            onNodeWithTag("footer").assertIsDisplayed()
+            onNodeWithText("Browsers").assertDoesNotExist()
+            onNodeWithTag("update-button").assertDoesNotExist()
+            shown.scope.cancel()
+        }
+
     private fun network(
         key: String,
         name: String,

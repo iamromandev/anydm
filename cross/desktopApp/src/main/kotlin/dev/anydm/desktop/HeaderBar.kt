@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -33,6 +35,42 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 
 private val HeaderHeight = 48.dp
+
+/** The frame both screens' top bars share: a row [start] and [end] with free space between them, and the rule under it. */
+@Composable
+internal fun TopBar(
+    start: @Composable RowScope.() -> Unit,
+    end: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(HeaderHeight)
+            .padding(horizontal = 20.dp)
+            .testTag("top-bar"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        start()
+        Spacer(Modifier.weight(1f))
+        end()
+    }
+    HeaderRule()
+}
+
+/** The networks pill with the menu it opens, anchored to it: the same block on every screen. */
+@Composable
+internal fun NetworksControl(
+    pill: NetworksPill,
+    unit: SpeedUnit,
+    onClick: () -> Unit,
+    menu: @Composable () -> Unit,
+) {
+    Box {
+        NetworksPill(pill, unit, onClick)
+        menu()
+    }
+}
 
 /** What the header shows while nothing is selected: the filter, the count text, the networks pill and New download. */
 @Composable
@@ -45,35 +83,21 @@ fun HeaderBar(
     onNewDownload: () -> Unit,
     /** Leaves the list for the landing page. */
     onBack: () -> Unit,
-    /** Opens the dialog that pairs browsers. */
-    onBrowsers: () -> Unit = {},
     /** What opens under the networks pill: the networks menu. */
     networksMenu: @Composable () -> Unit = {},
-    /** The update button, left of Browsers; none when the app has no version to compare. */
-    updates: @Composable () -> Unit = {},
 ) {
     val colors = Plexo.colors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(HeaderHeight)
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(Glyph.CHEVRON_LEFT, "Back", onBack)
-        FilterMenu(state.filter, state.counts, onFilter, onMenuOpen)
-        state.summary?.let { Txt(it, Plexo.type.detail.copy(fontSize = Plexo.type.detail.fontSize), color = colors.textTertiary) }
-        Spacer(Modifier.weight(1f))
-        updates()
-        PButton("Browsers", onBrowsers)
-        Box {
-            NetworksPill(state.pill, unit, onNetworks)
-            networksMenu()
-        }
-        PButton("New download", onNewDownload, kind = ButtonKind.PRIMARY, glyph = Glyph.PLUS)
-    }
-    HeaderRule()
+    TopBar(
+        start = {
+            IconButton(Glyph.CHEVRON_LEFT, "Back", onBack)
+            FilterMenu(state.filter, state.counts, onFilter, onMenuOpen)
+            state.summary?.let { Txt(it, Plexo.type.detail, color = colors.textTertiary) }
+        },
+        end = {
+            NetworksControl(state.pill, unit, onNetworks, networksMenu)
+            PButton("New download", onNewDownload, kind = ButtonKind.PRIMARY, glyph = Glyph.PLUS)
+        },
+    )
 }
 
 @Composable
