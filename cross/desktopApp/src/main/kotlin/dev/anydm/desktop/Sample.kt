@@ -12,6 +12,7 @@ fun populatedSample() =
             ),
         network = NetworkInfo(2, 14 * MB),
         freeBytes = 78 * GB + GB / 2,
+        networkNames = listOf("Wi-Fi", "USB Tethering"),
     )
 
 fun emptySample() = HomeState(emptyList(), NetworkInfo(1, 0), 78 * GB + GB / 2)
