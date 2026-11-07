@@ -15,6 +15,7 @@ import dev.anydm.engine.core.MirrorId
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.DoctorReport
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
 import dev.anydm.engine.net.NewScheduleRule
@@ -211,6 +212,9 @@ interface EngineSource {
         key: String,
         enabled: Boolean,
     ): CommandResult
+
+    /** Checks every network and says why one may add no speed; sends requests and asks an outside server, so only on the user's request. */
+    suspend fun diagnose(): DoctorReport
 }
 
 /** Changes some of the transfer settings: reads them, applies [change] to them and applies the result, with nothing in between. */
@@ -362,6 +366,8 @@ fun Engine.asSource(
             key: String,
             enabled: Boolean,
         ) = engine.setNetworkEnabled(key, enabled)
+
+        override suspend fun diagnose() = engine.diagnose()
 
         private suspend fun told() = onTransfer(engine.transferSettings())
     }

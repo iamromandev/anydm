@@ -5,6 +5,7 @@ import dev.anydm.engine.TorrentDetailResult
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import dev.anydm.engine.torrent.PieceMap
@@ -101,6 +102,8 @@ data class FinishedStats(
     val thirdLabel: String,
     val contributions: List<DetailNetwork>,
     val written: String,
+    /** What bonding saved, when it is worth a line. */
+    val timeSaved: TimeSaved? = null,
 )
 
 data class DetailState(
@@ -122,6 +125,8 @@ data class DetailState(
     val speed: Long = 0,
     val avgSpeed: Long = 0,
     val peakSpeed: Long? = null,
+    /** What limits the speed now, while it downloads; null when nothing does (#634). */
+    val limit: SpeedLimit? = null,
     val badges: List<AloneBadge> = emptyList(),
     val retries: Int = 0,
     val networks: List<DetailNetwork> = emptyList(),
@@ -153,7 +158,12 @@ data class DetailState(
     val fixLinkOpen: Boolean = false,
     val fixLinkError: String? = null,
     val message: String? = null,
-)
+) {
+    val limitText: String? get() = limit?.let(::limitText)
+
+    /** The Limits dialog can change it. */
+    val limitFixable: Boolean get() = limit?.fixable == true
+}
 
 private data class DetailLocal(
     val confirm: DetailConfirm? = null,
@@ -596,6 +606,7 @@ class DetailModel(
             speed = if (moving) snapshot.speed else 0,
             avgSpeed = if (seconds != null && seconds > 0) snapshot.downloaded / seconds else 0,
             peakSpeed = peakSpeed,
+            limit = if (moving) snapshot.limitedBy else null,
             badges = badges,
             retries = failed,
             networks = networks,
@@ -697,6 +708,14 @@ class DetailModel(
             thirdLabel = if (torrent) "Peers" else "Chunks",
             contributions = carried,
             written = written,
+            // Deliberately an estimate ("about"): it uses every attempt's seconds and the lifetime shares.
+            // Only a download that really finished saves time; FINISHED also covers CANCELLED.
+            timeSaved =
+                if (seconds != null && snapshot.download.status.let { it == DownloadStatus.COMPLETED || it == DownloadStatus.SEEDING }) {
+                    timeSaved(carried.sumOf { it.bytes }, seconds, carried.map { it.name to it.bytes })
+                } else {
+                    null
+                },
         )
     }
 

@@ -22,9 +22,12 @@ internal class NetworksModelTest {
         name: String = key,
         speed: Double? = null,
         up: Boolean = true,
-    ) = BondedNetwork(NetworkInfo(key, name, up, emptyList()), true, BindStatus.ISOLATED, speed, false)
+        faulted: Boolean = false,
+        enabled: Boolean = true,
+    ) = BondedNetwork(NetworkInfo(key, name, up, emptyList()), enabled, BindStatus.ISOLATED, speed, faulted)
 
     private class Setup(
+        val doctor: MutableList<Unit>,
         val source: FakeSource,
         val visuals: NetworkVisuals,
         val model: NetworksModel,
@@ -40,8 +43,9 @@ internal class NetworksModelTest {
             val visuals = NetworkVisuals(null)
             val looks = NetworkLooksModel(source, visuals, backgroundScope)
             val limits = mutableListOf<String?>()
-            val model = NetworksModel(source, looks.looks, backgroundScope) { limits += it }
-            block(Setup(source, visuals, model, NetworkEditor(visuals, looks.looks), limits))
+            val doctor = mutableListOf<Unit>()
+            val model = NetworksModel(source, looks.looks, backgroundScope, onOpenDoctor = { doctor += Unit }) { limits += it }
+            block(Setup(doctor, source, visuals, model, NetworkEditor(visuals, looks.looks), limits))
         }
 
     @Test
@@ -283,5 +287,42 @@ internal class NetworksModelTest {
                 s.editor.editing.value!!
                     .anchor,
             )
+        }
+
+    @Test
+    fun `an idle, a down and a failing network can ask why they add no speed, a busy one cannot`() =
+        menu { s ->
+            s.source.networks.value =
+                BondingState(
+                    listOf(
+                        network("busy", speed = 3_000_000.0),
+                        network("idle"),
+                        network("down", up = false),
+                        network("bad", speed = 1_000.0, faulted = true),
+                    ),
+                )
+            val help =
+                s.model.state.value.rows
+                    .associate { it.key to it.canDiagnose }
+            assertEquals(mapOf("bad" to true, "busy" to false, "down" to true, "idle" to true), help)
+        }
+
+    @Test
+    fun `a network switched off does not offer the why link`() =
+        menu { s ->
+            s.source.networks.value = BondingState(listOf(network("off", enabled = false), network("on")))
+            val help =
+                s.model.state.value.rows
+                    .associate { it.key to it.canDiagnose }
+            assertEquals(mapOf("off" to false, "on" to true), help)
+        }
+
+    @Test
+    fun `the doctor entry closes the menu and opens the doctor`() =
+        menu { s ->
+            s.model.open()
+            s.model.openDoctor()
+            assertFalse(s.model.state.value.open)
+            assertEquals(1, s.doctor.size)
         }
 }

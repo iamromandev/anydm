@@ -99,12 +99,14 @@ fun DetailRoute(
     naming: Pair<StateFlow<NetworkLooks>, NetworkEditor>? = null,
     /** Links and `.torrent` paths pasted or dropped on the page go to the new download dialog. */
     onNewDownload: (List<String>) -> Unit = {},
+    /** Opens the Limits dialog (on a network's page for a data limit), for the limit line. */
+    onLimits: (String?) -> Unit = {},
 ) {
     // One key for both: a model never outlives or outruns the scope it runs in.
     val own = remember(source, files, id) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     DisposableEffect(own) { onDispose { own.cancel() } }
     val model = remember(own) { DetailModel(source, files, id, own, looks = naming?.first ?: MutableStateFlow(NetworkLooks())) }
-    DetailScreen(model, footer, onBack, keys, naming?.second, source.clipboard, onNewDownload)
+    DetailScreen(model, footer, onBack, keys, naming?.second, source.clipboard, onNewDownload, onLimits)
 }
 
 @Composable
@@ -116,6 +118,7 @@ fun DetailScreen(
     editor: NetworkEditor? = null,
     clipboard: Clipboard = Clipboard.None,
     onNewDownload: (List<String>) -> Unit = {},
+    onLimits: (String?) -> Unit = {},
 ) {
     val colors = Plexo.colors
     val state by model.state.collectAsState()
@@ -170,7 +173,7 @@ fun DetailScreen(
             state.message?.let { Banner(it, model::dismissMessage) }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (state.kind) {
-                    DetailKind.ACTIVE, DetailKind.TORRENT -> ActiveBody(state, model, footerState.unit, editor, keys)
+                    DetailKind.ACTIVE, DetailKind.TORRENT -> ActiveBody(state, model, footerState.unit, editor, keys, onLimits)
                     DetailKind.FINISHED -> FinishedBody(state, footerState.unit)
                     DetailKind.FAILED -> FailedBody(state, model)
                 }
@@ -242,6 +245,7 @@ private fun ActiveBody(
     unit: SpeedUnit,
     editor: NetworkEditor?,
     keys: WindowKeys,
+    onLimits: (String?) -> Unit,
 ) {
     val colors = Plexo.colors
     val swatches = LocalNetworkLooks.current.swatches(colors)
@@ -266,6 +270,7 @@ private fun ActiveBody(
                             }
                         }
                     BigStat("TOTAL SPEED", value, speedUnit, if (state.paused) colors.textTertiary else colors.text)
+                    state.limit?.let { LimitLine(it, onLimits, Plexo.type.badge, Modifier.widthIn(max = 220.dp)) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         InlineStat("AVG", formatRate(state.avgSpeed, unit))
                         Txt("·", Plexo.type.badge, color = colors.textTertiary)
@@ -703,8 +708,11 @@ private fun FinishedBody(
         }
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             SectionLabel("Contribution by network")
+            val barDescription = "Contribution by network: " + stats.contributions.joinToString(", ") { "${it.name} ${it.share}%" }
+            stats.timeSaved?.let { Txt(it.text, Plexo.type.hint.copy(fontWeight = FontWeight.Medium), color = colors.accent) }
             Row(
                 Modifier
+                    .semantics { contentDescription = barDescription }
                     .fillMaxWidth()
                     .height(10.dp)
                     .clip(CircleShape)

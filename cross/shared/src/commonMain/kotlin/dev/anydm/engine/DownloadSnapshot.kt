@@ -6,6 +6,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.ItemCounts
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.Segment
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.torrent.TorrentSummary
 
 /**
@@ -38,6 +39,8 @@ data class DownloadSnapshot(
      * resumed after it (only the bytes counted since). A collection's is its items' sum.
      */
     val networkShare: Map<String, Long> = emptyMap(),
+    /** What limits it most while it runs below its recent peak or at a cap (#634), held a few seconds; null when nothing does or it is not running. */
+    val limitedBy: SpeedLimit? = null,
 )
 
 /**

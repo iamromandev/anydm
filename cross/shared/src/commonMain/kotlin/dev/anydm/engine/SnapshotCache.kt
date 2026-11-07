@@ -8,6 +8,7 @@ import dev.anydm.engine.core.DownloadStatus
 import dev.anydm.engine.core.Mirror
 import dev.anydm.engine.core.collectionStatus
 import dev.anydm.engine.core.itemCounts
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.torrent.TorrentLive
 import dev.anydm.engine.torrent.TorrentSummary
 
@@ -28,7 +29,11 @@ internal class SnapshotCache {
         var torrent: TorrentSummary? = null
         var liveDone: List<Long>? = null
         var speed = 0L
+        var limit: SpeedLimit? = null
         val samples = ArrayDeque<Long>()
+
+        // How many of the samples came in the current run: a peak from an earlier run is not this run's.
+        var runSamples = 0
         val share = mutableMapOf<String, Long>()
     }
 
@@ -110,13 +115,43 @@ internal class SnapshotCache {
         entry.speed = sample
         entry.samples.addLast(sample)
         while (entry.samples.size > SpeedWindow.SIZE) entry.samples.removeFirst()
+        entry.runSamples++
     }
 
-    /** It no longer runs: no live progress, no speed; its window stays. */
+    /** The last one-second speed of [id], 0 when it has none. */
+    fun speedOf(id: DownloadId): Long = entries[id.value]?.speed ?: 0L
+
+    /** The highest of [id]'s last seconds of the current run, 0 when it has none. */
+    fun peak(id: DownloadId): Long {
+        val entry = entries[id.value] ?: return 0L
+        return entry.samples.takeLast(minOf(entry.runSamples, entry.samples.size)).maxOrNull() ?: 0L
+    }
+
+    /** [id] starts a new run: what it ran at before is no longer its peak. */
+    fun newRun(id: DownloadId) {
+        entries[id.value]?.runSamples = 0
+    }
+
+    /** Whether [id] has received bytes on the network with [key]. */
+    fun usesNetwork(
+        id: DownloadId,
+        key: String,
+    ): Boolean = (entries[id.value]?.share?.get(key) ?: 0L) > 0L
+
+    /** What limits [id] now. */
+    fun limit(
+        id: DownloadId,
+        limit: SpeedLimit?,
+    ) {
+        entries[id.value]?.limit = limit
+    }
+
+    /** It no longer runs: no live progress, no speed, no limit; its window stays. */
     fun stoppedRunning(id: DownloadId) {
         val entry = entries[id.value] ?: return
         entry.live = null
         entry.speed = 0
+        entry.limit = null
     }
 
     /** The jobs that have a torrent summary now. */
@@ -196,6 +231,7 @@ internal class SnapshotCache {
                 files = files,
                 torrent = entry.torrent,
                 networkShare = entry.share.toMap(),
+                limitedBy = entry.limit,
             )
         }
 }

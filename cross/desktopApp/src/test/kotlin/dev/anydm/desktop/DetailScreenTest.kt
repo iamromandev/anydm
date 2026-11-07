@@ -33,6 +33,8 @@ import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.FileSnapshot
 import dev.anydm.engine.TorrentActionResult
 import dev.anydm.engine.TorrentDetailResult
+import dev.anydm.engine.core.Attempt
+import dev.anydm.engine.core.AttemptId
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadStatus.COMPLETED
 import dev.anydm.engine.core.DownloadStatus.DOWNLOADING
@@ -47,6 +49,7 @@ import dev.anydm.engine.net.BindStatus
 import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.torrent.PieceMap
 import dev.anydm.engine.torrent.TorrentDetail
 import dev.anydm.engine.torrent.TorrentPeer
@@ -60,6 +63,7 @@ import kotlinx.coroutines.cancel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 
 @OptIn(ExperimentalTestApi::class)
 internal class DetailScreenTest {
@@ -73,6 +77,7 @@ internal class DetailScreenTest {
         val scope: CoroutineScope,
         val window: FocusRequester,
         val backs: IntArray,
+        val limits: MutableList<String?> = mutableListOf(),
     )
 
     private fun ComposeUiTest.show(
@@ -90,19 +95,26 @@ internal class DetailScreenTest {
         val keys = WindowKeys()
         val window = FocusRequester()
         val backs = IntArray(1)
+        val limits = mutableListOf<String?>()
         setContent {
             Box(Modifier.focusRequester(window).focusTarget().onPreviewKeyEvent { keys.dispatch(it) }) {
-                PlexoTheme(prefs.theme) { DetailScreen(model, footer, { backs[0]++ }, keys) }
+                PlexoTheme(prefs.theme) { DetailScreen(model, footer, { backs[0]++ }, keys, onLimits = { limits += it }) }
             }
             LaunchedEffect(Unit) { window.requestFocus() }
         }
-        return Shown(source, files, keys, scope, window, backs)
+        return Shown(source, files, keys, scope, window, backs, limits)
     }
 
     private fun network(
         key: String,
         name: String,
     ) = BondedNetwork(NetworkInfo(key, name, true, emptyList()), true, BindStatus.ISOLATED, null, false)
+
+    private fun attempt(
+        n: Long,
+        start: Long,
+        end: Long,
+    ) = Attempt(AttemptId(n), id, Instant.fromEpochSeconds(1_000 + start), null, Instant.fromEpochSeconds(1_000 + end), null, null)
 
     private fun mirror() = Mirror(MirrorId(9), id, "https://example.com/Project.zip", 0)
 
@@ -149,6 +161,43 @@ internal class DetailScreenTest {
             assertEquals(2, onAllNodesWithText("Wi-Fi").fetchSemanticsNodes().size)
             onNodeWithText("51%").assertIsDisplayed()
             onNodeWithText("49%").assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a slow download names its limit under the speed and the line opens Limits`() =
+        runComposeUiTest {
+            val shown = show(active().copy(limitedBy = SpeedLimit.SlowMode), twoNetworks)
+            onNodeWithText("Limited by slow mode").assertIsDisplayed()
+            onNodeWithText("Limited by slow mode").performClick()
+            assertEquals(listOf<String?>(null), shown.limits)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a data limit opens Limits on its network`() =
+        runComposeUiTest {
+            val shown = show(active().copy(limitedBy = SpeedLimit.DataLimit("en7", "USB Tethering")), twoNetworks)
+            onNodeWithText("USB Tethering reached its data limit").performClick()
+            assertEquals(listOf<String?>("en7"), shown.limits)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a limit with no fix is only text`() =
+        runComposeUiTest {
+            val shown = show(active().copy(limitedBy = SpeedLimit.Unreachable("USB Tethering")), twoNetworks)
+            onNodeWithText("USB Tethering can't reach the server").assertIsDisplayed()
+            onNodeWithText("USB Tethering can't reach the server").performClick()
+            assertEquals(emptyList<String?>(), shown.limits)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `no line shows when nothing limits the download`() =
+        runComposeUiTest {
+            val shown = show(active(), twoNetworks)
+            assertEquals(0, onAllNodesWithText("Limited by", substring = true).fetchSemanticsNodes().size)
             shown.scope.cancel()
         }
 
@@ -259,11 +308,14 @@ internal class DetailScreenTest {
                                 10 * mib,
                             ),
                         networkShare = mapOf("en0" to 300 * mib, "en7" to 100 * mib),
+                        attempts = listOf(attempt(1, 0, 100)),
                         saveFolder = "/home/me/Downloads",
                         files = listOf(fileOf(0, "Project.zip")),
                     ),
                     twoNetworks,
                 )
+            onNodeWithText("About 33 sec sooner than Wi-Fi alone").assertIsDisplayed()
+            onNodeWithContentDescription("Contribution by network: Wi-Fi 75%, USB Tethering 25%").assertExists()
             onNodeWithText("Project.zip").assertIsDisplayed()
             onNodeWithText("AVERAGE").assertIsDisplayed()
             onNodeWithText("SIZE").assertIsDisplayed()

@@ -28,6 +28,7 @@ import dev.anydm.engine.net.BindStatus
 import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.platform.FileResult
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.torrent.PieceMap
@@ -435,6 +436,38 @@ internal class DetailModelTest {
         }
 
     @Test
+    fun `a limit the engine names shows while it downloads`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "a", total = 100 * mib, speed = 4 * mib, limitedBy = SpeedLimit.SlowMode),
+        ) { _, _, model ->
+            assertEquals(SpeedLimit.SlowMode, model.state.value.limit)
+            assertEquals("Limited by slow mode", model.state.value.limitText)
+            assertTrue(model.state.value.limitFixable)
+        }
+
+    @Test
+    fun `a limit with no fix in Limits is a line without a link`() =
+        detail(
+            snapshot(1, DOWNLOADING, name = "a", total = 100 * mib, speed = 4 * mib, limitedBy = SpeedLimit.Unreachable("iPhone")),
+        ) { _, _, model ->
+            assertEquals("iPhone can't reach the server", model.state.value.limitText)
+            assertFalse(model.state.value.limitFixable)
+        }
+
+    @Test
+    fun `nothing is said when nothing limits the download`() =
+        detail(snapshot(1, DOWNLOADING, name = "a", total = 100 * mib, speed = 4 * mib)) { _, _, model ->
+            assertNull(model.state.value.limit)
+            assertNull(model.state.value.limitText)
+        }
+
+    @Test
+    fun `a paused download names no limit`() =
+        detail(snapshot(1, PAUSED, name = "a", total = 100 * mib, limitedBy = SpeedLimit.SpeedCap)) { _, _, model ->
+            assertNull(model.state.value.limitText)
+        }
+
+    @Test
     fun `each network's speed is what it gained in the last second`() =
         detail(
             snapshot(1, DOWNLOADING, name = "a", total = 100 * mib, speed = 4 * mib, networkShare = mapOf("en0" to 0L, "en7" to 0L)),
@@ -652,6 +685,78 @@ internal class DetailModelTest {
             assertEquals("Chunks", done.thirdLabel)
             assertEquals(8, done.third)
             assertEquals("written in 8 chunks · 1 retry", done.written)
+            // 40 s, Wi-Fi carried 75%: alone 53 s, so 13 s sooner.
+            assertEquals("About 13 sec sooner than Wi-Fi alone", done.timeSaved?.text)
+        }
+
+    @Test
+    fun `time saved counts every attempt's seconds, an estimate`() =
+        detail(
+            snapshot(
+                1,
+                COMPLETED,
+                name = "a",
+                size = 400 * mib,
+                downloaded = 400 * mib,
+                networkShare = mapOf("en0" to 200 * mib, "en7" to 200 * mib),
+                attempts = listOf(attempt(1, 0, 20, failed = true), attempt(2, 30, 110)),
+            ),
+        ) { source, _, model ->
+            twoNetworks(source)
+            // 100 s over both tries, an even split: 100 s sooner.
+            assertEquals(100L, assertNotNull(model.state.value.finished).timeSaved?.seconds)
+        }
+
+    @Test
+    fun `a finished download with no attempts has no time and no time saved`() =
+        detail(
+            snapshot(
+                1,
+                COMPLETED,
+                name = "a",
+                size = 400 * mib,
+                downloaded = 400 * mib,
+                networkShare = mapOf("en0" to 200 * mib, "en7" to 200 * mib),
+            ),
+        ) { source, _, model ->
+            twoNetworks(source)
+            val done = assertNotNull(model.state.value.finished)
+            assertNull(done.seconds)
+            assertNull(done.timeSaved)
+        }
+
+    @Test
+    fun `a cancelled download shows no page, so no time saved`() =
+        detail(
+            snapshot(
+                1,
+                CANCELLED,
+                name = "a",
+                size = 400 * mib,
+                downloaded = 100 * mib,
+                networkShare = mapOf("en0" to 50 * mib, "en7" to 50 * mib),
+                attempts = listOf(attempt(1, 0, 100)),
+            ),
+        ) { source, _, model ->
+            twoNetworks(source)
+            assertNull(model.state.value.finished)
+        }
+
+    @Test
+    fun `a finished download from one network has no time saved`() =
+        detail(
+            snapshot(
+                1,
+                COMPLETED,
+                name = "a",
+                size = 400 * mib,
+                downloaded = 400 * mib,
+                networkShare = mapOf("en0" to 400 * mib),
+                attempts = listOf(attempt(1, 0, 100)),
+            ),
+        ) { source, _, model ->
+            twoNetworks(source)
+            assertNull(assertNotNull(model.state.value.finished).timeSaved)
         }
 
     @Test

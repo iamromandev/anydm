@@ -12,6 +12,7 @@ import dev.anydm.engine.core.File
 import dev.anydm.engine.core.FileId
 import dev.anydm.engine.core.Segment
 import dev.anydm.engine.core.SegmentId
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.torrent.TorrentLive
 import dev.anydm.engine.torrent.TorrentSummary
 import io.kotest.matchers.shouldBe
@@ -289,5 +290,50 @@ class SnapshotCacheTest {
         cache.share(DownloadId(9), "wifi", 5) shouldBe false
 
         cache.list().single().networkShare shouldBe mapOf("wifi" to 15L)
+    }
+
+    @Test
+    fun aLimitIsPublishedWhileRunningAndClearedWhenTheJobStops() {
+        val cache = SnapshotCache().with(job(1))
+        cache.list().single().limitedBy shouldBe null
+
+        cache.limit(DownloadId(1), SpeedLimit.SlowMode)
+        cache.list().single().limitedBy shouldBe SpeedLimit.SlowMode
+
+        cache.stoppedRunning(DownloadId(1))
+        cache.list().single().limitedBy shouldBe null
+    }
+
+    @Test
+    fun theRecentPeakIsTheHighestOfTheWindow() {
+        val cache = SnapshotCache().with(job(1))
+        cache.peak(DownloadId(1)) shouldBe 0L
+
+        for (sample in listOf(5L, 90L, 40L)) cache.speed(DownloadId(1), sample)
+
+        cache.peak(DownloadId(1)) shouldBe 90L
+    }
+
+    @Test
+    fun thePeakOfAnEarlierRunIsForgottenWhenANewRunStarts() {
+        val cache = SnapshotCache().with(job(1))
+        for (sample in listOf(900L, 40L)) cache.speed(DownloadId(1), sample)
+        cache.stoppedRunning(DownloadId(1))
+        cache.peak(DownloadId(1)) shouldBe 900L // a quick restart still counts it
+
+        cache.newRun(DownloadId(1))
+        cache.peak(DownloadId(1)) shouldBe 0L
+        cache.speed(DownloadId(1), 30L)
+        cache.peak(DownloadId(1)) shouldBe 30L
+    }
+
+    @Test
+    fun aJobUsesTheNetworksItReceivedBytesOn() {
+        val cache = SnapshotCache().with(job(1))
+        cache.share(DownloadId(1), "wifi", 10)
+
+        cache.usesNetwork(DownloadId(1), "wifi") shouldBe true
+        cache.usesNetwork(DownloadId(1), "usb0") shouldBe false
+        cache.usesNetwork(DownloadId(2), "wifi") shouldBe false
     }
 }

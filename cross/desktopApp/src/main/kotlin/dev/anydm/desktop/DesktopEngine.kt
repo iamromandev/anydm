@@ -16,6 +16,7 @@ import dev.anydm.engine.ftp.FtpProtocol
 import dev.anydm.engine.ftp.JavaKeyringKeychain
 import dev.anydm.engine.ftp.KeychainCredentials
 import dev.anydm.engine.http.HttpProtocol
+import dev.anydm.engine.http.HttpTransport
 import dev.anydm.engine.http.OkHttpTransport
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.log.RotatingFileSink
@@ -23,10 +24,14 @@ import dev.anydm.engine.media.SiteProtocol
 import dev.anydm.engine.media.YtDlpPlaylistSource
 import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.BoundSocketFactories
 import dev.anydm.engine.net.DefaultRouteNetwork
+import dev.anydm.engine.net.DesktopNetworks
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NewScheduleRule
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.net.TransportPublicIpLookup
+import dev.anydm.engine.net.doctorOsOf
 import dev.anydm.engine.os.BridgeServer
 import dev.anydm.engine.os.FilePairStore
 import dev.anydm.engine.os.secureBridgeService
@@ -35,6 +40,8 @@ import dev.anydm.engine.platform.Clipboard
 import dev.anydm.engine.platform.DesktopFileSystem
 import dev.anydm.engine.platform.DesktopProcessRunner
 import dev.anydm.engine.platform.FileResult
+import dev.anydm.engine.platform.NetworkBinder
+import dev.anydm.engine.platform.NetworkLister
 import dev.anydm.engine.platform.current
 import dev.anydm.engine.platform.desktopAppDirs
 import dev.anydm.engine.platform.keepAwakeForCurrentOs
@@ -75,14 +82,20 @@ import kotlin.time.Clock
  * can't be set up (no libtorrent for this machine, say) is left out and the rest still works; [EngineSource.available]
  * says which kinds are there. If the store can't be opened the app still starts, with an engine that reports itself failed.
  */
-suspend fun openDesktopSource(dirs: AppDirs = desktopAppDirs()): EngineSource =
+suspend fun openDesktopSource(dirs: AppDirs = desktopAppDirs()): EngineSource = openDesktopSource(dirs) { DesktopNetworking(it) }
+
+/** [openDesktopSource] with the networking it builds given, so a test can put its own lister and binder in. */
+internal suspend fun openDesktopSource(
+    dirs: AppDirs,
+    networking: (Log) -> DesktopNetworking,
+): EngineSource =
     try {
         val fileSystem = DesktopFileSystem()
         when (val opened = openStore(dirs, fileSystem)) {
             is FileResult.Ok -> {
                 val store = opened.value
                 try {
-                    desktopEngine(store, fileSystem, dirs)
+                    desktopEngine(store, fileSystem, dirs, networking)
                 } catch (e: Exception) {
                     store.close()
                     throw e
@@ -101,12 +114,15 @@ private suspend fun desktopEngine(
     store: Store,
     fileSystem: DesktopFileSystem,
     dirs: AppDirs,
+    networking: (Log) -> DesktopNetworking,
 ): EngineSource {
     val keychain = JavaKeyringKeychain("anydm")
     val logins = KeychainCredentials(keychain)
     // HTTP and FTP ask for the connections at each download; the source tells this when the setting changes.
     val connections = AtomicInteger(store.settings.load().connectionsPerDownload)
-    val http = HttpProtocol(OkHttpTransport(), connections = { connections.get() }, credentials = logins)
+    val log = Log(RotatingFileSink(dirs.logs), Clock.System)
+    val networking = networking(log)
+    val http = HttpProtocol(networking.httpTransport, connections = { connections.get() }, credentials = logins)
     val runner = DesktopProcessRunner()
     val platform = Platform.current()
     val tools =
@@ -126,13 +142,21 @@ private suspend fun desktopEngine(
     val protocols =
         mutableMapOf<DownloadKind, Protocol>(
             DownloadKind.DIRECT to http,
-            DownloadKind.FTP to FtpProtocol(DefaultRemoteClients(store.hostKeys), logins, logins, connections = { connections.get() }),
+            DownloadKind.FTP to
+                FtpProtocol(
+                    DefaultRemoteClients(store.hostKeys, bound = networking.networks),
+                    logins,
+                    logins,
+                    connections = { connections.get() },
+                ),
             DownloadKind.SITE to SiteProtocol(http, runner, tools::resolve, store.extractions, fileSystem),
             DownloadKind.TOOL to ToolProtocol(http, runner, DesktopUnpacker(runner), fileSystem, platform.os),
         )
     val torrents = torrentProtocol(store, fileSystem, http, dirs)
     if (torrents != null) protocols[DownloadKind.TORRENT] = torrents
-    val log = Log(RotatingFileSink(dirs.logs), Clock.System)
+    val doctorTransport = networking.doctorTransport
+    // No onlineProbe: the engine's default (always online) stays. A route lookup could call an intranet-only or air-gapped
+    // LAN offline and hold every job.
     val engine =
         Engine(
             log = log,
@@ -151,6 +175,11 @@ private suspend fun desktopEngine(
             powerActions = powerActionsForCurrentOs(runner, log),
             // The browsers paired with the extension: their secrets stay in a file only this user can read.
             pairStore = FilePairStore(File(dirs.data.toString(), FilePairStore.FILE_NAME), log),
+            doctorTransport = doctorTransport,
+            networkLister = networking.lister,
+            networkBinder = networking.binder,
+            publicIp = TransportPublicIpLookup(doctorTransport),
+            doctorOs = doctorOsOf(System.getProperty("os.name")),
         )
     val bridge = BridgeHost(engine, log)
     return engine.asSource(
@@ -160,6 +189,32 @@ private suspend fun desktopEngine(
         onStart = bridge::start,
         onStop = bridge::close,
     )
+}
+
+/**
+ * The one set of the machine's networks the whole engine shares (BND-01, BND-02): it lists them, binds the Network Doctor's
+ * probes, and makes the sockets of every transport that may run inside a bound network. [transportOn] builds a transport on
+ * those sockets.
+ *
+ * The interfaces are listed and probed at startup for everyone, but downloads only bind to them (opt-in) once two or more
+ * networks are chosen. Bound then: the web-file transport (also used by media and tool
+ * downloads for their own files), FTP/FTPS/SFTP clients, the doctor's transport, and torrents (rebound live by the engine
+ * through the libtorrent interface list, not through this transport). Left unbound on purpose: the tool-release lookup
+ * (GitHub API, tiny and not a download) and the yt-dlp process (a child process; the engine does not bind media pages).
+ */
+internal class DesktopNetworking(
+    log: Log = Log.None,
+    transportOn: (BoundSocketFactories?) -> HttpTransport = { OkHttpTransport(bound = it) },
+    listerOf: ((DesktopNetworks) -> NetworkLister)? = null,
+    binderOf: ((DesktopNetworks) -> NetworkBinder)? = null,
+) {
+    val networks = DesktopNetworks(log)
+    val lister: NetworkLister = listerOf?.invoke(networks) ?: networks
+    val binder: NetworkBinder = binderOf?.invoke(networks) ?: networks
+    val httpTransport: HttpTransport = transportOn(networks)
+
+    // The Network Doctor sends each of its requests through one network, and asks an outside server only when it is run.
+    val doctorTransport: HttpTransport = transportOn(networks)
 }
 
 /**
@@ -359,4 +414,6 @@ internal class UnavailableSource(
         key: String,
         enabled: Boolean,
     ) = stopped()
+
+    override suspend fun diagnose() = stopped()
 }

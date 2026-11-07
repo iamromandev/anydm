@@ -23,10 +23,13 @@ import dev.anydm.engine.core.PauseReason
 import dev.anydm.engine.core.ScheduleRuleId
 import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.DoctorOs
+import dev.anydm.engine.net.DoctorReport
 import dev.anydm.engine.net.NetworkPolicy
 import dev.anydm.engine.net.NetworkRules
 import dev.anydm.engine.net.NewScheduleRule
 import dev.anydm.engine.net.ScheduleRule
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.os.BridgePairing
 import dev.anydm.engine.os.LinkIntake
 import dev.anydm.engine.os.LinkProbeResult
@@ -491,6 +494,27 @@ internal class FakeSource(
         }
         return done
     }
+
+    /** What [diagnose] answers, and [diagnoseGate]/[diagnoseThrows] hold or fail it; [calls] records "diagnose". */
+    var report = DoctorReport(online = true, os = DoctorOs.MACOS, diagnoses = emptyList())
+    var diagnoseGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    var diagnoseThrows: Throwable? = null
+
+    /** The held [diagnose] call was cancelled. */
+    var diagnoseCancelled = false
+
+    override suspend fun diagnose(): DoctorReport {
+        if (refuseAll) throw IllegalStateException("the engine has stopped")
+        synchronized(calls) { calls += "diagnose" }
+        try {
+            diagnoseGate?.await()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            diagnoseCancelled = true
+            throw e
+        }
+        diagnoseThrows?.let { throw it }
+        return report
+    }
 }
 
 internal const val DEFAULT_CODE = "ABCD-EFGH-JKMN-PQRS"
@@ -524,6 +548,7 @@ internal fun snapshot(
     networkShare: Map<String, Long> = emptyMap(),
     speedSamples: List<Long> = emptyList(),
     saveFolder: String? = null,
+    limitedBy: SpeedLimit? = null,
     kind: DownloadKind = if (torrent != null) DownloadKind.TORRENT else DownloadKind.DIRECT,
 ): DownloadSnapshot =
     DownloadSnapshot(
@@ -553,4 +578,5 @@ internal fun snapshot(
         items = items,
         torrent = torrent,
         networkShare = networkShare,
+        limitedBy = limitedBy,
     )

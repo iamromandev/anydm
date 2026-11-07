@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -71,54 +72,78 @@ fun NetworksMenu(
             }
             for (row in state.rows) {
                 val color = swatches[row.key]?.solid ?: colors.accent
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(role = Role.Button) { model.openLimits(row.key) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+                Column {
                     Row(
-                        Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(role = Role.Button) { model.openLimits(row.key) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Txt(
-                            row.name,
-                            Plexo.type.rowName.copy(fontSize = Plexo.type.rowName.fontSize * 0.97f),
-                            Modifier.weight(1f, fill = false),
-                        )
-                        NetworkEditPencil(editor, "menu", row.key, row.name, row.osName, keys, size = 20.dp, glyphSize = 12.dp)
-                        Box(
-                            Modifier
-                                .widthIn(max = 110.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(colors.bgTertiary)
-                                .border(0.5.dp, colors.border, RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp),
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+                        Row(
+                            Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Txt(
-                                "${row.kind.tag} · ${row.key}",
-                                Plexo.type.badge.copy(fontSize = Plexo.type.badge.fontSize * 1.05f),
-                                color = colors.textTertiary,
+                                row.name,
+                                Plexo.type.rowName.copy(fontSize = Plexo.type.rowName.fontSize * 0.97f),
+                                Modifier.weight(1f, fill = false),
                             )
+                            NetworkEditPencil(editor, "menu", row.key, row.name, row.osName, keys, size = 20.dp, glyphSize = 12.dp)
+                            Box(
+                                Modifier
+                                    .widthIn(max = 110.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(colors.bgTertiary)
+                                    .border(0.5.dp, colors.border, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp),
+                            ) {
+                                Txt(
+                                    "${row.kind.tag} · ${row.key}",
+                                    Plexo.type.badge.copy(fontSize = Plexo.type.badge.fontSize * 1.05f),
+                                    color = colors.textTertiary,
+                                )
+                            }
                         }
+                        Txt(
+                            if (!row.up) "Down" else row.speed?.let { formatRate(it, unit) } ?: "Idle",
+                            Plexo.type.speed.copy(textAlign = TextAlign.End),
+                            color = if (row.speed != null) color else colors.textTertiary,
+                        )
+                        Box(
+                            Modifier
+                                .size(16.dp)
+                                .semantics { contentDescription = "${row.name} limits" },
+                        ) { GlyphIcon(Glyph.CHEVRON_RIGHT, colors.textTertiary, size = 16.dp) }
                     }
-                    Txt(
-                        if (!row.up) "Down" else row.speed?.let { formatRate(it, unit) } ?: "Idle",
-                        Plexo.type.speed.copy(textAlign = TextAlign.End),
-                        color = if (row.speed != null) color else colors.textTertiary,
-                    )
-                    Box(
-                        Modifier
-                            .size(16.dp)
-                            .semantics { contentDescription = "${row.name} limits" },
-                    ) { GlyphIcon(Glyph.CHEVRON_RIGHT, colors.textTertiary, size = 16.dp) }
+                    if (row.canDiagnose) {
+                        Txt(
+                            "Why isn't this network adding speed?",
+                            Plexo.type.hint,
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable(role = Role.Button) { model.openDoctor() }
+                                .padding(start = 36.dp, end = 16.dp, bottom = 10.dp)
+                                .semantics { testTag = "network-help-${row.key}" },
+                            color = colors.accent,
+                        )
+                    }
                 }
                 Rule()
             }
+            Txt(
+                "Network Doctor",
+                Plexo.type.button,
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button) { model.openDoctor() }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                color = colors.accent,
+            )
+            Rule()
             Txt(
                 "Speed & data limits",
                 Plexo.type.button,
