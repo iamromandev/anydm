@@ -16,6 +16,7 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)
     testImplementation(kotlin("test"))
+    testImplementation(libs.compose.ui.test)
 }
 
 // The one place the app's version is written; release.yml checks the tag against it.
