@@ -267,5 +267,8 @@ internal class DetailMathTest {
         assertEquals("Limited by your speed limit", limitText(SpeedLimit.SpeedCap))
         assertEquals("Wi-Fi reached its data limit", limitText(SpeedLimit.DataLimit("en0", "Wi-Fi")))
         assertEquals("iPhone can't reach the server", limitText(SpeedLimit.Unreachable("iPhone")))
+        val looks = NetworkLooks(names = mapOf("usb0" to "Pixel"), defaults = mapOf("en0" to "Wi-Fi", "usb0" to "USB"))
+        assertEquals("Wi-Fi reached its data limit", limitText(SpeedLimit.DataLimit("en0", "en0"), looks))
+        assertEquals("Pixel reached its data limit", limitText(SpeedLimit.DataLimit("usb0", "USB"), looks))
     }
 }

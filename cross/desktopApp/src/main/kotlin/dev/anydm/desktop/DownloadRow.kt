@@ -186,7 +186,7 @@ internal fun LimitLine(
     modifier: Modifier = Modifier,
 ) {
     val colors = Plexo.colors
-    val text = limitText(limit)
+    val text = limitText(limit, LocalNetworkLooks.current)
     if (limit.fixable) {
         val key = (limit as? SpeedLimit.DataLimit)?.key
         Txt(text, style, modifier.clickable(onClickLabel = "Open Limits", role = Role.Button) { onLimits(key) }, color = colors.accent)

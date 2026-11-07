@@ -215,7 +215,7 @@ class DetailModel(
 
     val state: StateFlow<DetailState> =
         combine(source.downloads, source.networks, local, looks) { downloads, networks, local, looks ->
-            build(downloads.firstOrNull { it.download.id == id }, networks.networks, local, looks.names)
+            build(downloads.firstOrNull { it.download.id == id }, networks.networks, local, looks)
         }.stateIn(
             scope,
             SharingStarted.Eagerly,
@@ -225,7 +225,7 @@ class DetailModel(
                 },
                 source.networks.value.networks,
                 DetailLocal(),
-                looks.value.names,
+                looks.value,
             ),
         )
 
@@ -504,7 +504,7 @@ class DetailModel(
         snapshot: DownloadSnapshot?,
         bonded: List<dev.anydm.engine.net.BondedNetwork>,
         local: DetailLocal,
-        custom: Map<String, String>,
+        looks: NetworkLooks,
     ): DetailState {
         for (net in bonded) knownNames[net.info.key] = net.info.name
         if (bonded.isNotEmpty()) sawNetworks = true
@@ -528,7 +528,7 @@ class DetailModel(
                 val speed = if (moving) local.speeds[key] ?: 0L else 0L
                 DetailNetwork(
                     key = key,
-                    name = custom[key] ?: knownNames[key] ?: key,
+                    name = looks.nameOf(key, knownNames[key] ?: key),
                     enabled = enabled[key] ?: false,
                     active = speed > 0,
                     bytes = bytes[i],

@@ -1215,6 +1215,30 @@ internal class DetailModelTest {
         }
 
     @Test
+    fun `a network that is no longer listed keeps its friendly name in the table and a rename still wins`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val source = FakeSource()
+            source.downloads.value =
+                listOf(snapshot(1, DOWNLOADING, name = "a", total = 100, networkShare = mapOf("en0" to 30L, "en7" to 70L)))
+            twoNetworks(source)
+            val visuals = NetworkVisuals(null)
+            val looks = NetworkLooksModel(source, visuals, backgroundScope)
+            val model = DetailModel(source, FakeFileActions(), id, backgroundScope, looks = looks.looks)
+            source.networks.value = BondingState(emptyList())
+            assertEquals(
+                listOf("Wi-Fi", "USB"),
+                model.state.value.networks
+                    .map { it.name },
+            )
+            visuals.rename("en7", "Pixel")
+            assertEquals(
+                listOf("Wi-Fi", "Pixel"),
+                model.state.value.networks
+                    .map { it.name },
+            )
+        }
+
+    @Test
     fun `the name a person gave a network shows in the table, the chart legend and the finished contributions`() =
         runTest(UnconfinedTestDispatcher()) {
             val source = FakeSource()
@@ -1225,7 +1249,7 @@ internal class DetailModelTest {
             val looks = NetworkLooksModel(source, visuals, backgroundScope)
             val model = DetailModel(source, FakeFileActions(), id, backgroundScope, looks = looks.looks)
             assertEquals(
-                listOf("Wi-Fi", "USB Tethering"),
+                listOf("Wi-Fi", "USB"),
                 model.state.value.networks
                     .map { it.name },
             )

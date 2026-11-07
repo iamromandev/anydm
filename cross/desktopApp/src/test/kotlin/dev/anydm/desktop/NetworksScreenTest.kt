@@ -98,7 +98,7 @@ internal class NetworksScreenTest {
             openMenu()
             onNodeWithText("Networks").assertIsDisplayed()
             onNodeWithText("Wi-Fi").assertIsDisplayed()
-            onNodeWithText("USB Tethering").assertIsDisplayed()
+            onNodeWithContentDescription("USB limits").assertIsDisplayed()
             onNodeWithText("WIFI · en0").assertIsDisplayed()
             onNodeWithText("USB · usb0").assertIsDisplayed()
             onNodeWithText("Idle").assertIsDisplayed()
@@ -110,11 +110,11 @@ internal class NetworksScreenTest {
         runComposeUiTest {
             val shown = showApp()
             openMenu()
-            onNodeWithContentDescription("USB Tethering limits").performClick()
+            onNodeWithContentDescription("USB limits").performClick()
             until { shown.limits.isNotEmpty() }
             assertEquals(listOf<String?>("usb0"), shown.limits)
             // The menu closed and the dialog is up (its title is the only "Speed & data limits" left); Cancel puts it away.
-            until { has("Limits the combined download speed on USB Tethering.") }
+            until { has("Limits the combined download speed on USB.") }
             onNodeWithText("Cancel").performClick()
             eventually { assertTrue(!has("Speed & data limits")) }
             openMenu()
@@ -141,11 +141,11 @@ internal class NetworksScreenTest {
                             ),
                         )
                 }
-            until { has("USB Tethering reached its data limit") }
-            onNodeWithText("USB Tethering reached its data limit").performClick()
+            until { has("USB reached its data limit") }
+            onNodeWithText("USB reached its data limit").performClick()
             until { shown.limits.isNotEmpty() }
             assertEquals(listOf<String?>("usb0"), shown.limits)
-            until { has("Limits the combined download speed on USB Tethering.") }
+            until { has("Limits the combined download speed on USB.") }
         }
 
     @Test
@@ -153,8 +153,8 @@ internal class NetworksScreenTest {
         runComposeUiTest {
             showApp()
             openMenu()
-            onNodeWithContentDescription("USB Tethering limits").performClick()
-            until { has("Limits the combined download speed on USB Tethering.") }
+            onNodeWithContentDescription("USB limits").performClick()
+            until { has("Limits the combined download speed on USB.") }
             onNodeWithContentDescription("Speed & data limits").assertIsDisplayed()
             onNodeWithText("Cancel").performClick()
             eventually { assertTrue(onAllNodes(hasContentDescription("Speed & data limits")).fetchSemanticsNodes().isEmpty()) }
@@ -183,7 +183,7 @@ internal class NetworksScreenTest {
             val file = Files.createTempDirectory("anydm-menu").resolve("network-visuals.json")
             val shown = showApp(NetworkVisuals(file))
             openMenu()
-            onNodeWithContentDescription("Edit USB Tethering").performClick()
+            onNodeWithContentDescription("Edit USB").performClick()
             until { has("NAME") }
             onNodeWithContentDescription("Network name").performTextClearance()
             onNodeWithContentDescription("Network name").performTextInput("Pixel")
@@ -212,7 +212,7 @@ internal class NetworksScreenTest {
         runComposeUiTest {
             val shown = showApp()
             openMenu()
-            onNodeWithContentDescription("Edit USB Tethering").performClick()
+            onNodeWithContentDescription("Edit USB").performClick()
             until { has("NAME") }
             onNodeWithContentDescription("Network name").performTextClearance()
             onNodeWithText("Done").performClick()
@@ -228,7 +228,7 @@ internal class NetworksScreenTest {
         runComposeUiTest {
             val shown = showApp()
             openMenu()
-            onNodeWithContentDescription("Edit USB Tethering").performClick()
+            onNodeWithContentDescription("Edit USB").performClick()
             until { has("NAME") }
             onNodeWithContentDescription("Network name").performTextClearance()
             onNodeWithContentDescription("Network name").performTextInput("Pixel")
@@ -260,7 +260,7 @@ internal class NetworksScreenTest {
                 }
             onNodeWithContentDescription("Open Project.zip").performClick()
             until { has("TOTAL SPEED") }
-            onNodeWithContentDescription("Edit USB Tethering").performClick()
+            onNodeWithContentDescription("Edit USB").performClick()
             until { has("NAME") }
             onNodeWithContentDescription("Network name").performTextClearance()
             onNodeWithContentDescription("Network name").performTextInput("Pixel")
@@ -292,7 +292,7 @@ internal class NetworksScreenTest {
             }
             onNodeWithContentDescription("Open Project.zip").performClick()
             until { has("TOTAL SPEED") }
-            onNodeWithContentDescription("Edit USB Tethering").performClick()
+            onNodeWithContentDescription("Edit USB").performClick()
             until { has("NAME") }
             onAllNodes(isRoot())[0].performKeyInput { pressKey(Key.Escape) }
             eventually { assertTrue(!has("NAME")) }

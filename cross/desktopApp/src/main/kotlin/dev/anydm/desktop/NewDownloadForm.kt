@@ -374,7 +374,7 @@ private fun NetworkPicker(
         }
         state.networksNote?.let { Txt(it, Plexo.type.detail, color = colors.textTertiary, maxLines = 2) }
         state.networkError?.let { Txt(it, Plexo.type.hint, color = colors.danger, maxLines = 2) }
-        if (state.noNetworkOn) Warning("No network is on. Downloads wait until one is switched on.")
+        if (state.noNetworkOn) Warning("No network is on, so downloads use your system's default connection.")
         Txt(
             "Speed & data limits",
             Plexo.type.button,

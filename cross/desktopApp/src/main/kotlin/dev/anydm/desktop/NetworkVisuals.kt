@@ -26,11 +26,13 @@ internal val SWATCH_IDS = listOf("teal", "amber", "steel", "rose", "violet", "li
 enum class NetworkKind(
     val tag: String,
     val hue: String?,
+    /** What a network of this kind is called when nobody named it; null keeps the OS's name. */
+    val friendlyName: String?,
 ) {
-    WIFI("WIFI", "teal"),
-    USB("USB", "amber"),
-    ETHERNET("ETH", "steel"),
-    OTHER("NET", null),
+    WIFI("WIFI", "teal", "Wi-Fi"),
+    USB("USB", "amber", "USB"),
+    ETHERNET("ETH", "steel", "Ethernet"),
+    OTHER("NET", null, null),
 }
 
 private val WIFI_KEY = Regex("^(wl\\w*|en0)$")
@@ -51,6 +53,20 @@ fun kindOf(info: NetworkInfo): NetworkKind {
         any("wi-fi", "wifi", "wireless", "wlan") || WIFI_KEY.matches(key) -> NetworkKind.WIFI
         any("ethernet", "gbe", "gigabit") || ETHERNET_KEY.matches(key) -> NetworkKind.ETHERNET
         else -> NetworkKind.OTHER
+    }
+}
+
+/** The kind the OS's own name for [info] gives, or null when only the key (`en0`, `enx…`) would tell: such a guess is not named. */
+fun kindByName(info: NetworkInfo): NetworkKind? {
+    val key = info.key.lowercase()
+    val name = info.name.lowercase()
+
+    fun any(vararg words: String) = words.any { it in name || it in key }
+    return when {
+        any("usb", "ndis", "tether", "iphone", "ipheth", "android") -> NetworkKind.USB
+        any("wi-fi", "wifi", "wireless", "wlan") -> NetworkKind.WIFI
+        any("ethernet", "gbe", "gigabit") -> NetworkKind.ETHERNET
+        else -> null
     }
 }
 
