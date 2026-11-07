@@ -88,6 +88,9 @@ internal object NativeBind {
             throw BindFailure("can't bind to ${network.key}: ${e.message}", e)
         } catch (e: UnsatisfiedLinkError) {
             throw BindFailure("can't bind to ${network.key}: the system call is missing: ${e.message}", e)
+        } catch (e: LinkageError) {
+            // JNA failed to load (or a class of it is gone after that): a failed bind, never a crash of the caller.
+            throw BindFailure("can't bind to ${network.key}: native access is not available: ${e.message}", e)
         }
     }
 
@@ -102,6 +105,8 @@ internal object NativeBind {
                 else -> null
             }
         } catch (_: LastErrorException) {
+            null
+        } catch (_: LinkageError) {
             null
         }
     }

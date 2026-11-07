@@ -100,6 +100,48 @@ abstract class EngineBondingContract : StoreTestBase() {
         }
 
     @Test
+    fun aListerThatThrowsDoesNotStopTheEngineStarting() =
+        runTest {
+            val lister =
+                dev.anydm.engine.platform
+                    .NetworkLister { throw IllegalStateException("no interfaces") }
+            val h = EngineHarness(this, newStore(), FakeProtocol(), networkLister = lister)
+            try {
+                h.engine.start()
+                runCurrent()
+                h.engine.networks.value.networks shouldBe emptyList()
+                h.addJob()
+                advanceTimeBy(5.seconds)
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
+    fun aBinderThatThrowsDoesNotStopTheEngineStarting() =
+        runTest {
+            val binder =
+                dev.anydm.engine.platform
+                    .NetworkBinder { throw IllegalStateException("probe failed") }
+            val h =
+                EngineHarness(
+                    this,
+                    newStore(),
+                    FakeProtocol(),
+                    networkLister = FakeNetworkLister(network("en0")),
+                    networkBinder = binder,
+                )
+            try {
+                h.engine.start()
+                runCurrent()
+                h.engine.networks.value.networks
+                    .map { it.info.key } shouldBe listOf("en0")
+            } finally {
+                h.engine.stop()
+            }
+        }
+
+    @Test
     fun aChoiceIsSavedInTheSettings() =
         bondingTest("en0", "en5") { f ->
             f.h.engine.setNetworkEnabled("en5", true)

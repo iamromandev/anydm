@@ -73,6 +73,8 @@ fun HomeScreen(
     onBrowsers: () -> Unit = {},
     /** The update button's session; none, and the header shows no button. */
     updates: UpdateSession? = null,
+    /** Opens the Limits dialog, for a row's limit line. */
+    onLimits: (String?) -> Unit = {},
 ) {
     val colors = Plexo.colors
     val state by model.state.collectAsState()
@@ -199,6 +201,7 @@ fun HomeScreen(
                                             model.openMenu(row.id)
                                         },
                                         onOpenFile = { model.openFile(row.id) },
+                                        onLimits = onLimits,
                                     )
                                 }
                             }

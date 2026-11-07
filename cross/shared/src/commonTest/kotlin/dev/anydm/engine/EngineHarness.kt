@@ -9,11 +9,13 @@ import dev.anydm.engine.core.StepRunner
 import dev.anydm.engine.core.stepRoot
 import dev.anydm.engine.ftp.CredentialWriter
 import dev.anydm.engine.ftp.Keychain
+import dev.anydm.engine.http.HttpTransport
 import dev.anydm.engine.log.Log
 import dev.anydm.engine.media.PlaylistSource
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.OnlineProbe
 import dev.anydm.engine.net.ProxyRouter
+import dev.anydm.engine.net.PublicIpLookup
 import dev.anydm.engine.platform.FakeFileSystem
 import dev.anydm.engine.platform.KeepAwake
 import dev.anydm.engine.platform.MeteredDetector
@@ -70,6 +72,8 @@ internal class EngineHarness(
     proxyKeychain: Keychain? = null,
     networkLister: NetworkLister = NetworkLister.None,
     networkBinder: NetworkBinder = NetworkBinder.None,
+    doctorTransport: HttpTransport? = null,
+    publicIp: PublicIpLookup = PublicIpLookup.None,
 ) {
     val engine =
         Engine(
@@ -100,6 +104,8 @@ internal class EngineHarness(
             proxyKeychain = proxyKeychain,
             networkLister = networkLister,
             networkBinder = networkBinder,
+            doctorTransport = doctorTransport,
+            publicIp = publicIp,
         )
 
     private var added = 0

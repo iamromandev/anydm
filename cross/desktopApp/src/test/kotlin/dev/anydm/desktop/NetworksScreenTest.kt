@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
@@ -29,6 +30,7 @@ import dev.anydm.engine.net.BindStatus
 import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
+import dev.anydm.engine.net.SpeedLimit
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,6 +121,31 @@ internal class NetworksScreenTest {
             onNodeWithText("Speed & data limits").performClick()
             until { shown.limits.size == 2 }
             assertEquals(null, shown.limits[1])
+        }
+
+    @Test
+    fun `a data limit line on a row opens the Limits dialog on that network`() =
+        runComposeUiTest {
+            val shown =
+                showApp {
+                    it.downloads.value =
+                        listOf(
+                            snapshot(
+                                1,
+                                DOWNLOADING,
+                                name = "a.bin",
+                                total = 100,
+                                downloaded = 1,
+                                speed = 10,
+                                limitedBy = SpeedLimit.DataLimit("usb0", "USB Tethering"),
+                            ),
+                        )
+                }
+            until { has("USB Tethering reached its data limit") }
+            onNodeWithText("USB Tethering reached its data limit").performClick()
+            until { shown.limits.isNotEmpty() }
+            assertEquals(listOf<String?>("usb0"), shown.limits)
+            until { has("Limits the combined download speed on USB Tethering.") }
         }
 
     @Test
@@ -279,5 +306,37 @@ internal class NetworksScreenTest {
             onNodeWithText("No network").performClick()
             until { has("Speed & data limits") }
             onAllNodes(hasText("No network")).fetchSemanticsNodes().let { assertTrue(it.size >= 2) }
+        }
+
+    @Test
+    fun `the menu has a Network Doctor entry that opens the doctor and closes the menu`() =
+        runComposeUiTest {
+            val shown = showApp()
+            openMenu()
+            onNodeWithText("Network Doctor").performClick()
+            until { has(DOCTOR_NOTICE) }
+            eventually { assertTrue(!has("Speed & data limits")) }
+            assertTrue(shown.source.calls.none { it == "diagnose" })
+        }
+
+    @Test
+    fun `an idle network offers the why question and a busy one does not`() =
+        runComposeUiTest {
+            showApp()
+            openMenu()
+            assertEquals(1, onAllNodes(hasText("Why isn't this network adding speed?")).fetchSemanticsNodes().size)
+            onNodeWithTag("network-help-en0").assertIsDisplayed()
+            onNodeWithTag("network-help-usb0").assertDoesNotExist()
+        }
+
+    @Test
+    fun `asking why on an idle network opens the doctor without running it`() =
+        runComposeUiTest {
+            val shown = showApp()
+            openMenu()
+            onNodeWithTag("network-help-en0").performClick()
+            until { has(DOCTOR_NOTICE) }
+            assertTrue(shown.source.calls.none { it == "diagnose" })
+            assertTrue(shown.limits.isEmpty())
         }
 }

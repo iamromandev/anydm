@@ -39,6 +39,7 @@ import dev.anydm.engine.ftp.Keychain
 import dev.anydm.engine.ftp.KeychainUnavailable
 import dev.anydm.engine.ftp.SshKeyLogin
 import dev.anydm.engine.ftp.stripUserInfo
+import dev.anydm.engine.http.HttpTransport
 import dev.anydm.engine.http.originOf
 import dev.anydm.engine.http.userInfoOf
 import dev.anydm.engine.log.Log
@@ -55,7 +56,12 @@ import dev.anydm.engine.net.AllowanceStatus
 import dev.anydm.engine.net.AwakeKeeper
 import dev.anydm.engine.net.Bonding
 import dev.anydm.engine.net.BondingState
+import dev.anydm.engine.net.DoctorOs
+import dev.anydm.engine.net.DoctorReport
+import dev.anydm.engine.net.LimitHold
+import dev.anydm.engine.net.LimitInputs
 import dev.anydm.engine.net.MeteredRefresh
+import dev.anydm.engine.net.NetworkDoctor
 import dev.anydm.engine.net.NetworkIdentity
 import dev.anydm.engine.net.NetworkMonitor
 import dev.anydm.engine.net.NetworkPolicy
@@ -72,16 +78,22 @@ import dev.anydm.engine.net.ProxyChoice
 import dev.anydm.engine.net.ProxyCommandResult
 import dev.anydm.engine.net.ProxyEntry
 import dev.anydm.engine.net.ProxyRouter
+import dev.anydm.engine.net.PublicIpLookup
 import dev.anydm.engine.net.QueueActivity
 import dev.anydm.engine.net.RuleKeeper
 import dev.anydm.engine.net.RuleStatus
 import dev.anydm.engine.net.ScheduleRule
 import dev.anydm.engine.net.SettingsBondChoices
 import dev.anydm.engine.net.SlowMode
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.net.StoreProxyRouter
 import dev.anydm.engine.net.TrafficMeter
+import dev.anydm.engine.net.UnavailableTransport
 import dev.anydm.engine.net.WakeDetector
+import dev.anydm.engine.net.capSourceOf
 import dev.anydm.engine.net.epochMinute
+import dev.anydm.engine.net.limitOf
+import dev.anydm.engine.net.minOfNotNull
 import dev.anydm.engine.net.withProxy
 import dev.anydm.engine.net.withProxyForNew
 import dev.anydm.engine.os.AddLinkResult
@@ -185,6 +197,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 /**
@@ -228,7 +241,7 @@ class Engine(
     private val credentials: CredentialWriter? = null,
     /** The zone days, weeks and schedule rules are read in (NET-05..08), asked at every use; the desktop passes the system's. */
     private val timeZone: () -> TimeZone = TimeZone.Companion::currentSystemDefault,
-    /** Whether this machine has a route to the internet (NET-13), polled every few seconds; the desktop passes DefaultRouteProbe. */
+    /** Whether this machine has a route to the internet (NET-13), polled every few seconds. */
     onlineProbe: OnlineProbe = OnlineProbe.Always,
     /** Whether the current network is metered (NET-14); without one only the user's own flag counts. */
     meteredDetector: MeteredDetector = MeteredDetector.None,
@@ -255,11 +268,21 @@ class Engine(
     networkBinder: NetworkBinder = NetworkBinder.None,
     /** Where the browsers paired with the bridge are kept; the desktop passes a file in its data folder. By default they are forgotten at the end of the run. */
     pairStore: PairStore = InMemoryPairStore(),
+    /** Sends the Network Doctor's requests, each tied to one network (#635); the desktop passes one bound to its networks. Without one, the checks fail. */
+    doctorTransport: HttpTransport? = null,
+    /** Finds the public address seen through a network (#635); asked only when [diagnose] is called. */
+    publicIp: PublicIpLookup = PublicIpLookup.None,
+    /** The system whose fixes the Network Doctor suggests. */
+    doctorOs: DoctorOs = DoctorOs.OTHER,
 ) {
     private val nameCleaner = NameCleaner(osProfile)
 
     // The networks and which of them downloads are bound to (BND-01, BND-03).
     private val bonding = Bonding(networkLister, networkBinder, SettingsBondChoices(store.settings), clock, log)
+
+    // Why a network may add no speed (#635); it sends nothing until diagnose() is called.
+    private val doctor =
+        NetworkDoctor(doctorTransport ?: UnavailableTransport, networkBinder, onlineProbe, publicIp, doctorOs)
 
     // The networks now in use; set on the publisher, to tell a change from a poll that found the same.
     private var bondedKeys: Set<String> = emptySet()
@@ -350,6 +373,14 @@ class Engine(
     // The publisher's own: what runs, what was last published, and the loops that run while anything does.
     private val running = mutableSetOf<DownloadId>()
     private val published = mutableMapOf<DownloadId, Pair<Long, Long?>>()
+
+    // What limits each running download (#634): the raw reason is held a few seconds so the line is steady (on the publisher).
+    private val limitHolds = mutableMapOf<DownloadId, LimitHold>()
+    private val limitTime = monotonic
+    private val endedAt = mutableMapOf<DownloadId, TimeMark>()
+
+    // The global speed limit as the queue has it, kept here so the once-a-second reading does not hit the store.
+    private val globalLimit = MutableStateFlow<Long?>(null)
     private val totalSamples = ArrayDeque<Long>()
     private var loops: Job? = null
     private val diskGuard = DiskGuard(fileSystem) { store.settings.load().freeSpaceReserve }
@@ -595,6 +626,7 @@ class Engine(
         val startup =
             scope.async {
                 store.settings.load().let { settings ->
+                    globalLimit.value = settings.globalSpeedLimit
                     if (settings.debugLogging) log.minLevel = LogLevel.DEBUG
                     osSettingsLock.withLock { osSettingsOf(settings) }
                 }
@@ -611,7 +643,14 @@ class Engine(
                 val (watch, offline) =
                     withContext(publisher) {
                         meteredRefresh.first(monitor.first())
-                        bonding.refresh()
+                        // Listing and probing the networks must not stop the engine starting: it then starts with none.
+                        try {
+                            bonding.refresh()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            log.warn("net", e) { "the networks could not be read at start: ${e.message}" }
+                        }
                         bondedKeys =
                             bonding.state.value.active
                                 .map { it.info.key }
@@ -1363,7 +1402,8 @@ class Engine(
 
     suspend fun setLimit(limit: Int): CommandResult = command { queue.setLimit(limit) }
 
-    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult = command { queue.setGlobalSpeedLimit(bytesPerSecond) }
+    suspend fun setGlobalSpeedLimit(bytesPerSecond: Long?): CommandResult =
+        command { queue.setGlobalSpeedLimit(bytesPerSecond).also { if (it is CommandResult.Done) globalLimit.value = bytesPerSecond } }
 
     /** The most all torrents together may send, in bytes per second, null for no limit (TOR-08). */
     suspend fun setGlobalUploadLimit(bytesPerSecond: Long?): CommandResult = command { queue.setGlobalUploadLimit(bytesPerSecond) }
@@ -1390,6 +1430,19 @@ class Engine(
         id: DownloadId,
         at: Instant?,
     ): CommandResult = command { queue.setStartTime(id, at) }
+
+    /**
+     * Checks every network the machine has and says why one may add no speed (#635). Called on the user's request: it sends
+     * requests through each network, and asks an outside server for the public address of each one that works.
+     */
+    suspend fun diagnose(): DoctorReport {
+        bonding.refresh()
+        return doctor.diagnoseAll(
+            bonding.state.value.networks
+                .map { it.info },
+            withPublicIp = true,
+        )
+    }
 
     /**
      * Turns the network [key] on or off for bonding (BND-01). The choice is kept even for a network that is not there now, and
@@ -1831,6 +1884,7 @@ class Engine(
                 (next.maxRetries != now.maxRetries).takeIf { it }?.let { queue.setMaxRetries(next.maxRetries) },
             )
         queued.firstOrNull { it !is CommandResult.Done }?.let { return it }
+        globalLimit.value = next.globalSpeedLimit
         // The rest in one write; pause and the after-queue action have their own paths below.
         // The queue's own fields were set through it above; what is stored now wins, so a limit set meanwhile isn't undone.
         store.settings.update {
@@ -2519,6 +2573,8 @@ class Engine(
 
     private fun started(id: DownloadId) {
         running += id
+        // A run that follows its end within moments (a rebind after a network fault) still has the peak of what came before.
+        if (endedAt[id]?.let { it.elapsedNow() < RUN_GAP } != true) cache.newRun(id)
         if (loops?.isActive != true) {
             loops =
                 scope.launch(publisher) {
@@ -2532,6 +2588,8 @@ class Engine(
     private suspend fun ended(id: DownloadId) {
         running -= id
         published -= id
+        limitHolds -= id
+        endedAt[id] = limitTime.markNow()
         if (cache.contains(id)) {
             // A torrent's live numbers go with its run: what it saved is what the files show now, not a second-old reading.
             cache.torrentLive(id, null)
@@ -2592,8 +2650,55 @@ class Engine(
         totalSamples.addLast(total)
         while (totalSamples.size > SpeedWindow.SIZE) totalSamples.removeFirst()
         speedFlow.value = SpeedWindow(total, totalSamples.toList())
+        updateLimitsSafely(total)
         publish()
         checkRules(byBytes = true)
+    }
+
+    // What limits each running job now (#634): worked out once a second from the rules, the settings, the networks and the
+    // job's own numbers, then held. A reason that is no longer there is shown for a few seconds more. It never suspends, so
+    // `running` cannot change while it goes through it, and a failure here must not end the speed loop.
+    private fun updateLimitsSafely(total: Long) {
+        try {
+            updateLimits(total)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("engine") { "limits could not be worked out: ${e.message}" }
+        }
+    }
+
+    private fun updateLimits(total: Long) {
+        if (running.isEmpty()) return
+        val status = rules.value
+        val networks = bonding.state.value.networks
+        val global = globalLimit.value
+        val sharedCap = minOfNotNull(global, status.downloadCap)
+        val source = capSourceOf(status, global)
+        val dataLimit =
+            status.allowance?.takeIf { it.over }?.let { over ->
+                SpeedLimit.DataLimit(over.network, networks.firstOrNull { it.info.key == over.network }?.info?.name ?: over.network)
+            }
+        val faulted = networks.filter { it.enabled && it.faulted }
+        for (id in running) {
+            val download = cache.downloadOf(id) ?: continue
+            // Only a network this download got bytes from can have held it back.
+            val unreachable = faulted.firstOrNull { cache.usesNetwork(id, it.info.key) }?.info?.name
+            val raw =
+                limitOf(
+                    LimitInputs(
+                        speed = cache.speedOf(id),
+                        peak = cache.peak(id),
+                        totalSpeed = total,
+                        sharedCap = sharedCap,
+                        sharedSource = source,
+                        ownCap = download.speedLimit,
+                        dataLimit = dataLimit,
+                        unreachable = unreachable,
+                    ),
+                )
+            cache.limit(id, limitHolds.getOrPut(id) { LimitHold(limitTime) }.update(raw))
+        }
     }
 
     /** Jobs being removed while their seed is stopped: that end finishes nothing. */
@@ -2803,6 +2908,9 @@ class Engine(
         val TRAFFIC_SAVE_EVERY = 10.seconds
         val PROGRESS_EVERY = 200.milliseconds
         val SPEED_EVERY = 1.seconds
+
+        // A run that starts within this after the last one ended carries its peak on (#634).
+        val RUN_GAP = 10.seconds
         val DISK_CHECK_EVERY = 30.seconds
         val TOOL_RELEASE_DELAY = 2.seconds
 

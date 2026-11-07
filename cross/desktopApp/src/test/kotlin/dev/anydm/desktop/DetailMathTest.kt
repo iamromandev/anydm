@@ -1,7 +1,10 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.net.SpeedLimit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 internal class DetailMathTest {
@@ -165,5 +168,104 @@ internal class DetailMathTest {
     fun `no badge while nothing moves or a network carries nothing`() {
         assertTrue(aloneBadges(0, listOf("A" to 0L, "B" to 0L)).isEmpty())
         assertTrue(aloneBadges(10, listOf("A" to 10L, "B" to 0L)).isEmpty())
+    }
+
+    // Time saved by bonding
+
+    @Test
+    fun `two networks sharing a run save the time the biggest alone would have taken extra`() {
+        // 100 s, Wi-Fi carried 75%: alone it would take 100 * 4 / 3 = 133 s, so 33 s sooner.
+        val saved = assertNotNull(timeSaved(400 * mib, 100, listOf("Wi-Fi" to 300 * mib, "iPhone" to 100 * mib)))
+        assertEquals(33L, saved.seconds)
+        assertEquals("About 33 sec sooner than Wi-Fi alone", saved.text)
+    }
+
+    @Test
+    fun `a saving of a minute or more reads in minutes`() {
+        // 600 s, a 50/50 split: alone 1200 s, so 10 min sooner.
+        val saved = assertNotNull(timeSaved(100 * mib, 600, listOf("Wi-Fi" to 50 * mib, "iPhone" to 50 * mib)))
+        assertEquals("About 10 min sooner than Wi-Fi alone", saved.text)
+    }
+
+    @Test
+    fun `a single network has nothing saved`() {
+        assertNull(timeSaved(100 * mib, 600, listOf("Wi-Fi" to 100 * mib)))
+    }
+
+    @Test
+    fun `a network under a tenth of the bytes does not count as sharing`() {
+        assertNull(timeSaved(100 * mib, 600, listOf("Wi-Fi" to 95 * mib, "iPhone" to 5 * mib)))
+    }
+
+    @Test
+    fun `a network at exactly a tenth counts`() {
+        assertNotNull(timeSaved(100 * mib, 600, listOf("Wi-Fi" to 90 * mib, "iPhone" to 10 * mib)))
+    }
+
+    @Test
+    fun `a run under thirty seconds has no estimate`() {
+        assertNull(timeSaved(100 * mib, 29, listOf("Wi-Fi" to 50 * mib, "iPhone" to 50 * mib)))
+        assertNotNull(timeSaved(100 * mib, 30, listOf("Wi-Fi" to 50 * mib, "iPhone" to 50 * mib)))
+    }
+
+    @Test
+    fun `a saving under ten seconds has no line`() {
+        // 30 s at 10%/90%: alone 33.3 s, only 3 s saved.
+        assertNull(timeSaved(100 * mib, 30, listOf("Wi-Fi" to 90 * mib, "iPhone" to 10 * mib)))
+    }
+
+    @Test
+    fun `no bytes or no networks has no estimate`() {
+        assertNull(timeSaved(0, 600, listOf("A" to 0L, "B" to 0L)))
+        assertNull(timeSaved(0, 600, emptyList()))
+    }
+
+    private fun even(seconds: Long) = timeSaved(100 * mib, seconds, listOf("Wi-Fi" to 50 * mib, "iPhone" to 50 * mib))
+
+    @Test
+    fun `a saving rounds to the nearest minute from a minute up, never reading 60 sec`() {
+        // A 50/50 split saves as many seconds as the run took.
+        assertEquals("About 59 sec sooner than Wi-Fi alone", even(59)?.text)
+        assertEquals("About 1 min sooner than Wi-Fi alone", even(60)?.text)
+        assertEquals("About 2 min sooner than Wi-Fi alone", even(119)?.text)
+        assertEquals("About 60 min sooner than Wi-Fi alone", even(3599)?.text)
+        // 119 s at a 2/3 share: alone 178.5 s, so 59.5 s saved, which reads 1 min.
+        val half = timeSaved(300 * mib, 119, listOf("Wi-Fi" to 200 * mib, "iPhone" to 100 * mib))
+        assertEquals("About 1 min sooner than Wi-Fi alone", half?.text)
+    }
+
+    @Test
+    fun `a saving of two hours or more reads in hours and minutes`() {
+        assertEquals("About 2 h 15 min sooner than Wi-Fi alone", even(8100)?.text)
+        assertEquals("About 2 h sooner than Wi-Fi alone", even(7200)?.text)
+    }
+
+    @Test
+    fun `a run of zero seconds has no estimate`() {
+        assertNull(even(0))
+    }
+
+    @Test
+    fun `an even split names the first network`() {
+        assertEquals("Wi-Fi", even(100)?.network)
+        assertEquals("iPhone", timeSaved(100 * mib, 100, listOf("iPhone" to 50 * mib, "Wi-Fi" to 50 * mib))?.network)
+    }
+
+    @Test
+    fun `three networks count the ones with a tenth or more, and the biggest sets the saving`() {
+        // 45 / 50 / 5: two networks share, the 5% one is ignored for that but its bytes stay in the total. 100 s * 100/50 - 100 = 100 s.
+        val saved = assertNotNull(timeSaved(100 * mib, 100, listOf("A" to 45 * mib, "B" to 50 * mib, "C" to 5 * mib)))
+        assertEquals("B", saved.network)
+        assertEquals(100L, saved.seconds)
+        // 90 / 5 / 5: only one network carries a tenth.
+        assertNull(timeSaved(100 * mib, 100, listOf("A" to 90 * mib, "B" to 5 * mib, "C" to 5 * mib)))
+    }
+
+    @Test
+    fun `each limit has a short line`() {
+        assertEquals("Limited by slow mode", limitText(SpeedLimit.SlowMode))
+        assertEquals("Limited by your speed limit", limitText(SpeedLimit.SpeedCap))
+        assertEquals("Wi-Fi reached its data limit", limitText(SpeedLimit.DataLimit("en0", "Wi-Fi")))
+        assertEquals("iPhone can't reach the server", limitText(SpeedLimit.Unreachable("iPhone")))
     }
 }

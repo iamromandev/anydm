@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.net.SpeedLimit
 import java.util.Locale
 
 /** Most cells the chunk map shows; more chunks are grouped into this many. */
@@ -106,3 +107,54 @@ fun aloneBadges(
         .sortedBy { it.second }
         .map { (name, ratio) -> AloneBadge(name, ratio, String.format(Locale.ROOT, "%.1f× %s ALONE", ratio, name.uppercase())) }
 }
+
+/** What bonding saved on a finished run: [seconds] sooner than the biggest [network] would have managed alone, as [text]. */
+data class TimeSaved(
+    val seconds: Long,
+    val network: String,
+    val text: String,
+)
+
+private const val MIN_SHARE_DIVISOR = 10L // a network counts from a tenth of the bytes: bytes * 10 >= total
+private const val MIN_RUN_SECONDS = 30L
+private const val MIN_SAVED_SECONDS = 10L
+
+/**
+ * An estimate of the time bonding saved: the run took [seconds] for [total] bytes, and the biggest network ([networks]:
+ * name and the bytes it carried) alone would have needed `seconds * total / its bytes`. Null unless two or more networks
+ * each carried at least a tenth, the run lasted 30 s or more and at least 10 s were saved. Shared speed is not alone
+ * speed, so the wording says "about".
+ */
+fun timeSaved(
+    total: Long,
+    seconds: Long,
+    networks: List<Pair<String, Long>>,
+): TimeSaved? {
+    if (total <= 0 || seconds < MIN_RUN_SECONDS) return null
+    if (networks.count { it.second * MIN_SHARE_DIVISOR >= total } < 2) return null
+    val (name, biggest) = networks.maxByOrNull { it.second } ?: return null
+    if (biggest <= 0) return null
+    val exact = seconds.toDouble() * total / biggest - seconds
+    val saved = exact.toLong()
+    if (saved < MIN_SAVED_SECONDS) return null
+    // Round first, then split into units, so 59.5 s reads "1 min", never "60 sec".
+    val rounded = Math.round(exact)
+    val minutes = (rounded + 30) / 60
+    val span =
+        when {
+            rounded < 60 -> "$rounded sec"
+            minutes < 120 -> "$minutes min"
+            minutes % 60 == 0L -> "${minutes / 60} h"
+            else -> "${minutes / 60} h ${minutes % 60} min"
+        }
+    return TimeSaved(saved, name, "About $span sooner than $name alone")
+}
+
+/** The short line that names what limits a download's speed (#634). */
+fun limitText(limit: SpeedLimit): String =
+    when (limit) {
+        SpeedLimit.SlowMode -> "Limited by slow mode"
+        SpeedLimit.SpeedCap -> "Limited by your speed limit"
+        is SpeedLimit.DataLimit -> "${limit.network} reached its data limit"
+        is SpeedLimit.Unreachable -> "${limit.network} can't reach the server"
+    }

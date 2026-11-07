@@ -46,6 +46,7 @@ import dev.anydm.engine.net.BindStatus
 import dev.anydm.engine.net.BondedNetwork
 import dev.anydm.engine.net.BondingState
 import dev.anydm.engine.net.NetworkInfo
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.store.TransferSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,7 @@ internal class HomeScreenTest {
         val keys: WindowKeys,
         val files: FakeFileActions,
         val routed: MutableList<DownloadId>,
+        val limits: MutableList<String?> = mutableListOf(),
     )
 
     private fun ComposeUiTest.show(
@@ -85,6 +87,7 @@ internal class HomeScreenTest {
         val footer = FooterModel(source, prefs, scope)
         val opened = mutableListOf<List<String>>()
         val backs = mutableListOf<Unit>()
+        val limits = mutableListOf<String?>()
         val keys = WindowKeys()
         val window = FocusRequester()
         setContent {
@@ -99,12 +102,13 @@ internal class HomeScreenTest {
                         onOpen = { routed += it },
                         onBack = { backs += Unit },
                         keys = keys,
+                        onLimits = { limits += it },
                     )
                 }
             }
             LaunchedEffect(Unit) { window.requestFocus() }
         }
-        return Shown(source, prefs, opened, backs, scope, window, keys, files, routed)
+        return Shown(source, prefs, opened, backs, scope, window, keys, files, routed, limits)
     }
 
     private fun network(key: String) = BondedNetwork(NetworkInfo(key, key, true, emptyList()), true, BindStatus.ISOLATED, null, false)
@@ -660,6 +664,57 @@ internal class HomeScreenTest {
             onNodeWithText("976.6 KB/s").assertIsDisplayed()
             onNodeWithText("Mbps").performClick()
             onNodeWithText("8.0 Mbps").assertIsDisplayed()
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a downloading row names its limit and a fixable one opens Limits`() =
+        runComposeUiTest {
+            val shown =
+                show {
+                    it.downloads.value =
+                        listOf(
+                            snapshot(
+                                1,
+                                DOWNLOADING,
+                                name = "a.bin",
+                                total = 100,
+                                downloaded = 1,
+                                speed = 10,
+                                limitedBy = SpeedLimit.SpeedCap,
+                            ),
+                            snapshot(
+                                2,
+                                DOWNLOADING,
+                                name = "b.bin",
+                                total = 100,
+                                downloaded = 1,
+                                speed = 10,
+                                limitedBy = SpeedLimit.Unreachable("iPhone"),
+                            ),
+                            snapshot(3, DOWNLOADING, name = "c.bin", total = 100, downloaded = 1, speed = 10),
+                        )
+                }
+            onNodeWithText("Limited by your speed limit").assertIsDisplayed()
+            onNodeWithText("iPhone can't reach the server").assertIsDisplayed()
+            assertEquals(1, onAllNodesWithText("Limited by", substring = true).fetchSemanticsNodes().size)
+            onNodeWithText("Limited by your speed limit").performClick()
+            assertEquals(listOf<String?>(null), shown.limits)
+            assertEquals(emptyList(), shown.routed)
+            onNodeWithText("iPhone can't reach the server").performClick()
+            assertEquals(listOf<String?>(null), shown.limits)
+            shown.scope.cancel()
+        }
+
+    @Test
+    fun `a paused row shows no limit`() =
+        runComposeUiTest {
+            val shown =
+                show {
+                    it.downloads.value =
+                        listOf(snapshot(1, PAUSED, name = "a.bin", total = 100, downloaded = 1, limitedBy = SpeedLimit.SpeedCap))
+                }
+            assertEquals(0, onAllNodesWithText("Limited by", substring = true).fetchSemanticsNodes().size)
             shown.scope.cancel()
         }
 

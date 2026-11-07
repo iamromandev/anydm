@@ -4,6 +4,7 @@ import dev.anydm.engine.DownloadSnapshot
 import dev.anydm.engine.core.DownloadId
 import dev.anydm.engine.core.DownloadKind
 import dev.anydm.engine.core.DownloadStatus
+import dev.anydm.engine.net.SpeedLimit
 import dev.anydm.engine.queue.CommandResult
 import dev.anydm.engine.queue.RemoveFiles
 import kotlinx.coroutines.CancellationException
@@ -92,7 +93,11 @@ data class HomeRow(
     /** It is not moving: its bar is faded. */
     val idle: Boolean,
     val selected: Boolean,
-)
+    /** What limits its speed while it downloads (#634); null when nothing does. */
+    val limit: SpeedLimit? = null,
+) {
+    val limitText: String? get() = limit?.let(::limitText)
+}
 
 data class HomeGroup(
     val kind: GroupKind,
@@ -617,6 +622,7 @@ private fun rowOf(
         failed = failed,
         idle = kind == GroupKind.PAUSED || kind == GroupKind.QUEUED,
         selected = selected,
+        limit = snapshot.limitedBy.takeIf { status == DownloadStatus.DOWNLOADING },
     )
 }
 

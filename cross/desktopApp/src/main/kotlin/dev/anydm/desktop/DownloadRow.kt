@@ -3,6 +3,7 @@ package dev.anydm.desktop
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -40,8 +41,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.anydm.engine.net.SpeedLimit
 
 /**
  * One download as a row: select box, type badge, name, progress, detail line, speed, its button and the way into its page.
@@ -59,6 +62,7 @@ fun DownloadRow(
     onAction: () -> Unit,
     onMenu: (Offset) -> Unit = {},
     onOpenFile: () -> Unit = {},
+    onLimits: (String?) -> Unit = {},
 ) {
     val colors = Plexo.colors
     val source = remember { MutableInteractionSource() }
@@ -124,6 +128,7 @@ fun DownloadRow(
                 }
                 if (row.segments.isNotEmpty()) ProgressBar(row, swatches)
                 Txt(row.detail, Plexo.type.detail, color = if (row.failed) colors.danger else colors.textTertiary)
+                row.limit?.let { LimitLine(it, onLimits, Plexo.type.detail) }
             }
         }
         row.action?.let { action ->
@@ -166,5 +171,26 @@ private fun ProgressBar(
         }
         val rest = 1f - row.segments.sumOf { it.fraction.toDouble() }.toFloat()
         if (rest > 0.0001f) Box(Modifier.weight(rest))
+    }
+}
+
+/**
+ * The line that names what limits a download's speed (#634). Where the Limits dialog can change the limit the line is a
+ * button that opens it ([onLimits], with the key of the network a data limit is about, else null); otherwise it is only text.
+ */
+@Composable
+internal fun LimitLine(
+    limit: SpeedLimit,
+    onLimits: (String?) -> Unit,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val colors = Plexo.colors
+    val text = limitText(limit)
+    if (limit.fixable) {
+        val key = (limit as? SpeedLimit.DataLimit)?.key
+        Txt(text, style, modifier.clickable(onClickLabel = "Open Limits", role = Role.Button) { onLimits(key) }, color = colors.accent)
+    } else {
+        Txt(text, style, modifier, color = colors.textTertiary)
     }
 }

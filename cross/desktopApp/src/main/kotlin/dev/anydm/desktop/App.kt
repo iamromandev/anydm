@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /** A request to open the Limits dialog on [page] (a network key, null for All downloads). */
@@ -62,6 +63,25 @@ private fun LimitsHost(
             onClose()
         },
     )
+}
+
+/** Builds the Network Doctor's model for [request]; nothing is checked until its button is pressed. */
+@Composable
+private fun DoctorHost(
+    source: EngineSource,
+    request: Long,
+    looks: StateFlow<NetworkLooks>,
+    copy: (String) -> String?,
+    keys: WindowKeys,
+    onClose: () -> Unit,
+) {
+    val model =
+        remember(request) {
+            val own = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            own to DoctorModel(source, looks, own, copy)
+        }
+    DisposableEffect(model) { onDispose { model.first.cancel() } }
+    DoctorDialog(model.second, keys, onClose)
 }
 
 /** Builds the pairing dialog's model for [request]; it is cleared and dropped when the dialog goes. */
@@ -120,6 +140,8 @@ fun App(
     onOpenLimits: (String?) -> Unit = {},
     /** What the update button drives; none (an app without a version), and there is no button. */
     updates: UpdateControls? = null,
+    /** Puts text on the system clipboard (Copy report); answers why it could not, else null. */
+    copyText: (String) -> String? = ::copyToSystemClipboard,
 ) {
     val uiScope = rememberCoroutineScope()
     val updateSession = remember(updates, files) { updates?.let { UpdateSession(it, files, uiScope) } }
@@ -130,6 +152,9 @@ fun App(
     var requests by remember { mutableStateOf(0L) }
     // The Browsers (pairing) dialog is open; a new opening is a new model, so no code survives a close.
     var pairRequest by remember { mutableStateOf<Long?>(null) }
+    // The Network Doctor is open for this request; a new opening is a new model, so an old result is never shown as new.
+    var doctorRequest by remember { mutableStateOf<Long?>(null) }
+    val doctor by rememberUpdatedState<() -> Unit> { doctorRequest = ++requests }
     val limits by rememberUpdatedState<(String?) -> Unit> { page ->
         onOpenLimits(page)
         limitsRequest = LimitsRequest(++requests, page)
@@ -146,7 +171,7 @@ fun App(
                 FooterModel(source, prefs, own),
                 looks,
                 editor,
-                NetworksModel(source, looks.looks, own) { limits(it) },
+                NetworksModel(source, looks.looks, own, { doctor() }) { limits(it) },
                 LandingSession(own) { prefill, scope -> NewDownloadModel(source, looks.looks, scope, prefill = prefill) },
                 BindingNotice(source, own),
             )
@@ -204,6 +229,7 @@ fun App(
                                 networks = models.networks to models.editor,
                                 onBrowsers = { pairRequest = ++requests },
                                 updates = updateSession,
+                                onLimits = models.networks::openLimits,
                             )
                         }
 
@@ -217,6 +243,7 @@ fun App(
                                 keys,
                                 naming = models.looks.looks to models.editor,
                                 onNewDownload = openLink,
+                                onLimits = models.networks::openLimits,
                             )
                         }
                     }
@@ -224,6 +251,7 @@ fun App(
                     limitsRequest?.let { request ->
                         LimitsHost(source, request, footer.unit, models.footer, models.networks, keys) { limitsRequest = null }
                     }
+                    doctorRequest?.let { id -> DoctorHost(source, id, models.looks.looks, copyText, keys) { doctorRequest = null } }
                     updateSession?.let { UpdateDialogs(it, keys) }
                     // Last, so it is on top of the other dialogs and its focus is what the user sees.
                     if (bindingShown) BindingDialog(keys, models.binding::dismiss)

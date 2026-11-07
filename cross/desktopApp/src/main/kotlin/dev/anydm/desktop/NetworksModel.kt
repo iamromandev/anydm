@@ -22,7 +22,14 @@ data class NetworkRow(
     /** Bytes per second it carries now; null when it is idle. */
     val speed: Long?,
     val up: Boolean,
-)
+    /** It failed a connection a moment ago and is left out for a while. */
+    val faulted: Boolean = false,
+    /** The user has it switched on for bonding. */
+    val enabled: Boolean = true,
+) {
+    /** Switched on, and idle, down or failing: the row offers "Why isn't this network adding speed?". */
+    val canDiagnose: Boolean get() = enabled && (!up || faulted || speed == null)
+}
 
 data class NetworksState(
     val open: Boolean = false,
@@ -31,12 +38,14 @@ data class NetworksState(
 
 /**
  * The networks menu: a row for each network the engine lists, whether the menu is open, and where a row's chevron and the
- * "Speed & data limits" link go ([onOpenLimits], a network key or null for the general page; the limits dialog is built apart).
+ * "Speed & data limits" link go ([onOpenLimits], a network key or null for the general page; the limits dialog is built apart),
+ * and where the Network Doctor entry and the "why" links go ([onOpenDoctor]; also built apart).
  */
 class NetworksModel(
     source: EngineSource,
     looks: StateFlow<NetworkLooks>,
     scope: CoroutineScope,
+    private val onOpenDoctor: () -> Unit = {},
     private val onOpenLimits: (String?) -> Unit = {},
 ) {
     private val open = MutableStateFlow(false)
@@ -57,6 +66,12 @@ class NetworksModel(
         onOpenLimits(key)
     }
 
+    /** Closes the menu and opens Network Doctor; it checks nothing until its own button is pressed. */
+    fun openDoctor() {
+        close()
+        onOpenDoctor()
+    }
+
     private fun rowsOf(
         networks: BondingState,
         looks: NetworkLooks,
@@ -71,6 +86,8 @@ class NetworksModel(
                 colorId = looks.colorIds[key] ?: SWATCH_IDS.first(),
                 speed = net.speed?.toLong()?.takeIf { it > 0 },
                 up = net.info.up,
+                faulted = net.faulted,
+                enabled = net.enabled,
             )
         }
 }
