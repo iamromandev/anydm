@@ -1,3 +1,0 @@
--- Version 19 to 20 (#543): metered networks (NET-14).
-ALTER TABLE network_policy ADD COLUMN metered INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE network_policy ADD COLUMN on_metered TEXT NOT NULL DEFAULT 'NONE';   -- NONE, SLOW, PAUSE

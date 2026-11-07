@@ -1,2 +1,0 @@
--- Version 4 to 5 (#573): the user's checksum of each download.
-ALTER TABLE download ADD COLUMN checksum TEXT;
