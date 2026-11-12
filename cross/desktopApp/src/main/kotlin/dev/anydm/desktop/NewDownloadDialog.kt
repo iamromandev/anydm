@@ -127,7 +127,7 @@ fun NewDownloadDialog(
                 }
                 OptionRow("Networks") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        networks.forEach { n -> NetworkPill(n.name, if (n.kind == NetworkKind.WiFi) c.success else c.accent) }
+                        networks.forEach { n -> NetworkPill(n.name, networkColor(n.kind, c)) }
                     }
                 }
                 if (networks.size >= 2 && preview?.parallel == true) {

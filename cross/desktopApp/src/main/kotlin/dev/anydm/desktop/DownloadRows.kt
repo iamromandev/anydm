@@ -3,6 +3,8 @@ package dev.anydm.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +18,27 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,13 +97,33 @@ fun DownloadRow(
     unit: SpeedUnit,
     onSelect: (Boolean) -> Unit,
     onTogglePause: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     val c = colors
     val active = item.status != DownloadStatus.Finished
+    val open by rememberUpdatedState(onOpen)
+    var focused by remember { mutableStateOf(false) }
     Row(
         Modifier
             .testTag("row-${item.id}")
             .fillMaxWidth()
+            .pointerInput(item.id) { detectTapGestures { open() } }
+            .semantics {
+                role = Role.Button
+                onClick {
+                    open()
+                    true
+                }
+            }.onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { e ->
+                val activate = e.key == Key.Enter || e.key == Key.NumPadEnter || e.key == Key.Spacebar
+                if (focused && activate && e.type == KeyEventType.KeyDown) {
+                    open()
+                    true
+                } else {
+                    false
+                }
+            }.focusable()
             .background(if (selected) c.accent.copy(alpha = 0.10f) else Color.Transparent)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -101,7 +138,8 @@ fun DownloadRow(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                badgeFor(item.name),
+                badgeFor(item),
+                modifier = Modifier.testTag("badge-${item.id}"),
                 color = c.textSecondary,
                 fontSize = 9.sp,
                 fontFamily = FontFamily.Monospace,
@@ -156,7 +194,7 @@ fun DownloadRow(
         } else {
             Spacer(Modifier.size(32.dp))
         }
-        IconBox("chevron-${item.id}", "Open ${item.name}", {}) { ChevronIcon(it) }
+        IconBox("chevron-${item.id}", "Open ${item.name}", onOpen) { ChevronIcon(it) }
     }
 }
 

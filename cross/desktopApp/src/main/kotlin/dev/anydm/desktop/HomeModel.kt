@@ -2,6 +2,8 @@ package dev.anydm.desktop
 
 enum class DownloadStatus { Downloading, Paused, Finished }
 
+enum class DownloadKind { Direct, Torrent }
+
 data class DownloadItem(
     val id: String,
     val name: String,
@@ -9,6 +11,7 @@ data class DownloadItem(
     val doneBytes: Long,
     val bytesPerSec: Long,
     val status: DownloadStatus,
+    val kind: DownloadKind = DownloadKind.Direct,
 )
 
 data class HomeState(
@@ -43,6 +46,8 @@ fun badgeFor(name: String): String {
     if (dot <= 0 || ext.isEmpty()) return "FILE"
     return ext.uppercase().take(4)
 }
+
+fun badgeFor(item: DownloadItem): String = if (item.kind == DownloadKind.Torrent) "TOR" else badgeFor(item.name)
 
 fun progress(item: DownloadItem): Float = if (item.totalBytes <= 0) 0f else (item.doneBytes.toFloat() / item.totalBytes).coerceIn(0f, 1f)
 

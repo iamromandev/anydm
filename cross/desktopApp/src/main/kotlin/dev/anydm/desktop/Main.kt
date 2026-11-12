@@ -19,7 +19,7 @@ fun main() =
             state = rememberWindowState(size = DpSize(1280.dp, 800.dp)),
         ) {
             window.minimumSize = Dimension(900, 600)
-            val sample = if (System.getProperty("anydm.sample") == "empty") emptySample() else populatedSample()
+            val sample = if (System.getProperty("anydm.sample") == "empty") emptySample() else detailSample()
             HomeScreen(sample, isSystemInDarkTheme())
         }
     }
