@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.ProbeResult
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentMeta
 import kotlin.test.Test
@@ -25,13 +26,33 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun localhostLinkIsResumableWith400Mb() {
+    fun aLinkKeepsItsUrlAndClaimsNothingBeforeTheProbe() {
         for (host in listOf("127.0.0.1:8765", "localhost")) {
-            val p = direct("http://$host/Project.zip")
-            assertTrue(p.resumable)
-            assertTrue(p.parallel)
-            assertEquals(400L * 1024 * 1024, p.totalBytes)
+            val p = direct("  http://$host/Project.zip ")
+            assertEquals("http://$host/Project.zip", p.url)
+            assertFalse(p.resumable)
+            assertNull(p.totalBytes)
         }
+    }
+
+    @Test
+    fun aProbeResultReplacesNameSizeAndResumability() {
+        val base = direct("https://x.test/download?id=7")
+        val ready = probedPreview(base, ProbeState.Ready(ProbeResult("report.pdf", 2048, true)))
+        assertEquals(listOf("report.pdf", "PDF", 2048L, true), listOf(ready.name, ready.badge, ready.totalBytes, ready.resumable))
+        assertEquals(base.url, ready.url)
+        assertEquals(false, ready.awaitingProbe)
+        assertEquals(base, probedPreview(base, ProbeState.Failed("HTTP 404")))
+    }
+
+    @Test
+    fun aPreviewWhoseProbeHasNotAnsweredIsMarkedSoItsNameCanBeAwaited() {
+        val base = direct("https://x.test/download?id=7")
+        val checking = probedPreview(base, ProbeState.Checking)
+        assertEquals(true, checking.awaitingProbe)
+        assertEquals(base, checking.copy(awaitingProbe = false))
+        assertEquals(false, base.awaitingProbe)
+        assertEquals(false, probedPreview(base, ProbeState.Idle).awaitingProbe)
     }
 
     @Test
@@ -131,11 +152,17 @@ class NewDownloadModelTest {
 
     @Test
     fun detailTextMatchesSpec() {
-        assertEquals("400.0 MB · resumable", previewDetail(direct("http://localhost/a.zip"), all))
-        assertEquals(
-            "size unknown · Uses one connection. This server doesn't support parallel downloads.",
-            previewDetail(direct("https://x.test/a.zip"), all),
-        )
+        val d = direct("https://x.test/a.zip")
+        assertEquals("Checking link…", previewDetail(d, all, ProbeState.Checking))
+        assertEquals("HTTP 404", previewDetail(d, all, ProbeState.Failed("HTTP 404")))
+
+        fun ready(
+            total: Long?,
+            resumable: Boolean,
+        ) = ProbeState.Ready(ProbeResult("a.zip", total, resumable)).let { previewDetail(probedPreview(d, it), all, it) }
+        assertEquals("400.0 MB · Resumable", ready(400L * 1024 * 1024, true))
+        assertEquals("size unknown · Resumable", ready(null, true))
+        assertEquals("1.0 KB · Uses one connection. This server doesn't support parallel downloads.", ready(1024, false))
         val t = parsePreview("magnet:?xt=urn:btih:abc")!!
         assertEquals("11 files · 123.3 MB", previewDetail(t, all))
         assertEquals("1 file · 1.5 KB", previewDetail(t, setOf(sintelFiles.last().name)))
@@ -144,10 +171,10 @@ class NewDownloadModelTest {
     @Test
     fun newDownloadItemForDirectAndTorrent() {
         val d = newDownloadItem(direct("https://x.test/a.zip"), all, "9")
-        assertEquals(DownloadItem("9", "a.zip", 0, 0, d.bytesPerSec, DownloadStatus.Downloading), d)
-        assertTrue(d.bytesPerSec > 0)
-        val r = newDownloadItem(direct("http://localhost/a.zip"), all, "10")
-        assertEquals(400L * 1024 * 1024, r.totalBytes)
+        assertEquals(DownloadItem("9", "a.zip", UNKNOWN_SIZE, 0, 0, DownloadStatus.Downloading, url = "https://x.test/a.zip"), d)
+        val probed = probedPreview(direct("https://x.test/a.zip"), ProbeState.Ready(ProbeResult("b.zip", 5000, true)))
+        val r = newDownloadItem(probed, all, "10", "/data")
+        assertEquals(listOf("b.zip", 5000L, "/data"), listOf(r.name, r.totalBytes, r.folder))
         val t = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all - "Sintel.mp4", "11")
         assertEquals("Sintel", t.name)
         assertEquals(torrentSummary(sintelFiles, all - "Sintel.mp4").second, t.totalBytes)

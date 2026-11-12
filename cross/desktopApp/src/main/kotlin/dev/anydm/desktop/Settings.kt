@@ -200,7 +200,7 @@ private fun proxyProblem(p: ProxyDto): String? =
     }
 
 /** A saved folder must be an absolute path of this system: a relative one would depend on where the app was started. */
-private fun isUsableFolder(folder: String): Boolean =
+internal fun isUsableFolder(folder: String): Boolean =
     folder.isNotBlank() &&
         folder.length <= MAX_SETTINGS_TEXT &&
         try {

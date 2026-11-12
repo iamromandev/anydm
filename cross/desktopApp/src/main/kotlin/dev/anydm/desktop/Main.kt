@@ -29,6 +29,10 @@ internal fun installExitFlush(
     addHook(Thread({ stores.flush() }, "anydm-exit-flush"))
 }
 
+/** What the window starts with: no download rows (they come from the user), the networks and free space as before. */
+internal fun startState(sampleProperty: String?): HomeState =
+    if (sampleProperty == "empty") emptySample() else detailSample().copy(downloads = emptyList())
+
 fun main() {
     val platform = Platform.current()
     val stores = AppStores.real(platform)
@@ -44,9 +48,19 @@ fun main() {
             state = rememberWindowState(size = DpSize(1280.dp, 800.dp)),
         ) {
             window.minimumSize = Dimension(900, 600)
-            val sample = if (System.getProperty("anydm.sample") == "empty") emptySample() else detailSample()
+            val sample = remember { startState(System.getProperty("anydm.sample")) }
+            // The engine has its own scope: a composition scope would be cancelled by any one failing job.
+            val downloads = remember { DownloadEnv.real() }
             AppMenuBar(bus, platform)
-            HomeScreen(sample, isSystemInDarkTheme(), files = remember { FilesEnv.real() }, bus = bus, platform = platform, stores = stores)
+            HomeScreen(
+                sample,
+                isSystemInDarkTheme(),
+                files = remember { FilesEnv.real() },
+                bus = bus,
+                platform = platform,
+                stores = stores,
+                downloadEnv = downloads,
+            )
         }
     }
 }

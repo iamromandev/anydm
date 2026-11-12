@@ -16,7 +16,11 @@ fun targetsOf(
 
 fun canPause(t: List<DownloadItem>): Boolean = t.any { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued }
 
-fun canResume(t: List<DownloadItem>): Boolean = t.any { it.status == DownloadStatus.Paused }
+fun canResume(t: List<DownloadItem>): Boolean = t.any { it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed }
+
+/** Resume is called Retry when every row it would act on has failed. */
+fun resumeLabel(t: List<DownloadItem>): String =
+    if (t.any { it.status == DownloadStatus.Failed } && t.none { it.status == DownloadStatus.Paused }) "Retry" else "Resume"
 
 fun allFinished(t: List<DownloadItem>): Boolean = t.isNotEmpty() && t.all { it.status == DownloadStatus.Finished }
 
@@ -46,6 +50,9 @@ fun menuActions(
         if (t.any { it.status == DownloadStatus.Queued }) add(MenuAction.StartNow)
         if (allFinished(t)) {
             add(MenuAction.Open)
+            add(MenuAction.ShowInFolder)
+        } else if (t.all { it.url != null }) {
+            // A real download that is still running has a `.part` file to show.
             add(MenuAction.ShowInFolder)
         }
         add(MenuAction.Remove)

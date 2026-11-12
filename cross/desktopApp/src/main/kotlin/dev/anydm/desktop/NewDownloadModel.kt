@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.ProbeResult
 import dev.anydm.engine.torrent.TorrentMeta
 import java.net.URLDecoder
 
@@ -28,6 +29,10 @@ sealed interface Preview {
         override val badge: String,
         val totalBytes: Long?,
         val resumable: Boolean,
+        /** The link as typed (trimmed): what the engine fetches. */
+        val url: String? = null,
+        /** True while the link is still being checked: the name shown is the link's, and the server may name the file differently. */
+        val awaitingProbe: Boolean = false,
     ) : Preview {
         override val parallel: Boolean get() = resumable
     }
@@ -71,7 +76,7 @@ fun pasteLink(
     return t.takeIf { listOf("http://", "https://", "magnet:").any { p -> t.startsWith(p, ignoreCase = true) } }
 }
 
-/** Derives a preview from the field text. Stand-in rules: localhost links count as range-capable. */
+/** Derives a preview from the field text: the name from the link, nothing else is known until the probe answers. */
 fun parsePreview(raw: String): Preview? {
     val text = raw.trim()
     if (text.startsWith("magnet:?", ignoreCase = true)) return magnetPreview(text)
@@ -82,12 +87,12 @@ fun parsePreview(raw: String): Preview? {
     if (port.isNotEmpty() && (port.toLongOrNull() ?: Long.MAX_VALUE) > 65535) return null
     val segment = m.groupValues[4].split('/').lastOrNull { it.isNotEmpty() }
     val name = segment?.let(::decode) ?: host
-    val resumable = host == "127.0.0.1" || host.equals("localhost", ignoreCase = true)
     return Preview.Direct(
         name = name,
         badge = if (segment == null) "FILE" else badgeFor(name),
-        totalBytes = if (resumable) 400 * MIB else null,
-        resumable = resumable,
+        totalBytes = null,
+        resumable = false,
+        url = text,
     )
 }
 
@@ -111,16 +116,59 @@ fun torrentSummary(
     return on.size to on.sumOf { it.bytes }
 }
 
+/** What the link probe of the New download dialog knows. */
+sealed interface ProbeState {
+    /** Nothing to probe (a magnet link, a torrent file or no link). */
+    data object Idle : ProbeState
+
+    data object Checking : ProbeState
+
+    data class Ready(
+        val result: ProbeResult,
+    ) : ProbeState
+
+    data class Failed(
+        val reason: String,
+    ) : ProbeState
+}
+
+/** The preview with what the probe found: the server's name, size and range support. */
+fun probedPreview(
+    base: Preview.Direct,
+    state: ProbeState,
+): Preview.Direct =
+    when (state) {
+        is ProbeState.Ready -> {
+            base.copy(
+                name = state.result.name,
+                badge = badgeFor(state.result.name),
+                totalBytes = state.result.total,
+                resumable = state.result.resumable,
+            )
+        }
+
+        ProbeState.Checking -> {
+            base.copy(awaitingProbe = true)
+        }
+
+        else -> {
+            base
+        }
+    }
+
 fun previewDetail(
     preview: Preview,
     ticked: Set<String>,
+    probe: ProbeState = ProbeState.Idle,
 ): String =
     when (preview) {
         is Preview.Direct -> {
-            if (preview.resumable) {
-                "${formatBytes(preview.totalBytes ?: 0)} · resumable"
-            } else {
-                "size unknown · Uses one connection. This server doesn't support parallel downloads."
+            val size = preview.totalBytes?.let(::formatBytes) ?: "size unknown"
+            when {
+                probe is ProbeState.Checking -> "Checking link…"
+                probe is ProbeState.Failed -> probe.reason
+                preview.resumable -> "$size · Resumable"
+                else -> "$size · Uses one connection. This server doesn't support parallel downloads."
             }
         }
 
@@ -150,12 +198,15 @@ fun newDownloadItem(
 ): DownloadItem {
     val total =
         when (preview) {
-            is Preview.Direct -> preview.totalBytes ?: 0L
+            is Preview.Direct -> preview.totalBytes ?: UNKNOWN_SIZE
             is Preview.Torrent -> torrentSummary(preview.files, ticked).second
         }
     val kind = if (preview is Preview.Torrent) DownloadKind.Torrent else DownloadKind.Direct
     val files = (preview as? Preview.Torrent)?.files?.filter { it.name in ticked }
-    return DownloadItem(id, preview.name, total, 0, SAMPLE_SPEED, DownloadStatus.Downloading, kind, folder, files)
+    // A direct link is a real download: it starts at 0 B/s and the engine's reports move it. A torrent row stays simulated.
+    val speed = if (preview is Preview.Torrent) SAMPLE_SPEED else 0L
+    val url = (preview as? Preview.Direct)?.url
+    return DownloadItem(id, preview.name, total, 0, speed, DownloadStatus.Downloading, kind, folder, files, url)
 }
 
 fun nextId(items: List<DownloadItem>): String = ((items.maxOfOrNull { it.id.toLongOrNull() ?: 0L } ?: 0L) + 1).toString()

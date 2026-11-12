@@ -74,12 +74,18 @@ fun DetailScreen(
     onStartNow: () -> Unit,
     home: String,
     modifier: Modifier = Modifier,
+    onOpenFile: () -> Unit = {},
+    onReveal: () -> Unit = {},
+    /** Moves the finished file to the Trash and removes the row; by default only the row goes. */
+    onTrash: () -> Unit = onRemove,
+    /** The speeds a real download reported this session, oldest first. */
+    history: List<Long> = emptyList(),
 ) {
     var off by remember(item.id) { mutableStateOf(emptySet<String>()) }
     var chip by remember { mutableStateOf(Rect.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
     val folder = folderLabel(item, home)
-    val detail = remember(item, networks, off, folder) { buildDetail(item, networks, off, folder) }
+    val detail = remember(item, networks, off, folder, history) { buildDetail(item, networks, off, folder, history) }
     Box(
         modifier
             .fillMaxSize()
@@ -88,7 +94,7 @@ fun DetailScreen(
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             if (item.status == DownloadStatus.Finished) {
-                FinishedBody(detail, unit, onBack, onRemove)
+                FinishedBody(detail, unit, onBack, onRemove, onTrash, onOpenFile, onReveal)
             } else {
                 ActiveBody(
                     detail,
@@ -102,6 +108,7 @@ fun DetailScreen(
                     onRemove,
                     queuePosition,
                     onStartNow,
+                    onReveal,
                     { onFilesOpen(!filesOpen) },
                     { chip = it },
                 )
@@ -124,29 +131,52 @@ private fun ActiveBody(
     onRemove: () -> Unit,
     queuePosition: Int?,
     onStartNow: () -> Unit,
+    onReveal: () -> Unit,
     onFiles: () -> Unit,
     onChip: (Rect) -> Unit,
 ) {
     val queued = detail.item.status == DownloadStatus.Queued
     if (queued) {
-        QueuedHeader(onBack, onStartNow, onRemove)
+        QueuedHeader(onBack, onStartNow, onRemove, onReveal)
     } else {
-        ActiveHeader(detail.item.status == DownloadStatus.Paused, onBack, onTogglePause, onCancel)
+        val status = detail.item.status
+        val label =
+            if (status == DownloadStatus.Failed) {
+                "Retry"
+            } else if (status == DownloadStatus.Paused) {
+                "Resume"
+            } else {
+                "Pause"
+            }
+        ActiveHeader(label, onBack, onTogglePause, onCancel, onReveal)
     }
     Divider()
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        if (queued) QueuedNote(queuePosition, Modifier.weight(1f)) else SpeedDiagram(detail, unit, Modifier.weight(1f))
-        ThroughputGraph(detail, unit, Modifier.width(300.dp))
+        if (queued) {
+            QueuedNote(queuePosition, Modifier.weight(1f))
+        } else if (detail.item.status == DownloadStatus.Failed) {
+            FailedNote(detail.item.error, Modifier.weight(1f))
+        } else if (detail.real) {
+            SingleConnectionSpeed(detail, unit, Modifier.weight(1f))
+        } else {
+            SpeedDiagram(detail, unit, Modifier.weight(1f))
+        }
+        if (detail.real) {
+            ThroughputGraph(detail, unit, Modifier.width(300.dp), title = "SPEED · THIS SESSION", startLabel = "earlier")
+        } else {
+            ThroughputGraph(detail, unit, Modifier.width(300.dp))
+        }
     }
     Divider()
     FileCard(detail, onFiles, onChip)
     if (showMap(detail)) {
         ChunkMap(detail, Modifier.padding(horizontal = 20.dp).padding(bottom = 14.dp))
     }
-    NetworkTable(detail, unit) { id -> setOff(toggleOff(off, networks, id)) }
+    // A real download's traffic is not bound to a network: there is nothing to break down per network.
+    if (!detail.real) NetworkTable(detail, unit) { id -> setOff(toggleOff(off, networks, id)) }
 }
 
 @Composable
@@ -167,10 +197,11 @@ private fun BackButton(onBack: () -> Unit) {
 
 @Composable
 private fun ActiveHeader(
-    paused: Boolean,
+    toggleLabel: String,
     onBack: () -> Unit,
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
+    onReveal: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 20.dp),
@@ -178,11 +209,12 @@ private fun ActiveHeader(
     ) {
         BackButton(onBack)
         Spacer(Modifier.weight(1f))
-        DangerButton("Cancel download", "detail-cancel", onCancel)
+        // It keeps the `.part` file, so it says what it does: the row goes, the download is not deleted.
+        DangerButton("Remove from list", "detail-remove", onCancel)
         Spacer(Modifier.width(8.dp))
-        OutlineButton(if (paused) "Resume" else "Pause", "detail-pause", onTogglePause)
+        OutlineButton(toggleLabel, "detail-pause", onTogglePause)
         Spacer(Modifier.width(8.dp))
-        PrimaryButton("Show in Finder", "detail-finder", true) {}
+        PrimaryButton("Show in Finder", "detail-finder", true, onReveal)
     }
 }
 
@@ -191,6 +223,7 @@ private fun QueuedHeader(
     onBack: () -> Unit,
     onStartNow: () -> Unit,
     onRemove: () -> Unit,
+    onReveal: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 20.dp),
@@ -202,7 +235,7 @@ private fun QueuedHeader(
         Spacer(Modifier.width(8.dp))
         OutlineButton("Start now", "detail-start-now", onStartNow)
         Spacer(Modifier.width(8.dp))
-        PrimaryButton("Show in Finder", "detail-finder", true) {}
+        PrimaryButton("Show in Finder", "detail-finder", true, onReveal)
     }
 }
 
@@ -221,6 +254,25 @@ private fun QueuedNote(
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
             modifier = Modifier.testTag("detail-queued"),
+        )
+    }
+}
+
+/** Stands where the speed diagram is for a failed row: the reason, and Retry is in the header. */
+@Composable
+private fun FailedNote(
+    reason: String?,
+    modifier: Modifier = Modifier,
+) {
+    val c = colors
+    Box(modifier, contentAlignment = Alignment.CenterStart) {
+        Text(
+            reason ?: "Failed",
+            color = c.danger,
+            fontSize = 18.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 2,
+            modifier = Modifier.testTag("detail-error"),
         )
     }
 }
@@ -249,6 +301,9 @@ private fun FinishedBody(
     unit: SpeedUnit,
     onBack: () -> Unit,
     onRemove: () -> Unit,
+    onTrash: () -> Unit,
+    onOpenFile: () -> Unit,
+    onReveal: () -> Unit,
 ) {
     val c = colors
     val item = d.item
@@ -261,11 +316,11 @@ private fun FinishedBody(
         Spacer(Modifier.weight(1f))
         OutlineButton("Remove from list", "detail-remove", onRemove)
         Spacer(Modifier.width(8.dp))
-        DangerButton("Move file to Trash", "detail-trash", onRemove)
+        DangerButton("Move file to Trash", "detail-trash", onTrash)
         Spacer(Modifier.width(8.dp))
-        OutlineButton("Open", "detail-open")
+        OutlineButton("Open", "detail-open", onOpenFile)
         Spacer(Modifier.width(8.dp))
-        PrimaryButton("Show in Finder", "detail-finder", true) {}
+        PrimaryButton("Show in Finder", "detail-finder", true, onReveal)
     }
     Divider()
     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -320,12 +375,17 @@ private fun FinishedBody(
             d,
             unit,
             Modifier.fillMaxWidth(),
-            title = "SPEED OVER THE DOWNLOAD",
-            startLabel = "60s before the end",
-            endLabel = "end",
+            title = if (d.real) "SPEED · THIS SESSION" else "SPEED OVER THE DOWNLOAD",
+            startLabel = if (d.real) "earlier" else "60s before the end",
+            endLabel = if (d.real) "now" else "end",
             plotHeight = 120.dp,
         )
         Spacer(Modifier.height(18.dp))
+        if (d.real) {
+            // No per-network shares or chunks for a download the app measured as one connection.
+            Spacer(Modifier.height(16.dp))
+            return@Column
+        }
         Text(
             "CONTRIBUTION BY NETWORK",
             color = c.textSecondary,
@@ -407,13 +467,22 @@ private fun StatsStrip(
             Triple("STREAMS", "streams", d.rows.sumOf { it.streams })
         }
     val stats =
-        listOf(
-            Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
-            Triple("TIME", "time", formatClock(d.elapsedSec)),
-            Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
-            Triple("NETWORKS", "networks", d.rows.count { it.on }.toString()),
-            Triple(last.first, last.second, last.third.toString()),
-        )
+        if (d.real) {
+            // One measured connection: no network count, and no clock for a transfer this session may only have seen part of.
+            listOf(
+                Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
+                Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
+                Triple("CONNECTIONS", "connections", "1"),
+            )
+        } else {
+            listOf(
+                Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
+                Triple("TIME", "time", formatClock(d.elapsedSec)),
+                Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
+                Triple("NETWORKS", "networks", d.rows.count { it.on }.toString()),
+                Triple(last.first, last.second, last.third.toString()),
+            )
+        }
     Row(
         Modifier
             .fillMaxWidth()

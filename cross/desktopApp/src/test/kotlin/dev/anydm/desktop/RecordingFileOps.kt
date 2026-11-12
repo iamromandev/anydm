@@ -30,6 +30,17 @@ class RecordingFileOps(
         return real.read(path, maxBytes)
     }
 
+    private var prefix = "settings"
+
+    override fun writeTemp(
+        dir: Path,
+        bytes: ByteArray,
+        prefix: String,
+    ): Path {
+        this.prefix = prefix
+        return writeTemp(dir, bytes)
+    }
+
     override fun writeTemp(
         dir: Path,
         bytes: ByteArray,
@@ -37,11 +48,11 @@ class RecordingFileOps(
         val partial = partialBytes
         if (failOn == "writeTemp" && partial != null) {
             log += "writeTemp"
-            temps.add(real.writeTemp(dir, bytes.copyOf(partial)))
+            temps.add(real.writeTemp(dir, bytes.copyOf(partial), prefix))
             throw IOException("injected failure at writeTemp")
         }
         step("writeTemp")
-        return real.writeTemp(dir, bytes).also { temps.add(it) }
+        return real.writeTemp(dir, bytes, prefix).also { temps.add(it) }
     }
 
     override fun moveAtomic(

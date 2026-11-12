@@ -84,6 +84,26 @@ private fun statLine(
     withStyle(SpanStyle(color = c.text, fontWeight = FontWeight.Bold)) { append(value) }
 }
 
+/** What stands where the speed diagram is for a real download: one connection, and the speed it measured. */
+@Composable
+fun SingleConnectionSpeed(
+    d: Detail,
+    unit: SpeedUnit,
+    modifier: Modifier = Modifier,
+) {
+    val c = colors
+    val total = formatSpeed(d.total, unit)
+    Column(
+        modifier
+            .testTag("detail-diagram")
+            .semantics { contentDescription = "Speed $total over one connection" },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Mono("1 CONNECTION", c.textSecondary, 10, spacing = 1)
+        Mono(total, c.text, 24, Modifier.testTag("detail-single-speed"), bold = true)
+    }
+}
+
 @Composable
 fun SpeedDiagram(
     d: Detail,
@@ -219,8 +239,9 @@ fun ThroughputGraph(
     val c = colors
     val ticks = niceTicks(d.peak, unit)
     val top = ticks.last().toFloat()
-    val live = d.rows.indices.filter { d.rows[it].on }
-    val fills = live.map { networkColor(d.rows[it].kind, d.rows[it].color, c) }
+    // A real download has the one measured series and no networks to colour it by.
+    val live = if (d.real) listOf(0) else d.rows.indices.filter { d.rows[it].on }
+    val fills = if (d.real) listOf(c.accent) else live.map { networkColor(d.rows[it].kind, d.rows[it].color, c) }
     Column(modifier) {
         Mono(title, c.textSecondary, 10, spacing = 1)
         Spacer(Modifier.height(6.dp))

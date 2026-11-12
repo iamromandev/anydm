@@ -1,5 +1,7 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.EngineEvent
+
 /** The download list and the order of the Queued rows (their ids, first in line first). */
 data class QueueState(
     val list: List<DownloadItem>,
@@ -51,12 +53,15 @@ fun resumeAll(
 ): QueueState {
     var out = s
     for (it in s.list) {
-        if (it.id !in ids || it.status != DownloadStatus.Paused) continue
+        if (it.id !in ids || (it.status != DownloadStatus.Paused && it.status != DownloadStatus.Failed)) continue
+        // A retry starts clean: the old reason goes with the Failed status.
+        val cleared = out.copy(list = out.list.map { r -> if (r.id == it.id) r.copy(error = null) else r })
+        val from = setOf(DownloadStatus.Paused, DownloadStatus.Failed)
         out =
-            if (running(out) < limit) {
-                out.setStatus(setOf(it.id), setOf(DownloadStatus.Paused), DownloadStatus.Downloading)
+            if (running(cleared) < limit) {
+                cleared.setStatus(setOf(it.id), from, DownloadStatus.Downloading)
             } else {
-                out.setStatus(setOf(it.id), setOf(DownloadStatus.Paused), DownloadStatus.Queued).copy(queue = out.queue + it.id)
+                cleared.setStatus(setOf(it.id), from, DownloadStatus.Queued).copy(queue = cleared.queue + it.id)
             }
     }
     return settle(out, limit)
@@ -67,6 +72,76 @@ fun removeAll(
     ids: Set<String>,
     limit: Int,
 ): QueueState = settle(QueueState(s.list.filter { it.id !in ids }, s.queue.filter { it !in ids }), limit)
+
+private fun QueueState.update(
+    id: String,
+    only: DownloadStatus?,
+    change: (DownloadItem) -> DownloadItem,
+): QueueState = copy(list = list.map { if (it.id == id && (only == null || it.status == only)) change(it) else it })
+
+/** A progress report from the engine. It never changes a status; a report for a row that is no longer Downloading is stale and dropped. */
+fun progressed(
+    s: QueueState,
+    id: String,
+    done: Long,
+    total: Long,
+    bytesPerSec: Long,
+): QueueState = s.update(id, DownloadStatus.Downloading) { it.copy(doneBytes = done, totalBytes = total, bytesPerSec = bytesPerSec) }
+
+/** The engine got its first response: the name, size and validators are now known (a restart reports done = 0). */
+fun started(
+    s: QueueState,
+    e: EngineEvent.Started,
+): QueueState =
+    s.update(e.id, DownloadStatus.Downloading) {
+        it.copy(
+            name = e.name.ifBlank { it.name },
+            totalBytes = e.total ?: UNKNOWN_SIZE,
+            etag = e.etag,
+            lastModified = e.lastModified,
+            doneBytes = e.done,
+        )
+    }
+
+/** The file is complete, also when a pause came a moment too late to stop it. The total becomes the real size. */
+fun finished(
+    s: QueueState,
+    id: String,
+    done: Long,
+    limit: Int,
+    /** The name the file really got, when the engine had to choose another one at the end; null keeps the row's. */
+    name: String? = null,
+): QueueState {
+    val row = s.list.firstOrNull { it.id == id } ?: return s
+    if (row.status == DownloadStatus.Finished) return s
+    val next =
+        s.update(id, null) {
+            it.copy(
+                name = name ?: it.name,
+                status = DownloadStatus.Finished,
+                doneBytes = done,
+                totalBytes = done,
+                bytesPerSec = 0,
+                error = null,
+            )
+        }
+    return settle(next.copy(queue = next.queue.filter { it != id }), limit)
+}
+
+/** A failure frees the slot. One that arrives after the row was paused or removed is dropped. */
+fun failed(
+    s: QueueState,
+    id: String,
+    reason: String,
+    done: Long,
+    limit: Int,
+): QueueState =
+    settle(
+        s.update(id, DownloadStatus.Downloading) {
+            it.copy(status = DownloadStatus.Failed, error = reason, doneBytes = done, bytesPerSec = 0)
+        },
+        limit,
+    )
 
 /** Starts the queued targets now, even above the limit. */
 fun startNow(

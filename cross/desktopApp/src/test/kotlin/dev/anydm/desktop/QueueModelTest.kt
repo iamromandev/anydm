@@ -396,4 +396,113 @@ class QueueModelTest {
         assertEquals("Starts after 1 download", startsAfterText(1))
         assertEquals("Starts after 3 downloads", startsAfterText(3))
     }
+
+    private fun fail(id: String) = item(id, DownloadStatus.Failed).copy(error = "HTTP 404")
+
+    @Test
+    fun progressedUpdatesBytesAndSpeedWithoutChangingStatusOrQueue() {
+        val s = state(1, "a")
+        val out = progressed(s, "d1", 50, 200, 7)
+        val row = out.list.first { it.id == "d1" }
+        assertEquals(listOf(50L, 200L, 7L), listOf(row.doneBytes, row.totalBytes, row.bytesPerSec))
+        assertEquals(s.list.map { it.status }, out.list.map { it.status })
+        assertEquals(s.queue, out.queue)
+        assertTrue(invariantsHold(out, 1))
+    }
+
+    @Test
+    fun progressedIgnoresRowsThatAreNotDownloadingAnymore() {
+        val s = QueueState(listOf(p("1")), emptyList())
+        assertEquals(s, progressed(s, "1", 90, 100, 5))
+        assertEquals(s, progressed(s, "gone", 90, 100, 5))
+    }
+
+    @Test
+    fun startedStoresNameSizeValidatorsAndDone() {
+        val s = state(1)
+        val out =
+            started(
+                s,
+                dev.anydm.engine.http.EngineEvent
+                    .Started("d1", "x.zip", 99, "\"e\"", "Mon", 0),
+            )
+        val row = out.list.single()
+        assertEquals(listOf("x.zip", 99L, "\"e\"", "Mon", 0L), listOf(row.name, row.totalBytes, row.etag, row.lastModified, row.doneBytes))
+        val unknown =
+            started(
+                s,
+                dev.anydm.engine.http.EngineEvent
+                    .Started("d1", "x.zip", null, null, null, 5),
+            )
+        assertEquals(UNKNOWN_SIZE, unknown.list.single().totalBytes)
+    }
+
+    @Test
+    fun finishedMarksFinishedFixesTheTotalAndStartsTheNextQueuedRow() {
+        val out = finished(state(1, "a", "b"), "d1", 100, 1)
+        val row = out.list.first { it.id == "d1" }
+        assertEquals(DownloadStatus.Finished, row.status)
+        assertEquals(listOf(100L, 100L, 0L), listOf(row.doneBytes, row.totalBytes, row.bytesPerSec))
+        assertEquals(DownloadStatus.Downloading, out.status("a"))
+        assertEquals(listOf("b"), out.queue)
+        assertTrue(invariantsHold(out, 1))
+    }
+
+    @Test
+    fun finishedCarriesTheRealNameWhenTheFinalNameWasTaken() {
+        val out = finished(QueueState(listOf(d("1")), emptyList()), "1", 100, 1, name = "f1 (1).zip")
+        assertEquals("f1 (1).zip", out.list.single().name)
+        assertEquals(DownloadStatus.Finished, out.status("1"))
+    }
+
+    @Test
+    fun finishedWithoutANameKeepsTheRowsName() {
+        val out = finished(QueueState(listOf(d("1")), emptyList()), "1", 100, 1)
+        assertEquals("f1.zip", out.list.single().name)
+    }
+
+    @Test
+    fun finishedAfterAPauseStillFinishesTheRow() {
+        val out = finished(QueueState(listOf(p("1")), emptyList()), "1", 100, 1)
+        assertEquals(DownloadStatus.Finished, out.status("1"))
+    }
+
+    @Test
+    fun failedKeepsTheReasonFreesTheSlotAndStartsTheNextQueuedRow() {
+        val out = failed(state(1, "a"), "d1", "HTTP 404", 30, 1)
+        val row = out.list.first { it.id == "d1" }
+        assertEquals(DownloadStatus.Failed, row.status)
+        assertEquals(listOf("HTTP 404", 30L, 0L), listOf(row.error, row.doneBytes, row.bytesPerSec))
+        assertEquals(DownloadStatus.Downloading, out.status("a"))
+        assertTrue(out.queue.isEmpty())
+        assertTrue(invariantsHold(out, 1))
+    }
+
+    @Test
+    fun failedIgnoresRowsThatWerePausedMeanwhile() {
+        val s = QueueState(listOf(p("1")), emptyList())
+        assertEquals(s, failed(s, "1", "Network error", 5, 1))
+    }
+
+    @Test
+    fun resumeAllRetriesFailedRowsAndClearsTheError() {
+        val out = resumeAll(QueueState(listOf(fail("1")), emptyList()), setOf("1"), 1)
+        assertEquals(DownloadStatus.Downloading, out.status("1"))
+        assertNull(out.list.single().error)
+        assertTrue(invariantsHold(out, 1))
+    }
+
+    @Test
+    fun retryQueuesWhenNoSlotIsFree() {
+        val out = resumeAll(QueueState(listOf(d("1"), fail("2")), emptyList()), setOf("2"), 1)
+        assertEquals(DownloadStatus.Queued, out.status("2"))
+        assertEquals(listOf("2"), out.queue)
+        assertTrue(invariantsHold(out, 1))
+    }
+
+    @Test
+    fun pauseAllLeavesFailedRowsAlone() {
+        val s = QueueState(listOf(fail("1")), emptyList())
+        assertEquals(s, pauseAll(s, setOf("1"), 1))
+    }
 }

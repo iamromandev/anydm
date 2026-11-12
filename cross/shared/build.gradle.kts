@@ -8,8 +8,14 @@ kotlin {
     jvm()
 
     sourceSets {
+        commonMain.dependencies {
+            api(libs.kotlinx.coroutines.core)
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
+        }
+        jvmTest.dependencies {
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

@@ -85,6 +85,7 @@ fun RowMenu(
     actions: List<MenuAction>,
     onAction: (MenuAction) -> Unit,
     onBounds: (Rect) -> Unit,
+    resumeLabel: String = "Resume",
 ) {
     val c = colors
     val focus = LocalFocusManager.current
@@ -120,7 +121,7 @@ fun RowMenu(
             actions.forEachIndexed { i, a ->
                 val danger = a == MenuAction.Remove
                 Text(
-                    label(a),
+                    if (a == MenuAction.Resume) resumeLabel else label(a),
                     color = if (danger) c.danger else c.text,
                     fontSize = 14.sp,
                     maxLines = 1,

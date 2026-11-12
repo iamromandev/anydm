@@ -286,7 +286,7 @@ class ShortcutsTest {
             onNodeWithTag("row-1").requestFocus()
             onNodeWithTag("row-1").performKeyInput { pressKey(Key.Delete) }
             onNodeWithTag("remove-title").assertTextEquals("Remove 1 download?")
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             onNodeWithTag("row-1").assertDoesNotExist()
             onNodeWithTag("row-3").assertIsDisplayed()
         }
@@ -300,7 +300,7 @@ class ShortcutsTest {
             tickRows("1", "3")
             press(Key.Delete)
             onNodeWithTag("remove-title").assertTextEquals("Remove 2 downloads?")
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             onNodeWithTag("row-1").assertDoesNotExist()
             onNodeWithTag("row-3").assertDoesNotExist()
             onNodeWithTag("row-2").assertIsDisplayed()
@@ -369,7 +369,7 @@ class ShortcutsTest {
             onNodeWithTag("chevron-1").performClick()
             press(Key.Delete)
             onNodeWithTag("remove-title").assertTextEquals("Remove 1 download?")
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             onNodeWithTag("row-1").assertDoesNotExist()
             onNodeWithTag("row-3").assertIsDisplayed()
         }
