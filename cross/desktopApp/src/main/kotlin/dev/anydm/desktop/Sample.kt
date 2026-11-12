@@ -4,6 +4,8 @@ private const val MB = 1024L * 1024
 private const val GB = 1024L * MB
 private val WIFI_SPEED = (7.1 * MB).toLong()
 
+val sampleUsage = mapOf("wifi" to (200.1 * MB).toLong(), "usb" to GB * 3 / 2)
+
 fun populatedSample() =
     HomeState(
         downloads =

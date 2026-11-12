@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
@@ -89,6 +90,45 @@ class ScreenshotsTest {
             shot("networks-open-$theme-900x600", populatedSample(), dark, 900, 600) { openNetworks() }
             shot("networks-empty-$theme-1280x800", emptySample(), dark, 1280, 800) { openNetworks() }
         }
+    }
+
+    @Test
+    fun captureLimits() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("limits-general-$size", populatedSample(), dark, w, h) { openLimits() }
+                shot("limits-general-bottom-$size", populatedSample(), dark, w, h) {
+                    openLimits()
+                    onNodeWithTag("schedule-enabled").performScrollTo().performClick()
+                    onNodeWithTag("limits-reset-defaults").performScrollTo()
+                }
+                shot("limits-wifi-$size", populatedSample(), dark, w, h) {
+                    openLimits()
+                    onNodeWithTag("limits-nav-wifi").performClick()
+                    onNodeWithTag("net-speed-limit").performClick()
+                    onNodeWithTag("net-speed-field").performTextInput("10")
+                    onNodeWithTag("net-data-limit").performClick()
+                    onNodeWithTag("net-data-field").performTextInput("5")
+                }
+                shot("limits-wifi-bottom-$size", populatedSample(), dark, w, h) {
+                    openLimits()
+                    onNodeWithTag("limits-nav-wifi").performClick()
+                    onNodeWithTag("remove-limits").performScrollTo()
+                }
+                shot("limits-error-$size", populatedSample(), dark, w, h) {
+                    openLimits()
+                    onNodeWithTag("total-limit").performClick()
+                    onNodeWithTag("schedule-enabled").performScrollTo().performClick()
+                    onNodeWithTag("schedule-end").performTextReplacement("08:00")
+                }
+            }
+        }
+    }
+
+    private fun ComposeUiTest.openLimits() {
+        openNetworks()
+        onNodeWithTag("networks-limits-link").performClick()
     }
 
     private fun ComposeUiTest.openNetworks() = onNodeWithTag("network-chip").performClick()
