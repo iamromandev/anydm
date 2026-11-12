@@ -379,15 +379,14 @@ class NetworksMenuTest {
         }
 
     @Test
-    fun chevronsDoNothing() =
+    fun chevronOpensThatNetworksPageAndLeavesTheNumbersAlone() =
         runComposeUiTest {
             home()
             openMenu()
-            onNodeWithTag("network-chevron-wifi").performClick()
             onNodeWithTag("network-chevron-usb").performClick()
-            onNodeWithTag("networks-menu").assertIsDisplayed()
-            speed("wifi", "7.1 MB/s")
-            speed("usb", "6.9 MB/s")
+            onNodeWithTag("network-page").assertIsDisplayed()
+            onNodeWithTag("network-page-title", useUnmergedTree = true).assertTextEquals("USB Tethering")
+            onNodeWithTag("network-row-wifi").assertDoesNotExist()
             chip("2 networks", "14.0 MB/s")
         }
 

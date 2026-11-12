@@ -17,6 +17,12 @@ class DetailModelTest {
     private val sintel = detailSample().downloads.first { it.id == "3" }
 
     @Test
+    fun rowsCarryTheNetworksColourChoice() {
+        val d = buildDetail(project, listOf(wifi.copy(color = NetworkColor.Pink), usb))
+        assertEquals(listOf<NetworkColor?>(NetworkColor.Pink, null), d.rows.map { it.color })
+    }
+
+    @Test
     fun sameInputsBuildEqualDetails() {
         assertEquals(buildDetail(project, two), buildDetail(project, two))
         assertEquals(buildDetail(sintel, two), buildDetail(sintel, two))

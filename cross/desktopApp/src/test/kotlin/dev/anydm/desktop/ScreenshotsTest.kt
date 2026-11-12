@@ -3,6 +3,7 @@ package dev.anydm.desktop
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
@@ -12,11 +13,13 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.text.AnnotatedString
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.Test
@@ -130,6 +133,77 @@ class ScreenshotsTest {
     }
 
     @Test
+    fun captureNetworkSettings() {
+        val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8"
+        val base = populatedSample()
+        val withProxy =
+            base.copy(
+                networks =
+                    listOf(
+                        base.networks[0].copy(color = NetworkColor.Pink),
+                        base.networks[1].copy(
+                            color = NetworkColor.Orange,
+                            proxy = Proxy(ProxyType.Socks5, "127.0.0.1", 1080, "alice", "secret"),
+                        ),
+                    ),
+            )
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("network-page-$size", base, dark, w, h) {
+                    openNetworks()
+                    onNodeWithTag("network-chevron-usb").performClick()
+                }
+                shot("network-page-orange-$size", base.withUsbColor(NetworkColor.Orange), dark, w, h) {
+                    openNetworks()
+                    onNodeWithTag("network-chevron-usb").performClick()
+                }
+                shot("network-page-colored-$size", withProxy, dark, w, h) {
+                    openNetworks()
+                    onNodeWithTag("network-chevron-usb").performClick()
+                }
+                // The sample password is only ever typed into the masked field.
+                shot("network-page-proxy-editor-$size", base, dark, w, h) {
+                    openNetworks()
+                    onNodeWithTag("network-chevron-usb").performClick()
+                    onNodeWithTag("network-page-proxy-edit").performClick()
+                    onNodeWithTag("proxy-page-type-http").performClick()
+                    onNodeWithTag("proxy-page-host").performTextReplacement("10.0.0.2")
+                    onNodeWithTag("proxy-page-port").performTextReplacement("8080")
+                    onNodeWithTag("proxy-page-user").performTextReplacement("alice")
+                    onNodeWithTag("proxy-page-password").performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("secret")) }
+                }
+                shot("network-page-proxy-error-$size", base, dark, w, h) {
+                    openNetworks()
+                    onNodeWithTag("network-chevron-usb").performClick()
+                    onNodeWithTag("network-page-proxy-edit").performClick()
+                    onNodeWithTag("proxy-page-type-socks5").performClick()
+                    onNodeWithTag("proxy-page-host").performTextReplacement("http://x")
+                    onNodeWithTag("proxy-page-port").performTextReplacement("70000")
+                    onNodeWithTag("proxy-page-password").performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("secret")) }
+                }
+                shot("new-download-proxy-chips-$size", withProxy, dark, w, h) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("url-field").performTextInput(magnet)
+                }
+                shot("new-download-proxy-popover-$size", base, dark, w, h) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("url-field").performTextInput(magnet)
+                    onNodeWithTag("proxy-chip-usb").performClick()
+                }
+                shot("new-download-proxy-popover-http-$size", withProxy, dark, w, h) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("url-field").performTextInput(magnet)
+                    onNodeWithTag("proxy-chip-usb").performClick()
+                    onNodeWithTag(
+                        "proxy-chip-usb-password",
+                    ).performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("secret")) }
+                }
+            }
+        }
+    }
+
+    @Test
     fun captureDetail() {
         val base = detailSample()
         val torrent = base.downloads.first { it.id == "3" }
@@ -175,6 +249,9 @@ class ScreenshotsTest {
             }
         }
     }
+
+    private fun HomeState.withUsbColor(color: NetworkColor) =
+        copy(networks = networks.map { if (it.id == "usb") it.copy(color = color) else it })
 
     private fun ComposeUiTest.rightClickRow(id: String) =
         onNodeWithTag("row-$id").performMouseInput { rightClick(Offset(width / 3f, height / 2f)) }

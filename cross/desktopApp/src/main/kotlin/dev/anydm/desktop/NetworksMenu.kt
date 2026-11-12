@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -62,17 +64,27 @@ fun NetworksMenu(
     onNetworksChange: (List<Network>) -> Unit,
     unit: SpeedUnit,
     onDismiss: () -> Unit,
-    onOpenLimits: () -> Unit,
+    onOpenLimits: (String?) -> Unit,
     modifier: Modifier = Modifier,
     onEditingChange: (Boolean) -> Unit = {},
+    maxHeight: Dp = Dp.Unspecified,
 ) {
     val c = colors
+    var pageId by remember { mutableStateOf<String?>(null) }
     var editingId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     var rejected by remember { mutableStateOf<String?>(null) }
+    var proxyEditing by remember { mutableStateOf(false) }
+    var proxyFocused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(editingId) { onEditingChange(editingId != null) }
+    // A focused text input anywhere in the menu (rename or proxy field) keeps Home's paste and Esc shortcuts out of its way.
+    LaunchedEffect(editingId, proxyFocused) { onEditingChange(editingId != null || proxyFocused) }
     DisposableEffect(Unit) { onDispose { onEditingChange(false) } }
+
+    fun showPage(id: String?) {
+        pageId = id
+        proxyEditing = false
+    }
 
     fun cancelEdit() {
         editingId = null
@@ -104,24 +116,61 @@ fun NetworksMenu(
     val shape = RoundedCornerShape(Radius)
     val focusManager = LocalFocusManager.current
     val menuFocus = remember { FocusRequester() }
-    LaunchedEffect(editingId) { if (editingId == null) menuFocus.requestFocus() }
+    LaunchedEffect(editingId, pageId, proxyEditing) { if (editingId == null) menuFocus.requestFocus() }
     Column(
         modifier
             .testTag("networks-menu")
             .focusRequester(menuFocus)
             .onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.Escape && editingId == null) {
-                    onDismiss()
+                    if (pageId != null) showPage(null) else onDismiss()
                     true
                 } else {
                     false
                 }
             }.focusable()
             .width(NetworksMenuWidth)
+            .heightIn(max = maxHeight)
             .background(c.surface, shape)
             .border(1.dp, c.border, shape)
             .pointerInput(Unit) { detectTapGestures { if (editingId != null) focusManager.clearFocus() } },
     ) {
+        val page = pageId?.let { id -> networks.firstOrNull { it.id == id } }
+        if (page != null) {
+            NetworkSettingsPage(
+                page,
+                editing = editingId == page.id,
+                draft = draft,
+                error = if (editingId == page.id) rejected else null,
+                onDraft = {
+                    draft = it
+                    rejected = null
+                },
+                onStartRename = {
+                    val base = settle()
+                    if (base !== networks) onNetworksChange(base)
+                    val name = base.first { it.id == page.id }.name
+                    draft = TextFieldValue(name, TextRange(0, name.length))
+                    rejected = null
+                    editingId = page.id
+                },
+                onCommit = ::commit,
+                onCancel = ::cancelEdit,
+                onColor = { onNetworksChange(setColor(settle(), page.id, it)) },
+                onProxySave = { onNetworksChange(setProxy(settle(), page.id, it)) },
+                onBack = {
+                    val base = settle()
+                    if (base !== networks) onNetworksChange(base)
+                    showPage(null)
+                },
+                onOpenLimits = { onOpenLimits(page.id) },
+                proxyEditing = proxyEditing,
+                onProxyEditing = { proxyEditing = it },
+                onTextFocus = { proxyFocused = it },
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            return@Column
+        }
         Text(
             "Networks",
             color = c.text,
@@ -155,6 +204,11 @@ fun NetworksMenu(
                 },
                 onCommit = ::commit,
                 onCancel = ::cancelEdit,
+                onOpenPage = {
+                    val base = settle()
+                    if (base !== networks) onNetworksChange(base)
+                    showPage(n.id)
+                },
             )
         }
         MenuDivider()
@@ -162,7 +216,7 @@ fun NetworksMenu(
             Modifier
                 .testTag("networks-limits-link")
                 .fillMaxWidth()
-                .clickable(role = Role.Button, onClick = onOpenLimits)
+                .clickable(role = Role.Button, onClick = { onOpenLimits(null) })
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -172,7 +226,7 @@ fun NetworksMenu(
 }
 
 @Composable
-private fun MenuDivider() {
+internal fun MenuDivider() {
     Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
 }
 
@@ -189,15 +243,14 @@ private fun NetworkRow(
     onStartRename: () -> Unit,
     onCommit: () -> Unit,
     onCancel: () -> Unit,
+    onOpenPage: () -> Unit,
 ) {
     val c = colors
     val dot =
         if (!n.enabled) {
             c.textSecondary.copy(alpha = 0.45f)
-        } else if (n.kind == NetworkKind.WiFi) {
-            c.success
         } else {
-            c.accent
+            networkColor(n.kind, n.color, c)
         }
     Column(Modifier.testTag("network-row-${n.id}").fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -207,7 +260,7 @@ private fun NetworkRow(
                     .size(28.dp)
                     .clickable(enabled = canToggle, role = Role.Button, onClick = onToggle),
                 contentAlignment = Alignment.Center,
-            ) { Box(Modifier.size(8.dp).background(dot, CircleShape)) }
+            ) { Box(Modifier.size(8.dp).networkDot("network-color-${n.id}", n.color).background(dot, CircleShape)) }
             Row(
                 Modifier.weight(1f).padding(start = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -245,7 +298,7 @@ private fun NetworkRow(
                 modifier = Modifier.padding(start = 8.dp).testTag("network-speed-${n.id}"),
             )
             Box(
-                Modifier.testTag("network-chevron-${n.id}").size(28.dp).clickable(role = Role.Button) {},
+                Modifier.testTag("network-chevron-${n.id}").size(28.dp).clickable(role = Role.Button, onClick = onOpenPage),
                 contentAlignment = Alignment.Center,
             ) { ChevronIcon(c.textSecondary) }
         }
@@ -253,7 +306,7 @@ private fun NetworkRow(
 }
 
 @Composable
-private fun RenameField(
+internal fun RenameField(
     draft: TextFieldValue,
     error: String?,
     onDraft: (TextFieldValue) -> Unit,
@@ -313,7 +366,7 @@ private fun KindTag(label: String) {
 }
 
 @Composable
-private fun PencilIcon(color: Color) {
+internal fun PencilIcon(color: Color) {
     androidx.compose.foundation.Canvas(Modifier.size(12.dp)) {
         val w = size.width
         val st = 1.3f * density

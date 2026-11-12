@@ -103,13 +103,13 @@ fun SpeedDiagram(
         Column(horizontalAlignment = Alignment.End) {
             live.forEach { r ->
                 Column(Modifier.height(LabelHeight), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
-                    val color = networkColor(r.kind, c)
+                    val color = networkColor(r.kind, r.color, c)
                     Mono(r.name.uppercase(), color, 10, spacing = 1)
                     Mono(formatSpeed(r.speed, unit), color, 13, Modifier.testTag("detail-diagram-speed-${r.id}"), bold = true)
                 }
             }
         }
-        val colors = live.map { networkColor(it.kind, c) }
+        val colors = live.map { networkColor(it.kind, it.color, c) }
         Box(Modifier.width(96.dp).height(LabelHeight * live.size.coerceAtLeast(1))) {
             Canvas(Modifier.fillMaxWidth().height(LabelHeight * live.size.coerceAtLeast(1))) {
                 val mid = size.height / 2
@@ -183,7 +183,7 @@ fun SpeedDiagram(
                 Spacer(Modifier.height(8.dp))
                 Mono(
                     "${String.format(Locale.ROOT, "%.1f", d.aloneFactor)}× ${fastest.name.uppercase()} ALONE",
-                    networkColor(fastest.kind, c),
+                    networkColor(fastest.kind, fastest.color, c),
                     11,
                     Modifier
                         .testTag("detail-alone")
@@ -220,7 +220,7 @@ fun ThroughputGraph(
     val ticks = niceTicks(d.peak, unit)
     val top = ticks.last().toFloat()
     val live = d.rows.indices.filter { d.rows[it].on }
-    val fills = live.map { networkColor(d.rows[it].kind, c) }
+    val fills = live.map { networkColor(d.rows[it].kind, d.rows[it].color, c) }
     Column(modifier) {
         Mono(title, c.textSecondary, 10, spacing = 1)
         Spacer(Modifier.height(6.dp))
@@ -314,7 +314,7 @@ fun ChunkMap(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box(Modifier.size(8.dp).background(networkColor(r.kind, c), CircleShape))
+                    Box(Modifier.size(8.dp).background(networkColor(r.kind, r.color, c), CircleShape))
                     Text(r.name, color = c.text, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                 }
             }
@@ -330,7 +330,7 @@ fun ChunkMap(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val cols = ((maxWidth + CellGap) / (CellSize + CellGap)).toInt().coerceAtLeast(1)
             val rows = (d.cells.size + cols - 1) / cols
-            val coloursByRow = d.rows.map { networkColor(it.kind, c) }
+            val coloursByRow = d.rows.map { networkColor(it.kind, it.color, c) }
             val full = (CellSize + CellGap) * rows - CellGap
             val scrolls = d.item.kind == DownloadKind.Torrent && rows > PIECE_ROWS
             val frame =
@@ -396,7 +396,7 @@ fun ContributionBar(
                     topEnd = if (i == parts.lastIndex) 5.dp else 0.dp,
                     bottomEnd = if (i == parts.lastIndex) 5.dp else 0.dp,
                 )
-            Box(Modifier.weight(r.share.toFloat()).height(10.dp).background(networkColor(r.kind, c), shape))
+            Box(Modifier.weight(r.share.toFloat()).height(10.dp).background(networkColor(r.kind, r.color, c), shape))
         }
     }
 }

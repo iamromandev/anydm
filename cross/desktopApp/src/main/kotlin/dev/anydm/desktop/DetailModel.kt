@@ -41,6 +41,7 @@ data class NetworkRow(
     val uploaded: Long,
     /** True when the network is switched off in the Networks menu, as opposed to unchecked here. */
     val disabled: Boolean = false,
+    val color: NetworkColor? = null,
 )
 
 data class Detail(
@@ -209,6 +210,7 @@ fun buildDetail(
                 up = 0,
                 uploaded = 0,
                 disabled = !net.enabled,
+                color = net.color,
             )
         }
     val total = speeds.sum()

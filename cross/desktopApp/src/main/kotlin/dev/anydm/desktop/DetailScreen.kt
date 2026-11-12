@@ -285,7 +285,7 @@ private fun FinishedBody(
         Spacer(Modifier.height(10.dp))
         d.rows.filter { it.on }.forEach { r ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(networkColor(r.kind, c), CircleShape))
+                Box(Modifier.size(8.dp).background(networkColor(r.kind, r.color, c), CircleShape))
                 Spacer(Modifier.width(10.dp))
                 Text(r.name, color = c.text, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Text(
@@ -695,7 +695,7 @@ private fun NetworkTableRow(
     onToggle: (String) -> Unit,
 ) {
     val c = colors
-    val color = networkColor(r.kind, c)
+    val color = networkColor(r.kind, r.color, c)
     val torrent = d.item.kind == DownloadKind.Torrent
     val fraction = if (d.item.totalBytes <= 0) 0f else (r.downloaded.toFloat() / d.item.totalBytes).coerceIn(0f, 1f)
     Row(
