@@ -58,6 +58,10 @@ private fun label(a: MenuAction): String =
         MenuAction.Open -> "Open"
         MenuAction.ShowInFolder -> "Show in folder"
         MenuAction.Remove -> "Remove"
+        MenuAction.MoveToTop -> "Move to top"
+        MenuAction.MoveUp -> "Move up"
+        MenuAction.MoveDown -> "Move down"
+        MenuAction.StartNow -> "Start now"
     }
 
 private fun tagOf(a: MenuAction): String =
@@ -67,6 +71,10 @@ private fun tagOf(a: MenuAction): String =
         MenuAction.Open -> "menu-open"
         MenuAction.ShowInFolder -> "menu-folder"
         MenuAction.Remove -> "menu-remove"
+        MenuAction.MoveToTop -> "menu-move-top"
+        MenuAction.MoveUp -> "menu-move-up"
+        MenuAction.MoveDown -> "menu-move-down"
+        MenuAction.StartNow -> "menu-start-now"
     }
 
 /** The context menu card at the pointer. Closing on an outside press and on Esc is done by the Home root. */

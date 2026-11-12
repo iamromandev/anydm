@@ -1,6 +1,6 @@
 package dev.anydm.desktop
 
-enum class DownloadStatus { Downloading, Paused, Finished }
+enum class DownloadStatus { Downloading, Queued, Paused, Finished }
 
 enum class DownloadKind { Direct, Torrent }
 

@@ -38,6 +38,18 @@ class DetailModelTest {
     }
 
     @Test
+    fun queuedItemHasZeroSpeedsSeriesAverageAndPeak() {
+        val d = buildDetail(project.copy(status = DownloadStatus.Queued), two)
+        assertEquals(0L, d.total)
+        assertEquals(0L, d.avg)
+        assertEquals(0L, d.peak)
+        assertEquals(0, d.retries)
+        assertTrue(d.rows.all { it.speed == 0L })
+        assertTrue(d.series.all { s -> s.all { it == 0L } })
+        assertEquals(0, d.cells.count { it.state == CellState.InFlight })
+    }
+
+    @Test
     fun totalSpeedSplitsEvenlyAcrossEnabledNetworks() {
         val d = buildDetail(project, two)
         assertEquals(listOf(2 * mib, 2 * mib), d.rows.map { it.speed })

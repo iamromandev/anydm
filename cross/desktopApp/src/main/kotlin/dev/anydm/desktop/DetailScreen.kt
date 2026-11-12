@@ -70,6 +70,8 @@ fun DetailScreen(
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
     onRemove: () -> Unit,
+    queuePosition: Int?,
+    onStartNow: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var off by remember(item.id) { mutableStateOf(emptySet<String>()) }
@@ -95,6 +97,9 @@ fun DetailScreen(
                     onBack,
                     onTogglePause,
                     onCancel,
+                    onRemove,
+                    queuePosition,
+                    onStartNow,
                     { onFilesOpen(!filesOpen) },
                     { chip = it },
                 )
@@ -114,16 +119,24 @@ private fun ActiveBody(
     onBack: () -> Unit,
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
+    onRemove: () -> Unit,
+    queuePosition: Int?,
+    onStartNow: () -> Unit,
     onFiles: () -> Unit,
     onChip: (Rect) -> Unit,
 ) {
-    ActiveHeader(detail.item.status == DownloadStatus.Paused, onBack, onTogglePause, onCancel)
+    val queued = detail.item.status == DownloadStatus.Queued
+    if (queued) {
+        QueuedHeader(onBack, onStartNow, onRemove)
+    } else {
+        ActiveHeader(detail.item.status == DownloadStatus.Paused, onBack, onTogglePause, onCancel)
+    }
     Divider()
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        SpeedDiagram(detail, unit, Modifier.weight(1f))
+        if (queued) QueuedNote(queuePosition, Modifier.weight(1f)) else SpeedDiagram(detail, unit, Modifier.weight(1f))
         ThroughputGraph(detail, unit, Modifier.width(300.dp))
     }
     Divider()
@@ -168,6 +181,45 @@ private fun ActiveHeader(
         OutlineButton(if (paused) "Resume" else "Pause", "detail-pause", onTogglePause)
         Spacer(Modifier.width(8.dp))
         PrimaryButton("Show in Finder", "detail-finder", true) {}
+    }
+}
+
+@Composable
+private fun QueuedHeader(
+    onBack: () -> Unit,
+    onStartNow: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BackButton(onBack)
+        Spacer(Modifier.weight(1f))
+        OutlineButton("Remove", "detail-remove", onRemove)
+        Spacer(Modifier.width(8.dp))
+        OutlineButton("Start now", "detail-start-now", onStartNow)
+        Spacer(Modifier.width(8.dp))
+        PrimaryButton("Show in Finder", "detail-finder", true) {}
+    }
+}
+
+/** Stands where the speed diagram is for a row that has not started. */
+@Composable
+private fun QueuedNote(
+    position: Int?,
+    modifier: Modifier = Modifier,
+) {
+    val c = colors
+    Box(modifier, contentAlignment = Alignment.CenterStart) {
+        Text(
+            if (position == null) "Queued" else "Queued · #$position in line",
+            color = c.textSecondary,
+            fontSize = 18.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            modifier = Modifier.testTag("detail-queued"),
+        )
     }
 }
 
