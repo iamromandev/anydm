@@ -78,6 +78,23 @@ class MenuModelTest {
     }
 
     @Test
+    fun settingsReplacesTheLimitsItemInTheFileMenuWithItsAccelerator() {
+        val file = model().first { it.title == "File" }.entries
+        val e = file.first { it.id == CommandId.Settings }
+        assertEquals("Settings…", e.label)
+        assertEquals(Shortcut(androidx.compose.ui.input.key.Key.Comma, mod = true), e.accelerator)
+        assertTrue(e.enabled)
+        assertTrue(file.none { it.label.contains("limits") })
+    }
+
+    @Test
+    fun withSettingsOpenTheListItemsAreDisabledAndTheOthersStay() {
+        val m = model(running.copy(settingsOpen = true))
+        for (id in listOf(CommandId.Pause, CommandId.Remove, CommandId.SelectAll)) assertFalse(m.entry(id).enabled, "$id")
+        for (id in listOf(CommandId.Settings, CommandId.NewDownload, CommandId.ToggleTheme)) assertTrue(m.entry(id).enabled, "$id")
+    }
+
+    @Test
     fun labelsComeFromTheTableAndTheWindowMenuIsMacOnly() {
         assertEquals("Open .torrent…", model().entry(CommandId.OpenTorrent).label)
         assertTrue(hasWindowMenu(Platform.Mac))

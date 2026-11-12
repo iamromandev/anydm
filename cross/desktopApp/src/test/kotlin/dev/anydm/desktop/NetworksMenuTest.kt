@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -391,13 +392,14 @@ class NetworksMenuTest {
         }
 
     @Test
-    fun limitsLinkOpensTheLimitsDialogAndClosesTheMenu() =
+    fun limitsLinkOpensSettingsOnSpeedAndDataAndClosesTheMenu() =
         runComposeUiTest {
             home()
             openMenu()
             onNodeWithTag("networks-limits-link").performClick()
             menuGone()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            onNodeWithTag("settings-nav-speeddata").assertIsSelected()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
         }
 
     @Test

@@ -35,13 +35,19 @@ import androidx.compose.ui.test.v2.runComposeUiTest
 import kotlin.test.Test
 
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
-class LimitsDialogTest {
+class SpeedDataTest {
     private fun ComposeUiTest.home(clipboard: String? = null) =
         setContent { HomeScreen(populatedSample(), true, clipboardText = { clipboard }) }
 
-    private fun ComposeUiTest.open() {
+    private fun ComposeUiTest.openSpeedData() {
         onNodeWithTag("network-chip").performClick()
         onNodeWithTag("networks-limits-link").performClick()
+    }
+
+    /** Leaves Settings for the list and comes back, to see what was kept. */
+    private fun ComposeUiTest.reopen() {
+        onNodeWithTag("settings-back").performClick()
+        openSpeedData()
     }
 
     private fun ComposeUiTest.summary(
@@ -54,7 +60,7 @@ class LimitsDialogTest {
         text: String,
     ) = onNodeWithTag(tag).assertTextEquals(text)
 
-    private fun ComposeUiTest.gone() = onNodeWithTag("limits-dialog").assertDoesNotExist()
+    private fun ComposeUiTest.gone() = onNodeWithTag("settings-page").assertDoesNotExist()
 
     private fun ComposeUiTest.setTotal(text: String) {
         onNodeWithTag("total-limit").performClick()
@@ -72,13 +78,13 @@ class LimitsDialogTest {
     private fun ComposeUiTest.pressEnter() = onNodeWithTag("total-field").performKeyInput { pressKey(Key.Enter) }
 
     @Test
-    fun linkOpensTheDialogOnAllDownloadsAndClosesTheMenu() =
+    fun linkOpensSpeedAndDataOnAllDownloadsAndClosesTheMenu() =
         runComposeUiTest {
             home()
-            open()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            openSpeedData()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
             onNodeWithTag("networks-menu").assertDoesNotExist()
-            onNodeWithText("Speed & data limits").assertIsDisplayed()
+            onNodeWithTag("settings-nav-speeddata").assertIsSelected()
             onNodeWithTag("total-none").assertIsSelected()
             summary("general", "No limit")
             summary("wifi", "No limit")
@@ -101,11 +107,11 @@ class LimitsDialogTest {
     fun escapeClosesWithoutSaving() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             onNodeWithTag("total-field").performKeyInput { pressKey(Key.Escape) }
             gone()
-            open()
+            openSpeedData()
             summary("general", "No limit")
         }
 
@@ -113,46 +119,26 @@ class LimitsDialogTest {
     fun cancelDiscardsEdits() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             onNodeWithTag("limits-cancel").performClick()
-            gone()
-            open()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
             summary("general", "No limit")
             onNodeWithTag("total-none").assertIsSelected()
-        }
-
-    @Test
-    fun clickingOutsideClosesWithoutSaving() =
-        runComposeUiTest {
-            home()
-            open()
-            setTotal("20")
-            onRoot().performTouchInput { click(Offset(3f, 3f)) }
-            gone()
-            open()
+            reopen()
             summary("general", "No limit")
-        }
-
-    @Test
-    fun clickingInsideTheCardKeepsItOpen() =
-        runComposeUiTest {
-            home()
-            open()
-            onNodeWithText("Speed & data limits").performClick()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
         }
 
     @Test
     fun savingALimitShowsItInTheSidebarOnReopen() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             summary("general", "20 MB/s")
             onNodeWithTag("limits-save").performClick()
-            gone()
-            open()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
+            reopen()
             summary("general", "20 MB/s")
             onNodeWithTag("total-limit").assertIsSelected()
             field("total-field", "20")
@@ -162,7 +148,7 @@ class LimitsDialogTest {
     fun speedFieldIsDisabledWhileNoLimitIsSelected() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("total-field").assertIsNotEnabled()
             onNodeWithTag("total-limit").performClick()
             onNodeWithTag("total-field").assertIsEnabled()
@@ -174,7 +160,7 @@ class LimitsDialogTest {
     fun slowModeShowsTheReplaceNote() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             val note = "Replaces the total speed limit while enabled"
             onNodeWithText(note).assertDoesNotExist()
             onNodeWithTag("slow-enabled").assertIsOff()
@@ -190,12 +176,12 @@ class LimitsDialogTest {
         runComposeUiTest {
             home()
             onNodeWithTag("slow-mode").performClick()
-            open()
+            openSpeedData()
             onNodeWithTag("slow-enabled").assertIsOn()
             onNodeWithTag("slow-enabled").performClick()
             onNodeWithTag("limits-save").performClick()
             onNodeWithTag("slow-mode").assertIsOff()
-            open()
+            reopen()
             onNodeWithTag("slow-enabled").assertIsOff()
             onNodeWithTag("slow-enabled").performClick()
             onNodeWithTag("limits-save").performClick()
@@ -206,7 +192,7 @@ class LimitsDialogTest {
     fun cancelLeavesTheFooterSlowSwitchAlone() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("slow-enabled").performClick()
             onNodeWithTag("limits-cancel").performClick()
             onNodeWithTag("slow-mode").assertIsOff()
@@ -216,7 +202,7 @@ class LimitsDialogTest {
     fun concurrencyStaysWithinOneAndTen() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("concurrency-value").assertTextEquals("2")
             onNodeWithTag("concurrency-minus").performClick()
             onNodeWithTag("concurrency-value").assertTextEquals("1")
@@ -230,7 +216,7 @@ class LimitsDialogTest {
     fun stepperButtonsHaveLabels() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithContentDescriptionTag("concurrency-minus", "Fewer")
             onNodeWithContentDescriptionTag("concurrency-plus", "More")
         }
@@ -244,7 +230,7 @@ class LimitsDialogTest {
     fun editsSurviveSwitchingPanes() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("net-speed-limit").performClick()
             onNodeWithTag("net-speed-field").performTextInput("10")
@@ -260,7 +246,7 @@ class LimitsDialogTest {
     fun networkPaneShowsUsageSpeedAndDataSectionsWithMonthSelected() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("limits-usage").assertTextEquals("200.1 MB used this month")
             onNodeWithTag("net-speed-none").assertIsSelected()
@@ -275,14 +261,14 @@ class LimitsDialogTest {
     fun dataLimitSavesWithItsPeriod() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("net-data-limit").performClick()
             onNodeWithTag("net-data-field").performTextInput("5")
             onNodeWithTag("net-period-week").performClick()
             summary("wifi", "5 GB/Week")
             onNodeWithTag("limits-save").performClick()
-            open()
+            reopen()
             onNodeWithTag("limits-nav-wifi").performClick()
             field("net-data-field", "5")
             onNodeWithTag("net-period-week").assertIsSelected()
@@ -292,7 +278,7 @@ class LimitsDialogTest {
     fun removeLimitsResetsBothSectionsAndDisablesItself() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("remove-limits").assertIsNotEnabled()
             onNodeWithTag("net-speed-limit").performClick()
@@ -311,7 +297,7 @@ class LimitsDialogTest {
     fun resetDataUsageZeroesTheUsageLine() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("reset-usage").performClick()
             onNodeWithTag("limits-usage").assertTextEquals("0 B used this month")
@@ -321,7 +307,7 @@ class LimitsDialogTest {
     fun emptyOrZeroLimitShowsAnErrorAndDisablesSave() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-save").assertIsEnabled()
             onNodeWithTag("limits-error").assertDoesNotExist()
             onNodeWithTag("total-limit").performClick()
@@ -339,7 +325,7 @@ class LimitsDialogTest {
     fun errorMarksTheSidebarRowOfThePane() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("net-speed-limit").performClick()
             onNodeWithTag("limits-nav-error-wifi", useUnmergedTree = true).assertIsDisplayed()
@@ -354,7 +340,7 @@ class LimitsDialogTest {
     fun commaDecimalIsAnError() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("1,5")
             onNodeWithTag("limits-error").assertIsDisplayed()
             onNodeWithTag("limits-save").assertIsNotEnabled()
@@ -364,13 +350,54 @@ class LimitsDialogTest {
     fun mbpsUnitShowsStoredLimitConverted() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             onNodeWithTag("limits-save").performClick()
             onNodeWithTag("unit-mbps").performClick()
-            open()
+            reopen()
             field("total-field", "160")
             summary("general", "160 Mbps")
+        }
+
+    @Test
+    fun changingTheUnitKeepsTheUnsavedDraftConverted() =
+        runComposeUiTest {
+            home()
+            openSpeedData()
+            setTotal("20")
+            onNodeWithTag("unit-mbps").performClick()
+            field("total-field", "160")
+            onNodeWithTag("limits-save").performClick()
+            onNodeWithTag("unit-mbps-bytes").performClick()
+            field("total-field", "20")
+        }
+
+    @Test
+    fun theFooterSlowSwitchSyncsIntoTheDraftWithoutDiscardingIt() =
+        runComposeUiTest {
+            home()
+            openSpeedData()
+            setTotal("20")
+            onNodeWithTag("slow-mode").performClick()
+            onNodeWithTag("slow-enabled").assertIsOn()
+            field("total-field", "20")
+            onNodeWithTag("limits-save").performClick()
+            onNodeWithTag("slow-mode").assertIsOn()
+            summary("general", "Slow · 2 MB/s")
+        }
+
+    @Test
+    fun anUnsavedDraftSurvivesBothTheUnitAndTheSlowSwitch() =
+        runComposeUiTest {
+            home()
+            openSpeedData()
+            onNodeWithTag("slow-enabled").performClick()
+            setTotal("20")
+            onNodeWithTag("unit-mbps").performClick()
+            onNodeWithTag("slow-mode").performClick()
+            onNodeWithTag("slow-mode").performClick()
+            onNodeWithTag("slow-enabled").assertIsOff()
+            field("total-field", "160")
         }
 
     @Test
@@ -378,19 +405,19 @@ class LimitsDialogTest {
         runComposeUiTest {
             home()
             onNodeWithTag("unit-mbps").performClick()
-            open()
+            openSpeedData()
             setTotal("160")
             onNodeWithTag("limits-save").performClick()
             onNodeWithTag("unit-mbps-bytes").performClick()
-            open()
+            reopen()
             field("total-field", "20")
         }
 
     @Test
-    fun pasteShortcutIsIgnoredWhileTheDialogIsOpen() =
+    fun pasteShortcutIsIgnoredWhileSettingsIsOpen() =
         runComposeUiTest {
             home(clipboard = "https://example.com/a.zip")
-            open()
+            openSpeedData()
             onRoot().performKeyInput {
                 val mod = if (System.getProperty("os.name").startsWith("Mac")) Key.MetaLeft else Key.CtrlLeft
                 keyDown(mod)
@@ -399,25 +426,14 @@ class LimitsDialogTest {
             }
             waitForIdle()
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
-        }
-
-    @Test
-    fun clickingTheChipBehindTheScrimOnlyClosesTheDialog() =
-        runComposeUiTest {
-            home()
-            open()
-            onNodeWithTag("network-chip").performClick()
-            gone()
-            onNodeWithTag("networks-menu").assertDoesNotExist()
-            onNodeWithTag("new-download-dialog").assertDoesNotExist()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
         }
 
     @Test
     fun generalControlsExposeRoles() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             role(Role.RadioButton, "total-limit", "total-none")
             role(Role.Switch, "slow-enabled", "schedule-enabled")
             role(Role.Tab, "limits-nav-general", "limits-nav-wifi", "limits-nav-usb")
@@ -429,7 +445,7 @@ class LimitsDialogTest {
     fun networkControlsExposeRoles() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             role(Role.RadioButton, "net-speed-none", "net-speed-limit", "net-data-none", "net-data-limit")
         }
@@ -438,7 +454,7 @@ class LimitsDialogTest {
     fun numberFieldsHaveDistinctLabels() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("total-field").assert(hasContentDescription("Total speed limit"))
             onNodeWithTag("slow-field").assert(hasContentDescription("Slow mode speed"))
             scheduleOn()
@@ -453,7 +469,7 @@ class LimitsDialogTest {
     fun stepperButtonsAreDisabledAtTheirBounds() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("concurrency-minus").assertIsEnabled()
             onNodeWithTag("concurrency-minus").performClick()
             onNodeWithTag("concurrency-minus").assertIsNotEnabled()
@@ -464,14 +480,13 @@ class LimitsDialogTest {
         }
 
     @Test
-    fun enterSavesAndClosesWhenValid() =
+    fun enterSavesWhenValid() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             pressEnter()
-            gone()
-            open()
+            reopen()
             summary("general", "20 MB/s")
         }
 
@@ -479,10 +494,10 @@ class LimitsDialogTest {
     fun enterDoesNothingWhileThereAreErrors() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("0")
             pressEnter()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
             onNodeWithTag("limits-error").assertIsDisplayed()
         }
 
@@ -490,7 +505,7 @@ class LimitsDialogTest {
     fun invalidTotalShowsInvalidInTheSidebarSummary() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("total-limit").performClick()
             summary("general", "Invalid")
             onNodeWithTag("total-field").performTextInput("20")
@@ -501,7 +516,7 @@ class LimitsDialogTest {
     fun invalidSlowTextOnlyBlocksSaveWhileSlowModeIsOn() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("slow-field").performTextClearance()
             onNodeWithTag("limits-error").assertDoesNotExist()
             onNodeWithTag("limits-save").assertIsEnabled()
@@ -511,8 +526,7 @@ class LimitsDialogTest {
             onNodeWithTag("slow-enabled").performClick()
             onNodeWithTag("limits-save").assertIsEnabled()
             onNodeWithTag("limits-save").performClick()
-            gone()
-            open()
+            reopen()
             field("slow-field", "2")
         }
 
@@ -520,20 +534,19 @@ class LimitsDialogTest {
     fun saveWithoutEditsKeepsEverything() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-save").performClick()
-            gone()
-            open()
+            reopen()
             summary("general", "No limit")
             onNodeWithTag("concurrency-value").assertTextEquals("2")
         }
 
     @Test
-    fun dialogWorksInLightTheme() =
+    fun editorWorksInLightTheme() =
         runComposeUiTest {
             setContent { HomeScreen(populatedSample(), false) }
-            open()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            openSpeedData()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
         }
 
     private val days = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -544,7 +557,7 @@ class LimitsDialogTest {
     fun scheduleOnShowsWeekdaysAndDefaultTimesAndOffHidesThemKeepingValues() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("schedule-day-mon").assertDoesNotExist()
             scheduleOn()
             for (d in days.take(5)) onNodeWithTag("schedule-day-$d").assertIsOn()
@@ -566,7 +579,7 @@ class LimitsDialogTest {
     fun scheduleWithNoDayDisablesSaveAndLastDayCanBeRemoved() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             scheduleOn()
             for (d in days.take(5)) onNodeWithTag("schedule-day-$d").performClick()
             onNodeWithTag("limits-save").assertIsNotEnabled()
@@ -580,7 +593,7 @@ class LimitsDialogTest {
     fun scheduleEndNotAfterStartDisablesSave() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             scheduleOn()
             onNodeWithTag("schedule-end").performTextClearance()
             onNodeWithTag("schedule-end").performTextInput("09:00")
@@ -598,7 +611,7 @@ class LimitsDialogTest {
     fun disabledScheduleNeverBlocksSave() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             scheduleOn()
             onNodeWithTag("schedule-end").performTextClearance()
             onNodeWithTag("schedule-end").performTextInput("01:00")
@@ -610,7 +623,7 @@ class LimitsDialogTest {
     fun resetToDefaultsRestoresTheWholeGeneralPane() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             setTotal("20")
             onNodeWithTag("slow-field").performTextClearance()
             onNodeWithTag("slow-field").performTextInput("5")
@@ -632,7 +645,7 @@ class LimitsDialogTest {
     fun resetToDefaultsLeavesNetworkEditsAlone() =
         runComposeUiTest {
             home()
-            open()
+            openSpeedData()
             onNodeWithTag("limits-nav-wifi").performClick()
             onNodeWithTag("net-speed-limit").performClick()
             onNodeWithTag("net-speed-field").performTextInput("10")
@@ -645,7 +658,7 @@ class LimitsDialogTest {
     fun smallWindowKeepsFooterVisibleAndBodyScrolls() =
         runDesktopComposeUiTest(900, 600) {
             setContent { HomeScreen(populatedSample(), true) }
-            open()
+            openSpeedData()
             scheduleOn()
             onNodeWithTag("limits-save").assertIsDisplayed()
             onNodeWithTag("limits-cancel").assertIsDisplayed()

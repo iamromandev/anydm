@@ -64,6 +64,8 @@ internal fun ProxyEditor(
     tagPrefix: String,
     modifier: Modifier = Modifier,
     onTextFocus: (Boolean) -> Unit = {},
+    /** Why the password is not in the keychain, or null. The password itself stays in memory for the session. */
+    note: String? = null,
 ) {
     val c = colors
     val start = remember { draftOf(initial) }
@@ -153,6 +155,7 @@ internal fun ProxyEditor(
                 ErrorText(tag("error-auth"), errors.auth)
             }
         }
+        if (note != null) Text(note, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.testTag(tag("note")))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
             OutlineButton("Cancel", tag("cancel"), onCancel)
             PrimaryButton("Save", tag("save"), !errors.any) { proxyOf(draft)?.let(onSave) }

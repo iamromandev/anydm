@@ -4,14 +4,34 @@ compose = "1.12.1"
 # Compose Material 3 versions on its own now; 1.9.0 is what Compose 1.12.1 pins.
 compose-material3 = "1.9.0"
 kotlinter = "5.7.0"
+java-keyring = "1.0.4"
+# java-keyring's own dependencies, pinned so none of them can change under it. Everything but JNA is the version java-keyring 1.0.4
+# resolves to; JNA is 5.19.1 (12 Jun 2026) rather than the 5.13.0 it asks for, and has to go through the keychain spike again.
+jna = { strictly = "5.19.1" }
+jkeychain = { strictly = "1.1.0" }
+secret-service = { strictly = "1.8.1-jdk17" }
+dbus-java = { strictly = "4.2.1" }
+slf4j = { strictly = "2.0.7" }
+# 1.13.0 is under two weeks old; 1.12.0 (19 Oct 2026) is the latest release past that.
+kotlinx-serialization = "1.12.0"
 
 [libraries]
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
 compose-ui-test = { module = "org.jetbrains.compose.ui:ui-test-junit4", version.ref = "compose" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+java-keyring = { module = "com.github.javakeyring:java-keyring", version.ref = "java-keyring" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+jkeychain = { module = "pt.davidafsilva.apple:jkeychain", version.ref = "jkeychain" }
+secret-service = { module = "de.swiesend:secret-service", version.ref = "secret-service" }
+dbus-java-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbus-java" }
+dbus-java-transport = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbus-java" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 compose = { id = "org.jetbrains.compose", version.ref = "compose" }
 kotlinter = { id = "org.jmailen.kotlinter", version.ref = "kotlinter" }

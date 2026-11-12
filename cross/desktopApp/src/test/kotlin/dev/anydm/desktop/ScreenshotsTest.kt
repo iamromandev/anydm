@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -42,9 +43,10 @@ class ScreenshotsTest {
         height: Int,
         link: String? = null,
         files: FilesEnv = FilesEnv.inert(),
+        stores: AppStores = AppStores.inMemory(),
         act: ComposeUiTest.() -> Unit = {},
     ) = runDesktopComposeUiTest(width, height) {
-        setContent { HomeScreen(state, dark, files = files, platform = Platform.Mac) }
+        setContent { HomeScreen(state, dark, files = files, platform = Platform.Mac, stores = stores) }
         act()
         if (link != null) {
             onNodeWithTag("new-download").performClick()
@@ -148,6 +150,62 @@ class ScreenshotsTest {
                     onNodeWithTag("schedule-enabled").performScrollTo().performClick()
                     onNodeWithTag("schedule-end").performTextReplacement("08:00")
                 }
+            }
+        }
+    }
+
+    @Test
+    fun captureSettings() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("settings-general-$size", populatedSample(), dark, w, h) { openSettings() }
+                shot("settings-appearance-$size", populatedSample(), dark, w, h) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-appearance").performClick()
+                }
+                shot("settings-speeddata-$size", populatedSample(), dark, w, h) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-speeddata").performClick()
+                }
+                shot("settings-speeddata-wifi-$size", populatedSample(), dark, w, h) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-speeddata").performClick()
+                    onNodeWithTag("limits-nav-wifi").performClick()
+                    onNodeWithTag("net-speed-limit").performClick()
+                    onNodeWithTag("net-speed-field").performTextInput("10")
+                }
+                shot("settings-networks-$size", populatedSample().withUsbColor(NetworkColor.Pink), dark, w, h) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-networks").performClick()
+                }
+                // The sample password is only ever typed into the masked field, and the keychain here is the "none" one.
+                shot(
+                    "settings-networks-proxy-note-$size",
+                    populatedSample(),
+                    dark,
+                    w,
+                    h,
+                    stores = AppStores(InMemorySettingsStore(), UnavailableSecretStore),
+                ) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-networks").performClick()
+                    onNodeWithTag("network-page-proxy-edit").performClick()
+                    onNodeWithTag("proxy-page-type-socks5").performClick()
+                    onNodeWithTag("proxy-page-host").performTextReplacement("127.0.0.1")
+                    onNodeWithTag("proxy-page-port").performTextReplacement("1080")
+                    onNodeWithTag("proxy-page-user").performTextReplacement("alice")
+                    onNodeWithTag("proxy-page-password").performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("secret")) }
+                    onNodeWithTag("proxy-page-save").performClick()
+                    waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("network-page-proxy-note").fetchSemanticsNodes().isNotEmpty() }
+                }
+            }
+        }
+        // Notices: a reset file and a failed save, over the list.
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            val reset = AppStores(InMemorySettingsStoreAnswering(LoadResult.Reset("not valid settings")), InMemorySecretStore())
+            shot("settings-reset-notice-$theme-1280x800", populatedSample(), dark, 1280, 800, stores = reset) {
+                waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("notice").fetchSemanticsNodes().isNotEmpty() }
             }
         }
     }
@@ -393,4 +451,21 @@ class ScreenshotsTest {
     }
 
     private fun ComposeUiTest.openNetworks() = onNodeWithTag("network-chip").performClick()
+
+    private fun ComposeUiTest.openSettings() {
+        onRoot().performKeyInput {
+            keyDown(Key.MetaLeft)
+            pressKey(Key.Comma)
+            keyUp(Key.MetaLeft)
+        }
+    }
+
+    /** A store whose file is always unreadable, so the reset notice shows. */
+    private class InMemorySettingsStoreAnswering(
+        private val result: LoadResult,
+    ) : SettingsStore {
+        override fun load() = result
+
+        override fun save(file: SettingsFile): SaveResult = SaveResult.Ok
+    }
 }

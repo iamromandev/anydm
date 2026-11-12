@@ -35,7 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** One network's settings inside the Networks menu panel: name, colour, proxy and the limits link. */
+/**
+ * One network's settings: name, colour, proxy and the limits link. The Networks menu shows it with a back row and the link;
+ * the Settings page passes null for both and has neither.
+ */
 @Composable
 internal fun NetworkSettingsPage(
     n: Network,
@@ -48,37 +51,40 @@ internal fun NetworkSettingsPage(
     onCancel: () -> Unit,
     onColor: (NetworkColor) -> Unit,
     onProxySave: (Proxy) -> Unit,
-    onBack: () -> Unit,
-    onOpenLimits: () -> Unit,
+    onBack: (() -> Unit)?,
+    onOpenLimits: (() -> Unit)?,
     proxyEditing: Boolean,
     onProxyEditing: (Boolean) -> Unit,
     onTextFocus: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    keychainNote: String? = null,
 ) {
     val c = colors
     Column(modifier.testTag("network-page")) {
-        Row(
-            Modifier
-                .testTag("network-page-back")
-                .fillMaxWidth()
-                .clickable(role = Role.Button, onClick = onBack)
-                .semantics { contentDescription = "Back to networks" }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("‹", color = c.textSecondary, fontSize = 16.sp, maxLines = 1)
-            Text(
-                n.name,
-                color = c.text,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("network-page-title"),
-            )
+        if (onBack != null) {
+            Row(
+                Modifier
+                    .testTag("network-page-back")
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button, onClick = onBack)
+                    .semantics { contentDescription = "Back to networks" }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("‹", color = c.textSecondary, fontSize = 16.sp, maxLines = 1)
+                Text(
+                    n.name,
+                    color = c.text,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("network-page-title"),
+                )
+            }
+            MenuDivider()
         }
-        MenuDivider()
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             Section("NAME") {
                 if (editing) {
@@ -129,6 +135,14 @@ internal fun NetworkSettingsPage(
                         )
                         if (!proxyEditing) OutlineButton("Edit", "network-page-proxy-edit", { onProxyEditing(true) })
                     }
+                    if (!proxyEditing && keychainNote != null) {
+                        Text(
+                            keychainNote,
+                            color = c.textSecondary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.testTag("network-page-proxy-note"),
+                        )
+                    }
                     if (proxyEditing) {
                         ProxyEditor(
                             n.proxy,
@@ -139,26 +153,29 @@ internal fun NetworkSettingsPage(
                             onCancel = { onProxyEditing(false) },
                             tagPrefix = "page",
                             onTextFocus = onTextFocus,
+                            note = keychainNote,
                         )
                     }
                 }
             }
-            MenuDivider()
-            Box(
-                Modifier
-                    .testTag("network-page-limits")
-                    .fillMaxWidth()
-                    .clickable(role = Role.Button, onClick = onOpenLimits)
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "Speed & data limits for ${n.name}",
-                    color = c.accent,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (onOpenLimits != null) {
+                MenuDivider()
+                Box(
+                    Modifier
+                        .testTag("network-page-limits")
+                        .fillMaxWidth()
+                        .clickable(role = Role.Button, onClick = onOpenLimits)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "Speed & data limits for ${n.name}",
+                        color = c.accent,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

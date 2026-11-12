@@ -698,7 +698,7 @@ class FilesTest {
             onNodeWithTag("new-download-dialog").assertIsDisplayed()
             onNodeWithTag("url-field").assertTextEquals("magnet:?xt=urn:btih:abc&dn=Sintel")
             onNodeWithTag("preview-name").assertTextEquals("Sintel")
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -720,7 +720,7 @@ class FilesTest {
             onNodeWithTag("torrent-file").assertTextEquals("show.torrent")
             onNodeWithTag("preview-name").assertTextEquals("Show")
             onNodeWithTag("file-Season 1/E01.mkv").assertIsOn()
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -742,7 +742,7 @@ class FilesTest {
             dropFiles(show, other)
             assertEquals(listOf(show), loader.loaded)
             onNodeWithTag("torrent-file").assertTextEquals("show.torrent")
-            onNodeWithTag("drop-message").assertTextEquals("Only the first item was added")
+            onNodeWithTag("notice").assertTextEquals("Only the first item was added")
         }
 
     @Test
@@ -752,7 +752,7 @@ class FilesTest {
             home()
             drop(DropItems(listOf(show), "https://example.com/a.zip"))
             onNodeWithTag("torrent-file").assertTextEquals("show.torrent")
-            onNodeWithTag("drop-message").assertTextEquals("Only the first item was added")
+            onNodeWithTag("notice").assertTextEquals("Only the first item was added")
         }
 
     @Test
@@ -761,7 +761,7 @@ class FilesTest {
             home()
             dropText("https://a.example/one.zip\nhttps://b.example/two.zip")
             onNodeWithTag("url-field").assertTextEquals("https://a.example/one.zip")
-            onNodeWithTag("drop-message").assertTextEquals("Only the first item was added")
+            onNodeWithTag("notice").assertTextEquals("Only the first item was added")
         }
 
     @Test
@@ -769,7 +769,7 @@ class FilesTest {
         runComposeUiTest {
             home()
             dropFiles(Path.of("/t/pic.png"))
-            onNodeWithTag("drop-message").assertTextEquals(tooManyOrWrong)
+            onNodeWithTag("notice").assertTextEquals(tooManyOrWrong)
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
             assertEquals(emptyList(), loader.loaded)
         }
@@ -779,23 +779,23 @@ class FilesTest {
         runComposeUiTest {
             home()
             dropText("just some words")
-            onNodeWithTag("drop-message").assertTextEquals(tooManyOrWrong)
+            onNodeWithTag("notice").assertTextEquals(tooManyOrWrong)
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
         }
 
     @Test
-    fun theDropMessageHidesAfterThreeSeconds() =
+    fun theNoticeHidesAfterThreeSeconds() =
         runComposeUiTest {
             mainClock.autoAdvance = false
             home()
             mainClock.advanceTimeByFrame()
             runOnIdle { env.drops.drop(DropItems(listOf(Path.of("/t/pic.png")), null)) }
             mainClock.advanceTimeBy(100)
-            onNodeWithTag("drop-message").assertTextEquals(tooManyOrWrong)
+            onNodeWithTag("notice").assertTextEquals(tooManyOrWrong)
             mainClock.advanceTimeBy(2_800)
-            onNodeWithTag("drop-message").assertIsDisplayed()
+            onNodeWithTag("notice").assertIsDisplayed()
             mainClock.advanceTimeBy(300)
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -808,9 +808,9 @@ class FilesTest {
             mainClock.advanceTimeBy(2_000)
             runOnIdle { env.drops.drop(DropItems(listOf(Path.of("/t/pic2.png")), null)) }
             mainClock.advanceTimeBy(2_000)
-            onNodeWithTag("drop-message").assertIsDisplayed()
+            onNodeWithTag("notice").assertIsDisplayed()
             mainClock.advanceTimeBy(1_200)
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -824,22 +824,22 @@ class FilesTest {
             dropText("https://example.com/other.zip")
             dropFiles(Path.of("/t/pic.png"))
             onNodeWithTag("url-field").assertTextEquals("https://example.com/mine.zip")
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
             onNodeWithTag("drop-overlay").assertDoesNotExist()
         }
 
     @Test
-    fun aDropWithTheLimitsDialogOpenIsIgnored() =
+    fun aDropWithSettingsOpenIsIgnored() =
         runComposeUiTest {
             home()
             onNodeWithTag("network-chip").performClick()
             onNodeWithTag("networks-limits-link").performClick()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            onNodeWithTag("settings-page").assertIsDisplayed()
             hover(true)
             onNodeWithTag("drop-overlay").assertDoesNotExist()
             dropText("https://example.com/other.zip")
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -853,7 +853,7 @@ class FilesTest {
             onNodeWithTag("drop-overlay").assertDoesNotExist()
             dropText("https://example.com/other.zip")
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
         }
 
     @Test
@@ -866,7 +866,7 @@ class FilesTest {
             dropText("https://example.com/other.zip")
             dropFiles(Path.of("/t/pic.png"))
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
-            onNodeWithTag("drop-message").assertDoesNotExist()
+            onNodeWithTag("notice").assertDoesNotExist()
             onNodeWithTag("detail-back").assertIsDisplayed()
         }
 

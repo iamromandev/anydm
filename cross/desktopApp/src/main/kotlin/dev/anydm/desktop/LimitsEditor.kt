@@ -60,105 +60,104 @@ import java.time.DayOfWeek
 
 private const val AMOUNT_ERROR = "Enter a number above 0, up to 100000 with one decimal"
 
+/** The Speed & data limits as an editable draft with Save and Cancel. Content only: the Settings page provides the frame. */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun LimitsDialog(
+fun LimitsEditor(
     initial: Limits,
     networks: List<Network>,
     unit: SpeedUnit,
     slow: Boolean,
     onCancel: () -> Unit,
     onSave: (Limits, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
     initialPane: String = GENERAL_PANE,
+    onPaneChange: (String) -> Unit = {},
+    /** Where the draft lives. The Settings page owns it, so the draft outlives this editor when another section is shown. */
+    draftHolder: LimitsDraftHolder = remember { LimitsDraftHolder() },
 ) {
     val c = colors
-    var draft by remember { mutableStateOf(draftOf(initial, unit, slow)) }
+    // The draft remembers the unit and the footer's slow switch it was last shown under. When either has changed since, the draft
+    // is converted to the new unit and takes the new switch value, so an unsaved draft is kept, not rebuilt.
+    var held by draftHolder.state
+    val shown = held
+    if (shown == null) {
+        held = HeldDraft(draftOf(initial, unit, slow), unit, slow)
+    } else if (shown.unit != unit || shown.slow != slow) {
+        held = HeldDraft(shown.under(unit, slow), unit, slow)
+    }
+    val draft = (held ?: HeldDraft(draftOf(initial, unit, slow), unit, slow)).draft
+    val setDraft = { next: LimitsDraft -> held = HeldDraft(next, unit, slow) }
     var pane by remember { mutableStateOf(initialPane) }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
     val errors = errorPanes(draft)
     val save = { limitsOf(draft, unit)?.let { onSave(it, it.slowOn) } }
 
-    BoxWithConstraints(
-        Modifier
+    Column(
+        modifier
+            .testTag("limits-editor")
             .fillMaxSize()
-            // Keyboard modality: Tab cannot leave the dialog for the Home controls under the scrim.
-            .focusProperties { exit = { FocusRequester.Cancel } }
-            .focusGroup()
-            .background(Color.Black.copy(alpha = if (c.dark) 0.6f else 0.4f))
-            .pointerInput(Unit) { detectTapGestures { onCancel() } }
             .onPreviewKeyEvent {
-                when {
-                    it.type != KeyEventType.KeyDown -> {
-                        false
-                    }
-
-                    it.key == Key.Escape -> {
-                        onCancel()
-                        true
-                    }
-
-                    (it.key == Key.Enter || it.key == Key.NumPadEnter) && errors.isEmpty() -> {
-                        save()
-                        true
-                    }
-
-                    else -> {
-                        false
-                    }
+                if (it.type == KeyEventType.KeyDown && (it.key == Key.Enter || it.key == Key.NumPadEnter) && errors.isEmpty()) {
+                    save()
+                    true
+                } else {
+                    false
                 }
             },
-        contentAlignment = Alignment.Center,
     ) {
-        Column(
-            Modifier
-                .testTag("limits-dialog")
-                .padding(24.dp)
-                .widthIn(max = 720.dp)
-                .heightIn(max = maxHeight - 48.dp)
-                .fillMaxWidth()
-                .background(c.surface, RoundedCornerShape(Radius))
-                .border(1.dp, c.border, RoundedCornerShape(Radius))
-                .pointerInput(Unit) { detectTapGestures {} }
-                .focusRequester(focus)
-                .focusable(),
-        ) {
-            Text(
-                "Speed & data limits",
-                color = c.text,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-            )
-            Divider()
-            Row(Modifier.weight(1f, fill = false).height(IntrinsicSize.Min)) {
-                Sidebar(draft, networks, unit, pane, errors) { pane = it }
-                Box(Modifier.width(1.dp).fillMaxHeight().background(c.border))
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                ) {
-                    val net = networks.firstOrNull { it.id == pane }
-                    val nd = draft.networks[pane]
-                    if (net != null && nd != null) {
-                        NetworkPane(net, nd, unit) { next -> draft = draft.copy(networks = draft.networks + (pane to next)) }
-                    } else {
-                        GeneralPane(draft.general, unit) { next -> draft = draft.copy(general = next) }
-                    }
+        Row(Modifier.weight(1f)) {
+            Sidebar(draft, networks, unit, pane, errors) {
+                pane = it
+                onPaneChange(it)
+            }
+            Box(Modifier.width(1.dp).fillMaxHeight().background(c.border))
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                val net = networks.firstOrNull { it.id == pane }
+                val nd = draft.networks[pane]
+                if (net != null && nd != null) {
+                    NetworkPane(net, nd, unit) { next -> setDraft(draft.copy(networks = draft.networks + (pane to next))) }
+                } else {
+                    GeneralPane(draft.general, unit) { next -> setDraft(draft.copy(general = next)) }
                 }
             }
-            Divider()
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
-            ) {
-                OutlineButton("Cancel", "limits-cancel", onCancel)
-                PrimaryButton("Save", "limits-save", errors.isEmpty()) { save() }
-            }
         }
+        Divider()
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+        ) {
+            OutlineButton("Cancel", "limits-cancel", onCancel)
+            PrimaryButton("Save", "limits-save", errors.isEmpty()) { save() }
+        }
+    }
+}
+
+/** The unsaved Speed & data draft, kept by whoever shows the editor; [discard] throws it away. */
+class LimitsDraftHolder {
+    internal val state = mutableStateOf<HeldDraft?>(null)
+
+    fun discard() {
+        state.value = null
+    }
+}
+
+internal class HeldDraft(
+    val draft: LimitsDraft,
+    val unit: SpeedUnit,
+    val slow: Boolean,
+) {
+    fun under(
+        unit: SpeedUnit,
+        slow: Boolean,
+    ): LimitsDraft {
+        val converted = rebaseDraft(draft, this.unit, unit)
+        return if (slow == this.slow) converted else converted.copy(general = converted.general.copy(slowOn = slow))
     }
 }
 

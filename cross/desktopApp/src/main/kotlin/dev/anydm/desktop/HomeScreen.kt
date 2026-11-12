@@ -16,6 +16,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,14 +55,20 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, FlowPreview::class)
 @Composable
 fun HomeScreen(
     initial: HomeState,
@@ -70,6 +77,7 @@ fun HomeScreen(
     files: FilesEnv = FilesEnv.inert(),
     bus: CommandBus = remember { CommandBus() },
     platform: Platform = Platform.current(),
+    stores: AppStores = remember { AppStores.inMemory() },
 ) {
     val limits0 = remember { initialLimits(initial.networks, sampleUsage) }
     // Initial Queued rows wait in list order; settle starts them when slots are free, so the invariants hold from the start.
@@ -86,7 +94,9 @@ fun HomeScreen(
     var filter by remember { mutableStateOf(Filter.All) }
     var unit by remember { mutableStateOf(SpeedUnit.MBps) }
     var slow by remember { mutableStateOf(false) }
-    var dark by remember { mutableStateOf(initialDark) }
+    var themeChoice by remember { mutableStateOf(ThemeChoice.System) }
+    // initialDark is the OS setting: it decides the theme only while the choice is System.
+    val dark = resolveDark(themeChoice, initialDark)
     val networks = remember { mutableStateListOf<Network>().apply { addAll(initial.networks) } }
     var networksOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
@@ -96,11 +106,20 @@ fun HomeScreen(
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
     var dialogTorrentPath by remember { mutableStateOf<Path?>(null) }
-    var notice by remember { mutableStateOf<DropNotice?>(null) }
+    var notice by remember { mutableStateOf<Notice?>(null) }
+    // Why a proxy password is not in the keychain, by network id. The password itself stays in memory for the session.
+    val keychainNote = remember { mutableStateMapOf<String, String>() }
+    // Keychain calls go one at a time, in the order they were asked for.
+    val secretLock = remember { Mutex() }
+    // Networks whose proxy the user changed after the start-up load: the keychain's password is older than that, so it is not filled in.
+    val proxyEdited = remember { mutableSetOf<String>() }
+    // Saving starts only after the load, so a state that was never loaded can not overwrite the file.
+    var loaded by remember { mutableStateOf(false) }
+    var saveNoticeShown by remember { mutableStateOf(false) }
     // The save folder for the next download; null means the default under home. It lasts for the session.
     var saveFolder by remember { mutableStateOf<String?>(null) }
     var limits by remember { mutableStateOf(limits0) }
-    var limitsOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf<SettingsSection?>(null) }
     var limitsPane by remember { mutableStateOf(GENERAL_PANE) }
     var openId by remember { mutableStateOf<String?>(null) }
     var filesOpen by remember { mutableStateOf(false) }
@@ -121,8 +140,8 @@ fun HomeScreen(
         if (open == null) filesOpen = false else filterOpen = false
     }
     // Back on Home when a dialog, the detail view or a menu closes. The help overlay never moves the focus, so it has no part here.
-    LaunchedEffect(dialogOpen, networksOpen, limitsOpen, removing, menu, open == null) {
-        if (!dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && !helpOpen) homeFocus.requestFocus()
+    LaunchedEffect(dialogOpen, networksOpen, settingsOpen, removing, menu, open == null) {
+        if (!dialogOpen && !networksOpen && removing == null && menu == null && !helpOpen) homeFocus.requestFocus()
     }
     // Held keys may have lost their KeyUp (macOS sends none for a letter under Command; a dialog, a popup or another window took it).
     val windowFocused = LocalWindowInfo.current.isWindowFocused
@@ -157,7 +176,7 @@ fun HomeScreen(
         }
     }
 
-    fun modalNow() = dialogOpen || limitsOpen || removing != null || helpOpen
+    fun modalNow() = dialogOpen || removing != null || helpOpen
 
     fun menuNow() = menu != null || networksOpen || filesOpen || filterOpen
 
@@ -174,6 +193,7 @@ fun HomeScreen(
             filter,
             unit,
             renaming,
+            settingsOpen != null,
         )
     }
 
@@ -214,7 +234,7 @@ fun HomeScreen(
     val focusHome: () -> Unit = { homeFocus.requestFocus() }
 
     // Drops are only taken when nothing else is in front: no dialog, no menu, no detail view.
-    val dropsEnabled = !dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && open == null && !helpOpen
+    val dropsEnabled = !dialogOpen && !networksOpen && removing == null && menu == null && open == null && settingsOpen == null && !helpOpen
     val dropsEnabledNow by rememberUpdatedState(dropsEnabled)
     val dropTarget =
         remember(files) {
@@ -239,7 +259,7 @@ fun HomeScreen(
                     pickOnStart = false
                     dialogInitial = a.text
                     dialogTorrentPath = null
-                    notice = if (a.more) DropNotice(ONLY_FIRST) else null
+                    notice = if (a.more) Notice(ONLY_FIRST) else null
                     dialogOpen = true
                 }
 
@@ -247,12 +267,12 @@ fun HomeScreen(
                     pickOnStart = false
                     dialogInitial = ""
                     dialogTorrentPath = a.path
-                    notice = if (a.more) DropNotice(ONLY_FIRST) else null
+                    notice = if (a.more) Notice(ONLY_FIRST) else null
                     dialogOpen = true
                 }
 
                 DropAction.Rejected -> {
-                    notice = DropNotice(ONLY_LINKS_AND_TORRENTS)
+                    notice = Notice(ONLY_LINKS_AND_TORRENTS)
                 }
             }
         }
@@ -260,7 +280,7 @@ fun HomeScreen(
     val shownNotice = notice
     LaunchedEffect(shownNotice) {
         if (shownNotice != null) {
-            delay(DROP_MESSAGE_MS)
+            delay(shownNotice.ms)
             notice = null
         }
     }
@@ -273,6 +293,141 @@ fun HomeScreen(
             downloads.clear()
             downloads.addAll(next.list)
             queue = next.queue
+        }
+
+        fun persistedFile() = toFile(themeChoice, unit, saveFolder, limits.copy(slowOn = slow), networks.toList())
+
+        // Keychain calls run on IO and never throw: a failure comes back as a result and becomes a note.
+        // [afterCall] runs on IO right after the call: an exit waiting in AppStores.flush on the UI thread must not need the UI.
+        suspend fun secretCall(
+            afterCall: () -> Unit = {},
+            block: suspend () -> SecretResult,
+        ): SecretResult =
+            withContext(Dispatchers.IO) {
+                try {
+                    block()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    SecretResult.Failed(KEYCHAIN_ERROR)
+                } finally {
+                    afterCall()
+                }
+            }
+
+        fun saveProxySecret(
+            id: String,
+            proxy: Proxy,
+        ) {
+            // Counted before the launch, so an exit right after the click still waits for this write.
+            val written = stores.secretWriteStarted()
+            scope
+                .launch {
+                    secretLock.withLock {
+                        val account = proxyAccount(id)
+                        if (proxy.type != ProxyType.None && proxy.password.isNotEmpty()) {
+                            val r = secretCall(written) { stores.secrets.set(account, proxy.password) }
+                            if (r is SecretResult.Failed) keychainNote[id] = "Password not saved: ${r.reason}" else keychainNote.remove(id)
+                        } else {
+                            // No password to keep: the entry goes, and so does any note about it.
+                            secretCall(written) { stores.secrets.delete(account) }
+                            keychainNote.remove(id)
+                        }
+                    }
+                }.invokeOnCompletion { written() }
+        }
+
+        // Every edit of the networks goes through here, so a changed proxy always reaches the keychain.
+        fun commitNetworks(next: List<Network>) {
+            val before = networks.toList()
+            networks.clear()
+            networks.addAll(next)
+            next.forEach { n ->
+                val old = before.firstOrNull { it.id == n.id }?.proxy
+                if (old != null && old != n.proxy) {
+                    proxyEdited += n.id
+                    saveProxySecret(n.id, n.proxy)
+                }
+            }
+        }
+
+        LaunchedEffect(stores) {
+            val result =
+                try {
+                    withContext(Dispatchers.IO) { stores.settings.load() }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    LoadResult.Reset("unreadable")
+                }
+            when (result) {
+                LoadResult.Missing -> {
+                    Unit
+                }
+
+                is LoadResult.Reset -> {
+                    notice = Notice(SETTINGS_RESET, SETTINGS_NOTICE_MS)
+                }
+
+                is LoadResult.Loaded -> {
+                    val r = fromFile(result.file, networks.toList(), limits0)
+                    themeChoice = r.theme
+                    unit = r.unit
+                    saveFolder = r.saveFolder
+                    limits = r.limits
+                    slow = r.limits.slowOn
+                    networks.clear()
+                    networks.addAll(r.networks)
+                    applyQueue(changeLimit(liveQueue(), r.limits.concurrency))
+                    stores.loaded(toFile(r.theme, r.unit, r.saveFolder, r.limits, r.networks))
+                }
+            }
+            loaded = true
+            // Passwords live in the keychain: fetch them for every network that has a user name.
+            if (result is LoadResult.Loaded) {
+                networks.toList().filter { it.proxy.type != ProxyType.None && it.proxy.user.isNotEmpty() }.forEach { n ->
+                    secretLock.withLock {
+                        when (val r = secretCall { stores.secrets.get(proxyAccount(n.id)) }) {
+                            is SecretResult.Ok -> {
+                                val i = networks.indexOfFirst { it.id == n.id }
+                                val password = r.value
+                                // Whatever the user did to this proxy in the meantime is newer than the keychain's password.
+                                if (password != null && i >= 0 && n.id !in proxyEdited && networks[i].proxy.password.isEmpty()) {
+                                    networks[i] = networks[i].copy(proxy = networks[i].proxy.copy(password = password))
+                                }
+                            }
+
+                            is SecretResult.Failed -> {
+                                keychainNote[n.id] = "Couldn't read the saved password: ${r.reason}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(loaded) {
+            if (!loaded) return@LaunchedEffect
+            snapshotFlow { persistedFile() }
+                .drop(1)
+                .map { stores.changed(it) }
+                .debounce(SAVE_DEBOUNCE_MS)
+                .collect { change ->
+                    val r =
+                        withContext(Dispatchers.IO) {
+                            try {
+                                stores.save(change)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                SaveResult.Failed("couldn't write the settings file")
+                            }
+                        }
+                    if (r is SaveResult.Failed && !saveNoticeShown) {
+                        saveNoticeShown = true
+                        notice = Notice(SETTINGS_NOT_SAVED, SETTINGS_NOTICE_MS)
+                    }
+                }
         }
 
         fun togglePause(r: DownloadItem) {
@@ -299,6 +454,19 @@ fun HomeScreen(
             dialogOpen = true
         }
 
+        fun openSettings(
+            section: SettingsSection,
+            networkId: String?,
+        ) {
+            menu = null
+            networksOpen = false
+            filesOpen = false
+            filterOpen = false
+            openId = null
+            limitsPane = networkId ?: GENERAL_PANE
+            settingsOpen = section
+        }
+
         // Every command, from a key or from the menu, ends up here and calls an action that already exists.
         fun runCommand(id: CommandId) {
             val targets = liveTargets()
@@ -314,13 +482,9 @@ fun HomeScreen(
                     openNewDownload(true)
                 }
 
-                CommandId.Limits -> {
-                    menu = null
-                    networksOpen = false
-                    filesOpen = false
-                    filterOpen = false
-                    limitsPane = GENERAL_PANE
-                    limitsOpen = true
+                CommandId.Settings -> {
+                    // Already open: stay where you are, so a draft is not lost to a key press.
+                    if (settingsOpen == null) openSettings(SettingsSection.General, null)
                 }
 
                 CommandId.SelectAll -> {
@@ -364,7 +528,7 @@ fun HomeScreen(
                 }
 
                 CommandId.ToggleTheme -> {
-                    dark = !dark
+                    themeChoice = if (dark) ThemeChoice.Light else ThemeChoice.Dark
                 }
 
                 CommandId.ToggleUnit -> {
@@ -454,15 +618,18 @@ fun HomeScreen(
                         // Esc closes it and nothing reaches the control that still holds the focus below.
                         if (down && e.key == Key.Escape) helpOpen = false
                         true
-                    } else if (down && e.key == Key.Escape && menu != null && !dialogOpen && !limitsOpen && removing == null) {
+                    } else if (down && e.key == Key.Escape && menu != null && !dialogOpen && removing == null) {
                         menu = null
                         true
-                    } else if (down && e.key == Key.Escape && open != null && !networksOpen && !dialogOpen && !limitsOpen && !renaming &&
+                    } else if (down && e.key == Key.Escape && settingsOpen != null && !dialogOpen && !renaming && removing == null) {
+                        settingsOpen = null
+                        true
+                    } else if (down && e.key == Key.Escape && open != null && !networksOpen && !dialogOpen && !renaming &&
                         removing == null
                     ) {
                         if (filesOpen) filesOpen = false else openId = null
                         true
-                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null || removing != null || helpOpen) {
+                    } else if (!paste || dialogOpen || settingsOpen != null || renaming || open != null || removing != null || helpOpen) {
                         // Mod commands. They are gated by the bus, so a dialog or a menu in front keeps them out.
                         // A key the bus refused goes on to the focused control: Mod+A belongs to a text field in a dialog.
                         val id =
@@ -486,7 +653,7 @@ fun HomeScreen(
                         }
                     } else {
                         scope.launch {
-                            val link = pasteLink(clipboardText(), dialogOpen || limitsOpen || removing != null)
+                            val link = pasteLink(clipboardText(), dialogOpen || removing != null)
                             if (link != null) {
                                 dialogInitial = link
                                 dialogTorrentPath = null
@@ -522,7 +689,35 @@ fun HomeScreen(
                     .testTag("home-root")
                     .semantics { stateDescription = if (dark) "dark" else "light" },
             ) {
-                if (open != null) {
+                if (settingsOpen != null) {
+                    SettingsScreen(
+                        section = settingsOpen ?: SettingsSection.General,
+                        onSection = { settingsOpen = it },
+                        onBack = { settingsOpen = null },
+                        folder = displayFolder(saveFolder ?: defaultFolder(files.home), files.home),
+                        onChangeFolder = {
+                            files.picker.pickFolder(saveFolder ?: defaultFolder(files.home))?.let { saveFolder = it }
+                        },
+                        themeChoice = themeChoice,
+                        onTheme = { themeChoice = it },
+                        unit = unit,
+                        onUnit = { unit = it },
+                        limits = limits,
+                        slow = slow,
+                        limitsPane = limitsPane,
+                        onLimitsPane = { limitsPane = it },
+                        onSaveLimits = { l, s ->
+                            limits = l
+                            applyQueue(changeLimit(liveQueue(), l.concurrency))
+                            slow = s
+                        },
+                        networks = networkList,
+                        onNetworksChange = ::commitNetworks,
+                        onEditingChange = { renaming = it },
+                        modifier = Modifier.weight(1f),
+                        keychainNotes = keychainNote,
+                    )
+                } else if (open != null) {
                     DetailScreen(
                         open,
                         networkList,
@@ -560,11 +755,11 @@ fun HomeScreen(
                         unit,
                         {
                             menu = null
-                            networksOpen = !networksOpen && !dialogOpen && !limitsOpen && removing == null
+                            networksOpen = !networksOpen && !dialogOpen && removing == null
                         },
                         { chipBounds = it },
                         {
-                            if (!dialogOpen && !limitsOpen && removing == null) {
+                            if (!dialogOpen && removing == null) {
                                 dialogInitial = ""
                                 dialogTorrentPath = null
                                 pickOnStart = false
@@ -648,24 +843,20 @@ fun HomeScreen(
                         }
                     }
                 }
-                Footer(initial.freeBytes, slow, { slow = it }, unit, { unit = it }, dark) { dark = !dark }
+                Footer(initial.freeBytes, slow, { slow = it }, unit, { unit = it }, dark) {
+                    themeChoice = if (dark) ThemeChoice.Light else ThemeChoice.Dark
+                }
             }
-            if (networksOpen && !dialogOpen && !limitsOpen && removing == null) {
+            if (networksOpen && !dialogOpen && removing == null) {
                 val density = LocalDensity.current
                 NetworksMenu(
                     networks,
-                    { next ->
-                        networks.clear()
-                        networks.addAll(next)
-                    },
+                    ::commitNetworks,
                     unit,
                     { networksOpen = false },
-                    { pane ->
-                        networksOpen = false
-                        limitsPane = pane ?: GENERAL_PANE
-                        limitsOpen = true
-                    },
+                    { section, networkId -> openSettings(section, networkId) },
                     onEditingChange = { renaming = it },
+                    keychainNotes = keychainNote,
                     maxHeight =
                         if (rootHeight > 0) {
                             with(density) { (rootHeight - chipBounds.bottom).toDp() } - NETWORKS_MENU_GAP - NETWORKS_MENU_MARGIN
@@ -685,7 +876,7 @@ fun HomeScreen(
                 val menuTargets = targetsOf(visible, m.ids)
                 if (menuTargets.isEmpty()) {
                     LaunchedEffect(m) { menu = null }
-                } else if (!dialogOpen && !limitsOpen && removing == null) {
+                } else if (!dialogOpen && removing == null) {
                     RowMenu(
                         m,
                         menuActions(menuTargets, queue),
@@ -706,22 +897,6 @@ fun HomeScreen(
                     )
                 }
             }
-            if (limitsOpen) {
-                LimitsDialog(
-                    limits,
-                    networkList,
-                    unit,
-                    slow,
-                    onCancel = { limitsOpen = false },
-                    initialPane = limitsPane,
-                    onSave = { l, s ->
-                        limits = l
-                        applyQueue(changeLimit(queueState, l.concurrency))
-                        slow = s
-                        limitsOpen = false
-                    },
-                )
-            }
             if (dialogOpen) {
                 NewDownloadDialog(
                     dialogInitial,
@@ -738,11 +913,8 @@ fun HomeScreen(
                     openPickerOnStart = pickOnStart,
                     saveFolder = saveFolder ?: defaultFolder(files.home),
                     startsAfter = startsAfter(queueState, limit),
-                    onProxySave = { id, proxy ->
-                        val next = setProxy(networks.toList(), id, proxy)
-                        networks.clear()
-                        networks.addAll(next)
-                    },
+                    onProxySave = { id, proxy -> commitNetworks(setProxy(networks.toList(), id, proxy)) },
+                    keychainNotes = keychainNote,
                 )
             }
             removing?.let { ids ->
@@ -757,17 +929,22 @@ fun HomeScreen(
             }
             if (helpOpen) ShortcutsOverlay(platform, onClose = { helpOpen = false })
             if (dropsEnabled && files.drops.hovering) DropOverlay()
-            shownNotice?.let { DropMessage(it.text, Modifier.align(Alignment.BottomCenter)) }
+            shownNotice?.let { NoticeBar(it.text, Modifier.align(Alignment.BottomCenter)) }
         }
     }
 }
 
 /** A transient bar message. Identity matters: a repeat of the same text still restarts the timer. */
-private class DropNotice(
+private class Notice(
     val text: String,
+    val ms: Long = DROP_MESSAGE_MS,
 )
 
 private const val DROP_MESSAGE_MS = 3_000L
+private const val SETTINGS_NOTICE_MS = 6_000L
+private const val SAVE_DEBOUNCE_MS = 500L
+private const val SETTINGS_RESET = "Settings couldn't be read and were reset"
+private const val SETTINGS_NOT_SAVED = "Settings couldn't be saved; changes last until you quit"
 private const val ONLY_FIRST = "Only the first item was added"
 private const val ONLY_LINKS_AND_TORRENTS = "Only links and .torrent files can be added"
 
