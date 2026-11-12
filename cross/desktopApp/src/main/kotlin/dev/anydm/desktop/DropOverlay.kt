@@ -37,9 +37,9 @@ fun DropOverlay() {
     }
 }
 
-/** A short-lived message at the bottom of Home. */
+/** A short-lived message at the bottom of Home: a rejected drop, or settings that could not be read or saved. */
 @Composable
-fun DropMessage(
+fun NoticeBar(
     text: String,
     modifier: Modifier = Modifier,
 ) {
@@ -52,7 +52,7 @@ fun DropMessage(
             maxLines = 2,
             modifier =
                 Modifier
-                    .testTag("drop-message")
+                    .testTag("notice")
                     .clip(RoundedCornerShape(8.dp))
                     .background(c.surface)
                     .border(1.dp, c.border, RoundedCornerShape(8.dp))

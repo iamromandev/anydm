@@ -24,7 +24,7 @@ class CommandsTest {
         ctx: CommandContext,
     ) = enabled(id, ctx)
 
-    private val fileIds = listOf(CommandId.NewDownload, CommandId.OpenTorrent, CommandId.Limits)
+    private val fileIds = listOf(CommandId.NewDownload, CommandId.OpenTorrent, CommandId.Settings)
     private val listIds =
         listOf(CommandId.SelectAll, CommandId.ClearSelection, CommandId.Pause, CommandId.Resume, CommandId.TogglePause, CommandId.Remove)
     private val viewIds =
@@ -59,7 +59,7 @@ class CommandsTest {
         fun label(id: CommandId) = commandTable.first { it.id == id }.let { it.group to it.label }
         assertEquals(Group.File to "New download", label(CommandId.NewDownload))
         assertEquals(Group.File to "Open .torrent…", label(CommandId.OpenTorrent))
-        assertEquals(Group.File to "Speed & data limits…", label(CommandId.Limits))
+        assertEquals(Group.File to "Settings…", label(CommandId.Settings))
         assertEquals(Group.Edit to "Select all", label(CommandId.SelectAll))
         assertEquals(Group.Edit to "Clear selection", label(CommandId.ClearSelection))
         assertEquals(Group.Edit to "Pause", label(CommandId.Pause))
@@ -125,7 +125,7 @@ class CommandsTest {
     fun macLabelsUseSymbols() {
         fun l(c: CommandId) = shortcutLabel(commandTable.first { it.id == c }.shortcut!!, Platform.Mac)
         assertEquals("⌘N", l(CommandId.NewDownload))
-        assertEquals("⌘,", l(CommandId.Limits))
+        assertEquals("⌘,", l(CommandId.Settings))
         assertEquals("⌘1", l(CommandId.FilterAll))
         assertEquals("⇧⌘D", l(CommandId.ToggleTheme))
         assertEquals("⇧⌘U", l(CommandId.ToggleUnit))
@@ -138,7 +138,7 @@ class CommandsTest {
     fun otherLabelsUseWords() {
         fun l(c: CommandId) = shortcutLabel(commandTable.first { it.id == c }.shortcut!!, Platform.Other)
         assertEquals("Ctrl+N", l(CommandId.NewDownload))
-        assertEquals("Ctrl+,", l(CommandId.Limits))
+        assertEquals("Ctrl+,", l(CommandId.Settings))
         assertEquals("Ctrl+Shift+D", l(CommandId.ToggleTheme))
         assertEquals("Ctrl+Shift+U", l(CommandId.ToggleUnit))
         assertEquals("Ctrl+/", l(CommandId.Shortcuts))
@@ -171,7 +171,7 @@ class CommandsTest {
         assertEquals(CommandId.SelectAll, matchKey(Key.A, true, false, false, Platform.Mac))
         assertEquals(CommandId.FilterFinished, matchKey(Key.Three, true, false, false, Platform.Mac))
         assertEquals(CommandId.Shortcuts, matchKey(Key.Slash, true, false, false, Platform.Mac))
-        assertEquals(CommandId.Limits, matchKey(Key.Comma, true, false, false, Platform.Mac))
+        assertEquals(CommandId.Settings, matchKey(Key.Comma, true, false, false, Platform.Mac))
     }
 
     @Test
@@ -223,6 +223,19 @@ class CommandsTest {
     fun withNothingOpenFileAndViewCommandsAreAlwaysEnabled() {
         for (id in fileIds + viewIds) assertTrue(on(id, CommandContext()), id.name)
         for (id in fileIds + viewIds) assertTrue(on(id, busy.copy(detailOpen = true)), id.name)
+    }
+
+    @Test
+    fun withSettingsOpenListCommandsAreDisabledAndFileAndViewCommandsStayEnabled() {
+        val ctx = busy.copy(settingsOpen = true)
+        for (id in listIds) assertFalse(on(id, ctx), id.name)
+        for (id in fileIds + viewIds) assertTrue(on(id, ctx), id.name)
+    }
+
+    @Test
+    fun settingsKeepsTheModalAndEditingRules() {
+        assertFalse(on(CommandId.Settings, CommandContext(editing = true, settingsOpen = true)))
+        assertFalse(on(CommandId.ToggleTheme, CommandContext(modalOpen = true, settingsOpen = true)))
     }
 
     @Test
@@ -313,8 +326,8 @@ class CommandsTest {
         val ran = mutableListOf<CommandId>()
         val b = bus(clock, ran)
         b.run(CommandId.NewDownload)
-        assertTrue(b.run(CommandId.Limits))
-        assertEquals(listOf(CommandId.NewDownload, CommandId.Limits), ran)
+        assertTrue(b.run(CommandId.Settings))
+        assertEquals(listOf(CommandId.NewDownload, CommandId.Settings), ran)
     }
 
     @Test
@@ -333,8 +346,8 @@ class CommandsTest {
         val clock = Clock()
         val ran = mutableListOf<CommandId>()
         val b = bus(clock, ran)
-        assertTrue(b.run(CommandId.Limits, dedupe = false))
-        assertTrue(b.run(CommandId.Limits, dedupe = false))
+        assertTrue(b.run(CommandId.Settings, dedupe = false))
+        assertTrue(b.run(CommandId.Settings, dedupe = false))
         assertEquals(2, ran.size)
     }
 
@@ -397,7 +410,7 @@ class CommandsTest {
         val modal = CommandContext(modalOpen = true)
         assertTrue(consumes(CommandId.NewDownload, modal))
         assertTrue(consumes(CommandId.OpenTorrent, modal))
-        assertTrue(consumes(CommandId.Limits, modal))
+        assertTrue(consumes(CommandId.Settings, modal))
         assertTrue(consumes(CommandId.Shortcuts, modal))
     }
 

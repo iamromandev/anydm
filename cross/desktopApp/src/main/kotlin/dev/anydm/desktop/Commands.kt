@@ -37,7 +37,7 @@ enum class Group(
 enum class CommandId {
     NewDownload,
     OpenTorrent,
-    Limits,
+    Settings,
     SelectAll,
     ClearSelection,
     Pause,
@@ -74,7 +74,7 @@ val commandTable: List<Command> =
     listOf(
         Command(CommandId.NewDownload, Group.File, "New download", Shortcut(Key.N, mod = true)),
         Command(CommandId.OpenTorrent, Group.File, "Open .torrent…", Shortcut(Key.O, mod = true)),
-        Command(CommandId.Limits, Group.File, "Speed & data limits…", Shortcut(Key.Comma, mod = true)),
+        Command(CommandId.Settings, Group.File, "Settings…", Shortcut(Key.Comma, mod = true)),
         Command(CommandId.SelectAll, Group.Edit, "Select all", Shortcut(Key.A, mod = true)),
         Command(CommandId.ClearSelection, Group.Edit, "Clear selection", Shortcut(Key.Escape)),
         // Pause, Resume and TogglePause share Space: the key runs TogglePause, which picks one by the targets (see spaceAction).
@@ -111,9 +111,21 @@ data class CommandContext(
     val unit: SpeedUnit = SpeedUnit.MBps,
     /** A text field in the Networks menu (rename or proxy) has the focus. */
     val editing: Boolean = false,
+    /** The Settings page is in front of the list. */
+    val settingsOpen: Boolean = false,
 )
 
-private val fileCommands = setOf(CommandId.NewDownload, CommandId.OpenTorrent, CommandId.Limits)
+private val fileCommands = setOf(CommandId.NewDownload, CommandId.OpenTorrent, CommandId.Settings)
+
+private val listCommands =
+    setOf(
+        CommandId.SelectAll,
+        CommandId.ClearSelection,
+        CommandId.Pause,
+        CommandId.Resume,
+        CommandId.TogglePause,
+        CommandId.Remove,
+    )
 
 fun enabled(
     id: CommandId,
@@ -121,6 +133,7 @@ fun enabled(
 ): Boolean {
     if (ctx.modalOpen) return id == CommandId.Shortcuts
     if (id in fileCommands) return !ctx.editing
+    if (ctx.settingsOpen && id in listCommands) return false
     if (ctx.menuOpen) return false
     return when (id) {
         CommandId.SelectAll -> !ctx.detailOpen && ctx.visibleCount > 0

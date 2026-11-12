@@ -303,7 +303,8 @@ class NetworkSettingsTest {
             openPage()
             onNodeWithTag("network-page-limits").performClick()
             menuGone()
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
+            onNodeWithTag("settings-nav-speeddata").assertIsSelected()
+            onNodeWithTag("limits-editor").assertIsDisplayed()
             onNodeWithTag("limits-nav-usb").assertIsSelected()
         }
 

@@ -319,4 +319,76 @@ class LimitsModelTest {
         assertEquals(n.used, r.used)
         assertEquals(n.period, r.period)
     }
+
+    @Test
+    fun rebaseConvertsAnEditedValueToTheNewUnit() {
+        val d =
+            draft()
+                .editGeneral {
+                    it.copy(total = LimitField(true, "10"), slowText = "4")
+                }.net("wifi") { it.copy(speed = LimitField(true, "5")) }
+        val r = rebaseDraft(d, SpeedUnit.MBps, SpeedUnit.Mbps)
+        assertEquals("80", r.general.total.text)
+        assertEquals("32", r.general.slowText)
+        assertEquals(
+            "40",
+            r.networks
+                .getValue("wifi")
+                .speed.text,
+        )
+        val saved = limitsOf(r, SpeedUnit.Mbps)
+        assertNotNull(saved)
+        assertEquals(10 * mb, saved.total)
+        assertEquals(4 * mb, saved.slow)
+        assertEquals(5 * mb, saved.networks.getValue("wifi").speed)
+    }
+
+    @Test
+    fun rebaseKeepsTheExactSavedBytesOfAnUntouchedValue() {
+        val limits = seed.copy(total = 1_000_000L)
+        val d = draftOf(limits, SpeedUnit.MBps, false)
+        val r = rebaseDraft(d, SpeedUnit.MBps, SpeedUnit.Mbps)
+        assertEquals("7.6", r.general.total.text)
+        assertEquals(1_000_000L, limitsOf(r, SpeedUnit.Mbps)?.total)
+    }
+
+    @Test
+    fun rebaseLeavesAnInvalidTextAndAnOffFieldAlone() {
+        val d = draft().editGeneral { it.copy(total = LimitField(true, "1,5")) }.net("usb") { it.copy(speed = LimitField(false, "7")) }
+        val r = rebaseDraft(d, SpeedUnit.MBps, SpeedUnit.Mbps)
+        assertEquals("1,5", r.general.total.text)
+        assertEquals(setOf(GENERAL_PANE), errorPanes(r))
+        assertEquals(
+            "7",
+            r.networks
+                .getValue("usb")
+                .speed.text,
+        )
+    }
+
+    @Test
+    fun rebaseDoesNotTouchDataLimitsOrOtherFields() {
+        val d =
+            draft()
+                .net(
+                    "wifi",
+                ) { it.copy(data = LimitField(true, "5"), used = 123) }
+                .editGeneral { it.copy(concurrency = 4, slowOn = true) }
+        val r = rebaseDraft(d, SpeedUnit.MBps, SpeedUnit.Mbps)
+        assertEquals(
+            "5",
+            r.networks
+                .getValue("wifi")
+                .data.text,
+        )
+        assertEquals(123, r.networks.getValue("wifi").used)
+        assertEquals(4, r.general.concurrency)
+        assertTrue(r.general.slowOn)
+    }
+
+    @Test
+    fun rebaseToTheSameUnitChangesNothing() {
+        val d = draft().editGeneral { it.copy(total = LimitField(true, "10")) }
+        assertEquals(d, rebaseDraft(d, SpeedUnit.MBps, SpeedUnit.MBps))
+    }
 }

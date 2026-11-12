@@ -69,6 +69,7 @@ class QueueTest {
         repeat(target - current) { onNodeWithTag("concurrency-plus").performClick() }
         repeat(current - target) { onNodeWithTag("concurrency-minus").performClick() }
         onNodeWithTag("limits-save").performClick()
+        onNodeWithTag("settings-back").performClick()
     }
 
     /** Detail sample at limit 2 with archive.zip (4) queued #1 and notes.pdf (5) queued #2. */

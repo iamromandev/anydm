@@ -58,7 +58,7 @@ fun Footer(
             Modifier.border(1.dp, c.border, RoundedCornerShape(Radius)).padding(2.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            // Tags are used by LimitsDialogTest ("unit-mbps" is the Mbps segment, "unit-mbps-bytes" the MB/s one); keep them stable.
+            // Tags are used by SpeedDataTest ("unit-mbps" is the Mbps segment, "unit-mbps-bytes" the MB/s one); keep them stable.
             Segment("MB/s", unit == SpeedUnit.MBps, "unit-mbps-bytes") { onUnit(SpeedUnit.MBps) }
             Segment("Mbps", unit == SpeedUnit.Mbps, "unit-mbps") { onUnit(SpeedUnit.Mbps) }
         }

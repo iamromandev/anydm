@@ -176,6 +176,38 @@ fun draftOf(
         },
     )
 
+/**
+ * Re-expresses a draft written in [from] in [to]: the amounts stay the same, only their display changes, so an unsaved draft
+ * survives a change of unit. An untouched value keeps its exact saved bytes; a typed one that does not parse is left as typed.
+ */
+fun rebaseDraft(
+    draft: LimitsDraft,
+    from: SpeedUnit,
+    to: SpeedUnit,
+): LimitsDraft {
+    if (from == to) return draft
+    val g = draft.general
+    val slowBytes = if (g.slowUnedited()) g.slowKept?.bytes else parseAmount(g.slowText)?.let { speedToBytes(it, from) }
+    val slow = slowBytes?.let { keptOf(it, bytesToSpeed(it, to)) }
+    return LimitsDraft(
+        g.copy(
+            total = g.total.rebased(from, to),
+            slowText = slow?.text ?: g.slowText,
+            slowKept = slow ?: g.slowKept,
+        ),
+        draft.networks.mapValues { (_, n) -> n.copy(speed = n.speed.rebased(from, to)) },
+    )
+}
+
+private fun LimitField.rebased(
+    from: SpeedUnit,
+    to: SpeedUnit,
+): LimitField {
+    if (!on) return this
+    val bytes = speedBytes(this, from) ?: return this
+    return keptOf(bytes, bytesToSpeed(bytes, to)).let { LimitField(true, it.text, it) }
+}
+
 private fun GeneralDraft.slowUnedited() = slowKept != null && slowKept.text == slowText
 
 fun slowBad(g: GeneralDraft) = !g.slowUnedited() && parseAmount(g.slowText) == null

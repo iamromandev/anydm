@@ -110,6 +110,7 @@ fun NewDownloadDialog(
     startsAfter: Int? = null,
     initialTorrentPath: Path? = null,
     openPickerOnStart: Boolean = false,
+    keychainNotes: Map<String, String> = emptyMap(),
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -306,6 +307,7 @@ fun NewDownloadDialog(
                         },
                         onCancel = { proxyFor = null },
                         tagPrefix = "chip-${target.id}",
+                        note = keychainNotes[target.id],
                     )
                 }
             }

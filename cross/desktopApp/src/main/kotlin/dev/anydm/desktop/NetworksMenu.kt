@@ -64,10 +64,11 @@ fun NetworksMenu(
     onNetworksChange: (List<Network>) -> Unit,
     unit: SpeedUnit,
     onDismiss: () -> Unit,
-    onOpenLimits: (String?) -> Unit,
+    onOpenSettings: (SettingsSection, String?) -> Unit,
     modifier: Modifier = Modifier,
     onEditingChange: (Boolean) -> Unit = {},
     maxHeight: Dp = Dp.Unspecified,
+    keychainNotes: Map<String, String> = emptyMap(),
 ) {
     val c = colors
     var pageId by remember { mutableStateOf<String?>(null) }
@@ -163,11 +164,12 @@ fun NetworksMenu(
                     if (base !== networks) onNetworksChange(base)
                     showPage(null)
                 },
-                onOpenLimits = { onOpenLimits(page.id) },
+                onOpenLimits = { onOpenSettings(SettingsSection.SpeedData, page.id) },
                 proxyEditing = proxyEditing,
                 onProxyEditing = { proxyEditing = it },
                 onTextFocus = { proxyFocused = it },
                 modifier = Modifier.weight(1f, fill = false),
+                keychainNote = keychainNotes[page.id],
             )
             return@Column
         }
@@ -216,7 +218,7 @@ fun NetworksMenu(
             Modifier
                 .testTag("networks-limits-link")
                 .fillMaxWidth()
-                .clickable(role = Role.Button, onClick = { onOpenLimits(null) })
+                .clickable(role = Role.Button, onClick = { onOpenSettings(SettingsSection.SpeedData, null) })
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center,
         ) {

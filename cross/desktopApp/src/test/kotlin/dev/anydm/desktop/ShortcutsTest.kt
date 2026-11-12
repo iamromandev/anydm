@@ -21,6 +21,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -158,17 +159,28 @@ class ShortcutsTest {
         }
 
     @Test
-    fun modNWhileAnotherModalIsOpenOpensNothingNew() =
+    fun modCommaWhileSettingsIsOpenKeepsOnePageAndTheSection() =
         runComposeUiTest {
             home()
             mod(Key.Comma)
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
-            mod(Key.N)
-            noDialog()
-            mod(Key.O)
-            noDialog()
+            onNodeWithTag("settings-page").assertIsDisplayed()
+            onNodeWithTag("settings-nav-appearance").performClick()
             mod(Key.Comma)
-            assertEquals(1, onAllNodesWithTag("limits-dialog").fetchSemanticsNodes().size)
+            assertEquals(1, onAllNodesWithTag("settings-page").fetchSemanticsNodes().size)
+            onNodeWithTag("settings-nav-appearance").assertIsSelected()
+        }
+
+    @Test
+    fun modNWhileSettingsIsOpenOpensTheDialogOverThePage() =
+        runComposeUiTest {
+            home()
+            mod(Key.Comma)
+            mod(Key.N)
+            dialogOpen()
+            onNodeWithTag("settings-page").assertIsDisplayed()
+            press(Key.Escape)
+            noDialog()
+            onNodeWithTag("settings-page").assertIsDisplayed()
         }
 
     @Test
@@ -404,12 +416,12 @@ class ShortcutsTest {
     // R7, AC8
 
     @Test
-    fun modCommaOpensLimitsOnAllDownloads() =
+    fun modCommaOpensSettingsOnGeneral() =
         runComposeUiTest {
             home()
             mod(Key.Comma)
-            onNodeWithTag("limits-dialog").assertIsDisplayed()
-            onNodeWithTag("total-limit").assertIsDisplayed()
+            onNodeWithTag("settings-page").assertIsDisplayed()
+            onNodeWithTag("settings-folder").assertIsDisplayed()
         }
 
     @Test
@@ -515,6 +527,7 @@ class ShortcutsTest {
             home()
             tickRows("1")
             mod(Key.Comma)
+            onNodeWithTag("settings-nav-speeddata").performClick()
             onNodeWithTag("total-limit").performClick()
             onNodeWithTag("total-field").performTextInput("12")
             onNodeWithTag("total-field").performKeyInput { pressKey(Key.Backspace) }
@@ -575,12 +588,19 @@ class ShortcutsTest {
         }
 
     @Test
-    fun withTheLimitsDialogOpenListKeysDoNothing() =
+    fun withSettingsOpenListKeysDoNothing() =
         runComposeUiTest {
             home()
             tickRows("1")
             mod(Key.Comma)
-            listKeysDoNothing(onNodeWithTag("limits-dialog"))
+            press(Key.Delete)
+            press(Key.Backspace)
+            mod(Key.A)
+            press(Key.Spacebar)
+            onNodeWithTag("settings-page").assertIsDisplayed()
+            noRemoveDialog()
+            press(Key.Escape)
+            listIsSame()
         }
 
     @Test
@@ -728,13 +748,20 @@ class ShortcutsTest {
 
     private fun ComposeUiTest.hostMod(key: Key) = mod(key, meta = hostMac)
 
-    /** Types "abc", presses Mod+A, types "x": the field must read "x", so the key went to the field and not to the list. */
-    private fun ComposeUiTest.selectAllInField(field: SemanticsNodeInteraction) {
+    /**
+     * Types "abc", presses Mod+A, types "x": the field must read "x", so the key went to the field and not to the list.
+     * [leave]: the field is on the Settings page, which hides the list; Esc goes back to it before the list is checked.
+     */
+    private fun ComposeUiTest.selectAllInField(
+        field: SemanticsNodeInteraction,
+        leave: Boolean = false,
+    ) {
         field.performTextInput("abc")
         field.assertTextEquals("abc")
         hostMod(Key.A)
         field.performTextInput("x")
         field.assertTextEquals("x")
+        if (leave) press(Key.Escape)
         count("1 selected")
         listIsUntouched()
     }
@@ -766,8 +793,9 @@ class ShortcutsTest {
             homeOnHost()
             tickRows("1")
             hostMod(Key.Comma)
+            onNodeWithTag("settings-nav-speeddata").performClick()
             onNodeWithTag("total-limit").performClick()
-            selectAllInField(onNodeWithTag("total-field"))
+            selectAllInField(onNodeWithTag("total-field"), leave = true)
         }
 
     @Test
@@ -1161,7 +1189,7 @@ class ShortcutsTest {
             mod(Key.O)
             mod(Key.Comma)
             noDialog()
-            onNodeWithTag("limits-dialog").assertDoesNotExist()
+            onNodeWithTag("settings-page").assertDoesNotExist()
             onNodeWithTag("network-rename-field").assertTextEquals("Home")
         }
 }
