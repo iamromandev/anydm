@@ -611,11 +611,13 @@ class DetailScreenTest {
         }
 
     @Test
-    fun spaceOnAFocusedRowOpensTheDetail() =
+    fun enterOnAFocusedRowOpensTheDetailAndSpaceDoesNot() =
         runComposeUiTest {
             home()
             onNodeWithTag("row-2").requestFocus()
             onNodeWithTag("row-2").performKeyInput { pressKey(Key.Spacebar) }
+            onNodeWithTag("detail-name").assertDoesNotExist()
+            onNodeWithTag("row-2").performKeyInput { pressKey(Key.Enter) }
             onNodeWithTag("detail-name").assertTextEquals("report.pdf")
         }
 

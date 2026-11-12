@@ -13,6 +13,8 @@ import java.awt.Dimension
 
 fun main() =
     application {
+        val bus = remember { CommandBus() }
+        val platform = remember { Platform.current() }
         Window(
             onCloseRequest = ::exitApplication,
             title = APP_NAME,
@@ -21,6 +23,7 @@ fun main() =
         ) {
             window.minimumSize = Dimension(900, 600)
             val sample = if (System.getProperty("anydm.sample") == "empty") emptySample() else detailSample()
-            HomeScreen(sample, isSystemInDarkTheme(), files = remember { FilesEnv.real() })
+            AppMenuBar(bus, platform)
+            HomeScreen(sample, isSystemInDarkTheme(), files = remember { FilesEnv.real() }, bus = bus, platform = platform)
         }
     }

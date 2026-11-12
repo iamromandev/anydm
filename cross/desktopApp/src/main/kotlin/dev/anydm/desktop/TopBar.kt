@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.sp
 fun TopBar(
     filter: Filter,
     onFilter: (Filter) -> Unit,
+    filterOpen: Boolean,
+    onFilterOpenChange: (Boolean) -> Unit,
     downloadingCount: Int,
     networks: List<Network>,
     unit: SpeedUnit,
@@ -51,12 +53,11 @@ fun TopBar(
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        var open by remember { mutableStateOf(false) }
         Box {
             Row(
                 Modifier
                     .testTag("filter")
-                    .clickable(role = Role.DropdownList) { open = true }
+                    .clickable(role = Role.DropdownList) { onFilterOpenChange(true) }
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -64,13 +65,13 @@ fun TopBar(
                 Text(filter.label, color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                 ChevronIcon(c.textSecondary, down = true)
             }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenu(expanded = filterOpen, onDismissRequest = { onFilterOpenChange(false) }) {
                 Filter.entries.forEach { f ->
                     DropdownMenuItem(
                         text = { Text(f.label, color = c.text, fontSize = 14.sp) },
                         onClick = {
                             onFilter(f)
-                            open = false
+                            onFilterOpenChange(false)
                         },
                         modifier = Modifier.testTag("filter-${f.name.lowercase()}"),
                     )
