@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -32,9 +33,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -43,6 +47,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -63,6 +68,8 @@ fun HomeScreen(
     initialDark: Boolean,
     clipboardText: suspend () -> String? = { withContext(Dispatchers.IO) { systemClipboardText() } },
     files: FilesEnv = FilesEnv.inert(),
+    bus: CommandBus = remember { CommandBus() },
+    platform: Platform = Platform.current(),
 ) {
     val limits0 = remember { initialLimits(initial.networks, sampleUsage) }
     // Initial Queued rows wait in list order; settle starts them when slots are free, so the invariants hold from the start.
@@ -99,6 +106,11 @@ fun HomeScreen(
     var filesOpen by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Set<String>?>(null) }
     var menu by remember { mutableStateOf<RowMenuState?>(null) }
+    var helpOpen by remember { mutableStateOf(false) }
+    var pickOnStart by remember { mutableStateOf(false) }
+    var focusedId by remember { mutableStateOf<String?>(null) }
+    var filterOpen by remember { mutableStateOf(false) }
+    val keys = remember(bus) { KeyTracker { bus.release() } }
     var rowMenuBounds by remember { mutableStateOf(Rect.Zero) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -106,10 +118,19 @@ fun HomeScreen(
     val open = openId?.let { id -> downloads.firstOrNull { it.id == id } }
     LaunchedEffect(open == null) {
         if (openId != null && open == null) openId = null
-        if (open == null) filesOpen = false
+        if (open == null) filesOpen = false else filterOpen = false
     }
+    // Back on Home when a dialog, the detail view or a menu closes. The help overlay never moves the focus, so it has no part here.
     LaunchedEffect(dialogOpen, networksOpen, limitsOpen, removing, menu, open == null) {
-        if (!dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null) homeFocus.requestFocus()
+        if (!dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && !helpOpen) homeFocus.requestFocus()
+    }
+    // Held keys may have lost their KeyUp (macOS sends none for a letter under Command; a dialog, a popup or another window took it).
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowFocused) { keys.clear() }
+    // Layers inside this tree (dialogs, row menu, overlay, detail) keep the tracker, or a held Esc would look fresh after it closed one.
+    // Popups and the native picker take the keys away from the tree, so their KeyUps may be missing.
+    LaunchedEffect(networksOpen, filesOpen, filterOpen) {
+        keys.clear()
     }
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
@@ -117,6 +138,44 @@ fun HomeScreen(
             .collect { menu = null }
     }
     val networkList by remember { derivedStateOf { networks.toList() } }
+
+    // Commands run later than they were composed, so they read the state as it is at that moment, not these snapshots.
+    fun liveQueue() = QueueState(downloads.toList(), queue)
+
+    fun liveVisible() = filtered(initial.copy(downloads = downloads.toList()), filter)
+
+    fun liveTargets(): List<DownloadItem> {
+        val visibleNow = liveVisible()
+        val openNow = openId?.let { id -> downloads.firstOrNull { it.id == id } }
+        val selectedNow = selected intersect visibleNow.map { it.id }.toSet()
+        val focusedNow = visibleNow.firstOrNull { it.id == focusedId }
+        return when {
+            openNow != null -> listOf(openNow)
+            selectedNow.isNotEmpty() -> targetsOf(visibleNow, selectedNow)
+            focusedNow != null -> listOf(focusedNow)
+            else -> emptyList()
+        }
+    }
+
+    fun modalNow() = dialogOpen || limitsOpen || removing != null || helpOpen
+
+    fun menuNow() = menu != null || networksOpen || filesOpen || filterOpen
+
+    fun liveContext(): CommandContext {
+        val visibleNow = liveVisible()
+        val ids = visibleNow.map { it.id }.toSet()
+        return CommandContext(
+            modalNow(),
+            menuNow(),
+            openId?.let { id -> downloads.any { it.id == id } } == true,
+            liveTargets(),
+            visibleNow.size,
+            (selected intersect ids).isNotEmpty(),
+            filter,
+            unit,
+            renaming,
+        )
+    }
 
     val state = initial.copy(downloads = downloads.toList())
     val limit = limits.concurrency
@@ -128,6 +187,20 @@ fun HomeScreen(
     // Only selected rows the filter shows count and are acted on; hidden ones stay selected for later.
     val visibleIds = visible.map { it.id }.toSet()
     val liveSelected = selected intersect visibleIds
+    // List commands act on the visible selection, else the focused row, else nothing; in the detail view on the open download.
+    val focusedRow = visible.firstOrNull { it.id == focusedId }
+    val targets = liveTargets()
+    val modalOpen = modalNow()
+    val menuOpen = menuNow()
+    // A hidden or removed row may have held the focus, which would leave every key press without a target.
+    // Only then does Home take the focus back: never from a control the user is on, a detail view, a dialog or a menu.
+    LaunchedEffect(focusedRow == null, filter, visible.size) {
+        if (focusedRow == null) {
+            val lost = focusedId != null
+            focusedId = null
+            if (lost && !modalOpen && !menuOpen && open == null) homeFocus.requestFocus()
+        }
+    }
 
     fun select(
         ids: List<String>,
@@ -136,8 +209,12 @@ fun HomeScreen(
         selected = if (on) selected + ids else selected - ids.toSet()
     }
 
+    // Ticking with the mouse leaves the key focus on Home, so Space then acts on the selection, not on the checkbox.
+    // Reaching the box with Tab and pressing Space keeps the focus where it is.
+    val focusHome: () -> Unit = { homeFocus.requestFocus() }
+
     // Drops are only taken when nothing else is in front: no dialog, no menu, no detail view.
-    val dropsEnabled = !dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && open == null
+    val dropsEnabled = !dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && open == null && !helpOpen
     val dropsEnabledNow by rememberUpdatedState(dropsEnabled)
     val dropTarget =
         remember(files) {
@@ -159,6 +236,7 @@ fun HomeScreen(
             if (!dropsEnabledNow) return@collect
             when (val a = classifyDrop(items)) {
                 is DropAction.Link -> {
+                    pickOnStart = false
                     dialogInitial = a.text
                     dialogTorrentPath = null
                     notice = if (a.more) DropNotice(ONLY_FIRST) else null
@@ -166,6 +244,7 @@ fun HomeScreen(
                 }
 
                 is DropAction.Torrent -> {
+                    pickOnStart = false
                     dialogInitial = ""
                     dialogTorrentPath = a.path
                     notice = if (a.more) DropNotice(ONLY_FIRST) else null
@@ -198,13 +277,117 @@ fun HomeScreen(
 
         fun togglePause(r: DownloadItem) {
             val ids = setOf(r.id)
-            applyQueue(if (r.status == DownloadStatus.Paused) resumeAll(queueState, ids, limit) else pauseAll(queueState, ids, limit))
+            val q = liveQueue()
+            val l = limits.concurrency
+            applyQueue(if (r.status == DownloadStatus.Paused) resumeAll(q, ids, l) else pauseAll(q, ids, l))
         }
 
         fun removeIds(ids: Set<String>) {
-            val next = removeAll(queueState, ids, limit)
+            val next = removeAll(liveQueue(), ids, limits.concurrency)
             applyQueue(next)
             selected = prune(selected, next.list)
+        }
+
+        fun openNewDownload(pick: Boolean) {
+            dialogInitial = ""
+            dialogTorrentPath = null
+            pickOnStart = pick
+            menu = null
+            networksOpen = false
+            filesOpen = false
+            filterOpen = false
+            dialogOpen = true
+        }
+
+        // Every command, from a key or from the menu, ends up here and calls an action that already exists.
+        fun runCommand(id: CommandId) {
+            val targets = liveTargets()
+            val ids = targets.ids()
+            val queueState = liveQueue()
+            val limit = limits.concurrency
+            when (id) {
+                CommandId.NewDownload -> {
+                    openNewDownload(false)
+                }
+
+                CommandId.OpenTorrent -> {
+                    openNewDownload(true)
+                }
+
+                CommandId.Limits -> {
+                    menu = null
+                    networksOpen = false
+                    filesOpen = false
+                    filterOpen = false
+                    limitsPane = GENERAL_PANE
+                    limitsOpen = true
+                }
+
+                CommandId.SelectAll -> {
+                    selected = selected + liveVisible().map { it.id }
+                }
+
+                CommandId.ClearSelection -> {
+                    selected = emptySet()
+                }
+
+                CommandId.Pause -> {
+                    applyQueue(pauseAll(queueState, ids, limit))
+                }
+
+                CommandId.Resume -> {
+                    applyQueue(resumeAll(queueState, ids, limit))
+                }
+
+                CommandId.TogglePause -> {
+                    when (spaceAction(targets)) {
+                        CommandId.Pause -> applyQueue(pauseAll(queueState, ids, limit))
+                        CommandId.Resume -> applyQueue(resumeAll(queueState, ids, limit))
+                        else -> Unit
+                    }
+                }
+
+                CommandId.Remove -> {
+                    removing = ids
+                }
+
+                CommandId.FilterAll -> {
+                    filter = Filter.All
+                }
+
+                CommandId.FilterDownloading -> {
+                    filter = Filter.Downloading
+                }
+
+                CommandId.FilterFinished -> {
+                    filter = Filter.Finished
+                }
+
+                CommandId.ToggleTheme -> {
+                    dark = !dark
+                }
+
+                CommandId.ToggleUnit -> {
+                    unit = if (unit == SpeedUnit.MBps) SpeedUnit.Mbps else SpeedUnit.MBps
+                }
+
+                CommandId.SetUnitMBps -> {
+                    unit = SpeedUnit.MBps
+                }
+
+                CommandId.SetUnitMbps -> {
+                    unit = SpeedUnit.Mbps
+                }
+
+                CommandId.Shortcuts -> {
+                    helpOpen = true
+                }
+            }
+        }
+        SideEffect {
+            bus.context = liveContext()
+            bus.contextSource = ::liveContext
+            bus.handler = ::runCommand
         }
 
         @Composable
@@ -226,6 +409,15 @@ fun HomeScreen(
                     menu = RowMenuState(targetsFor(liveSelected, r.id), p.x, p.y)
                 },
                 queuePosition = queuePosition(queueState, r.id),
+                onFocusChange = { f ->
+                    if (f) {
+                        focusedId = r.id
+                    } else if (focusedId == r.id && liveVisible().any { it.id == r.id }) {
+                        // A row that is gone from the list keeps its id, so Home can tell the focus was lost with it.
+                        focusedId = null
+                    }
+                },
+                onPointerSelect = focusHome,
             )
         Box(
             Modifier
@@ -256,7 +448,13 @@ fun HomeScreen(
                 .onPreviewKeyEvent { e ->
                     val down = e.type == KeyEventType.KeyDown
                     val paste = down && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
-                    if (down && e.key == Key.Escape && menu != null && !dialogOpen && !limitsOpen && removing == null) {
+                    keys.track(e.key, e.type)
+                    if (helpOpen) {
+                        // The overlay takes no focus (a dialog under it would not let go of it), so it takes every key here:
+                        // Esc closes it and nothing reaches the control that still holds the focus below.
+                        if (down && e.key == Key.Escape) helpOpen = false
+                        true
+                    } else if (down && e.key == Key.Escape && menu != null && !dialogOpen && !limitsOpen && removing == null) {
                         menu = null
                         true
                     } else if (down && e.key == Key.Escape && open != null && !networksOpen && !dialogOpen && !limitsOpen && !renaming &&
@@ -264,20 +462,56 @@ fun HomeScreen(
                     ) {
                         if (filesOpen) filesOpen = false else openId = null
                         true
-                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null || removing != null) {
-                        false
+                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null || removing != null || helpOpen) {
+                        // Mod commands. They are gated by the bus, so a dialog or a menu in front keeps them out.
+                        // A key the bus refused goes on to the focused control: Mod+A belongs to a text field in a dialog.
+                        val id =
+                            if (down) {
+                                matchKey(
+                                    e.key,
+                                    e.isMetaPressed,
+                                    e.isCtrlPressed,
+                                    e.isShiftPressed,
+                                    platform,
+                                    e.isAltPressed,
+                                )
+                            } else {
+                                null
+                            }
+                        when {
+                            id == null -> false
+
+                            // No repeat guard: macOS sends no letter KeyUp under Command, so the bus's toggle lockout covers repeats.
+                            else -> bus.run(id) || consumes(id, bus.current)
+                        }
                     } else {
                         scope.launch {
                             val link = pasteLink(clipboardText(), dialogOpen || limitsOpen || removing != null)
                             if (link != null) {
                                 dialogInitial = link
                                 dialogTorrentPath = null
+                                pickOnStart = false
                                 menu = null
                                 networksOpen = false
                                 dialogOpen = true
                             }
                         }
                         true
+                    }
+                }
+                // Bare keys (Space, Delete, Backspace, Esc) bubble up, so a control that wants the key gets it first.
+                // Dialogs and menus also keep them out through the bus.
+                .onKeyEvent { e ->
+                    val id =
+                        if (e.type == KeyEventType.KeyDown) {
+                            matchBareKey(e.key, e.isShiftPressed, e.isAltPressed, e.isMetaPressed, e.isCtrlPressed)
+                        } else {
+                            null
+                        }
+                    when {
+                        id == null -> false
+                        keys.repeating -> enabled(id, bus.current)
+                        else -> bus.run(id, dedupe = false)
                     }
                 }.focusable(),
         ) {
@@ -319,6 +553,8 @@ fun HomeScreen(
                     TopBar(
                         filter,
                         { filter = it },
+                        filterOpen,
+                        { filterOpen = it },
                         downloads.count { it.status == DownloadStatus.Downloading },
                         networks,
                         unit,
@@ -331,6 +567,7 @@ fun HomeScreen(
                             if (!dialogOpen && !limitsOpen && removing == null) {
                                 dialogInitial = ""
                                 dialogTorrentPath = null
+                                pickOnStart = false
                                 menu = null
                                 networksOpen = false
                                 dialogOpen = true
@@ -356,6 +593,7 @@ fun HomeScreen(
                                     if (dropsEnabled) {
                                         dialogInitial = ""
                                         dialogTorrentPath = null
+                                        pickOnStart = false
                                         dialogOpen = true
                                     }
                                 }
@@ -372,6 +610,7 @@ fun HomeScreen(
                                             active.size,
                                             active.all { it.id in selected },
                                             { select(active.map { r -> r.id }, it) },
+                                            onPointerSelect = focusHome,
                                         )
                                     }
                                     items(active, key = { it.id }) { r -> rowFor(r) }
@@ -384,6 +623,7 @@ fun HomeScreen(
                                             queuedRows.size,
                                             queuedRows.all { it.id in selected },
                                             { select(queuedRows.map { r -> r.id }, it) },
+                                            onPointerSelect = focusHome,
                                         )
                                     }
                                     items(queuedRows, key = { it.id }) { r -> rowFor(r) }
@@ -396,6 +636,7 @@ fun HomeScreen(
                                             finished.size,
                                             finished.all { it.id in selected },
                                             { select(finished.map { r -> r.id }, it) },
+                                            onPointerSelect = focusHome,
                                             onClear = {
                                                 removeIds(downloads.filter { it.status == DownloadStatus.Finished }.map { it.id }.toSet())
                                             },
@@ -494,6 +735,7 @@ fun HomeScreen(
                     },
                     files = files,
                     initialTorrentPath = dialogTorrentPath,
+                    openPickerOnStart = pickOnStart,
                     saveFolder = saveFolder ?: defaultFolder(files.home),
                     startsAfter = startsAfter(queueState, limit),
                     onProxySave = { id, proxy ->
@@ -513,6 +755,7 @@ fun HomeScreen(
                     onCancel = { removing = null },
                 )
             }
+            if (helpOpen) ShortcutsOverlay(platform, onClose = { helpOpen = false })
             if (dropsEnabled && files.drops.hovering) DropOverlay()
             shownNotice?.let { DropMessage(it.text, Modifier.align(Alignment.BottomCenter)) }
         }

@@ -44,7 +44,7 @@ class ScreenshotsTest {
         files: FilesEnv = FilesEnv.inert(),
         act: ComposeUiTest.() -> Unit = {},
     ) = runDesktopComposeUiTest(width, height) {
-        setContent { HomeScreen(state, dark, files = files) }
+        setContent { HomeScreen(state, dark, files = files, platform = Platform.Mac) }
         act()
         if (link != null) {
             onNodeWithTag("new-download").performClick()
@@ -76,6 +76,21 @@ class ScreenshotsTest {
             shot("dialog-streams-$theme-1280x800", populatedSample(), dark, 1280, 800, streams)
             shot("dialog-magnet-$theme-900x540", populatedSample(), dark, 900, 540, magnet)
             shot("dialog-magnet-$theme-900x600", populatedSample(), dark, 900, 600, magnet)
+        }
+    }
+
+    @Test
+    fun captureShortcuts() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                shot("shortcuts-$theme-${w}x$h", populatedSample(), dark, w, h) {
+                    onRoot().performKeyInput {
+                        keyDown(Key.MetaLeft)
+                        pressKey(Key.Slash)
+                        keyUp(Key.MetaLeft)
+                    }
+                }
+            }
         }
     }
 

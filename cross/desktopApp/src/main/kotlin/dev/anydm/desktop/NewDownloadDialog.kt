@@ -109,6 +109,7 @@ fun NewDownloadDialog(
     onProxySave: (String, Proxy) -> Unit = { _, _ -> },
     startsAfter: Int? = null,
     initialTorrentPath: Path? = null,
+    openPickerOnStart: Boolean = false,
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -168,6 +169,8 @@ fun NewDownloadDialog(
     // Back to the link field whenever no popover is open (including at first show).
     LaunchedEffect(proxyFor, torrent != null) { if (proxyFor == null) focus.requestFocus() }
     LaunchedEffect(initialTorrentPath) { initialTorrentPath?.let { load(it) } }
+    // Open .torrent… from the menu or Mod+O: the picker opens at once; a cancel leaves the dialog empty.
+    LaunchedEffect(Unit) { if (openPickerOnStart) files.picker.pickTorrent()?.let(::load) }
     val valid = preview != null && (preview !is Preview.Torrent || ticked.isNotEmpty())
 
     BoxWithConstraints(

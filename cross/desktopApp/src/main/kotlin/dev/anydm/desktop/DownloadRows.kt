@@ -59,6 +59,7 @@ fun SectionHeader(
     allSelected: Boolean,
     onSelectAll: (Boolean) -> Unit,
     onClear: (() -> Unit)? = null,
+    onPointerSelect: () -> Unit = {},
 ) {
     val c = colors
     Column(Modifier.fillMaxWidth()) {
@@ -66,7 +67,7 @@ fun SectionHeader(
             Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CheckBox(allSelected, onSelectAll, "select-all-$key", "Select all $title")
+            CheckBox(allSelected, onSelectAll, "select-all-$key", "Select all $title", onPointerRelease = onPointerSelect)
             Spacer(Modifier.width(12.dp))
             Text(
                 "$title $count",
@@ -106,8 +107,11 @@ fun DownloadRow(
     onOpen: () -> Unit,
     onContextMenu: (Offset) -> Unit = {},
     queuePosition: Int? = null,
+    onFocusChange: (Boolean) -> Unit = {},
+    onPointerSelect: () -> Unit = {},
 ) {
     val c = colors
+    val focusChange by rememberUpdatedState(onFocusChange)
     val active = item.status != DownloadStatus.Finished
     val open by rememberUpdatedState(onOpen)
     val contextMenu by rememberUpdatedState(onContextMenu)
@@ -141,9 +145,11 @@ fun DownloadRow(
                     open()
                     true
                 }
-            }.onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { e ->
-                val activate = e.key == Key.Enter || e.key == Key.NumPadEnter || e.key == Key.Spacebar
+            }.onFocusChanged {
+                focused = it.isFocused
+                focusChange(it.isFocused)
+            }.onKeyEvent { e ->
+                val activate = e.key == Key.Enter || e.key == Key.NumPadEnter
                 if (focused && activate && e.type == KeyEventType.KeyDown) {
                     open()
                     true
@@ -155,7 +161,7 @@ fun DownloadRow(
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CheckBox(selected, onSelect, "select-${item.id}", "Select ${item.name}")
+        CheckBox(selected, onSelect, "select-${item.id}", "Select ${item.name}", onPointerRelease = onPointerSelect)
         Spacer(Modifier.width(12.dp))
         Box(
             Modifier

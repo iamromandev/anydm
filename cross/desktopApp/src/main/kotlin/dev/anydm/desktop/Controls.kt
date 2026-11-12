@@ -21,6 +21,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -30,6 +32,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -48,14 +53,23 @@ fun CheckBox(
     onChange: (Boolean) -> Unit,
     tag: String,
     description: String,
+    /** A mouse release on the box, not a key: lets the caller move the key focus off it after a click. */
+    onPointerRelease: () -> Unit = {},
 ) {
     val c = colors
+    val pointerRelease by rememberUpdatedState(onPointerRelease)
     Box(
         modifier =
             Modifier
                 .size(18.dp)
                 .testTag(tag)
-                .semantics { contentDescription = description }
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            if (awaitPointerEvent(PointerEventPass.Final).type == PointerEventType.Release) pointerRelease()
+                        }
+                    }
+                }.semantics { contentDescription = description }
                 .background(if (checked) c.accent else Color.Transparent, RoundedCornerShape(4.dp))
                 .border(1.dp, if (checked) c.accent else c.border, RoundedCornerShape(4.dp))
                 .toggleable(checked, role = Role.Checkbox, onValueChange = onChange),
