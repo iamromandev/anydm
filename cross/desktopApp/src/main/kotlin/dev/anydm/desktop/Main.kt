@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.remember
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -20,6 +21,6 @@ fun main() =
         ) {
             window.minimumSize = Dimension(900, 600)
             val sample = if (System.getProperty("anydm.sample") == "empty") emptySample() else detailSample()
-            HomeScreen(sample, isSystemInDarkTheme())
+            HomeScreen(sample, isSystemInDarkTheme(), files = remember { FilesEnv.real() })
         }
     }

@@ -123,7 +123,7 @@ class HomeScreenTest {
         runComposeUiTest {
             setContent { HomeScreen(emptySample(), true) }
             onNodeWithText("No downloads yet").assertIsDisplayed()
-            onNodeWithText("Paste a link or drop a file to start").assertIsDisplayed()
+            onNodeWithText("Paste a link, drop a .torrent, or press New download").assertIsDisplayed()
             onNodeWithTag("clear-finished").assertDoesNotExist()
             onAllNodes(hasText("DOWNLOADING")).assertCountEquals(0)
             onAllNodes(hasText("FINISHED")).assertCountEquals(0)

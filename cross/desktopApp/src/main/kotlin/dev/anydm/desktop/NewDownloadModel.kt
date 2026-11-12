@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.torrent.TorrentMeta
 import java.net.URLDecoder
 
 private const val MIB = 1024L * 1024
@@ -34,8 +35,12 @@ sealed interface Preview {
     data class Torrent(
         override val name: String,
         val files: List<SampleFile>,
+        /** True for a single-file torrent; a folder torrent with one entry is still a folder. */
+        val single: Boolean = false,
     ) : Preview {
-        override val badge: String get() = "DIR"
+        /** A single-file torrent shows its file's badge; anything else, even a folder with one entry, is a folder. */
+        override val badge: String
+            get() = if (single) files.singleOrNull()?.name?.let(::badgeFor) ?: "DIR" else "DIR"
         override val parallel: Boolean get() = false
     }
 }
@@ -125,17 +130,32 @@ fun previewDetail(
         }
     }
 
+/** A `.torrent` that was read: its file name (shown in the dialog) and what it holds. */
+data class LoadedTorrent(
+    val fileName: String,
+    val meta: TorrentMeta,
+)
+
+fun previewOf(t: LoadedTorrent): Preview.Torrent =
+    Preview.Torrent(t.meta.name, t.meta.files.map { SampleFile(it.path, it.size) }, t.meta.isSingle)
+
+/** The files ticked when [preview] first shows: all of its own files, none for a direct link. */
+fun initialTicked(preview: Preview?): Set<String> = (preview as? Preview.Torrent)?.files?.mapTo(HashSet()) { it.name } ?: emptySet()
+
 fun newDownloadItem(
     preview: Preview,
     ticked: Set<String>,
     id: String,
+    folder: String? = null,
 ): DownloadItem {
     val total =
         when (preview) {
             is Preview.Direct -> preview.totalBytes ?: 0L
             is Preview.Torrent -> torrentSummary(preview.files, ticked).second
         }
-    return DownloadItem(id, preview.name, total, 0, SAMPLE_SPEED, DownloadStatus.Downloading)
+    val kind = if (preview is Preview.Torrent) DownloadKind.Torrent else DownloadKind.Direct
+    val files = (preview as? Preview.Torrent)?.files?.filter { it.name in ticked }
+    return DownloadItem(id, preview.name, total, 0, SAMPLE_SPEED, DownloadStatus.Downloading, kind, folder, files)
 }
 
 fun nextId(items: List<DownloadItem>): String = ((items.maxOfOrNull { it.id.toLongOrNull() ?: 0L } ?: 0L) + 1).toString()

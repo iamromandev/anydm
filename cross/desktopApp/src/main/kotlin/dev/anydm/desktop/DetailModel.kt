@@ -149,6 +149,7 @@ fun buildDetail(
     item: DownloadItem,
     networks: List<Network>,
     off: Set<String> = emptySet(),
+    folder: String = "~/Downloads",
 ): Detail {
     val torrent = item.kind == DownloadKind.Torrent
     val finished = item.status == DownloadStatus.Finished
@@ -233,6 +234,7 @@ fun buildDetail(
         retries = if (!torrent && n >= 2 && item.status != DownloadStatus.Queued) seedOf(item.id) % 40 else 0,
         peers = if (torrent && n > 0) TORRENT_PEERS else 0,
         elapsedSec = elapsed,
+        folder = folder,
     )
 }
 

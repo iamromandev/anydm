@@ -72,12 +72,14 @@ fun DetailScreen(
     onRemove: () -> Unit,
     queuePosition: Int?,
     onStartNow: () -> Unit,
+    home: String,
     modifier: Modifier = Modifier,
 ) {
     var off by remember(item.id) { mutableStateOf(emptySet<String>()) }
     var chip by remember { mutableStateOf(Rect.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
-    val detail = remember(item, networks, off) { buildDetail(item, networks, off) }
+    val folder = folderLabel(item, home)
+    val detail = remember(item, networks, off, folder) { buildDetail(item, networks, off, folder) }
     Box(
         modifier
             .fillMaxSize()
@@ -105,7 +107,7 @@ fun DetailScreen(
                 )
             }
         }
-        if (filesOpen) FilesMenuOverlay(chip, origin) { onFilesOpen(false) }
+        if (filesOpen) FilesMenuOverlay(chip, origin, item.fileList()) { onFilesOpen(false) }
     }
 }
 
@@ -287,7 +289,7 @@ private fun FinishedBody(
                 modifier = Modifier.testTag("detail-name"),
             )
             Spacer(Modifier.height(4.dp))
-            val prefix = if (torrent) "${sintelFiles.size} files · " else ""
+            val prefix = if (torrent) "${fileCount(item.fileList().size)} · " else ""
             Text(
                 "$prefix${formatBytes(item.totalBytes)} · ${d.folder}",
                 color = c.textSecondary,
@@ -464,6 +466,7 @@ private fun CheckIcon(color: Color) {
 private fun FilesMenuOverlay(
     chip: Rect,
     origin: Offset,
+    files: List<SampleFile>,
     onClose: () -> Unit,
 ) {
     val c = colors
@@ -500,7 +503,7 @@ private fun FilesMenuOverlay(
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 6.dp),
             ) {
-                sintelFiles.forEachIndexed { i, f ->
+                files.forEachIndexed { i, f ->
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -611,7 +614,7 @@ private fun FileCard(
                         modifier = Modifier.testTag("detail-card"),
                     )
                     if (torrent) {
-                        FilesChip(onFiles, onChip)
+                        FilesChip(item.fileList().size, onFiles, onChip)
                         etaText(item)?.let {
                             Text(
                                 "· $it",
@@ -676,6 +679,7 @@ private fun cardLine(d: Detail): String {
 
 @Composable
 private fun FilesChip(
+    count: Int,
     onClick: () -> Unit,
     onBounds: (Rect) -> Unit,
 ) {
@@ -690,7 +694,7 @@ private fun FilesChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text("${sintelFiles.size} files", color = c.text, fontSize = 12.sp, maxLines = 1)
+        Text(fileCount(count), color = c.text, fontSize = 12.sp, maxLines = 1)
         ChevronIcon(c.textSecondary, down = true, size = 10)
     }
 }

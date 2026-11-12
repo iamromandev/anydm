@@ -494,7 +494,7 @@ class QueueTest {
             var item by mutableStateOf(detailSample().downloads.first().copy(id = "9", status = DownloadStatus.Queued))
             var position by mutableStateOf<Int?>(2)
             setContent {
-                DetailScreen(item, emptyList(), SpeedUnit.MBps, false, {}, {}, {}, {}, {}, position, {})
+                DetailScreen(item, emptyList(), SpeedUnit.MBps, false, {}, {}, {}, {}, {}, position, {}, home = "/home/user")
             }
             onNodeWithTag("detail-queued").assertTextEquals("Queued · #2 in line")
             position = 1

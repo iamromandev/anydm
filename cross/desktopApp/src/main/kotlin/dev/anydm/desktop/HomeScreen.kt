@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,9 +18,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.awtTransferable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
@@ -43,15 +50,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun HomeScreen(
     initial: HomeState,
     initialDark: Boolean,
     clipboardText: suspend () -> String? = { withContext(Dispatchers.IO) { systemClipboardText() } },
+    files: FilesEnv = FilesEnv.inert(),
 ) {
     val limits0 = remember { initialLimits(initial.networks, sampleUsage) }
     // Initial Queued rows wait in list order; settle starts them when slots are free, so the invariants hold from the start.
@@ -77,6 +88,10 @@ fun HomeScreen(
     var rootHeight by remember { mutableStateOf(0) }
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
+    var dialogTorrentPath by remember { mutableStateOf<Path?>(null) }
+    var notice by remember { mutableStateOf<DropNotice?>(null) }
+    // The save folder for the next download; null means the default under home. It lasts for the session.
+    var saveFolder by remember { mutableStateOf<String?>(null) }
     var limits by remember { mutableStateOf(limits0) }
     var limitsOpen by remember { mutableStateOf(false) }
     var limitsPane by remember { mutableStateOf(GENERAL_PANE) }
@@ -119,6 +134,56 @@ fun HomeScreen(
         on: Boolean,
     ) {
         selected = if (on) selected + ids else selected - ids.toSet()
+    }
+
+    // Drops are only taken when nothing else is in front: no dialog, no menu, no detail view.
+    val dropsEnabled = !dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null && open == null
+    val dropsEnabledNow by rememberUpdatedState(dropsEnabled)
+    val dropTarget =
+        remember(files) {
+            object : DragAndDropTarget {
+                override fun onEntered(event: DragAndDropEvent) = files.drops.hover(true)
+
+                override fun onExited(event: DragAndDropEvent) = files.drops.hover(false)
+
+                override fun onEnded(event: DragAndDropEvent) = files.drops.hover(false)
+
+                override fun onDrop(event: DragAndDropEvent): Boolean {
+                    files.drops.drop(dropItemsOf(event.awtTransferable))
+                    return true
+                }
+            }
+        }
+    LaunchedEffect(files) {
+        files.drops.drops.collect { items ->
+            if (!dropsEnabledNow) return@collect
+            when (val a = classifyDrop(items)) {
+                is DropAction.Link -> {
+                    dialogInitial = a.text
+                    dialogTorrentPath = null
+                    notice = if (a.more) DropNotice(ONLY_FIRST) else null
+                    dialogOpen = true
+                }
+
+                is DropAction.Torrent -> {
+                    dialogInitial = ""
+                    dialogTorrentPath = a.path
+                    notice = if (a.more) DropNotice(ONLY_FIRST) else null
+                    dialogOpen = true
+                }
+
+                DropAction.Rejected -> {
+                    notice = DropNotice(ONLY_LINKS_AND_TORRENTS)
+                }
+            }
+        }
+    }
+    val shownNotice = notice
+    LaunchedEffect(shownNotice) {
+        if (shownNotice != null) {
+            delay(DROP_MESSAGE_MS)
+            notice = null
+        }
     }
 
     AnydmTheme(dark) {
@@ -166,6 +231,7 @@ fun HomeScreen(
             Modifier
                 .fillMaxSize()
                 .onSizeChanged { rootHeight = it.height }
+                .dragAndDropTarget(shouldStartDragAndDrop = { dropsEnabledNow }, target = dropTarget)
                 .pointerInput(networksOpen) {
                     if (networksOpen) {
                         awaitPointerEventScope {
@@ -205,6 +271,7 @@ fun HomeScreen(
                             val link = pasteLink(clipboardText(), dialogOpen || limitsOpen || removing != null)
                             if (link != null) {
                                 dialogInitial = link
+                                dialogTorrentPath = null
                                 menu = null
                                 networksOpen = false
                                 dialogOpen = true
@@ -245,6 +312,7 @@ fun HomeScreen(
                         },
                         queuePosition = queuePosition(queueState, open.id),
                         onStartNow = { applyQueue(startNow(queueState, setOf(open.id))) },
+                        home = files.home,
                         modifier = Modifier.weight(1f),
                     )
                 } else {
@@ -262,6 +330,7 @@ fun HomeScreen(
                         {
                             if (!dialogOpen && !limitsOpen && removing == null) {
                                 dialogInitial = ""
+                                dialogTorrentPath = null
                                 menu = null
                                 networksOpen = false
                                 dialogOpen = true
@@ -283,7 +352,13 @@ fun HomeScreen(
                     Box(Modifier.weight(1f)) {
                         if (visible.isEmpty()) {
                             if (downloads.isEmpty()) {
-                                EmptyState("No downloads yet", "Paste a link or drop a file to start")
+                                EmptyState("No downloads yet", "Paste a link, drop a .torrent, or press New download") {
+                                    if (dropsEnabled) {
+                                        dialogInitial = ""
+                                        dialogTorrentPath = null
+                                        dialogOpen = true
+                                    }
+                                }
                             } else {
                                 EmptyState("Nothing here", null)
                             }
@@ -411,11 +486,15 @@ fun HomeScreen(
                     dialogInitial,
                     networks.filter { it.enabled },
                     onCancel = { dialogOpen = false },
-                    onDownload = { preview, ticked ->
-                        applyQueue(addDownload(queueState, newDownloadItem(preview, ticked, nextId(downloads)), limit))
+                    onDownload = { preview, ticked, folder ->
+                        applyQueue(addDownload(queueState, newDownloadItem(preview, ticked, nextId(downloads), folder), limit))
+                        saveFolder = folder
                         filter = Filter.All
                         dialogOpen = false
                     },
+                    files = files,
+                    initialTorrentPath = dialogTorrentPath,
+                    saveFolder = saveFolder ?: defaultFolder(files.home),
                     startsAfter = startsAfter(queueState, limit),
                     onProxySave = { id, proxy ->
                         val next = setProxy(networks.toList(), id, proxy)
@@ -434,9 +513,20 @@ fun HomeScreen(
                     onCancel = { removing = null },
                 )
             }
+            if (dropsEnabled && files.drops.hovering) DropOverlay()
+            shownNotice?.let { DropMessage(it.text, Modifier.align(Alignment.BottomCenter)) }
         }
     }
 }
+
+/** A transient bar message. Identity matters: a repeat of the same text still restarts the timer. */
+private class DropNotice(
+    val text: String,
+)
+
+private const val DROP_MESSAGE_MS = 3_000L
+private const val ONLY_FIRST = "Only the first item was added"
+private const val ONLY_LINKS_AND_TORRENTS = "Only links and .torrent files can be added"
 
 private fun List<DownloadItem>.ids(): Set<String> = map { it.id }.toSet()
 
