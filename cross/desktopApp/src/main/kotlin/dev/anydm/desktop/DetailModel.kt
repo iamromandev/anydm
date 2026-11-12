@@ -58,6 +58,8 @@ data class Detail(
     val peers: Int,
     val elapsedSec: Long,
     val folder: String = "~/Downloads",
+    /** A real download: [series] is its one measured speed history, and there are no per-network rows, shares or chunks. */
+    val real: Boolean = false,
 )
 
 fun detailSample(): HomeState {
@@ -145,12 +147,47 @@ private fun buildCells(
     return cells to cellBytes
 }
 
+/**
+ * A real download's detail: what was measured, nothing invented. Its traffic is not bound to a network, so there are no per-network
+ * rows or shares, and no chunk map; the chart is the last [POINTS] speeds [history] holds (this session only), older ones as 0.
+ */
+private fun realDetail(
+    item: DownloadItem,
+    history: List<Long>,
+    folder: String,
+): Detail {
+    val running = item.status == DownloadStatus.Downloading
+    // A row that is not moving ends its chart at zero instead of at the speed it last reported.
+    val samples = if (running || item.status == DownloadStatus.Finished) history else history + 0L
+    val tail = samples.takeLast(POINTS)
+    val points = List(POINTS - tail.size) { 0L } + tail
+    return Detail(
+        item = item,
+        rows = emptyList(),
+        total = if (running) item.bytesPerSec else 0L,
+        avg = if (history.isEmpty()) 0L else history.sum() / history.size,
+        peak = points.max(),
+        aloneFactor = null,
+        series = listOf(points),
+        cells = emptyList(),
+        cellBytes = 0,
+        retries = 0,
+        peers = 0,
+        elapsedSec = 0,
+        folder = folder,
+        real = true,
+    )
+}
+
 fun buildDetail(
     item: DownloadItem,
     networks: List<Network>,
     off: Set<String> = emptySet(),
     folder: String = "~/Downloads",
+    /** The speeds a real download reported this session, oldest first. */
+    history: List<Long> = emptyList(),
 ): Detail {
+    if (item.kind == DownloadKind.Direct && item.url != null) return realDetail(item, history, folder)
     val torrent = item.kind == DownloadKind.Torrent
     val finished = item.status == DownloadStatus.Finished
     val flags = networks.map { it.enabled && it.id !in off }
@@ -271,7 +308,9 @@ fun graphDescription(
     d: Detail,
     unit: SpeedUnit,
 ): String =
-    if (d.item.status == DownloadStatus.Finished) {
+    if (d.real) {
+        "Speed during this session, peak ${formatSpeed(d.peak, unit)}"
+    } else if (d.item.status == DownloadStatus.Finished) {
         "Speed over the download, peak ${formatSpeed(d.peak, unit)}"
     } else {
         "Throughput, last 60 seconds, peak ${formatSpeed(d.peak, unit)}"

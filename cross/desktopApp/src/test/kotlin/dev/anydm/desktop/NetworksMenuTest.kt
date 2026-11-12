@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.ClipEntry
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -30,10 +32,23 @@ import kotlin.test.Test
 
 @OptIn(ExperimentalTestApi::class)
 class NetworksMenuTest {
+    private val resumableProber =
+        FakeProber(
+            fallback =
+                dev.anydm.engine.http.ProbeOutcome
+                    .Ok(
+                        dev.anydm.engine.http
+                            .ProbeResult("Project.zip", 400L * 1024 * 1024, true),
+                    ),
+        )
+
     private fun ComposeUiTest.home(
         state: HomeState = populatedSample(),
         dark: Boolean = true,
-    ) = setContent { HomeScreen(state, dark) }
+        prober: FakeProber? = null,
+    ) = setContent {
+        HomeScreen(state, dark, downloadEnv = remember { prober?.let { DownloadEnv.inert().copy(prober = it) } ?: DownloadEnv.inert() })
+    }
 
     private fun ComposeUiTest.openMenu() = onNodeWithTag("network-chip").performClick()
 
@@ -353,9 +368,14 @@ class NetworksMenuTest {
     @Test
     fun dialogKeepsStreamsWithTwoEnabledNetworks() =
         runComposeUiTest {
-            home()
+            home(prober = resumableProber)
             onNodeWithTag("new-download").performClick()
             onNodeWithTag("url-field").performTextInput("http://127.0.0.1:8765/Project.zip")
+            val end = System.nanoTime() + 5_000_000_000L
+            while (onAllNodesWithTag("streams-auto").fetchSemanticsNodes().isEmpty() && System.nanoTime() < end) {
+                mainClock.advanceTimeByFrame()
+                Thread.sleep(5)
+            }
             onNodeWithTag("streams-auto").assertIsDisplayed()
         }
 

@@ -194,14 +194,16 @@ fun DownloadRow(
                 if (active) {
                     Spacer(Modifier.width(12.dp))
                     val queued = item.status == DownloadStatus.Queued
+                    val failed = item.status == DownloadStatus.Failed
                     Text(
                         when {
                             queued && queuePosition != null -> "#$queuePosition · Queued"
                             queued -> "Queued"
+                            failed -> item.error ?: "Failed"
                             item.status == DownloadStatus.Paused -> "Paused"
                             else -> formatSpeed(item.bytesPerSec, unit)
                         },
-                        color = c.text,
+                        color = if (failed) c.danger else c.text,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -219,7 +221,7 @@ fun DownloadRow(
             }
             Spacer(Modifier.height(5.dp))
             Text(
-                details(item),
+                details(item, unit),
                 color = c.textSecondary,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
@@ -229,8 +231,16 @@ fun DownloadRow(
         }
         Spacer(Modifier.width(12.dp))
         if (active) {
-            val paused = item.status == DownloadStatus.Paused
-            IconBox("pause-${item.id}", if (paused) "Resume" else "Pause", onTogglePause) {
+            val paused = item.status == DownloadStatus.Paused || item.status == DownloadStatus.Failed
+            val label =
+                if (item.status == DownloadStatus.Failed) {
+                    "Retry"
+                } else if (paused) {
+                    "Resume"
+                } else {
+                    "Pause"
+                }
+            IconBox("pause-${item.id}", label, onTogglePause) {
                 if (paused) PlayIcon(it) else PauseIcon(it)
             }
         } else {
@@ -240,9 +250,19 @@ fun DownloadRow(
     }
 }
 
-private fun details(item: DownloadItem): String =
+private fun details(
+    item: DownloadItem,
+    unit: SpeedUnit,
+): String =
     if (item.status == DownloadStatus.Finished) {
         formatBytes(item.totalBytes)
+    } else if (item.totalBytes <= 0) {
+        // Size unknown: no percentage and no ETA, only what has arrived and how fast.
+        if (item.status == DownloadStatus.Downloading) {
+            "${formatBytes(item.doneBytes)} · ${formatSpeed(item.bytesPerSec, unit)}"
+        } else {
+            formatBytes(item.doneBytes)
+        }
     } else {
         val pct = percent(item)
         val base = "$pct% · ${formatBytes(item.doneBytes)} of ${formatBytes(item.totalBytes)}"

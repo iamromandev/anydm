@@ -6,6 +6,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -21,6 +23,9 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.text.AnnotatedString
+import dev.anydm.engine.http.EngineEvent
+import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.http.ProbeResult
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentMeta
 import dev.anydm.engine.torrent.TorrentResult
@@ -44,9 +49,10 @@ class ScreenshotsTest {
         link: String? = null,
         files: FilesEnv = FilesEnv.inert(),
         stores: AppStores = AppStores.inMemory(),
+        env: DownloadEnv = DownloadEnv.inert(),
         act: ComposeUiTest.() -> Unit = {},
     ) = runDesktopComposeUiTest(width, height) {
-        setContent { HomeScreen(state, dark, files = files, platform = Platform.Mac, stores = stores) }
+        setContent { HomeScreen(state, dark, files = files, platform = Platform.Mac, stores = stores, downloadEnv = env) }
         act()
         if (link != null) {
             onNodeWithTag("new-download").performClick()
@@ -64,6 +70,95 @@ class ScreenshotsTest {
             shot("populated-$theme-1280x800", populatedSample(), dark, 1280, 800)
             shot("empty-$theme-1280x800", emptySample(), dark, 1280, 800)
             shot("populated-$theme-900x600", populatedSample(), dark, 900, 600)
+        }
+    }
+
+    private fun realRows(): HomeState {
+        val mb = 1024L * 1024
+
+        fun row(
+            id: String,
+            name: String,
+            total: Long,
+            done: Long,
+            speed: Long,
+            status: DownloadStatus,
+            error: String? = null,
+        ) = DownloadItem(id, name, total, done, speed, status, url = "https://example.com/$name", error = error)
+        return populatedSample().copy(
+            downloads =
+                listOf(
+                    row("1", "ubuntu-24.04.iso", 5_800 * mb, 2_320 * mb, 12 * mb, DownloadStatus.Downloading),
+                    row("2", "stream.bin", UNKNOWN_SIZE, 48 * mb, 3 * mb, DownloadStatus.Downloading),
+                    row("3", "holiday.mkv", 900 * mb, 360 * mb, 0, DownloadStatus.Paused),
+                    row("4", "backup.zip", 120 * mb, 30 * mb, 0, DownloadStatus.Failed, "HTTP 404"),
+                    row("5", "disk.img", 700 * mb, 350 * mb, 0, DownloadStatus.Failed, "Disk full"),
+                    row("6", "report.pdf", 5 * mb, 5 * mb, 0, DownloadStatus.Finished),
+                ),
+        )
+    }
+
+    private fun prober(outcome: ProbeOutcome) = DownloadEnv.inert().copy(prober = FakeProber(fallback = outcome))
+
+    private fun ComposeUiTest.typeLink(link: String) {
+        onNodeWithTag("new-download").performClick()
+        onNodeWithTag("url-field").performTextInput(link)
+    }
+
+    private fun ComposeUiTest.awaitDetail(text: String) {
+        val end = System.nanoTime() + 5_000_000_000L
+        while (runCatching { onNodeWithTag("preview-detail").assertTextEquals(text) }.isFailure && System.nanoTime() < end) {
+            mainClock.advanceTimeByFrame()
+            Thread.sleep(5)
+        }
+    }
+
+    @Test
+    fun captureHttpDownloads() {
+        val link = "https://example.com/files/ubuntu-24.04.iso"
+        val ok = prober(ProbeOutcome.Ok(ProbeResult("ubuntu-24.04.iso", 5_800L * 1024 * 1024, true)))
+        val unknown = prober(ProbeOutcome.Ok(ProbeResult("stream.bin", null, false)))
+        val failed = prober(ProbeOutcome.Failed("HTTP 404"))
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("downloads-rows-$size", realRows(), dark, w, h)
+                shot("downloads-probe-checking-$size", emptySample(), dark, w, h, env = ok) { typeLink(link) }
+                shot("downloads-probe-ready-$size", emptySample(), dark, w, h, env = ok) {
+                    typeLink(link)
+                    awaitDetail("5.7 GB · Resumable")
+                }
+                shot("downloads-probe-unknown-$size", emptySample(), dark, w, h, env = unknown) {
+                    typeLink(link)
+                    awaitDetail("size unknown · Uses one connection. This server doesn't support parallel downloads.")
+                }
+                shot("downloads-probe-failed-$size", emptySample(), dark, w, h, env = failed) {
+                    typeLink(link)
+                    awaitDetail("HTTP 404")
+                }
+                shot("downloads-remove-$size", realRows(), dark, w, h) {
+                    onNodeWithTag("select-1").performClick()
+                    onNodeWithTag("bar-remove").performClick()
+                    onNodeWithTag("remove-delete").performClick()
+                }
+                shot("downloads-detail-failed-$size", realRows(), dark, w, h) { onNodeWithTag("row-4").performClick() }
+                val engine = FakeEngine()
+                shot("downloads-detail-running-$size", realRows(), dark, w, h, env = DownloadEnv.inert().copy(engine = engine)) {
+                    waitForIdle()
+                    // A session of speeds, as the engine's progress reports would have made them.
+                    val mb = 1024L * 1024
+                    listOf(2, 6, 9, 11, 12, 8, 4, 10, 12, 13, 12).forEachIndexed { i, v ->
+                        engine.emit(EngineEvent.Progress("1", (2_320 + i) * mb, 5_800 * mb, v * mb))
+                        mainClock.advanceTimeByFrame()
+                    }
+                    waitForIdle()
+                    onNodeWithTag("chevron-1").performClick()
+                }
+                shot("downloads-detail-finished-$size", realRows(), dark, w, h) {
+                    onNodeWithTag("download-list").performScrollToKey("6") // below the fold in the small window
+                    onNodeWithTag("chevron-6").performClick()
+                }
+            }
         }
     }
 

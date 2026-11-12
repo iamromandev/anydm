@@ -16,6 +16,67 @@ class DetailModelTest {
     private val report = DownloadItem("2", "report.pdf", 5 * mib, 5 * mib, 0, DownloadStatus.Finished)
     private val sintel = detailSample().downloads.first { it.id == "3" }
 
+    private val real = DownloadItem("9", "a.zip", 100 * mib, 40 * mib, 3 * mib, DownloadStatus.Downloading, url = "https://x.test/a.zip")
+
+    @Test
+    fun aRealRowsChartIsItsOwnSpeedHistoryPaddedToSixtyPoints() {
+        val d = buildDetail(real, two, history = listOf(1 * mib, 5 * mib, 3 * mib))
+        assertEquals(1, d.series.size)
+        assertEquals(60, d.series.single().size)
+        assertEquals(List(57) { 0L } + listOf(1 * mib, 5 * mib, 3 * mib), d.series.single())
+        assertEquals(5 * mib, d.peak)
+        assertEquals(3 * mib, d.avg)
+        assertEquals(3 * mib, d.total)
+        assertTrue(d.real)
+    }
+
+    @Test
+    fun aRealRowKeepsOnlyTheLastSixtySpeeds() {
+        val history = List(100) { it.toLong() + 1 }
+        assertEquals(history.takeLast(60), buildDetail(real, two, history = history).series.single())
+    }
+
+    @Test
+    fun aRealRowInventsNoPerNetworkRowsSharesOrChunks() {
+        val d = buildDetail(real, two, history = listOf(mib))
+        assertTrue(d.rows.isEmpty())
+        assertTrue(d.cells.isEmpty())
+        assertFalse(showMap(d))
+        assertNull(d.aloneFactor)
+        assertEquals(0, d.retries)
+        assertEquals(0, d.peers)
+    }
+
+    @Test
+    fun aPausedRealRowEndsItsChartAtZero() {
+        val d = buildDetail(real.copy(status = DownloadStatus.Paused), two, history = listOf(mib, 2 * mib))
+        assertEquals(0L, d.total)
+        assertEquals(0L, d.series.single().last())
+    }
+
+    @Test
+    fun aRealRowWithNoHistoryHasAFlatChart() {
+        val d = buildDetail(real.copy(status = DownloadStatus.Finished), two)
+        assertTrue(d.series.single().all { it == 0L })
+        assertEquals(0L, d.peak)
+        assertEquals(0L, d.avg)
+    }
+
+    @Test
+    fun aSampleRowWithoutALinkIsStillBuiltFromTheSample() {
+        val d = buildDetail(project, two, history = listOf(mib))
+        assertFalse(d.real)
+        assertEquals(2, d.rows.size)
+        assertEquals(2, d.series.size)
+    }
+
+    @Test
+    fun aTorrentRowEvenWithAHistoryStaysSimulated() {
+        val d = buildDetail(sintel, two, history = listOf(mib))
+        assertFalse(d.real)
+        assertEquals(2, d.rows.size)
+    }
+
     @Test
     fun rowsCarryTheNetworksColourChoice() {
         val d = buildDetail(project, listOf(wifi.copy(color = NetworkColor.Pink), usb))

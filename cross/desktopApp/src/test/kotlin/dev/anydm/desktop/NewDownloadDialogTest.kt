@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.ClipEntry
@@ -27,9 +28,13 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.v2.runComposeUiTest
+import dev.anydm.engine.http.LinkProber
+import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.http.ProbeResult
 import java.awt.datatransfer.StringSelection
 import kotlin.test.Test
 
@@ -41,7 +46,27 @@ class NewDownloadDialogTest {
     private fun ComposeUiTest.home(
         state: HomeState = populatedSample(),
         clipboard: String? = null,
-    ) = setContent { HomeScreen(state, true, clipboardText = { clipboard }) }
+        prober: LinkProber? = null,
+    ) = setContent {
+        val env = remember { DownloadEnv.inert().let { e -> if (prober == null) e else e.copy(prober = prober) } }
+        HomeScreen(state, true, clipboardText = { clipboard }, downloadEnv = env)
+    }
+
+    private fun answering(
+        name: String,
+        total: Long?,
+        resumable: Boolean,
+    ) = FakeProber(fallback = ProbeOutcome.Ok(ProbeResult(name, total, resumable)))
+
+    /** Frames and real time pass until the preview line reads [text]: the probe answers on an IO thread after its debounce. */
+    private fun ComposeUiTest.awaitDetail(text: String) {
+        val end = System.nanoTime() + 5_000_000_000L
+        while (runCatching { onNodeWithTag("preview-detail").assertTextEquals(text) }.isFailure) {
+            check(System.nanoTime() < end) { "timed out waiting for preview detail: $text" }
+            mainClock.advanceTimeByFrame()
+            Thread.sleep(5)
+        }
+    }
 
     private fun ComposeUiTest.open(text: String? = null) {
         onNodeWithTag("new-download").performClick()
@@ -99,11 +124,11 @@ class NewDownloadDialogTest {
     @Test
     fun directLinkShowsPreviewWithoutStreams() =
         runComposeUiTest {
-            home()
+            home(prober = answering("archive.zip", null, false))
             open("https://example.com/files/archive.zip")
             onNodeWithTag("preview-badge").assertTextEquals("ZIP")
             onNodeWithTag("preview-name").assertTextEquals("archive.zip")
-            onNodeWithTag("preview-detail").assertTextEquals(unknownNote)
+            awaitDetail(unknownNote)
             onNodeWithTag("streams-auto").assertDoesNotExist()
             onNodeWithTag("download").assertIsEnabled()
             onNodeWithTag("network-Wi-Fi").assertIsDisplayed()
@@ -113,9 +138,9 @@ class NewDownloadDialogTest {
     @Test
     fun resumableLinkShowsStreamsWithSingleSelection() =
         runComposeUiTest {
-            home()
+            home(prober = answering("Project.zip", 400L * 1024 * 1024, true))
             open("http://127.0.0.1:8765/Project.zip")
-            onNodeWithTag("preview-detail").assertTextEquals("400.0 MB · resumable")
+            awaitDetail("400.0 MB · Resumable")
             onNodeWithTag("streams-auto").assertIsSelected()
             onNodeWithTag("streams-8").performClick()
             onNodeWithTag("streams-8").assertIsSelected()
@@ -126,9 +151,9 @@ class NewDownloadDialogTest {
     @Test
     fun streamsHiddenWithOneNetworkEvenWhenResumable() =
         runComposeUiTest {
-            home(emptySample())
+            home(emptySample(), prober = answering("Project.zip", 400L * 1024 * 1024, true))
             open("http://localhost/Project.zip")
-            onNodeWithTag("preview-detail").assertTextEquals("400.0 MB · resumable")
+            awaitDetail("400.0 MB · Resumable")
             onNodeWithTag("streams-auto").assertDoesNotExist()
             onNodeWithTag("network-Wi-Fi").assertIsDisplayed()
             onNodeWithTag("network-USB Tethering").assertDoesNotExist()
@@ -335,6 +360,85 @@ class NewDownloadDialogTest {
             onNodeWithTag("dialog-title").assertIsDisplayed()
             onNodeWithTag("cancel").assertIsDisplayed()
             onNodeWithTag("download").assertIsDisplayed()
+        }
+
+    @Test
+    fun theProbeShowsCheckingThenTheServersNameSizeAndResumable() =
+        runComposeUiTest {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val prober =
+                FakeProber(fallback = ProbeOutcome.Ok(ProbeResult("ubuntu.iso", 6_100_000_000, true)), gate = { gate.await() })
+            home(prober = prober)
+            open("https://example.com/dl?id=7")
+            onNodeWithTag("preview-detail").assertTextEquals("Checking link…")
+            awaitDetail("Checking link…")
+            val end = System.nanoTime() + 5_000_000_000L
+            while (prober.probed.isEmpty() && System.nanoTime() < end) {
+                mainClock.advanceTimeByFrame()
+                Thread.sleep(5)
+            }
+            onNodeWithTag("preview-detail").assertTextEquals("Checking link…")
+            onNodeWithTag("download").assertIsEnabled()
+            gate.complete(Unit)
+            awaitDetail("5.7 GB · Resumable")
+            onNodeWithTag("preview-name").assertTextEquals("ubuntu.iso")
+            onNodeWithTag("preview-badge").assertTextEquals("ISO")
+        }
+
+    @Test
+    fun aFailedProbeShowsTheReasonAndDownloadStaysEnabled() =
+        runComposeUiTest {
+            home(prober = FakeProber(fallback = ProbeOutcome.Failed("HTTP 404")))
+            open("https://example.com/missing.zip")
+            awaitDetail("HTTP 404")
+            onNodeWithTag("download").assertIsEnabled()
+        }
+
+    @Test
+    fun changingTheLinkCancelsTheEarlierProbeAndOnlyTheNewOneAnswers() =
+        runComposeUiTest {
+            val prober =
+                FakeProber(
+                    answers =
+                        java.util.concurrent.ConcurrentHashMap(
+                            mapOf("https://example.com/b.zip" to ProbeOutcome.Ok(ProbeResult("b.zip", 2048, true))),
+                        ),
+                    gate = { url -> if (url.endsWith("a.zip")) kotlinx.coroutines.awaitCancellation() },
+                )
+            home(prober = prober)
+            open("https://example.com/a.zip")
+            val end = System.nanoTime() + 5_000_000_000L
+            while (prober.probed.isEmpty() && System.nanoTime() < end) {
+                mainClock.advanceTimeByFrame()
+                Thread.sleep(5)
+            }
+            onNodeWithTag("url-field").performTextReplacement("https://example.com/b.zip")
+            awaitDetail("2.0 KB · Resumable")
+            check(prober.cancelled == listOf("https://example.com/a.zip")) { "cancelled: ${prober.cancelled}" }
+        }
+
+    @Test
+    fun typingFastProbesOnlyTheFinalLink() =
+        runComposeUiTest {
+            val prober = answering("c.zip", 10, true)
+            home(prober = prober)
+            open("https://example.com/a.zip")
+            onNodeWithTag("url-field").performTextReplacement("https://example.com/b.zip")
+            onNodeWithTag("url-field").performTextReplacement("https://example.com/c.zip")
+            awaitDetail("10 B · Resumable")
+            check(prober.probed.toList() == listOf("https://example.com/c.zip")) { "probed: ${prober.probed}" }
+        }
+
+    @Test
+    fun aMagnetLinkIsNeverProbed() =
+        runComposeUiTest {
+            val prober = answering("x", 1, true)
+            home(prober = prober)
+            open(magnet)
+            onNodeWithTag("preview-detail").assertTextEquals("11 files · 123.3 MB")
+            Thread.sleep(100)
+            mainClock.advanceTimeBy(1_000)
+            check(prober.probed.isEmpty())
         }
 }
 

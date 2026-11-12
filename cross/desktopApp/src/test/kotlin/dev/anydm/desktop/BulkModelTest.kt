@@ -141,4 +141,25 @@ class BulkModelTest {
         assertEquals(IntOffset(700, 500), clampMenu(890, 590, 200, 100, 900, 600))
         assertEquals(IntOffset(0, 0), clampMenu(5, 5, 1000, 700, 900, 600))
     }
+
+    private val failedRow = item("5", DownloadStatus.Failed)
+
+    @Test
+    fun canResumeAlsoAcceptsAFailedRowButCanPauseDoesNot() {
+        assertTrue(canResume(listOf(failedRow)))
+        assertFalse(canPause(listOf(failedRow)))
+    }
+
+    @Test
+    fun menuOffersResumeForFailedRowsAndCallsItRetryOnlyWhenAllFailed() {
+        assertTrue(MenuAction.Resume in menuActions(listOf(failedRow), emptyList()))
+        assertEquals("Retry", resumeLabel(listOf(failedRow)))
+        assertEquals("Resume", resumeLabel(listOf(failedRow, paused)))
+        assertEquals("Resume", resumeLabel(listOf(paused)))
+    }
+
+    @Test
+    fun spaceOnAFailedRowResumes() {
+        assertEquals(CommandId.Resume, spaceAction(listOf(failedRow)))
+    }
 }

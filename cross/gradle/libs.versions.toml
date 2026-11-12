@@ -14,11 +14,15 @@ dbus-java = { strictly = "4.2.1" }
 slf4j = { strictly = "2.0.7" }
 # 1.13.0 is under two weeks old; 1.12.0 (19 Oct 2026) is the latest release past that.
 kotlinx-serialization = "1.12.0"
+# The version Compose 1.12.1 resolves on :desktopApp's runtimeClasspath; pinned so the download engine adds nothing new to the app.
+kotlinx-coroutines = "1.9.0"
 
 [libraries]
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
 compose-ui-test = { module = "org.jetbrains.compose.ui:ui-test-junit4", version.ref = "compose" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 java-keyring = { module = "com.github.javakeyring:java-keyring", version.ref = "java-keyring" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }

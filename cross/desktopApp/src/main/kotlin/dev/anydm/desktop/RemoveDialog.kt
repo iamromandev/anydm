@@ -16,7 +16,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -39,10 +42,11 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun RemoveDialog(
     count: Int,
-    onRemove: () -> Unit,
+    onRemove: (deleteFiles: Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
     val c = colors
+    var deleteFiles by remember { mutableStateOf(false) }
     val cancelFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { cancelFocus.requestFocus() }
     Box(
@@ -86,6 +90,15 @@ fun RemoveDialog(
                     color = c.textSecondary,
                     fontSize = 13.sp,
                 )
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CheckBox(deleteFiles, { deleteFiles = it }, "remove-delete", "Also delete the file")
+                    Text(
+                        "Also delete the file",
+                        color = c.text,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 10.dp).testTag("remove-delete-label"),
+                    )
+                }
             }
             Divider()
             Row(
@@ -93,8 +106,7 @@ fun RemoveDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
             ) {
                 OutlineButton("Cancel", "remove-cancel", onCancel, modifier = Modifier.focusRequester(cancelFocus))
-                OutlineButton("Move files to Trash", "remove-trash", onRemove, danger = true)
-                PrimaryButton("Remove from list", "remove-list", true, onRemove)
+                PrimaryButton("Remove", "remove-confirm", true) { onRemove(deleteFiles) }
             }
         }
     }

@@ -89,4 +89,19 @@ class HomeModelTest {
         assertEquals(100, percent(base.copy(doneBytes = 500, totalBytes = 100)))
         assertEquals(0, percent(base.copy(doneBytes = -5, totalBytes = 100)))
     }
+
+    @Test
+    fun failedRowsStayInTheDownloadingFilterAndNotInFinished() {
+        val failedRow = DownloadItem("9", "a.zip", 100, 10, 0, DownloadStatus.Failed, error = "HTTP 404")
+        val state = populatedSample().copy(downloads = listOf(failedRow))
+        assertEquals(listOf(failedRow), filtered(state, Filter.Downloading))
+        assertEquals(emptyList(), filtered(state, Filter.Finished))
+    }
+
+    @Test
+    fun unknownSizeShowsNoProgress() {
+        val row = DownloadItem("9", "a.zip", UNKNOWN_SIZE, 10, 5, DownloadStatus.Downloading)
+        assertEquals(0, percent(row))
+        assertEquals(0f, progress(row))
+    }
 }

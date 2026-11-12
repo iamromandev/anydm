@@ -55,7 +55,7 @@ compose.desktop {
             packageVersion = appVersion
             // What `suggestRuntimeModules` lists for the libraries (JNA, dbus-java) that java-keyring brings; the packaged app's
             // trimmed runtime would otherwise lack them, and only the packaged app would show it.
-            modules("java.instrument", "jdk.security.auth", "jdk.unsupported")
+            modules("java.instrument", "java.net.http", "jdk.security.auth", "jdk.unsupported")
             description = "anydm desktop client"
             vendor = "anydm"
             macOS {

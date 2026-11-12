@@ -150,7 +150,7 @@ class RowMenuTest {
             onNodeWithTag("menu-remove").performClick()
             menuGone()
             onNodeWithTag("remove-title").assertTextEquals("Remove 2 downloads?")
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             onNodeWithTag("row-1").assertDoesNotExist()
             onNodeWithTag("row-2").assertDoesNotExist()
             onNodeWithTag("row-3").assertIsDisplayed()
@@ -297,10 +297,8 @@ class RowMenuTest {
             onNodeWithTag("bar-remove").performClick()
             onNodeWithTag("remove-cancel").assertIsFocused()
             onNodeWithTag("remove-cancel").performKeyInput { pressKey(Key.Tab) }
-            onNodeWithTag("remove-trash").assertIsFocused()
-            onNodeWithTag("remove-trash").performKeyInput { pressKey(Key.Tab) }
-            onNodeWithTag("remove-list").assertIsFocused()
-            onNodeWithTag("remove-list").performKeyInput { pressKey(Key.Enter) }
+            onNodeWithTag("remove-confirm").assertIsFocused()
+            onNodeWithTag("remove-confirm").performKeyInput { pressKey(Key.Enter) }
             onNodeWithTag("row-1").assertDoesNotExist()
         }
 

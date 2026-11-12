@@ -145,10 +145,10 @@ class DetailScreenTest {
         }
 
     @Test
-    fun activeHeaderShowsThreeButtons() =
+    fun activeHeaderShowsThreeButtonsAndRemoveSaysItKeepsTheDownload() =
         runComposeUiTest {
             openProject()
-            for (label in listOf("Cancel download", "Pause", "Show in Finder")) {
+            for (label in listOf("Remove from list", "Pause", "Show in Finder")) {
                 onNodeWithText(label).assertIsDisplayed()
                 onNodeWithText(label).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             }
@@ -173,10 +173,10 @@ class DetailScreenTest {
         }
 
     @Test
-    fun cancelRemovesTheItemAndReturnsToTheList() =
+    fun removeFromListRemovesTheActiveItemAndReturnsToTheList() =
         runComposeUiTest {
             openProject()
-            onNodeWithTag("detail-cancel").performClick()
+            onNodeWithTag("detail-remove").performClick()
             // The list is back (filter shown) because the item is gone and the detail closed;
             // no unknown-id state is involved, the other rows are still there.
             onNodeWithTag("detail-screen").assertDoesNotExist()
@@ -293,7 +293,7 @@ class DetailScreenTest {
         runComposeUiTest {
             home()
             onNodeWithTag("chevron-3").performClick()
-            onNodeWithTag("detail-cancel").performClick()
+            onNodeWithTag("detail-remove").performClick()
             onNodeWithTag("row-3").assertDoesNotExist()
             onNodeWithTag("row-1").assertIsDisplayed()
         }
@@ -362,7 +362,6 @@ class DetailScreenTest {
                 onNodeWithText(label).assertIsDisplayed()
                 onNodeWithText(label).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             }
-            onNodeWithTag("detail-cancel").assertDoesNotExist()
             onNodeWithTag("detail-pause").assertDoesNotExist()
             onNodeWithTag("detail-open").performClick()
             onNodeWithTag("detail-finder").performClick()

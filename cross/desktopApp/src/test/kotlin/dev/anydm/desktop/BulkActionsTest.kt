@@ -102,17 +102,20 @@ class BulkActionsTest {
         }
 
     @Test
-    fun removeOpensDialogWithTitleAndThreeButtons() =
+    fun removeOpensDialogWithTitleCheckboxAndTwoButtons() =
         runDesktopComposeUiTest {
             home()
             tick("1", "2")
             onNodeWithTag("bar-remove").performClick()
             onNodeWithTag("remove-dialog").assertIsDisplayed()
             onNodeWithTag("remove-title").assertTextEquals("Remove 2 downloads?")
-            onNodeWithTag("remove-list").assertTextEquals("Remove from list")
-            onNodeWithTag("remove-trash").assertTextEquals("Move files to Trash")
+            onNodeWithTag("remove-confirm").assertTextEquals("Remove")
             onNodeWithTag("remove-cancel").assertTextEquals("Cancel")
-            listOf("remove-list", "remove-trash", "remove-cancel").forEach { onNodeWithTag(it).assert(hasRole(Role.Button)) }
+            onNodeWithTag("remove-delete-label").assertTextEquals("Also delete the file")
+            onNodeWithTag("remove-delete").assertIsOff()
+            // One way to remove: the labels no longer promise a Trash or a list-only removal that the button would not keep.
+            onNodeWithTag("remove-trash").assertDoesNotExist()
+            listOf("remove-confirm", "remove-cancel").forEach { onNodeWithTag(it).assert(hasRole(Role.Button)) }
         }
 
     @Test
@@ -124,12 +127,13 @@ class BulkActionsTest {
             onNodeWithTag("remove-title").assertTextEquals("Remove 1 download?")
         }
 
-    private fun removeWith(button: String) =
+    @Test
+    fun removeRemovesTargetsAndKeepsOthers() =
         runDesktopComposeUiTest {
             home()
             tick("1", "2")
             onNodeWithTag("bar-remove").performClick()
-            onNodeWithTag(button).performClick()
+            onNodeWithTag("remove-confirm").performClick()
             dialogGone()
             barGone()
             onNodeWithTag("row-1").assertDoesNotExist()
@@ -139,18 +143,12 @@ class BulkActionsTest {
         }
 
     @Test
-    fun removeFromListRemovesTargetsAndKeepsOthers() = removeWith("remove-list")
-
-    @Test
-    fun moveToTrashRemovesTargetsAndKeepsOthers() = removeWith("remove-trash")
-
-    @Test
     fun removingEveryRowShowsTheEmptyState() =
         runDesktopComposeUiTest {
             home(populatedSample())
             tick("1", "2")
             onNodeWithTag("bar-remove").performClick()
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             barGone()
             onNodeWithTag("home-root").assertIsDisplayed()
             onNodeWithTag("clear-finished").assertDoesNotExist()
@@ -271,11 +269,11 @@ class BulkActionsTest {
             tick("1")
             onNodeWithTag("bar-remove").performClick()
             val card = onNodeWithTag("remove-dialog").fetchSemanticsNode().boundsInRoot
-            for (tag in listOf("remove-cancel", "remove-trash", "remove-list")) {
+            for (tag in listOf("remove-cancel", "remove-confirm")) {
                 val b = onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
                 assertTrue(b.left >= card.left && b.right <= card.right, "$tag $b outside card $card")
             }
-            onNodeWithTag("remove-list").assertTextEquals("Remove from list")
+            onNodeWithTag("remove-confirm").assertTextEquals("Remove")
         }
 
     @Test
@@ -335,7 +333,7 @@ class BulkActionsTest {
             showOnly("finished")
             onNodeWithTag("bar-remove").performClick()
             onNodeWithTag("remove-title").assertTextEquals("Remove 1 download?")
-            onNodeWithTag("remove-list").performClick()
+            onNodeWithTag("remove-confirm").performClick()
             barGone()
             showOnly("all")
             onNodeWithTag("row-2").assertDoesNotExist()

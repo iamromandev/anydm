@@ -54,7 +54,7 @@ class QueueTest {
             )
         }
 
-    private fun ComposeUiTest.confirmRemove() = onNodeWithTag("remove-list").performClick()
+    private fun ComposeUiTest.confirmRemove() = onNodeWithTag("remove-confirm").performClick()
 
     private fun ComposeUiTest.setLimit(target: Int) {
         onNodeWithTag("network-chip").performClick()
@@ -201,11 +201,11 @@ class QueueTest {
         }
 
     @Test
-    fun cancellingFromTheDetailViewStartsTheFirstQueuedRow() =
+    fun removingFromTheDetailViewStartsTheFirstQueuedRow() =
         runDesktopComposeUiTest {
             queued()
             onNodeWithTag("chevron-1").performClick()
-            onNodeWithTag("detail-cancel").performClick()
+            onNodeWithTag("detail-remove").performClick()
             onNodeWithTag("row-1").assertDoesNotExist()
             speed("5", "#1 · Queued")
         }
@@ -451,7 +451,6 @@ class QueueTest {
             onNodeWithTag("detail-remove").assertIsDisplayed()
             onNodeWithTag("detail-finder").assertIsDisplayed()
             onNodeWithTag("detail-pause").assertDoesNotExist()
-            onNodeWithTag("detail-cancel").assertDoesNotExist()
             onNodeWithTag("detail-queued").assertTextEquals("Queued · #2 in line")
             onNodeWithTag("detail-average").assertDoesNotExist()
         }

@@ -68,14 +68,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.anydm.engine.http.LinkProber
+import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.http.Reasons
 import dev.anydm.engine.torrent.TorrentResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 private const val READING_DELAY_MS = 200L
+
+/** Typing never probes at once: the probe starts when the link has been left alone this long. */
+private const val PROBE_DEBOUNCE_MS = 300L
 
 private val streamOptions = listOf("auto" to "Auto", "4" to "4", "8" to "8", "16" to "16", "32" to "32")
 
@@ -111,6 +120,7 @@ fun NewDownloadDialog(
     initialTorrentPath: Path? = null,
     openPickerOnStart: Boolean = false,
     keychainNotes: Map<String, String> = emptyMap(),
+    prober: LinkProber = remember { DownloadEnv.inert().prober },
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -120,7 +130,29 @@ fun NewDownloadDialog(
     // Picked with Change; it applies to this dialog only. Home adopts it as the default when Download is pressed.
     var folder by remember { mutableStateOf(saveFolder) }
     val torrentPreview = remember(torrent) { torrent?.let(::previewOf) }
-    val preview = torrentPreview ?: parsePreview(text)
+    val base = torrentPreview ?: parsePreview(text)
+    // The probe belongs to the link: a new link starts over at Checking, and its effect below cancels the old probe.
+    val link = (base as? Preview.Direct)?.url
+    var probe by remember(link) { mutableStateOf<ProbeState>(if (link != null) ProbeState.Checking else ProbeState.Idle) }
+    LaunchedEffect(link) {
+        if (link == null) return@LaunchedEffect
+        delay(PROBE_DEBOUNCE_MS)
+        // The prober may block, so it never runs on the UI thread. It must not stop the typing, so nothing here waits for it.
+        val outcome =
+            try {
+                withContext(Dispatchers.IO) { prober.probe(link) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                ProbeOutcome.Failed(Reasons.NETWORK)
+            }
+        probe =
+            when (outcome) {
+                is ProbeOutcome.Ok -> ProbeState.Ready(outcome.r)
+                is ProbeOutcome.Failed -> ProbeState.Failed(outcome.reason)
+            }
+    }
+    val preview = if (base is Preview.Direct) probedPreview(base, probe) else base
     var ticked by remember(preview) { mutableStateOf(initialTicked(preview)) }
     val scope = rememberCoroutineScope()
     val reads = remember { Reads() }
@@ -234,7 +266,7 @@ fun NewDownloadDialog(
                 }
                 torrentError?.let { reason -> TorrentError(reason) }
                 if (preview != null) {
-                    PreviewBlock(preview, ticked)
+                    PreviewBlock(preview, ticked, probe)
                     if (startsAfter != null) {
                         Text(
                             startsAfterText(startsAfter),
@@ -411,6 +443,7 @@ private fun TorrentError(reason: String) {
 private fun PreviewBlock(
     preview: Preview,
     ticked: Set<String>,
+    probe: ProbeState,
 ) {
     val c = colors
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -443,7 +476,7 @@ private fun PreviewBlock(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                previewDetail(preview, ticked),
+                previewDetail(preview, ticked, probe),
                 color = c.textSecondary,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,

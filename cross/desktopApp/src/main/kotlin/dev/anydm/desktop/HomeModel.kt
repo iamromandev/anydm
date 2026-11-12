@@ -1,6 +1,9 @@
 package dev.anydm.desktop
 
-enum class DownloadStatus { Downloading, Queued, Paused, Finished }
+enum class DownloadStatus { Downloading, Queued, Paused, Finished, Failed }
+
+/** A total size that the server did not tell: no percentage and no ETA. */
+const val UNKNOWN_SIZE = -1L
 
 enum class DownloadKind { Direct, Torrent }
 
@@ -16,6 +19,12 @@ data class DownloadItem(
     val folder: String? = null,
     /** A torrent's files (the ticked ones); null shows the Sintel sample. */
     val files: List<SampleFile>? = null,
+    /** The http(s) link of a real download; null for torrent rows and samples, which never move. */
+    val url: String? = null,
+    /** Why a Failed row failed. */
+    val error: String? = null,
+    val etag: String? = null,
+    val lastModified: String? = null,
 )
 
 data class HomeState(
