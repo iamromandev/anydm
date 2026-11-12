@@ -20,7 +20,11 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.text.AnnotatedString
+import dev.anydm.engine.torrent.TorrentFile
+import dev.anydm.engine.torrent.TorrentMeta
+import dev.anydm.engine.torrent.TorrentResult
 import java.io.File
+import java.nio.file.Path
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -37,9 +41,10 @@ class ScreenshotsTest {
         width: Int,
         height: Int,
         link: String? = null,
+        files: FilesEnv = FilesEnv.inert(),
         act: ComposeUiTest.() -> Unit = {},
     ) = runDesktopComposeUiTest(width, height) {
-        setContent { HomeScreen(state, dark) }
+        setContent { HomeScreen(state, dark, files = files) }
         act()
         if (link != null) {
             onNodeWithTag("new-download").performClick()
@@ -198,6 +203,79 @@ class ScreenshotsTest {
                     onNodeWithTag(
                         "proxy-chip-usb-password",
                     ).performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("secret")) }
+                }
+            }
+        }
+    }
+
+    /** Fakes only: nothing here opens an OS dialog. */
+    private fun filesEnv(
+        torrent: TorrentResult,
+        folder: String? = null,
+    ) = FilesEnv(
+        object : FilePicker {
+            override fun pickTorrent(): Path? = Path.of("/t/The.Show.S01.torrent")
+
+            override fun pickFolder(current: String): String? = folder
+        },
+        object : TorrentLoader {
+            override suspend fun load(path: Path): TorrentResult = torrent
+        },
+        "/Users/x",
+    )
+
+    @Test
+    fun captureFiles() {
+        val show =
+            TorrentResult.Ok(
+                TorrentMeta(
+                    "The.Show.S01.1080p",
+                    listOf(
+                        TorrentFile("Season 1/E01.The.Pilot.mkv", 1_800_000_000),
+                        TorrentFile("Season 1/E02.The.Second.One.mkv", 1_650_000_000),
+                        TorrentFile("Season 1/E03.mkv", 1_700_000_000),
+                        TorrentFile("Subs/English.srt", 90_000),
+                        TorrentFile("notes.txt", 0),
+                    ),
+                ),
+            )
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("files-torrent-$size", populatedSample(), dark, w, h, files = filesEnv(show)) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("open-torrent").performClick()
+                    waitForIdle()
+                }
+                shot(
+                    "files-folder-$size",
+                    populatedSample(),
+                    dark,
+                    w,
+                    h,
+                    files = filesEnv(show, "/Users/x/Movies/Shows and Series/Season One"),
+                ) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("open-torrent").performClick()
+                    waitForIdle()
+                    onNodeWithTag("save-change").performClick()
+                    waitForIdle()
+                }
+                shot("files-error-$size", populatedSample(), dark, w, h, files = filesEnv(TorrentResult.Err("Too large"))) {
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("open-torrent").performClick()
+                    waitForIdle()
+                }
+                val env = filesEnv(show)
+                shot("files-drop-overlay-$size", populatedSample(), dark, w, h, files = env) {
+                    runOnIdle { env.drops.hover(true) }
+                    waitForIdle()
+                }
+                shot("files-empty-$size", emptySample(), dark, w, h)
+                val env2 = filesEnv(show)
+                shot("files-drop-message-$size", populatedSample(), dark, w, h, files = env2) {
+                    runOnIdle { env2.drops.drop(DropItems(listOf(Path.of("/t/pic.png")), null)) }
+                    waitForIdle()
                 }
             }
         }

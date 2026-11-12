@@ -37,6 +37,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -67,8 +68,34 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.anydm.engine.torrent.TorrentResult
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import java.nio.file.Path
+
+private const val READING_DELAY_MS = 200L
 
 private val streamOptions = listOf("auto" to "Auto", "4" to "4", "8" to "8", "16" to "16", "32" to "32")
+
+/** Tracks the newest torrent read; an older one that finishes late is stale. */
+private class Reads {
+    var job: Job? = null
+    private var latest = 0
+
+    fun start(): Int {
+        job?.cancel()
+        return ++latest
+    }
+
+    fun isCurrent(token: Int) = token == latest
+
+    fun cancel() {
+        job?.cancel()
+        latest++
+    }
+}
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -76,20 +103,71 @@ fun NewDownloadDialog(
     initialText: String,
     networks: List<Network>,
     onCancel: () -> Unit,
-    onDownload: (Preview, Set<String>) -> Unit,
+    onDownload: (Preview, Set<String>, String) -> Unit,
+    files: FilesEnv,
+    saveFolder: String,
     onProxySave: (String, Proxy) -> Unit = { _, _ -> },
     startsAfter: Int? = null,
+    initialTorrentPath: Path? = null,
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
-    val preview = parsePreview(text)
-    var ticked by remember(preview) { mutableStateOf(sintelFiles.map { it.name }.toSet()) }
+    var torrent by remember { mutableStateOf<LoadedTorrent?>(null) }
+    var torrentError by remember { mutableStateOf<String?>(null) }
+    var reading by remember { mutableStateOf(false) }
+    // Picked with Change; it applies to this dialog only. Home adopts it as the default when Download is pressed.
+    var folder by remember { mutableStateOf(saveFolder) }
+    val torrentPreview = remember(torrent) { torrent?.let(::previewOf) }
+    val preview = torrentPreview ?: parsePreview(text)
+    var ticked by remember(preview) { mutableStateOf(initialTicked(preview)) }
+    val scope = rememberCoroutineScope()
+    val reads = remember { Reads() }
+
+    // Ends the read in flight, if any: a result that arrives later is dropped and "Reading…" goes away.
+    fun cancelRead() {
+        reads.cancel()
+        reading = false
+    }
+
+    // The read runs off the UI thread; "Reading…" only shows when it takes longer than READING_DELAY_MS.
+    // Only the newest read may change the dialog, so a cancelled one can neither apply its result nor hide a newer "Reading…".
+    fun load(path: Path) {
+        val token = reads.start()
+        reads.job =
+            scope.launch {
+                val spinner =
+                    launch {
+                        delay(READING_DELAY_MS)
+                        reading = true
+                    }
+                try {
+                    val r = files.loader.load(path)
+                    ensureActive()
+                    if (!reads.isCurrent(token)) return@launch
+                    when (r) {
+                        is TorrentResult.Ok -> {
+                            torrent = LoadedTorrent(path.fileName?.toString().orEmpty(), r.meta)
+                            torrentError = null
+                            text = ""
+                        }
+
+                        is TorrentResult.Err -> {
+                            torrentError = r.reason
+                        }
+                    }
+                } finally {
+                    spinner.cancel()
+                    if (reads.isCurrent(token)) reading = false
+                }
+            }
+    }
     var streams by remember { mutableStateOf("auto") }
     val focus = remember { FocusRequester() }
     var proxyFor by remember { mutableStateOf<String?>(null) }
     val chips = remember { mutableStateMapOf<String, Rect>() }
     // Back to the link field whenever no popover is open (including at first show).
-    LaunchedEffect(proxyFor) { if (proxyFor == null) focus.requestFocus() }
+    LaunchedEffect(proxyFor, torrent != null) { if (proxyFor == null) focus.requestFocus() }
+    LaunchedEffect(initialTorrentPath) { initialTorrentPath?.let { load(it) } }
     val valid = preview != null && (preview !is Preview.Torrent || ticked.isNotEmpty())
 
     BoxWithConstraints(
@@ -131,7 +209,26 @@ fun NewDownloadDialog(
             )
             Divider()
             Column(Modifier.weight(1f, fill = false).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                InputRow(text, { text = it }, focus)
+                InputRow(
+                    text,
+                    {
+                        cancelRead()
+                        text = it
+                        torrentError = null
+                    },
+                    focus,
+                    torrent?.fileName,
+                    onClearTorrent = {
+                        cancelRead()
+                        torrent = null
+                        torrentError = null
+                    },
+                    onOpenTorrent = { files.picker.pickTorrent()?.let(::load) },
+                )
+                if (reading) {
+                    Text("Reading…", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("torrent-reading"))
+                }
+                torrentError?.let { reason -> TorrentError(reason) }
                 if (preview != null) {
                     PreviewBlock(preview, ticked)
                     if (startsAfter != null) {
@@ -148,9 +245,17 @@ fun NewDownloadDialog(
                     }
                 }
                 OptionRow("Save to") {
-                    Text("~/Downloads", color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
-                    Spacer(Modifier.weight(1f))
-                    OutlineButton("Change", "save-change")
+                    Text(
+                        displayFolder(folder, files.home),
+                        color = c.text,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.MiddleEllipsis,
+                        modifier = Modifier.weight(1f).testTag("save-folder"),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    OutlineButton("Change", "save-change", { files.picker.pickFolder(folder)?.let { folder = it } })
                 }
                 OptionRow("Networks") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -181,7 +286,7 @@ fun NewDownloadDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
             ) {
                 OutlineButton("Cancel", "cancel", onCancel)
-                PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked) }
+                PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked, folder) }
             }
         }
         val target = proxyFor?.let { id -> networks.firstOrNull { it.id == id } }
@@ -210,6 +315,9 @@ private fun InputRow(
     text: String,
     onText: (String) -> Unit,
     focus: FocusRequester,
+    torrentFile: String?,
+    onClearTorrent: () -> Unit,
+    onOpenTorrent: () -> Unit,
 ) {
     val c = colors
     val shape = RoundedCornerShape(Radius)
@@ -222,36 +330,75 @@ private fun InputRow(
                 .padding(start = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (text.isEmpty()) {
+            if (torrentFile != null) {
+                // Read-only: the file replaces the link field until it is cleared. Holds focus so Escape still reaches the dialog.
+                Box(Modifier.weight(1f).focusRequester(focus).focusable(), contentAlignment = Alignment.CenterStart) {
                     Text(
-                        "Paste a link or magnet",
-                        color = c.textSecondary,
+                        torrentFile,
+                        color = c.text,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
+                        overflow = TextOverflow.MiddleEllipsis,
+                        modifier = Modifier.testTag("torrent-file"),
                     )
                 }
-                BasicTextField(
-                    text,
-                    onText,
-                    singleLine = true,
-                    textStyle = TextStyle(color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
-                    cursorBrush = SolidColor(c.text),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("url-field"),
-                )
-            }
-            if (text.isNotEmpty()) {
                 Box(
                     Modifier
-                        .testTag("url-clear")
+                        .testTag("torrent-clear")
                         .size(32.dp)
-                        .clickable(role = Role.Button) { onText("") },
+                        .clickable(role = Role.Button, onClick = onClearTorrent)
+                        .semantics { contentDescription = "Remove .torrent file" },
                     contentAlignment = Alignment.Center,
                 ) { CloseIcon(c.textSecondary) }
+            } else {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    if (text.isEmpty()) {
+                        Text(
+                            "Paste a link or magnet",
+                            color = c.textSecondary,
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                        )
+                    }
+                    BasicTextField(
+                        text,
+                        onText,
+                        singleLine = true,
+                        textStyle = TextStyle(color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                        cursorBrush = SolidColor(c.text),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("url-field"),
+                    )
+                }
+                if (text.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .testTag("url-clear")
+                            .size(32.dp)
+                            .clickable(role = Role.Button) { onText("") },
+                        contentAlignment = Alignment.Center,
+                    ) { CloseIcon(c.textSecondary) }
+                }
             }
         }
-        OutlineButton("Open .torrent", "open-torrent", icon = true)
+        OutlineButton("Open .torrent", "open-torrent", onOpenTorrent, icon = true)
+    }
+}
+
+@Composable
+private fun TorrentError(reason: String) {
+    val c = colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Not a valid .torrent file", color = c.danger, fontSize = 13.sp, maxLines = 1, modifier = Modifier.testTag("torrent-error"))
+        Text(
+            reason,
+            color = c.textSecondary,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            modifier = Modifier.testTag("torrent-error-reason"),
+        )
     }
 }
 
@@ -313,6 +460,7 @@ private fun TorrentTree(
     val allOn = preview.files.all { it.name in ticked }
     LazyColumn(
         modifier
+            .testTag("torrent-tree")
             .fillMaxWidth()
             .heightIn(min = 80.dp, max = 170.dp)
             .border(1.dp, c.border, shape)

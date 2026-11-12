@@ -12,6 +12,10 @@ data class DownloadItem(
     val bytesPerSec: Long,
     val status: DownloadStatus,
     val kind: DownloadKind = DownloadKind.Direct,
+    /** Absolute save folder; null means the default (`<home>/Downloads`). */
+    val folder: String? = null,
+    /** A torrent's files (the ticked ones); null shows the Sintel sample. */
+    val files: List<SampleFile>? = null,
 )
 
 data class HomeState(
@@ -39,6 +43,11 @@ fun filtered(
         Filter.Downloading -> state.downloads.filter { it.status != DownloadStatus.Finished }
         Filter.Finished -> state.downloads.filter { it.status == DownloadStatus.Finished }
     }
+
+/** The files a torrent row shows: its own, or the Sintel sample for sample rows. */
+fun DownloadItem.fileList(): List<SampleFile> = files ?: sintelFiles
+
+fun fileCount(n: Int): String = "$n ${if (n == 1) "file" else "files"}"
 
 fun badgeFor(name: String): String {
     val ext = name.substringAfterLast('.', "")

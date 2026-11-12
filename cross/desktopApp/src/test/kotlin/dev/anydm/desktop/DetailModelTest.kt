@@ -289,4 +289,18 @@ class DetailModelTest {
         assertEquals("ZIP", badgeFor(project))
         assertEquals("FILE", badgeFor(project.copy(name = "download")))
     }
+
+    @Test
+    fun detailCarriesTheFolderItIsGiven() {
+        assertEquals("~/Downloads", buildDetail(project, two).folder)
+        assertEquals("~/Movies", buildDetail(project, two, folder = "~/Movies").folder)
+        assertEquals("~/Movies", buildDetail(report, two, folder = "~/Movies").folder)
+    }
+
+    @Test
+    fun folderLabelUsesTheItemsFolderElseTheDefaultUnderHome() {
+        assertEquals("~/Downloads", folderLabel(project, "/Users/x"))
+        assertEquals("~/Movies", folderLabel(project.copy(folder = "/Users/x/Movies"), "/Users/x"))
+        assertEquals("/Volumes/Media", folderLabel(project.copy(folder = "/Volumes/Media"), "/Users/x"))
+    }
 }

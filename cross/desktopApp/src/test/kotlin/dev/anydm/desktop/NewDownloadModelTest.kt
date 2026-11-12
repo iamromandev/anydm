@@ -1,5 +1,7 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.torrent.TorrentFile
+import dev.anydm.engine.torrent.TorrentMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -149,6 +151,78 @@ class NewDownloadModelTest {
         val t = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all - "Sintel.mp4", "11")
         assertEquals("Sintel", t.name)
         assertEquals(torrentSummary(sintelFiles, all - "Sintel.mp4").second, t.totalBytes)
+    }
+
+    private fun loaded(
+        name: String,
+        vararg files: Pair<String, Long>,
+        single: Boolean = false,
+    ) = LoadedTorrent("$name.torrent", TorrentMeta(name, files.map { (p, n) -> TorrentFile(p, n) }, single))
+
+    @Test
+    fun previewOfALoadedTorrentKeepsItsNameAndJoinedPathsInOrder() {
+        val p = previewOf(loaded("Show", "Season 1/E01.mkv" to 30L, "notes.txt" to 0L))
+        assertEquals("Show", p.name)
+        assertEquals(listOf(SampleFile("Season 1/E01.mkv", 30), SampleFile("notes.txt", 0)), p.files)
+        assertEquals("2 files · 30 B", previewDetail(p, initialTicked(p)))
+    }
+
+    @Test
+    fun badgeIsTheFilesOwnForASingleTopLevelFileElseDir() {
+        assertEquals("ISO", previewOf(loaded("ubuntu.iso", "ubuntu.iso" to 5L, single = true)).badge)
+        assertEquals("FILE", previewOf(loaded("README", "README" to 5L, single = true)).badge)
+        assertEquals("DIR", previewOf(loaded("Show", "a.mkv" to 1L, "b.mkv" to 1L)).badge)
+        assertEquals("DIR", previewOf(loaded("Show", "Season 1/a.mkv" to 1L)).badge)
+        assertEquals("DIR", assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc")).badge)
+    }
+
+    @Test
+    fun aFolderTorrentWithOneEntryIsStillADir() {
+        assertEquals("DIR", previewOf(loaded("Show", "episode.mkv" to 5L)).badge)
+        assertEquals("DIR", previewOf(loaded("Show", "episode.mkv" to 5L, single = false)).badge)
+    }
+
+    @Test
+    fun initialTickedComesFromThePreviewsOwnFiles() {
+        val real = previewOf(loaded("Show", "Season 1/E01.mkv" to 30L, "notes.txt" to 0L))
+        assertEquals(setOf("Season 1/E01.mkv", "notes.txt"), initialTicked(real))
+        assertEquals(all, initialTicked(parsePreview("magnet:?xt=urn:btih:abc")))
+        assertEquals(emptySet(), initialTicked(parsePreview("https://x.test/a.zip")))
+        assertEquals(emptySet(), initialTicked(null))
+    }
+
+    @Test
+    fun torrentPreviewsBecomeTorrentItemsAndDirectOnesStayDirect() {
+        val t = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1")
+        assertEquals(DownloadKind.Torrent, t.kind)
+        assertEquals(DownloadKind.Torrent, newDownloadItem(previewOf(loaded("a", "a" to 1L)), setOf("a"), "2").kind)
+        assertEquals(DownloadKind.Direct, newDownloadItem(direct("https://x.test/a.zip"), all, "3").kind)
+    }
+
+    @Test
+    fun theTotalOfARealTorrentCountsOnlyTickedFiles() {
+        val p = previewOf(loaded("Show", "a" to 100L, "b" to 20L))
+        assertEquals(20L, newDownloadItem(p, setOf("b"), "1").totalBytes)
+    }
+
+    @Test
+    fun aRealTorrentItemKeepsOnlyItsTickedFilesInOrder() {
+        val p = previewOf(loaded("Show", "a" to 1L, "d/b" to 2L, "c" to 3L, "d/e" to 4L, "f" to 5L))
+        val item = newDownloadItem(p, setOf("d/e", "a"), "1")
+        assertEquals(listOf(SampleFile("a", 1), SampleFile("d/e", 4)), item.files)
+        assertEquals(5L, item.totalBytes)
+    }
+
+    @Test
+    fun aMagnetItemKeepsTheSintelTreeItShowedAndDirectItemsHaveNoFiles() {
+        assertEquals(sintelFiles, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1").files)
+        assertNull(newDownloadItem(direct("https://x.test/a.zip"), all, "2").files)
+    }
+
+    @Test
+    fun newDownloadItemCarriesItsFolder() {
+        assertEquals("/Users/x/Movies", newDownloadItem(direct("https://x.test/a.zip"), all, "1", "/Users/x/Movies").folder)
+        assertNull(newDownloadItem(direct("https://x.test/a.zip"), all, "1").folder)
     }
 
     @Test

@@ -2,7 +2,9 @@ package dev.anydm.desktop
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -15,6 +17,7 @@ import androidx.compose.ui.unit.sp
 fun EmptyState(
     title: String,
     hint: String?,
+    action: (() -> Unit)? = null,
 ) {
     val c = colors
     Column(
@@ -24,5 +27,9 @@ fun EmptyState(
     ) {
         Text(title, color = c.text, fontSize = 18.sp)
         if (hint != null) Text(hint, color = c.textSecondary, fontSize = 13.sp)
+        if (action != null) {
+            Spacer(Modifier.height(8.dp))
+            PrimaryButton("New download", "empty-new-download", true, action)
+        }
     }
 }

@@ -455,6 +455,15 @@ class DetailScreenTest {
         }
 
     @Test
+    fun finishedTorrentWithItsOwnFilesCountsThemInTheSubtitle() =
+        runComposeUiTest {
+            val own = listOf(SampleFile("a/one.bin", 1_048_576), SampleFile("two.bin", 1_048_576))
+            homeWith(finishedTorrent.copy(totalBytes = 2_097_152, doneBytes = 2_097_152, files = own))
+            onNodeWithTag("chevron-4").performClick()
+            text("detail-subtitle", "2 files · 2.0 MB · ~/Downloads")
+        }
+
+    @Test
     fun torrentCardShowsTagPeersAndFilesChip() =
         runComposeUiTest {
             home()
