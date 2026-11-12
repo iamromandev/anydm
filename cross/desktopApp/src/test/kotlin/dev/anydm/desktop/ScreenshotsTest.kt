@@ -126,6 +126,35 @@ class ScreenshotsTest {
         }
     }
 
+    @Test
+    fun captureDetail() {
+        val base = detailSample()
+        val torrent = base.downloads.first { it.id == "3" }
+        val finishedTorrent = torrent.copy(id = "4", status = DownloadStatus.Finished, doneBytes = torrent.totalBytes, bytesPerSec = 0)
+        val withFinishedTorrent = base.copy(downloads = base.downloads + finishedTorrent)
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("detail-two-$size", base, dark, w, h) { openDetail("1") }
+                shot("detail-single-$size", base, dark, w, h) {
+                    openDetail("1")
+                    onNodeWithTag("detail-check-usb").performScrollTo().performClick()
+                }
+                shot("detail-finished-$size", base, dark, w, h) { openDetail("2") }
+                shot("detail-torrent-$size", base, dark, w, h) { openDetail("3") }
+                shot("detail-torrent-finished-$size", withFinishedTorrent, dark, w, h) { openDetail("4") }
+                shot("detail-files-menu-$size", base, dark, w, h) {
+                    openDetail("3")
+                    onNodeWithTag("detail-files").performScrollTo().performClick()
+                }
+            }
+        }
+    }
+
+    private fun ComposeUiTest.openDetail(id: String) {
+        onNodeWithTag("chevron-$id").performScrollTo().performClick()
+    }
+
     private fun ComposeUiTest.openLimits() {
         openNetworks()
         onNodeWithTag("networks-limits-link").performClick()

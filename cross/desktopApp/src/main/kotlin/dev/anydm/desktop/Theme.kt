@@ -77,3 +77,8 @@ fun AnydmTheme(
 
 val colors: AnydmColors
     @Composable get() = LocalAnydmColors.current
+
+fun networkColor(
+    kind: NetworkKind,
+    c: AnydmColors,
+): Color = if (kind == NetworkKind.WiFi) c.success else c.accent

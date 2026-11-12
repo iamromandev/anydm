@@ -187,7 +187,7 @@ private fun Sidebar(
         SidebarHeader("NETWORKS")
         networks.forEach { n ->
             val d = draft.networks[n.id] ?: return@forEach
-            val dot = if (n.kind == NetworkKind.WiFi) c.success else c.accent
+            val dot = networkColor(n.kind, c)
             NavRow(
                 n.id,
                 n.name,

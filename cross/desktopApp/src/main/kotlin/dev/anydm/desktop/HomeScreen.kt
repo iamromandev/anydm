@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,9 +64,20 @@ fun HomeScreen(
     var dialogInitial by remember { mutableStateOf("") }
     var limits by remember { mutableStateOf(initialLimits(initial.networks, sampleUsage)) }
     var limitsOpen by remember { mutableStateOf(false) }
+    var openId by remember { mutableStateOf<String?>(null) }
+    var filesOpen by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val homeFocus = remember { FocusRequester() }
-    LaunchedEffect(dialogOpen, networksOpen, limitsOpen) { if (!dialogOpen && !networksOpen && !limitsOpen) homeFocus.requestFocus() }
+    val open = openId?.let { id -> downloads.firstOrNull { it.id == id } }
+    LaunchedEffect(open == null) {
+        if (openId != null && open == null) openId = null
+        if (open == null) filesOpen = false
+    }
+    LaunchedEffect(dialogOpen, networksOpen, limitsOpen, open == null) {
+        if (!dialogOpen && !networksOpen && !limitsOpen) homeFocus.requestFocus()
+    }
+    val networkList by remember { derivedStateOf { networks.toList() } }
 
     val state = initial.copy(downloads = downloads.toList())
     val visible = filtered(state, filter)
@@ -81,6 +94,14 @@ fun HomeScreen(
     AnydmTheme(dark) {
         val c = colors
 
+        fun togglePause(r: DownloadItem) {
+            val i = downloads.indexOfFirst { d -> d.id == r.id }
+            if (i >= 0) {
+                val next = if (r.status == DownloadStatus.Paused) DownloadStatus.Downloading else DownloadStatus.Paused
+                downloads[i] = r.copy(status = next)
+            }
+        }
+
         @Composable
         fun rowFor(r: DownloadItem) =
             DownloadRow(
@@ -88,12 +109,11 @@ fun HomeScreen(
                 r.id in selected,
                 unit,
                 { select(listOf(r.id), it) },
+                { togglePause(r) },
                 {
-                    val i = downloads.indexOfFirst { d -> d.id == r.id }
-                    if (i >= 0) {
-                        val next = if (r.status == DownloadStatus.Paused) DownloadStatus.Downloading else DownloadStatus.Paused
-                        downloads[i] = r.copy(status = next)
-                    }
+                    networksOpen = false
+                    filesOpen = false
+                    openId = r.id
                 },
             )
         Box(
@@ -111,8 +131,12 @@ fun HomeScreen(
                     }
                 }.focusRequester(homeFocus)
                 .onPreviewKeyEvent { e ->
-                    val paste = e.type == KeyEventType.KeyDown && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
-                    if (!paste || dialogOpen || limitsOpen || renaming) {
+                    val down = e.type == KeyEventType.KeyDown
+                    val paste = down && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
+                    if (down && e.key == Key.Escape && open != null && !dialogOpen && !limitsOpen && !renaming) {
+                        if (filesOpen) filesOpen = false else openId = null
+                        true
+                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null) {
                         false
                     } else {
                         scope.launch {
@@ -134,59 +158,87 @@ fun HomeScreen(
                     .testTag("home-root")
                     .semantics { stateDescription = if (dark) "dark" else "light" },
             ) {
-                TopBar(
-                    filter,
-                    { filter = it },
-                    downloads.count { it.status == DownloadStatus.Downloading },
-                    networks,
-                    unit,
-                    { networksOpen = !networksOpen && !dialogOpen && !limitsOpen },
-                    { chipBounds = it },
-                    {
-                        if (!dialogOpen && !limitsOpen) {
-                            dialogInitial = ""
-                            networksOpen = false
-                            dialogOpen = true
-                        }
-                    },
-                )
-                Box(Modifier.weight(1f)) {
-                    if (visible.isEmpty()) {
-                        if (downloads.isEmpty()) {
-                            EmptyState("No downloads yet", "Paste a link or drop a file to start")
-                        } else {
-                            EmptyState("Nothing here", null)
-                        }
-                    } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
-                            if (active.isNotEmpty()) {
-                                item(key = "h-downloading") {
-                                    SectionHeader(
-                                        "downloading",
-                                        "DOWNLOADING",
-                                        active.size,
-                                        active.all { it.id in selected },
-                                        { select(active.map { r -> r.id }, it) },
-                                    )
-                                }
-                                items(active, key = { it.id }) { r -> rowFor(r) }
+                if (open != null) {
+                    DetailScreen(
+                        open,
+                        networkList,
+                        unit,
+                        filesOpen,
+                        { filesOpen = it },
+                        onBack = {
+                            filesOpen = false
+                            openId = null
+                        },
+                        onTogglePause = { togglePause(open) },
+                        onCancel = {
+                            downloads.removeAll { it.id == open.id }
+                            selected = selected - open.id
+                            filesOpen = false
+                            openId = null
+                        },
+                        onRemove = {
+                            downloads.removeAll { it.id == open.id }
+                            selected = selected - open.id
+                            filesOpen = false
+                            openId = null
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    TopBar(
+                        filter,
+                        { filter = it },
+                        downloads.count { it.status == DownloadStatus.Downloading },
+                        networks,
+                        unit,
+                        { networksOpen = !networksOpen && !dialogOpen && !limitsOpen },
+                        { chipBounds = it },
+                        {
+                            if (!dialogOpen && !limitsOpen) {
+                                dialogInitial = ""
+                                networksOpen = false
+                                dialogOpen = true
                             }
-                            if (finished.isNotEmpty()) {
-                                item(key = "h-finished") {
-                                    SectionHeader(
-                                        "finished",
-                                        "FINISHED",
-                                        finished.size,
-                                        finished.all { it.id in selected },
-                                        { select(finished.map { r -> r.id }, it) },
-                                        onClear = {
-                                            val gone = downloads.filter { it.status == DownloadStatus.Finished }
-                                            downloads.removeAll(gone)
-                                            selected = selected - gone.map { it.id }.toSet()
-                                        },
-                                    )
+                        },
+                    )
+                    Box(Modifier.weight(1f)) {
+                        if (visible.isEmpty()) {
+                            if (downloads.isEmpty()) {
+                                EmptyState("No downloads yet", "Paste a link or drop a file to start")
+                            } else {
+                                EmptyState("Nothing here", null)
+                            }
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize(), listState) {
+                                if (active.isNotEmpty()) {
+                                    item(key = "h-downloading") {
+                                        SectionHeader(
+                                            "downloading",
+                                            "DOWNLOADING",
+                                            active.size,
+                                            active.all { it.id in selected },
+                                            { select(active.map { r -> r.id }, it) },
+                                        )
+                                    }
+                                    items(active, key = { it.id }) { r -> rowFor(r) }
                                 }
-                                items(finished, key = { it.id }) { r -> rowFor(r) }
+                                if (finished.isNotEmpty()) {
+                                    item(key = "h-finished") {
+                                        SectionHeader(
+                                            "finished",
+                                            "FINISHED",
+                                            finished.size,
+                                            finished.all { it.id in selected },
+                                            { select(finished.map { r -> r.id }, it) },
+                                            onClear = {
+                                                val gone = downloads.filter { it.status == DownloadStatus.Finished }
+                                                downloads.removeAll(gone)
+                                                selected = selected - gone.map { it.id }.toSet()
+                                            },
+                                        )
+                                    }
+                                    items(finished, key = { it.id }) { r -> rowFor(r) }
+                                }
                             }
                         }
                     }
@@ -220,7 +272,7 @@ fun HomeScreen(
             if (limitsOpen) {
                 LimitsDialog(
                     limits,
-                    networks.toList(),
+                    networkList,
                     unit,
                     slow,
                     onCancel = { limitsOpen = false },
