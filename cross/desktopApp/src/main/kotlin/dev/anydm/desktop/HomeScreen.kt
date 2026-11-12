@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -40,6 +41,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -66,6 +68,9 @@ fun HomeScreen(
     var limitsOpen by remember { mutableStateOf(false) }
     var openId by remember { mutableStateOf<String?>(null) }
     var filesOpen by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<Set<String>?>(null) }
+    var menu by remember { mutableStateOf<RowMenuState?>(null) }
+    var rowMenuBounds by remember { mutableStateOf(Rect.Zero) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val homeFocus = remember { FocusRequester() }
@@ -74,8 +79,13 @@ fun HomeScreen(
         if (openId != null && open == null) openId = null
         if (open == null) filesOpen = false
     }
-    LaunchedEffect(dialogOpen, networksOpen, limitsOpen, open == null) {
-        if (!dialogOpen && !networksOpen && !limitsOpen) homeFocus.requestFocus()
+    LaunchedEffect(dialogOpen, networksOpen, limitsOpen, removing, menu, open == null) {
+        if (!dialogOpen && !networksOpen && !limitsOpen && removing == null && menu == null) homeFocus.requestFocus()
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .drop(1)
+            .collect { menu = null }
     }
     val networkList by remember { derivedStateOf { networks.toList() } }
 
@@ -83,6 +93,9 @@ fun HomeScreen(
     val visible = filtered(state, filter)
     val active = visible.filter { it.status != DownloadStatus.Finished }
     val finished = visible.filter { it.status == DownloadStatus.Finished }
+    // Only selected rows the filter shows count and are acted on; hidden ones stay selected for later.
+    val visibleIds = visible.map { it.id }.toSet()
+    val liveSelected = selected intersect visibleIds
 
     fun select(
         ids: List<String>,
@@ -102,6 +115,11 @@ fun HomeScreen(
             }
         }
 
+        fun applyList(next: List<DownloadItem>) {
+            downloads.clear()
+            downloads.addAll(next)
+        }
+
         @Composable
         fun rowFor(r: DownloadItem) =
             DownloadRow(
@@ -114,6 +132,11 @@ fun HomeScreen(
                     networksOpen = false
                     filesOpen = false
                     openId = r.id
+                },
+                { p ->
+                    if (r.id !in selected) selected = (selected - visibleIds) + r.id
+                    networksOpen = false
+                    menu = RowMenuState(targetsFor(liveSelected, r.id), p.x, p.y)
                 },
             )
         Box(
@@ -129,20 +152,34 @@ fun HomeScreen(
                             }
                         }
                     }
+                }.pointerInput(menu != null) {
+                    if (menu != null) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                val p = e.changes.firstOrNull { it.pressed && !it.previousPressed }?.position
+                                if (p != null && !rowMenuBounds.contains(p)) menu = null
+                            }
+                        }
+                    }
                 }.focusRequester(homeFocus)
                 .onPreviewKeyEvent { e ->
                     val down = e.type == KeyEventType.KeyDown
                     val paste = down && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
-                    if (down && e.key == Key.Escape && open != null && !dialogOpen && !limitsOpen && !renaming) {
+                    if (down && e.key == Key.Escape && menu != null && !dialogOpen && !limitsOpen && removing == null) {
+                        menu = null
+                        true
+                    } else if (down && e.key == Key.Escape && open != null && !dialogOpen && !limitsOpen && !renaming && removing == null) {
                         if (filesOpen) filesOpen = false else openId = null
                         true
-                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null) {
+                    } else if (!paste || dialogOpen || limitsOpen || renaming || open != null || removing != null) {
                         false
                     } else {
                         scope.launch {
-                            val link = pasteLink(clipboardText(), dialogOpen || limitsOpen)
+                            val link = pasteLink(clipboardText(), dialogOpen || limitsOpen || removing != null)
                             if (link != null) {
                                 dialogInitial = link
+                                menu = null
                                 networksOpen = false
                                 dialogOpen = true
                             }
@@ -191,16 +228,32 @@ fun HomeScreen(
                         downloads.count { it.status == DownloadStatus.Downloading },
                         networks,
                         unit,
-                        { networksOpen = !networksOpen && !dialogOpen && !limitsOpen },
+                        {
+                            menu = null
+                            networksOpen = !networksOpen && !dialogOpen && !limitsOpen && removing == null
+                        },
                         { chipBounds = it },
                         {
-                            if (!dialogOpen && !limitsOpen) {
+                            if (!dialogOpen && !limitsOpen && removing == null) {
                                 dialogInitial = ""
+                                menu = null
                                 networksOpen = false
                                 dialogOpen = true
                             }
                         },
                     )
+                    if (liveSelected.isNotEmpty()) {
+                        val targets = targetsOf(state.downloads, liveSelected)
+                        SelectionBar(
+                            liveSelected.size,
+                            canPause(targets),
+                            canResume(targets),
+                            { applyList(pause(state.downloads, liveSelected)) },
+                            { applyList(resume(state.downloads, liveSelected)) },
+                            { removing = liveSelected },
+                            { selected = emptySet() },
+                        )
+                    }
                     Box(Modifier.weight(1f)) {
                         if (visible.isEmpty()) {
                             if (downloads.isEmpty()) {
@@ -209,7 +262,7 @@ fun HomeScreen(
                                 EmptyState("Nothing here", null)
                             }
                         } else {
-                            LazyColumn(Modifier.fillMaxSize(), listState) {
+                            LazyColumn(Modifier.fillMaxSize().testTag("download-list"), listState) {
                                 if (active.isNotEmpty()) {
                                     item(key = "h-downloading") {
                                         SectionHeader(
@@ -245,7 +298,7 @@ fun HomeScreen(
                 }
                 Footer(initial.freeBytes, slow, { slow = it }, unit, { unit = it }, dark) { dark = !dark }
             }
-            if (networksOpen && !dialogOpen && !limitsOpen) {
+            if (networksOpen && !dialogOpen && !limitsOpen && removing == null) {
                 val density = LocalDensity.current
                 NetworksMenu(
                     networks,
@@ -268,6 +321,27 @@ fun HomeScreen(
                                 IntOffset((chipBounds.right.toInt() - width).coerceAtLeast(0), chipBounds.bottom.toInt() + gap)
                             }.onGloballyPositioned { menuBounds = it.boundsInRoot() },
                 )
+            }
+            menu?.let { m ->
+                val menuTargets = targetsOf(visible, m.ids)
+                if (menuTargets.isEmpty()) {
+                    LaunchedEffect(m) { menu = null }
+                } else if (!dialogOpen && !limitsOpen && removing == null) {
+                    RowMenu(
+                        m,
+                        menuActions(menuTargets),
+                        onAction = { a ->
+                            when (a) {
+                                MenuAction.Pause -> applyList(pause(state.downloads, menuTargets.ids()))
+                                MenuAction.Resume -> applyList(resume(state.downloads, menuTargets.ids()))
+                                MenuAction.Remove -> removing = menuTargets.ids()
+                                MenuAction.Open, MenuAction.ShowInFolder -> Unit
+                            }
+                            menu = null
+                        },
+                        onBounds = { rowMenuBounds = it },
+                    )
+                }
             }
             if (limitsOpen) {
                 LimitsDialog(
@@ -295,6 +369,20 @@ fun HomeScreen(
                     },
                 )
             }
+            removing?.let { ids ->
+                RemoveDialog(
+                    ids.size,
+                    onRemove = {
+                        val next = remove(downloads.toList(), ids)
+                        applyList(next)
+                        selected = prune(selected, next)
+                        removing = null
+                    },
+                    onCancel = { removing = null },
+                )
+            }
         }
     }
 }
+
+private fun List<DownloadItem>.ids(): Set<String> = map { it.id }.toSet()
