@@ -27,13 +27,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
@@ -98,16 +103,36 @@ fun DownloadRow(
     onSelect: (Boolean) -> Unit,
     onTogglePause: () -> Unit,
     onOpen: () -> Unit,
+    onContextMenu: (Offset) -> Unit = {},
 ) {
     val c = colors
     val active = item.status != DownloadStatus.Finished
     val open by rememberUpdatedState(onOpen)
+    val contextMenu by rememberUpdatedState(onContextMenu)
+    var origin by remember { mutableStateOf(Offset.Zero) }
     var focused by remember { mutableStateOf(false) }
     Row(
         Modifier
             .testTag("row-${item.id}")
             .fillMaxWidth()
-            .pointerInput(item.id) { detectTapGestures { open() } }
+            .onGloballyPositioned { origin = it.positionInRoot() }
+            // A secondary press (also on the checkbox, pause and chevron) is a right click on the row:
+            // it is consumed on the way down so no primary handler below reacts to it.
+            .pointerInput(item.id) {
+                awaitPointerEventScope {
+                    var secondary = false
+                    while (true) {
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        val down = e.changes.firstOrNull { it.pressed && !it.previousPressed }
+                        if (down != null) {
+                            secondary = e.buttons.isSecondaryPressed
+                            if (secondary) contextMenu(origin + down.position)
+                        }
+                        if (secondary) e.changes.forEach { it.consume() }
+                        if (e.changes.none { it.pressed }) secondary = false
+                    }
+                }
+            }.pointerInput(item.id) { detectTapGestures { open() } }
             .semantics {
                 role = Role.Button
                 onClick {

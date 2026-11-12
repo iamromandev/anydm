@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ComposeUiTest
@@ -9,10 +10,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import java.io.File
 import javax.imageio.ImageIO
@@ -150,6 +153,33 @@ class ScreenshotsTest {
             }
         }
     }
+
+    @Test
+    fun captureBulk() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("bulk-bar-$size", detailSample(), dark, w, h) { tick("1", "2") }
+                shot("bulk-remove-$size", detailSample(), dark, w, h) {
+                    tick("1", "2")
+                    onNodeWithTag("bar-remove").performClick()
+                }
+                shot("bulk-menu-finished-$size", detailSample(), dark, w, h) { rightClickRow("2") }
+                shot("bulk-menu-mixed-$size", detailSample(), dark, w, h) {
+                    tick("1", "2")
+                    rightClickRow("1")
+                }
+                shot("bulk-menu-edge-$size", detailSample(), dark, w, h) {
+                    onNodeWithTag("row-3").performMouseInput { rightClick(Offset(width - 2f, height - 2f)) }
+                }
+            }
+        }
+    }
+
+    private fun ComposeUiTest.rightClickRow(id: String) =
+        onNodeWithTag("row-$id").performMouseInput { rightClick(Offset(width / 3f, height / 2f)) }
+
+    private fun ComposeUiTest.tick(vararg ids: String) = ids.forEach { onNodeWithTag("select-$it").performClick() }
 
     private fun ComposeUiTest.openDetail(id: String) {
         onNodeWithTag("chevron-$id").performScrollTo().performClick()

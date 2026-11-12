@@ -246,11 +246,13 @@ fun OutlineButton(
     onClick: () -> Unit = {},
     icon: Boolean = false,
     enabled: Boolean = true,
+    danger: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val c = colors
     val shape = RoundedCornerShape(Radius)
     Row(
-        Modifier
+        modifier
             .testTag(tag)
             .height(if (icon) 40.dp else 36.dp)
             .border(1.dp, c.border, shape)
@@ -260,7 +262,8 @@ fun OutlineButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (icon) FolderIcon(c.text)
-        Text(label, color = if (enabled) c.text else c.textSecondary.copy(alpha = 0.6f), fontSize = 14.sp, maxLines = 1)
+        val text = if (danger) c.danger else c.text
+        Text(label, color = if (enabled) text else c.textSecondary.copy(alpha = 0.6f), fontSize = 14.sp, maxLines = 1)
     }
 }
 
