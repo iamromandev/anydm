@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,14 +23,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -47,12 +53,18 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -65,6 +77,7 @@ fun NewDownloadDialog(
     networks: List<Network>,
     onCancel: () -> Unit,
     onDownload: (Preview, Set<String>) -> Unit,
+    onProxySave: (String, Proxy) -> Unit = { _, _ -> },
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -72,7 +85,10 @@ fun NewDownloadDialog(
     var ticked by remember(preview) { mutableStateOf(sintelFiles.map { it.name }.toSet()) }
     var streams by remember { mutableStateOf("auto") }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    var proxyFor by remember { mutableStateOf<String?>(null) }
+    val chips = remember { mutableStateMapOf<String, Rect>() }
+    // Back to the link field whenever no popover is open (including at first show).
+    LaunchedEffect(proxyFor) { if (proxyFor == null) focus.requestFocus() }
     val valid = preview != null && (preview !is Preview.Torrent || ticked.isNotEmpty())
 
     BoxWithConstraints(
@@ -85,7 +101,8 @@ fun NewDownloadDialog(
             .pointerInput(Unit) { detectTapGestures {} }
             .onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
-                    onCancel()
+                    // The preview pass reaches this handler before the popover's, so it must yield to the popover.
+                    if (proxyFor != null) proxyFor = null else onCancel()
                     true
                 } else {
                     false
@@ -127,7 +144,9 @@ fun NewDownloadDialog(
                 }
                 OptionRow("Networks") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        networks.forEach { n -> NetworkPill(n.name, networkColor(n.kind, c)) }
+                        networks.forEach { n ->
+                            NetworkPill(n, networkColor(n.kind, n.color, c), { chips[n.id] = it }) { proxyFor = n.id }
+                        }
                     }
                 }
                 if (networks.size >= 2 && preview?.parallel == true) {
@@ -153,6 +172,24 @@ fun NewDownloadDialog(
             ) {
                 OutlineButton("Cancel", "cancel", onCancel)
                 PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked) }
+            }
+        }
+        val target = proxyFor?.let { id -> networks.firstOrNull { it.id == id } }
+        val anchor = proxyFor?.let { chips[it] }
+        if (target != null && anchor != null) {
+            ProxyPopover(anchor, onClose = { proxyFor = null }) {
+                Text("Proxy for ${target.name}", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                key(target.id) {
+                    ProxyEditor(
+                        target.proxy,
+                        onSave = {
+                            onProxySave(target.id, it)
+                            proxyFor = null
+                        },
+                        onCancel = { proxyFor = null },
+                        tagPrefix = "chip-${target.id}",
+                    )
+                }
             }
         }
     }
@@ -336,23 +373,105 @@ private fun OptionRow(
 
 @Composable
 private fun NetworkPill(
-    name: String,
+    n: Network,
     dot: Color,
+    onChipBounds: (Rect) -> Unit,
+    onProxy: () -> Unit,
 ) {
     val c = colors
     val shape = RoundedCornerShape(50)
     Row(
         Modifier
-            .testTag("network-$name")
+            .testTag("network-${n.name}")
             .height(30.dp)
             .background(dot.copy(alpha = 0.12f), shape)
             .border(1.dp, dot.copy(alpha = 0.5f), shape)
-            .padding(horizontal = 12.dp),
+            .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(7.dp).background(dot, CircleShape))
-        Text(name, color = c.text, fontSize = 13.sp, maxLines = 1)
+        Box(Modifier.size(7.dp).networkDot("pill-dot-${n.id}", n.color).background(dot, CircleShape))
+        Text(n.name, color = c.text, fontSize = 13.sp, maxLines = 1)
+        val on = n.proxy.type != ProxyType.None
+        Box(
+            Modifier
+                .testTag("proxy-chip-${n.id}")
+                .onGloballyPositioned { onChipBounds(it.boundsInRoot()) }
+                .height(22.dp)
+                .background(c.track, RoundedCornerShape(50))
+                .clickable(role = Role.Button, onClick = onProxy)
+                .semantics { contentDescription = "Proxy settings for ${n.name}" }
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (on) "Proxy on" else "\u270E Proxy",
+                color = if (on) c.accent else c.textSecondary,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+private val PopoverWidth = 340.dp
+private val PopoverGap = 6.dp
+private val PopoverMargin = 12.dp
+
+/**
+ * Anchored popover: left-aligned with [anchor], below it, or above when it does not fit below. It never overlaps the
+ * anchor; when neither side fits, it takes the larger side and scrolls. A tap anywhere outside it calls [onClose].
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ProxyPopover(
+    anchor: Rect,
+    onClose: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val c = colors
+    val shape = RoundedCornerShape(Radius)
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Layout(
+        {
+            Column(
+                Modifier
+                    .testTag("proxy-popover")
+                    .fillMaxWidth()
+                    .background(c.surface, shape)
+                    .border(1.dp, c.border, shape)
+                    .pointerInput(Unit) { detectTapGestures {} }
+                    .focusRequester(focus)
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .focusGroup()
+                    .focusable()
+                    .verticalScroll(rememberScrollState())
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { content() }
+        },
+        Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onClose() } },
+    ) { measurables, constraints ->
+        val gap = PopoverGap.roundToPx()
+        val margin = PopoverMargin.roundToPx()
+        val width = minOf(PopoverWidth.roundToPx(), constraints.maxWidth - 2 * margin).coerceAtLeast(0)
+        val below = (constraints.maxHeight - anchor.bottom.toInt() - gap - margin).coerceAtLeast(0)
+        val above = (anchor.top.toInt() - gap - margin).coerceAtLeast(0)
+
+        fun measure(maxHeight: Int) = measurables.single().measure(Constraints(width, width, 0, maxHeight))
+        var p = measure((constraints.maxHeight - 2 * margin).coerceAtLeast(0))
+        val under =
+            when {
+                p.height <= below -> true
+                p.height <= above -> false
+                else -> below >= above
+            }
+        if (p.height > (if (under) below else above)) p = measure(if (under) below else above)
+        val y = if (under) anchor.bottom.toInt() + gap else anchor.top.toInt() - gap - p.height
+        val x = anchor.left.toInt().coerceIn(margin, (constraints.maxWidth - margin - p.width).coerceAtLeast(margin))
+        layout(constraints.maxWidth, constraints.maxHeight) { p.place(x, y) }
     }
 }
 

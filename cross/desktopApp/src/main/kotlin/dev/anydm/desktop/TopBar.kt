@@ -107,6 +107,8 @@ fun TopBar(
     }
 }
 
+private const val MAX_CHIP_DOTS = 3
+
 @Composable
 private fun NetworkChip(
     networks: List<Network>,
@@ -127,7 +129,11 @@ private fun NetworkChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(7.dp).background(c.success, CircleShape))
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            networks.filter { it.enabled }.take(MAX_CHIP_DOTS).forEach { n ->
+                Box(Modifier.size(7.dp).networkDot("chip-dot-${n.id}", n.color).background(networkColor(n.kind, n.color, c), CircleShape))
+            }
+        }
         Text(
             networkLabel(enabledCount(networks)),
             color = c.text,

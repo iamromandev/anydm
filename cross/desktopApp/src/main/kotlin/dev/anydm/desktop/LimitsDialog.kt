@@ -69,10 +69,11 @@ fun LimitsDialog(
     slow: Boolean,
     onCancel: () -> Unit,
     onSave: (Limits, Boolean) -> Unit,
+    initialPane: String = GENERAL_PANE,
 ) {
     val c = colors
     var draft by remember { mutableStateOf(draftOf(initial, unit, slow)) }
-    var pane by remember { mutableStateOf(GENERAL_PANE) }
+    var pane by remember { mutableStateOf(initialPane) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val errors = errorPanes(draft)
@@ -178,6 +179,7 @@ private fun Sidebar(
             "All downloads",
             summaryGeneral(draft.general, unit),
             c.textSecondary,
+            null,
             false,
             selected,
             GENERAL_PANE in errors,
@@ -187,12 +189,13 @@ private fun Sidebar(
         SidebarHeader("NETWORKS")
         networks.forEach { n ->
             val d = draft.networks[n.id] ?: return@forEach
-            val dot = networkColor(n.kind, c)
+            val dot = networkColor(n.kind, n.color, c)
             NavRow(
                 n.id,
                 n.name,
                 summaryNetwork(d, unit),
                 if (n.enabled) dot else c.textSecondary.copy(alpha = 0.45f),
+                n.color,
                 !n.enabled,
                 selected,
                 n.id in errors,
@@ -220,6 +223,7 @@ private fun NavRow(
     name: String,
     summary: String,
     dot: Color,
+    choice: NetworkColor?,
     off: Boolean,
     selected: String,
     error: Boolean,
@@ -238,7 +242,7 @@ private fun NavRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(8.dp).background(if (error) c.danger else dot, CircleShape))
+        Box(Modifier.size(8.dp).networkDot("limits-dot-$id", choice).background(if (error) c.danger else dot, CircleShape))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(

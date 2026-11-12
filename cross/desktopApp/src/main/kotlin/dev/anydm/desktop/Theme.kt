@@ -7,7 +7,12 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 
 val Radius = 8.dp
@@ -78,7 +83,67 @@ fun AnydmTheme(
 val colors: AnydmColors
     @Composable get() = LocalAnydmColors.current
 
+enum class NetworkColor(
+    val label: String,
+) {
+    Green("Green"),
+    Indigo("Indigo"),
+    Orange("Orange"),
+    Pink("Pink"),
+    Teal("Teal"),
+    Yellow("Yellow"),
+}
+
+fun swatch(
+    color: NetworkColor,
+    c: AnydmColors,
+): Color =
+    if (c.dark) {
+        when (color) {
+            NetworkColor.Green -> Color(0xFF4ADE80)
+            NetworkColor.Indigo -> Color(0xFF818CF8)
+            NetworkColor.Orange -> Color(0xFFFB923C)
+            NetworkColor.Pink -> Color(0xFFF472B6)
+            NetworkColor.Teal -> Color(0xFF2DD4BF)
+            NetworkColor.Yellow -> Color(0xFFFACC15)
+        }
+    } else {
+        when (color) {
+            NetworkColor.Green -> Color(0xFF15803D)
+            NetworkColor.Indigo -> Color(0xFF4F46E5)
+            NetworkColor.Orange -> Color(0xFFC2410C)
+            NetworkColor.Pink -> Color(0xFFBE185D)
+            NetworkColor.Teal -> Color(0xFF0F766E)
+            NetworkColor.Yellow -> Color(0xFFA16207)
+        }
+    }
+
+/** The chosen swatch, or today's default by kind (Wi-Fi success green, everything else accent). */
 fun networkColor(
     kind: NetworkKind,
+    choice: NetworkColor?,
     c: AnydmColors,
-): Color = if (kind == NetworkKind.WiFi) c.success else c.accent
+): Color =
+    if (choice != null) {
+        swatch(choice, c)
+    } else if (kind == NetworkKind.WiFi) {
+        c.success
+    } else {
+        c.accent
+    }
+
+/** WCAG contrast ratio, 1.0 to 21.0. */
+fun contrastRatio(
+    a: Color,
+    b: Color,
+): Double {
+    val hi = maxOf(a.luminance(), b.luminance()).toDouble()
+    val lo = minOf(a.luminance(), b.luminance()).toDouble()
+    return (hi + 0.05) / (lo + 0.05)
+}
+
+/** Tags a colour dot and exposes the colour name (or "Default") so tests and screen readers can tell them apart. */
+fun Modifier.networkDot(
+    tag: String,
+    choice: NetworkColor?,
+): Modifier = testTag(tag).semantics { stateDescription = choice?.label ?: "Default" }

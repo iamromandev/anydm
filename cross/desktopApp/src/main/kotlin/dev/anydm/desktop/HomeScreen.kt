@@ -34,10 +34,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -62,10 +64,12 @@ fun HomeScreen(
     var renaming by remember { mutableStateOf(false) }
     var chipBounds by remember { mutableStateOf(Rect.Zero) }
     var menuBounds by remember { mutableStateOf(Rect.Zero) }
+    var rootHeight by remember { mutableStateOf(0) }
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
     var limits by remember { mutableStateOf(initialLimits(initial.networks, sampleUsage)) }
     var limitsOpen by remember { mutableStateOf(false) }
+    var limitsPane by remember { mutableStateOf(GENERAL_PANE) }
     var openId by remember { mutableStateOf<String?>(null) }
     var filesOpen by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Set<String>?>(null) }
@@ -142,6 +146,7 @@ fun HomeScreen(
         Box(
             Modifier
                 .fillMaxSize()
+                .onSizeChanged { rootHeight = it.height }
                 .pointerInput(networksOpen) {
                     if (networksOpen) {
                         awaitPointerEventScope {
@@ -169,7 +174,9 @@ fun HomeScreen(
                     if (down && e.key == Key.Escape && menu != null && !dialogOpen && !limitsOpen && removing == null) {
                         menu = null
                         true
-                    } else if (down && e.key == Key.Escape && open != null && !dialogOpen && !limitsOpen && !renaming && removing == null) {
+                    } else if (down && e.key == Key.Escape && open != null && !networksOpen && !dialogOpen && !limitsOpen && !renaming &&
+                        removing == null
+                    ) {
                         if (filesOpen) filesOpen = false else openId = null
                         true
                     } else if (!paste || dialogOpen || limitsOpen || renaming || open != null || removing != null) {
@@ -308,16 +315,23 @@ fun HomeScreen(
                     },
                     unit,
                     { networksOpen = false },
-                    {
+                    { pane ->
                         networksOpen = false
+                        limitsPane = pane ?: GENERAL_PANE
                         limitsOpen = true
                     },
                     onEditingChange = { renaming = it },
+                    maxHeight =
+                        if (rootHeight > 0) {
+                            with(density) { (rootHeight - chipBounds.bottom).toDp() } - NETWORKS_MENU_GAP - NETWORKS_MENU_MARGIN
+                        } else {
+                            Dp.Unspecified
+                        },
                     modifier =
                         Modifier
                             .offset {
                                 val width = with(density) { NetworksMenuWidth.roundToPx() }
-                                val gap = with(density) { 6.dp.roundToPx() }
+                                val gap = with(density) { NETWORKS_MENU_GAP.roundToPx() }
                                 IntOffset((chipBounds.right.toInt() - width).coerceAtLeast(0), chipBounds.bottom.toInt() + gap)
                             }.onGloballyPositioned { menuBounds = it.boundsInRoot() },
                 )
@@ -350,6 +364,7 @@ fun HomeScreen(
                     unit,
                     slow,
                     onCancel = { limitsOpen = false },
+                    initialPane = limitsPane,
                     onSave = { l, s ->
                         limits = l
                         slow = s
@@ -366,6 +381,11 @@ fun HomeScreen(
                         downloads.add(newDownloadItem(preview, ticked, nextId(downloads)))
                         filter = Filter.All
                         dialogOpen = false
+                    },
+                    onProxySave = { id, proxy ->
+                        val next = setProxy(networks.toList(), id, proxy)
+                        networks.clear()
+                        networks.addAll(next)
                     },
                 )
             }
@@ -386,3 +406,6 @@ fun HomeScreen(
 }
 
 private fun List<DownloadItem>.ids(): Set<String> = map { it.id }.toSet()
+
+private val NETWORKS_MENU_GAP = 6.dp
+private val NETWORKS_MENU_MARGIN = 12.dp
