@@ -152,31 +152,11 @@ fun NewDownloadDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
             ) {
                 OutlineButton("Cancel", "cancel", onCancel)
-                val shape = RoundedCornerShape(Radius)
-                Box(
-                    Modifier
-                        .testTag("download")
-                        .height(36.dp)
-                        .background(if (valid) c.accent else c.track, shape)
-                        .clickable(enabled = valid, role = Role.Button) { if (preview != null) onDownload(preview, ticked) }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "Download",
-                        color = if (valid) c.onAccent else c.textSecondary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                    )
-                }
+                PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked) }
             }
         }
     }
 }
-
-@Composable
-private fun Divider() = Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
 
 @Composable
 private fun InputRow(
@@ -225,30 +205,6 @@ private fun InputRow(
             }
         }
         OutlineButton("Open .torrent", "open-torrent", icon = true)
-    }
-}
-
-@Composable
-private fun OutlineButton(
-    label: String,
-    tag: String,
-    onClick: () -> Unit = {},
-    icon: Boolean = false,
-) {
-    val c = colors
-    val shape = RoundedCornerShape(Radius)
-    Row(
-        Modifier
-            .testTag(tag)
-            .height(if (icon) 40.dp else 36.dp)
-            .border(1.dp, c.border, shape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (icon) FolderIcon(c.text)
-        Text(label, color = c.text, fontSize = 14.sp, maxLines = 1)
     }
 }
 

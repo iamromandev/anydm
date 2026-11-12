@@ -62,6 +62,7 @@ fun NetworksMenu(
     onNetworksChange: (List<Network>) -> Unit,
     unit: SpeedUnit,
     onDismiss: () -> Unit,
+    onOpenLimits: () -> Unit,
     modifier: Modifier = Modifier,
     onEditingChange: (Boolean) -> Unit = {},
 ) {
@@ -161,7 +162,7 @@ fun NetworksMenu(
             Modifier
                 .testTag("networks-limits-link")
                 .fillMaxWidth()
-                .clickable(role = Role.Button) {}
+                .clickable(role = Role.Button, onClick = onOpenLimits)
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center,
         ) {

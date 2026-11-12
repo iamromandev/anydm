@@ -60,9 +60,11 @@ fun HomeScreen(
     var menuBounds by remember { mutableStateOf(Rect.Zero) }
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
+    var limits by remember { mutableStateOf(initialLimits(initial.networks, sampleUsage)) }
+    var limitsOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val homeFocus = remember { FocusRequester() }
-    LaunchedEffect(dialogOpen, networksOpen) { if (!dialogOpen && !networksOpen) homeFocus.requestFocus() }
+    LaunchedEffect(dialogOpen, networksOpen, limitsOpen) { if (!dialogOpen && !networksOpen && !limitsOpen) homeFocus.requestFocus() }
 
     val state = initial.copy(downloads = downloads.toList())
     val visible = filtered(state, filter)
@@ -110,11 +112,11 @@ fun HomeScreen(
                 }.focusRequester(homeFocus)
                 .onPreviewKeyEvent { e ->
                     val paste = e.type == KeyEventType.KeyDown && e.key == Key.V && (e.isCtrlPressed || e.isMetaPressed)
-                    if (!paste || dialogOpen || renaming) {
+                    if (!paste || dialogOpen || limitsOpen || renaming) {
                         false
                     } else {
                         scope.launch {
-                            val link = pasteLink(clipboardText(), dialogOpen)
+                            val link = pasteLink(clipboardText(), dialogOpen || limitsOpen)
                             if (link != null) {
                                 dialogInitial = link
                                 networksOpen = false
@@ -138,10 +140,10 @@ fun HomeScreen(
                     downloads.count { it.status == DownloadStatus.Downloading },
                     networks,
                     unit,
-                    { networksOpen = !networksOpen && !dialogOpen },
+                    { networksOpen = !networksOpen && !dialogOpen && !limitsOpen },
                     { chipBounds = it },
                     {
-                        if (!dialogOpen) {
+                        if (!dialogOpen && !limitsOpen) {
                             dialogInitial = ""
                             networksOpen = false
                             dialogOpen = true
@@ -191,7 +193,7 @@ fun HomeScreen(
                 }
                 Footer(initial.freeBytes, slow, { slow = it }, unit, { unit = it }, dark) { dark = !dark }
             }
-            if (networksOpen && !dialogOpen) {
+            if (networksOpen && !dialogOpen && !limitsOpen) {
                 val density = LocalDensity.current
                 NetworksMenu(
                     networks,
@@ -201,6 +203,10 @@ fun HomeScreen(
                     },
                     unit,
                     { networksOpen = false },
+                    {
+                        networksOpen = false
+                        limitsOpen = true
+                    },
                     onEditingChange = { renaming = it },
                     modifier =
                         Modifier
@@ -209,6 +215,20 @@ fun HomeScreen(
                                 val gap = with(density) { 6.dp.roundToPx() }
                                 IntOffset((chipBounds.right.toInt() - width).coerceAtLeast(0), chipBounds.bottom.toInt() + gap)
                             }.onGloballyPositioned { menuBounds = it.boundsInRoot() },
+                )
+            }
+            if (limitsOpen) {
+                LimitsDialog(
+                    limits,
+                    networks.toList(),
+                    unit,
+                    slow,
+                    onCancel = { limitsOpen = false },
+                    onSave = { l, s ->
+                        limits = l
+                        slow = s
+                        limitsOpen = false
+                    },
                 )
             }
             if (dialogOpen) {

@@ -379,17 +379,26 @@ class NetworksMenuTest {
         }
 
     @Test
-    fun limitsLinkAndChevronsDoNothing() =
+    fun chevronsDoNothing() =
         runComposeUiTest {
             home()
             openMenu()
-            onNodeWithTag("networks-limits-link").performClick()
             onNodeWithTag("network-chevron-wifi").performClick()
             onNodeWithTag("network-chevron-usb").performClick()
             onNodeWithTag("networks-menu").assertIsDisplayed()
             speed("wifi", "7.1 MB/s")
             speed("usb", "6.9 MB/s")
             chip("2 networks", "14.0 MB/s")
+        }
+
+    @Test
+    fun limitsLinkOpensTheLimitsDialogAndClosesTheMenu() =
+        runComposeUiTest {
+            home()
+            openMenu()
+            onNodeWithTag("networks-limits-link").performClick()
+            menuGone()
+            onNodeWithTag("limits-dialog").assertIsDisplayed()
         }
 
     @Test

@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -54,25 +52,13 @@ fun Footer(
         Spacer(Modifier.weight(1f))
         Text("Slow mode", color = c.textSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
         Spacer(Modifier.width(8.dp))
-        Switch(
-            checked = slow,
-            onCheckedChange = onSlow,
-            modifier = Modifier.testTag("slow-mode"),
-            colors =
-                SwitchDefaults.colors(
-                    checkedTrackColor = c.accent,
-                    checkedThumbColor = c.onAccent,
-                    checkedBorderColor = c.accent,
-                    uncheckedTrackColor = c.track,
-                    uncheckedThumbColor = c.text,
-                    uncheckedBorderColor = c.border,
-                ),
-        )
+        AnydmSwitch(slow, onSlow, "slow-mode")
         Spacer(Modifier.width(16.dp))
         Row(
             Modifier.border(1.dp, c.border, RoundedCornerShape(Radius)).padding(2.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
+            // Tags are used by LimitsDialogTest ("unit-mbps" is the Mbps segment, "unit-mbps-bytes" the MB/s one); keep them stable.
             Segment("MB/s", unit == SpeedUnit.MBps, "unit-mbps-bytes") { onUnit(SpeedUnit.MBps) }
             Segment("Mbps", unit == SpeedUnit.Mbps, "unit-mbps") { onUnit(SpeedUnit.Mbps) }
         }
