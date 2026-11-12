@@ -250,6 +250,38 @@ class ScreenshotsTest {
         }
     }
 
+    @Test
+    fun captureQueue() {
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("queue-list-$size", detailSample(), dark, w, h) { queueTwo() }
+                shot("queue-menu-$size", detailSample(), dark, w, h) {
+                    queueTwo()
+                    rightClickRow("5")
+                }
+                shot("queue-detail-$size", detailSample(), dark, w, h) {
+                    queueTwo()
+                    openDetail("5")
+                }
+                shot("queue-new-download-hint-$size", detailSample(), dark, w, h) {
+                    queueTwo()
+                    onNodeWithTag("new-download").performClick()
+                    onNodeWithTag("url-field").performTextInput("https://example.com/files/c.zip")
+                }
+            }
+        }
+    }
+
+    /** At limit 2 with two rows running, these two wait as queue positions 1 and 2. */
+    private fun ComposeUiTest.queueTwo() {
+        for (name in listOf("archive.zip", "notes.pdf")) {
+            onNodeWithTag("new-download").performClick()
+            onNodeWithTag("url-field").performTextInput("https://example.com/files/$name")
+            onNodeWithTag("download").performClick()
+        }
+    }
+
     private fun HomeState.withUsbColor(color: NetworkColor) =
         copy(networks = networks.map { if (it.id == "usb") it.copy(color = color) else it })
 

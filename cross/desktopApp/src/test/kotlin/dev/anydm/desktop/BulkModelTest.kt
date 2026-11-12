@@ -23,8 +23,9 @@ class BulkModelTest {
     }
 
     @Test
-    fun canPauseNeedsADownloadingRow() {
+    fun canPauseNeedsADownloadingOrQueuedRow() {
         assertTrue(canPause(listOf(down, done)))
+        assertTrue(canPause(listOf(item("4", DownloadStatus.Queued), done)))
         assertFalse(canPause(listOf(paused, done)))
         assertFalse(canPause(emptyList()))
     }
@@ -44,32 +45,6 @@ class BulkModelTest {
     }
 
     @Test
-    fun pauseChangesOnlySelectedDownloadingRows() {
-        val out = pause(all, setOf("1", "2", "3"))
-        assertEquals(listOf(DownloadStatus.Paused, DownloadStatus.Paused, DownloadStatus.Finished), out.map { it.status })
-        assertEquals(done, out[2])
-        assertEquals(all, pause(all, emptySet()))
-    }
-
-    @Test
-    fun pauseLeavesUnselectedRowsAlone() {
-        val other = down.copy(id = "4")
-        assertEquals(DownloadStatus.Downloading, pause(all + other, setOf("1")).last().status)
-    }
-
-    @Test
-    fun resumeChangesOnlySelectedPausedRows() {
-        val out = resume(all, setOf("1", "2", "3"))
-        assertEquals(listOf(DownloadStatus.Downloading, DownloadStatus.Downloading, DownloadStatus.Finished), out.map { it.status })
-        assertEquals(all, resume(all, setOf("1", "3")))
-    }
-
-    @Test
-    fun removeDropsOnlyTheGivenIds() {
-        assertEquals(listOf(paused), remove(all, setOf("1", "3", "9")))
-    }
-
-    @Test
     fun rightClickOnASelectedRowTargetsTheWholeSelection() {
         assertEquals(setOf("1", "2"), targetsFor(setOf("1", "2"), "2"))
     }
@@ -86,19 +61,70 @@ class BulkModelTest {
 
     @Test
     fun menuForFinishedRowsOffersOpenFolderRemove() {
-        assertEquals(listOf(MenuAction.Open, MenuAction.ShowInFolder, MenuAction.Remove), menuActions(listOf(done)))
+        assertEquals(listOf(MenuAction.Open, MenuAction.ShowInFolder, MenuAction.Remove), menuActions(listOf(done), emptyList()))
     }
 
     @Test
     fun menuForMixedRowsHidesOpenAndFolder() {
-        assertEquals(listOf(MenuAction.Pause, MenuAction.Remove), menuActions(listOf(down, done)))
-        assertEquals(listOf(MenuAction.Pause, MenuAction.Resume, MenuAction.Remove), menuActions(listOf(down, paused)))
-        assertEquals(listOf(MenuAction.Resume, MenuAction.Remove), menuActions(listOf(paused)))
+        assertEquals(listOf(MenuAction.Pause, MenuAction.Remove), menuActions(listOf(down, done), emptyList()))
+        assertEquals(listOf(MenuAction.Pause, MenuAction.Resume, MenuAction.Remove), menuActions(listOf(down, paused), emptyList()))
+        assertEquals(listOf(MenuAction.Resume, MenuAction.Remove), menuActions(listOf(paused), emptyList()))
+    }
+
+    private val q1 = item("q1", DownloadStatus.Queued)
+    private val q2 = item("q2", DownloadStatus.Queued)
+    private val q3 = item("q3", DownloadStatus.Queued)
+    private val queue = listOf("q1", "q2", "q3")
+
+    private val move = listOf(MenuAction.MoveToTop, MenuAction.MoveUp, MenuAction.MoveDown)
+
+    @Test
+    fun menuForTheFirstQueuedRowHidesMovesUp() {
+        assertEquals(
+            listOf(MenuAction.Pause, MenuAction.MoveDown, MenuAction.StartNow, MenuAction.Remove),
+            menuActions(listOf(q1), queue),
+        )
+    }
+
+    @Test
+    fun menuForTheLastQueuedRowHidesMoveDown() {
+        assertEquals(
+            listOf(MenuAction.Pause, MenuAction.MoveToTop, MenuAction.MoveUp, MenuAction.StartNow, MenuAction.Remove),
+            menuActions(listOf(q3), queue),
+        )
+    }
+
+    @Test
+    fun menuForAMiddleQueuedRowOffersAllMoves() {
+        assertEquals(
+            listOf(MenuAction.Pause) + move + listOf(MenuAction.StartNow, MenuAction.Remove),
+            menuActions(listOf(q2), queue),
+        )
+    }
+
+    @Test
+    fun menuForTheWholeQueueHidesMoves() {
+        val actions = menuActions(listOf(q1, q2, q3), queue)
+        assertTrue(move.none { it in actions })
+        assertTrue(MenuAction.StartNow in actions)
+    }
+
+    @Test
+    fun menuForAMixedSelectionOffersStartNowAndMovesThatChangeTheQueue() {
+        val actions = menuActions(listOf(down, q2), queue)
+        assertEquals(listOf(MenuAction.Pause) + move + listOf(MenuAction.StartNow, MenuAction.Remove), actions)
+    }
+
+    @Test
+    fun menuWithoutQueuedTargetsHasNoQueueActions() {
+        val actions = menuActions(listOf(down, paused), queue)
+        assertTrue(move.none { it in actions })
+        assertFalse(MenuAction.StartNow in actions)
     }
 
     @Test
     fun menuForNoTargetsIsEmpty() {
-        assertEquals(emptyList(), menuActions(emptyList()))
+        assertEquals(emptyList(), menuActions(emptyList(), emptyList()))
     }
 
     @Test

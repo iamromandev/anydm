@@ -53,7 +53,17 @@ fun HomeScreen(
     initialDark: Boolean,
     clipboardText: suspend () -> String? = { withContext(Dispatchers.IO) { systemClipboardText() } },
 ) {
-    val downloads = remember { mutableStateListOf<DownloadItem>().apply { addAll(initial.downloads) } }
+    val limits0 = remember { initialLimits(initial.networks, sampleUsage) }
+    // Initial Queued rows wait in list order; settle starts them when slots are free, so the invariants hold from the start.
+    val seeded =
+        remember {
+            settle(
+                QueueState(initial.downloads, initial.downloads.filter { it.status == DownloadStatus.Queued }.map { it.id }),
+                limits0.concurrency,
+            )
+        }
+    val downloads = remember { mutableStateListOf<DownloadItem>().apply { addAll(seeded.list) } }
+    var queue by remember { mutableStateOf(seeded.queue) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var filter by remember { mutableStateOf(Filter.All) }
     var unit by remember { mutableStateOf(SpeedUnit.MBps) }
@@ -67,7 +77,7 @@ fun HomeScreen(
     var rootHeight by remember { mutableStateOf(0) }
     var dialogOpen by remember { mutableStateOf(false) }
     var dialogInitial by remember { mutableStateOf("") }
-    var limits by remember { mutableStateOf(initialLimits(initial.networks, sampleUsage)) }
+    var limits by remember { mutableStateOf(limits0) }
     var limitsOpen by remember { mutableStateOf(false) }
     var limitsPane by remember { mutableStateOf(GENERAL_PANE) }
     var openId by remember { mutableStateOf<String?>(null) }
@@ -94,8 +104,11 @@ fun HomeScreen(
     val networkList by remember { derivedStateOf { networks.toList() } }
 
     val state = initial.copy(downloads = downloads.toList())
+    val limit = limits.concurrency
+    val queueState = QueueState(state.downloads, queue)
     val visible = filtered(state, filter)
-    val active = visible.filter { it.status != DownloadStatus.Finished }
+    val active = visible.filter { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Paused }
+    val queuedRows = queue.mapNotNull { id -> visible.firstOrNull { it.id == id && it.status == DownloadStatus.Queued } }
     val finished = visible.filter { it.status == DownloadStatus.Finished }
     // Only selected rows the filter shows count and are acted on; hidden ones stay selected for later.
     val visibleIds = visible.map { it.id }.toSet()
@@ -111,17 +124,22 @@ fun HomeScreen(
     AnydmTheme(dark) {
         val c = colors
 
-        fun togglePause(r: DownloadItem) {
-            val i = downloads.indexOfFirst { d -> d.id == r.id }
-            if (i >= 0) {
-                val next = if (r.status == DownloadStatus.Paused) DownloadStatus.Downloading else DownloadStatus.Paused
-                downloads[i] = r.copy(status = next)
-            }
+        // Every change of a status goes through QueueModel, so the queue and the list stay consistent.
+        fun applyQueue(next: QueueState) {
+            downloads.clear()
+            downloads.addAll(next.list)
+            queue = next.queue
         }
 
-        fun applyList(next: List<DownloadItem>) {
-            downloads.clear()
-            downloads.addAll(next)
+        fun togglePause(r: DownloadItem) {
+            val ids = setOf(r.id)
+            applyQueue(if (r.status == DownloadStatus.Paused) resumeAll(queueState, ids, limit) else pauseAll(queueState, ids, limit))
+        }
+
+        fun removeIds(ids: Set<String>) {
+            val next = removeAll(queueState, ids, limit)
+            applyQueue(next)
+            selected = prune(selected, next.list)
         }
 
         @Composable
@@ -142,6 +160,7 @@ fun HomeScreen(
                     networksOpen = false
                     menu = RowMenuState(targetsFor(liveSelected, r.id), p.x, p.y)
                 },
+                queuePosition = queuePosition(queueState, r.id),
             )
         Box(
             Modifier
@@ -215,17 +234,17 @@ fun HomeScreen(
                         },
                         onTogglePause = { togglePause(open) },
                         onCancel = {
-                            downloads.removeAll { it.id == open.id }
-                            selected = selected - open.id
+                            removeIds(setOf(open.id))
                             filesOpen = false
                             openId = null
                         },
                         onRemove = {
-                            downloads.removeAll { it.id == open.id }
-                            selected = selected - open.id
+                            removeIds(setOf(open.id))
                             filesOpen = false
                             openId = null
                         },
+                        queuePosition = queuePosition(queueState, open.id),
+                        onStartNow = { applyQueue(startNow(queueState, setOf(open.id))) },
                         modifier = Modifier.weight(1f),
                     )
                 } else {
@@ -255,8 +274,8 @@ fun HomeScreen(
                             liveSelected.size,
                             canPause(targets),
                             canResume(targets),
-                            { applyList(pause(state.downloads, liveSelected)) },
-                            { applyList(resume(state.downloads, liveSelected)) },
+                            { applyQueue(pauseAll(queueState, liveSelected, limit)) },
+                            { applyQueue(resumeAll(queueState, liveSelected, limit)) },
                             { removing = liveSelected },
                             { selected = emptySet() },
                         )
@@ -282,6 +301,18 @@ fun HomeScreen(
                                     }
                                     items(active, key = { it.id }) { r -> rowFor(r) }
                                 }
+                                if (queuedRows.isNotEmpty()) {
+                                    item(key = "h-queued") {
+                                        SectionHeader(
+                                            "queued",
+                                            "QUEUED",
+                                            queuedRows.size,
+                                            queuedRows.all { it.id in selected },
+                                            { select(queuedRows.map { r -> r.id }, it) },
+                                        )
+                                    }
+                                    items(queuedRows, key = { it.id }) { r -> rowFor(r) }
+                                }
                                 if (finished.isNotEmpty()) {
                                     item(key = "h-finished") {
                                         SectionHeader(
@@ -291,9 +322,7 @@ fun HomeScreen(
                                             finished.all { it.id in selected },
                                             { select(finished.map { r -> r.id }, it) },
                                             onClear = {
-                                                val gone = downloads.filter { it.status == DownloadStatus.Finished }
-                                                downloads.removeAll(gone)
-                                                selected = selected - gone.map { it.id }.toSet()
+                                                removeIds(downloads.filter { it.status == DownloadStatus.Finished }.map { it.id }.toSet())
                                             },
                                         )
                                     }
@@ -343,12 +372,16 @@ fun HomeScreen(
                 } else if (!dialogOpen && !limitsOpen && removing == null) {
                     RowMenu(
                         m,
-                        menuActions(menuTargets),
+                        menuActions(menuTargets, queue),
                         onAction = { a ->
                             when (a) {
-                                MenuAction.Pause -> applyList(pause(state.downloads, menuTargets.ids()))
-                                MenuAction.Resume -> applyList(resume(state.downloads, menuTargets.ids()))
+                                MenuAction.Pause -> applyQueue(pauseAll(queueState, menuTargets.ids(), limit))
+                                MenuAction.Resume -> applyQueue(resumeAll(queueState, menuTargets.ids(), limit))
                                 MenuAction.Remove -> removing = menuTargets.ids()
+                                MenuAction.MoveToTop -> applyQueue(moveToTop(queueState, menuTargets.ids()))
+                                MenuAction.MoveUp -> applyQueue(moveUp(queueState, menuTargets.ids()))
+                                MenuAction.MoveDown -> applyQueue(moveDown(queueState, menuTargets.ids()))
+                                MenuAction.StartNow -> applyQueue(startNow(queueState, menuTargets.ids()))
                                 MenuAction.Open, MenuAction.ShowInFolder -> Unit
                             }
                             menu = null
@@ -367,6 +400,7 @@ fun HomeScreen(
                     initialPane = limitsPane,
                     onSave = { l, s ->
                         limits = l
+                        applyQueue(changeLimit(queueState, l.concurrency))
                         slow = s
                         limitsOpen = false
                     },
@@ -378,10 +412,11 @@ fun HomeScreen(
                     networks.filter { it.enabled },
                     onCancel = { dialogOpen = false },
                     onDownload = { preview, ticked ->
-                        downloads.add(newDownloadItem(preview, ticked, nextId(downloads)))
+                        applyQueue(addDownload(queueState, newDownloadItem(preview, ticked, nextId(downloads)), limit))
                         filter = Filter.All
                         dialogOpen = false
                     },
+                    startsAfter = startsAfter(queueState, limit),
                     onProxySave = { id, proxy ->
                         val next = setProxy(networks.toList(), id, proxy)
                         networks.clear()
@@ -393,9 +428,7 @@ fun HomeScreen(
                 RemoveDialog(
                     ids.size,
                     onRemove = {
-                        val next = remove(downloads.toList(), ids)
-                        applyList(next)
-                        selected = prune(selected, next)
+                        removeIds(ids)
                         removing = null
                     },
                     onCancel = { removing = null },

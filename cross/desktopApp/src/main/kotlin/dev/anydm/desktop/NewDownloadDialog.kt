@@ -78,6 +78,7 @@ fun NewDownloadDialog(
     onCancel: () -> Unit,
     onDownload: (Preview, Set<String>) -> Unit,
     onProxySave: (String, Proxy) -> Unit = { _, _ -> },
+    startsAfter: Int? = null,
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -133,6 +134,15 @@ fun NewDownloadDialog(
                 InputRow(text, { text = it }, focus)
                 if (preview != null) {
                     PreviewBlock(preview, ticked)
+                    if (startsAfter != null) {
+                        Text(
+                            startsAfterText(startsAfter),
+                            color = c.textSecondary,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("queue-hint"),
+                        )
+                    }
                     if (preview is Preview.Torrent) {
                         TorrentTree(preview, ticked, Modifier.weight(1f, fill = false)) { ticked = it }
                     }

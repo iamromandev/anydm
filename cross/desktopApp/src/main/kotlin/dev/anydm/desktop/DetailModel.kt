@@ -181,6 +181,10 @@ fun buildDetail(
                     curveParts.map { it[p] }
                 }
 
+                item.status == DownloadStatus.Queued -> {
+                    List(POINTS) { 0L }
+                }
+
                 else -> {
                     val s = activeSeries(nominal[p], rng)
                     if (item.status == DownloadStatus.Paused) s.mapIndexed { i, v -> if (i >= POINTS - PAUSED_TAIL) 0L else v } else s
@@ -226,7 +230,7 @@ fun buildDetail(
         series = series,
         cells = cells,
         cellBytes = cellBytes,
-        retries = if (!torrent && n >= 2) seedOf(item.id) % 40 else 0,
+        retries = if (!torrent && n >= 2 && item.status != DownloadStatus.Queued) seedOf(item.id) % 40 else 0,
         peers = if (torrent && n > 0) TORRENT_PEERS else 0,
         elapsedSec = elapsed,
     )

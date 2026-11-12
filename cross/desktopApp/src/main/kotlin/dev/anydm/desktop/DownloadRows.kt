@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -104,6 +105,7 @@ fun DownloadRow(
     onTogglePause: () -> Unit,
     onOpen: () -> Unit,
     onContextMenu: (Offset) -> Unit = {},
+    queuePosition: Int? = null,
 ) {
     val c = colors
     val active = item.status != DownloadStatus.Finished
@@ -185,14 +187,23 @@ fun DownloadRow(
                 )
                 if (active) {
                     Spacer(Modifier.width(12.dp))
+                    val queued = item.status == DownloadStatus.Queued
                     Text(
-                        if (item.status == DownloadStatus.Paused) "Paused" else formatSpeed(item.bytesPerSec, unit),
+                        when {
+                            queued && queuePosition != null -> "#$queuePosition · Queued"
+                            queued -> "Queued"
+                            item.status == DownloadStatus.Paused -> "Paused"
+                            else -> formatSpeed(item.bytesPerSec, unit)
+                        },
                         color = c.text,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        modifier = Modifier.testTag("speed-${item.id}"),
+                        modifier =
+                            Modifier.testTag("speed-${item.id}").semantics {
+                                if (queued && queuePosition != null) contentDescription = "Queued, number $queuePosition in line"
+                            },
                     )
                 }
             }
