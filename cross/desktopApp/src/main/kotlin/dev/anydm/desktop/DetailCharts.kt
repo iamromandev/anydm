@@ -93,15 +93,23 @@ fun SingleConnectionSpeed(
 ) {
     val c = colors
     val total = formatSpeed(d.total, unit)
-    val n = connectionCount(d.item)
+    val torrent = d.item.kind == DownloadKind.Torrent
+    val n = if (torrent) d.peers else connectionCount(d.item)
+    val what = if (torrent) "peer" else "connection"
     Column(
         modifier
             .testTag("detail-diagram")
-            .semantics { contentDescription = "Speed $total over ${if (n == 1) "one connection" else "$n connections"}" },
+            .semantics { contentDescription = "Speed $total over ${if (n == 1) "one $what" else "$n ${what}s"}" },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Mono(if (n == 1) "1 CONNECTION" else "$n CONNECTIONS", c.textSecondary, 10, spacing = 1)
+        if (torrent) {
+            Mono("PEERS $n", c.textSecondary, 10, Modifier.testTag("detail-peers"), spacing = 1)
+        } else {
+            Mono(if (n == 1) "1 CONNECTION" else "$n CONNECTIONS", c.textSecondary, 10, spacing = 1)
+        }
         Mono(total, c.text, 24, Modifier.testTag("detail-single-speed"), bold = true)
+        // This version never sends a piece: what a torrent uploaded is always nothing, and the view says so.
+        if (torrent) Mono("uploaded ${formatBytes(0)}", c.textSecondary, 10, Modifier.testTag("detail-uploaded"), spacing = 1)
     }
 }
 
@@ -342,7 +350,11 @@ fun ChunkMap(
             }
             Spacer(Modifier.weight(1f))
             Mono(
-                "${d.cells.size} $unitName · ${formatBytes(d.cellBytes)} each",
+                if (d.groupedPieces > 0) {
+                    "${d.groupedPieces} $unitName · ${formatBytes(d.cellBytes)} per square"
+                } else {
+                    "${d.cells.size} $unitName · ${formatBytes(d.cellBytes)} each"
+                },
                 c.textSecondary,
                 11,
                 Modifier.testTag("detail-map-caption"),

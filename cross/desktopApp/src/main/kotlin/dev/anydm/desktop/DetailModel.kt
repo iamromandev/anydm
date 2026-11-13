@@ -13,6 +13,10 @@ private const val POINTS = 60
 private const val RAMP = 5
 private const val PAUSED_TAIL = 10
 private const val MAX_CHUNKS = 128
+
+/** The most cells a real torrent's piece map has; a torrent with more pieces puts several in each cell. */
+private const val MAX_PIECE_CELLS = 2_048
+private const val MIN_PIECE_LENGTH = 16_384L
 private const val CHUNK_BYTES = 3 * MIB
 private const val PIECE_BYTES = 128L * 1024
 private const val TORRENT_PEERS = 9
@@ -61,6 +65,8 @@ data class Detail(
     val folder: String = "~/Downloads",
     /** A real download: [series] is its one measured speed history, and there are no per-network rows, shares or chunks. */
     val real: Boolean = false,
+    /** A real torrent's piece count, when it is more than [cells] (several pieces share a cell); else 0. */
+    val groupedPieces: Int = 0,
 )
 
 fun detailSample(): HomeState {
@@ -182,6 +188,47 @@ private fun realCells(item: DownloadItem): Pair<List<Cell>, Long> {
     return cells to size
 }
 
+/**
+ * The piece map of a real torrent, from its verified [DownloadItem.pieces] and the pieces [DownloadItem.inFlight] (only while it
+ * runs): one cell per piece up to [MAX_PIECE_CELLS], above that a cell holds the same number of pieces each and is done when all of
+ * them are, in flight when any is, else missing. A finished torrent is all done. A row with no pieces yet has no map. The work is one
+ * pass over the pieces (bit tests) and over the in-flight set, so a 100,000-piece torrent costs a few milliseconds.
+ */
+private fun torrentCells(item: DownloadItem): Pair<List<Cell>, Long> {
+    val pieces = item.pieces ?: return emptyList<Cell>() to 0L
+    val n = pieces.size
+    if (n == 0 || item.totalBytes <= 0) return emptyList<Cell>() to 0L
+    val group = (n + MAX_PIECE_CELLS - 1) / MAX_PIECE_CELLS
+    val count = (n + group - 1) / group
+    val flight = BooleanArray(count)
+    if (item.status == DownloadStatus.Downloading) {
+        for (i in item.inFlight) if (i in 0 until n) flight[i / group] = true
+    }
+    val finished = item.status == DownloadStatus.Finished
+    val cells =
+        List(count) { c ->
+            val from = c * group
+            val to = minOf(n, from + group)
+            var whole = true
+            if (!finished) {
+                for (i in from until to) {
+                    if (!pieces.has(i)) {
+                        whole = false
+                        break
+                    }
+                }
+            }
+            when {
+                whole -> Cell(CellState.Done, -1)
+                flight[c] -> Cell(CellState.InFlight, -1)
+                else -> Cell(CellState.Pending, -1)
+            }
+        }
+    // The piece length is not kept with the row: it is the power of two the size and the count allow.
+    val pieceLength = if (n == 1) item.totalBytes else generateSequence(MIN_PIECE_LENGTH) { it * 2 }.first { it * n >= item.totalBytes }
+    return cells to pieceLength * group
+}
+
 /** The byte runs that are done, in file order, with touching ones joined. */
 private fun doneRuns(spans: List<Span>): List<LongRange> {
     val runs = ArrayList<LongRange>()
@@ -213,7 +260,7 @@ private fun realDetail(
     val samples = if (running || item.status == DownloadStatus.Finished) history else history + 0L
     val tail = samples.takeLast(POINTS)
     val points = List(POINTS - tail.size) { 0L } + tail
-    val (cells, cellBytes) = realCells(item)
+    val (cells, cellBytes) = if (item.kind == DownloadKind.Torrent) torrentCells(item) else realCells(item)
     return Detail(
         item = item,
         rows = emptyList(),
@@ -225,10 +272,12 @@ private fun realDetail(
         cells = cells,
         cellBytes = cellBytes,
         retries = 0,
-        peers = 0,
+        // A torrent's peers are the ones connected now; nothing is connected to a row that is not running.
+        peers = if (item.kind == DownloadKind.Torrent && running) item.peers else 0,
         elapsedSec = 0,
         folder = folder,
         real = true,
+        groupedPieces = item.pieces?.size?.takeIf { item.kind == DownloadKind.Torrent && it > cells.size } ?: 0,
     )
 }
 
@@ -240,7 +289,7 @@ fun buildDetail(
     /** The speeds a real download reported this session, oldest first. */
     history: List<Long> = emptyList(),
 ): Detail {
-    if (item.kind == DownloadKind.Direct && item.url != null) return realDetail(item, history, folder)
+    if ((item.kind == DownloadKind.Direct && item.url != null) || item.realTorrent()) return realDetail(item, history, folder)
     val torrent = item.kind == DownloadKind.Torrent
     val finished = item.status == DownloadStatus.Finished
     val flags = networks.map { it.enabled && it.id !in off }

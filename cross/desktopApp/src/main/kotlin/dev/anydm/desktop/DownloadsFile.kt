@@ -2,6 +2,7 @@ package dev.anydm.desktop
 
 import dev.anydm.engine.http.MAX_CONNECTIONS
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.PieceSet
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
@@ -65,6 +66,14 @@ data class DownloadDto(
     val ranges: List<RangeDto>? = null,
     /** The identity of the `.part` file the [ranges] belong to; a row with ranges and none has ranges that are not trusted. */
     val partId: String? = null,
+    /** A real torrent's info hash, 40 lowercase hex digits; a row from before torrents were real has none. */
+    val infoHash: String? = null,
+    /** A real torrent's verified pieces, a bitfield in base64 ([PieceSet.toBase64]); none until it first starts. */
+    val pieces: String? = null,
+    /** How many pieces [pieces] is for: the bitfield alone cannot say (its last byte may have spare bits). */
+    val pieceCount: Int? = null,
+    /** A magnet row made by this build, a simulation: it keeps pausing and resuming as one. A torrent row with no info hash and no mark is older. */
+    val sim: Boolean = false,
 )
 
 fun toDownloadsFile(list: List<DownloadItem>): DownloadsFile =
@@ -87,6 +96,10 @@ fun toDownloadsFile(list: List<DownloadItem>): DownloadsFile =
                     it.connections,
                     it.spans?.map { r -> RangeDto(r.start, r.end, r.done) },
                     it.partId,
+                    it.infoHash,
+                    it.pieces?.toBase64(),
+                    it.pieces?.size,
+                    it.simulated,
                 )
             },
     )
@@ -118,8 +131,24 @@ fun fromDownloadsFile(file: DownloadsFile): List<DownloadItem> =
             connections = it.connections.coerceIn(1, MAX_CONNECTIONS),
             spans = it.ranges?.map { r -> Span(r.start, r.end, r.done) },
             partId = it.partId,
+            infoHash = it.infoHash,
+            pieces = claimOf(it),
+            simulated = it.sim,
         )
     }
+
+/** The most pieces a saved claim may be for: a 10 MiB `.torrent` holds at most this many 20-byte hashes. */
+private const val MAX_SAVED_PIECES = 10 * 1024 * 1024 / 20
+
+/**
+ * The pieces a saved torrent row claims. A claim that does not decode for its count is an empty one, never null: null would make
+ * the engine take the row for one that never ran and pick new file names, leaving the files it made before behind.
+ */
+private fun claimOf(d: DownloadDto): PieceSet? {
+    val text = d.pieces ?: return null
+    val count = d.pieceCount?.takeIf { it in 0..MAX_SAVED_PIECES } ?: return PieceSet.empty(0)
+    return PieceSet.fromBase64(count, text) ?: PieceSet.empty(count)
+}
 
 /** Any case of the scheme, any length of link (signed links are long): the file's own size cap is the limit. */
 private fun isHttpUrl(url: String): Boolean = url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
@@ -132,6 +161,7 @@ private fun rowProblem(d: DownloadDto): String? =
         d.folder != null && !isUsableFolder(d.folder) -> "bad download folder"
         d.done < 0 || (d.total != null && d.total < 0) -> "negative download size"
         d.kind == DownloadKind.Direct && (d.url == null || !isHttpUrl(d.url)) -> "bad download link"
+        d.infoHash != null && !isInfoHashHex(d.infoHash) -> "bad info hash"
         d.ranges != null && !rangesUsable(d.ranges, d.total) -> "bad download ranges"
         else -> null
     }

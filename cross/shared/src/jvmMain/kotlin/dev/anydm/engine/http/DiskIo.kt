@@ -6,10 +6,14 @@ import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 
 /** A part file written at arbitrary offsets. [write] is safe to call from several threads for disjoint ranges. */
 interface PartFile : Closeable {
@@ -44,6 +48,18 @@ interface DiskIo {
 
     fun delete(p: Path)
 
+    /** Deletes [p] and, when it is a folder, everything in it; a link is removed, never followed. No error when it is not there. */
+    fun deleteTree(p: Path) = delete(p)
+
+    /** Whether [p] is itself a symbolic link (what it points to is not looked at). False when it is not there. */
+    fun isLink(p: Path): Boolean = false
+
+    /**
+     * The entries of the folder [dir], links not followed; null when [dir] is not a folder (a file, a link, nothing there) or
+     * cannot be listed. The default says nothing is known.
+     */
+    fun children(dir: Path): List<Path>? = null
+
     fun mkdirs(p: Path)
 
     /**
@@ -63,6 +79,18 @@ interface DiskIo {
         p: Path,
         len: Int,
     ): ByteArray?
+
+    /**
+     * Reads up to [len] bytes at position [pos] of [p] into [buf] at [off] and returns how many it read: fewer than [len] only at the
+     * end of the file, 0 at or past it. A file that is not there fails with an [IOException].
+     */
+    fun readAt(
+        p: Path,
+        pos: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int
 }
 
 open class RealDiskIo : DiskIo {
@@ -96,6 +124,41 @@ open class RealDiskIo : DiskIo {
         Files.deleteIfExists(p)
     }
 
+    override fun deleteTree(p: Path) {
+        if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) return
+        // walkFileTree does not follow links by default: a link in the tree is deleted as the file it is.
+        Files.walkFileTree(
+            p,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(
+                    file: Path,
+                    attrs: BasicFileAttributes,
+                ): FileVisitResult {
+                    Files.deleteIfExists(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(
+                    dir: Path,
+                    exc: IOException?,
+                ): FileVisitResult {
+                    if (exc != null) throw exc
+                    Files.deleteIfExists(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            },
+        )
+    }
+
+    override fun isLink(p: Path): Boolean = Files.isSymbolicLink(p)
+
+    override fun children(dir: Path): List<Path>? =
+        try {
+            if (Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) Files.list(dir).use { it.toList() } else null
+        } catch (_: IOException) {
+            null
+        }
+
     override fun mkdirs(p: Path) {
         Files.createDirectories(p)
     }
@@ -121,6 +184,25 @@ open class RealDiskIo : DiskIo {
     }
 
     override fun freeSpace(dir: Path): Long = Files.getFileStore(dir).usableSpace
+
+    override fun readAt(
+        p: Path,
+        pos: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
+        FileChannel.open(p, StandardOpenOption.READ).use { channel ->
+            val bb = ByteBuffer.wrap(buf, off, len)
+            var at = pos
+            while (bb.hasRemaining()) {
+                val n = channel.read(bb, at)
+                if (n < 0) break
+                at += n
+            }
+            return (at - pos).toInt()
+        }
+    }
 
     override fun readTail(
         p: Path,

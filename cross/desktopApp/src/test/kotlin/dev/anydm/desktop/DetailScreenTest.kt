@@ -28,6 +28,7 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.v2.runComposeUiTest
+import dev.anydm.engine.torrent.PieceSet
 import kotlin.test.Test
 
 @OptIn(ExperimentalTestApi::class)
@@ -661,5 +662,76 @@ class DetailScreenTest {
             home()
             onNodeWithTag("chevron-3").performClick()
             assertMenuClearsChip()
+        }
+
+    private val realTorrent =
+        DownloadItem(
+            "7",
+            "Show",
+            100 * 16_384L,
+            10 * 16_384L,
+            3L * 1024 * 1024,
+            DownloadStatus.Downloading,
+            DownloadKind.Torrent,
+            files = listOf(SampleFile("a.bin", 100 * 16_384L)),
+            infoHash = "ab".repeat(20),
+            pieces = PieceSet.of(100, 0 until 10),
+            inFlight = setOf(10, 11),
+            peers = 7,
+        )
+
+    @Test
+    fun aRealTorrentShowsPeersUploadedZeroAndItsPieceMapAndNoNetworkBreakdown() =
+        runComposeUiTest {
+            homeWith(realTorrent)
+            onNodeWithTag("chevron-7").performClick()
+            text("detail-peers", "PEERS 7")
+            text("detail-uploaded", "uploaded 0 B")
+            onNodeWithTag("detail-table").assertDoesNotExist()
+            onNodeWithTag("detail-contribution").assertDoesNotExist()
+            onNodeWithTag("detail-map").assertIsDisplayed()
+            onNodeWithContentDescription("Chunk map, 100 pieces, 10 done").assertIsDisplayed()
+            text("detail-map-caption", "100 pieces · 16.0 KB each")
+            text("detail-single-speed", "3.0 MB/s")
+        }
+
+    @Test
+    fun aRealTorrentWithMorePiecesThanSquaresSaysSoInTheMapCaption() =
+        runComposeUiTest {
+            homeWith(
+                realTorrent.copy(
+                    totalBytes = 5000 * 16_384L,
+                    pieces = PieceSet.of(5000, 0 until 10),
+                    doneBytes = 10 * 16_384L,
+                    inFlight = emptySet(),
+                ),
+            )
+            onNodeWithTag("chevron-7").performClick()
+            text("detail-map-caption", "5000 pieces · 48.0 KB per square")
+        }
+
+    @Test
+    fun aFinishedRealTorrentShowsNoNetworkBreakdownAndUploadedZero() =
+        runComposeUiTest {
+            homeWith(
+                realTorrent.copy(
+                    status = DownloadStatus.Finished,
+                    doneBytes = realTorrent.totalBytes,
+                    pieces =
+                        PieceSet.of(
+                            100,
+                            0 until 100,
+                        ),
+                ),
+            )
+            onNodeWithTag("chevron-7").performClick()
+            onNodeWithTag("detail-table").assertDoesNotExist()
+            onNodeWithTag("detail-contribution").assertDoesNotExist()
+            text("detail-stat-uploaded", "0 B")
+            text("detail-stat-peers", "0")
+            text("detail-stat-size", "1.6 MB")
+            onNodeWithTag("detail-stat-streams").assertDoesNotExist()
+            onNodeWithTag("detail-stat-networks").assertDoesNotExist()
+            onNodeWithTag("detail-stat-connections").assertDoesNotExist()
         }
 }

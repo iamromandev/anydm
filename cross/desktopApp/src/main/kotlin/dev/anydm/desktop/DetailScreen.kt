@@ -468,12 +468,22 @@ private fun StatsStrip(
         }
     val stats =
         if (d.real) {
-            // One measured connection: no network count, and no clock for a transfer this session may only have seen part of.
-            listOf(
-                Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
-                Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
-                Triple("CONNECTIONS", "connections", connectionCount(d.item).toString()),
-            )
+            if (d.item.kind == DownloadKind.Torrent) {
+                // A real torrent: its peers, and the nothing it uploads (this version never sends a piece). No network count either.
+                listOf(
+                    Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
+                    Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
+                    Triple(last.first, last.second, last.third.toString()),
+                    Triple("UPLOADED", "uploaded", formatBytes(0)),
+                )
+            } else {
+                // One measured connection: no network count, and no clock for a transfer this session may only have seen part of.
+                listOf(
+                    Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
+                    Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
+                    Triple("CONNECTIONS", "connections", connectionCount(d.item).toString()),
+                )
+            }
         } else {
             listOf(
                 Triple("SIZE", "size", formatBytes(d.item.totalBytes)),

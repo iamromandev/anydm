@@ -69,6 +69,8 @@ class ShortcutsTest {
             picker,
             object : TorrentLoader {
                 override suspend fun load(path: Path): TorrentResult = torrents[path] ?: TorrentResult.Err("Can't read file")
+
+                override suspend fun bytes(path: Path): ByteArray? = null
             },
             "/home/test",
         )
@@ -405,7 +407,10 @@ class ShortcutsTest {
     fun modOWithAPickedTorrentLoadsIt() =
         runComposeUiTest {
             val path = Path.of("/t/show.torrent")
-            torrents[path] = TorrentResult.Ok(TorrentMeta("Show", listOf(TorrentFile("a.mkv", 1_000_000))))
+            torrents[path] =
+                TorrentResult.Ok(
+                    TorrentMeta("Show", listOf(TorrentFile("a.mkv", 1_000_000)), trackers = listOf(listOf("http://tracker.test/announce"))),
+                )
             picker.torrent = path
             home()
             mod(Key.O)

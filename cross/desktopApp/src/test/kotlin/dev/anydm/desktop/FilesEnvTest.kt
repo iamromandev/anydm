@@ -63,7 +63,8 @@ class FilesEnvTest {
         }
     }
 
-    private val tiny = "d4:infod4:name1:a6:lengthi5eee".encodeToByteArray()
+    // One 5-byte file in one piece: `readTorrent` needs the piece length and exactly one 20-byte hash for it.
+    private val tiny = ("d4:infod6:lengthi5e4:name1:a12:piece lengthi16384e6:pieces20:" + "\u0000".repeat(20) + "ee").encodeToByteArray()
 
     @Test
     fun loaderReadsAndParsesAFile() {

@@ -3,6 +3,8 @@ package dev.anydm.desktop
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.Reasons
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.CANT_RESUME
+import dev.anydm.engine.torrent.PieceSet
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -614,5 +616,124 @@ class QueueModelTest {
             started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 0, spans, "AA")).list.single().liveConnections,
         )
         assertEquals(1, started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 0)).list.single().liveConnections)
+    }
+
+    // Torrent rows (R12, R14, NFR6)
+    private val hex = "ab".repeat(20)
+
+    private fun tor(
+        status: DownloadStatus = DownloadStatus.Downloading,
+        pieces: PieceSet? = PieceSet.of(8, listOf(0, 1)),
+        infoHash: String? = hex,
+        done: Long = 20,
+    ) = DownloadItem("t", "T", 80, done, 0, status, DownloadKind.Torrent, infoHash = infoHash, pieces = pieces)
+
+    private fun only(row: DownloadItem) = QueueState(listOf(row), emptyList())
+
+    @Test
+    fun aTorrentProgressTakesItsPiecesInFlightSetAndPeers() {
+        val set = PieceSet.of(8, listOf(0, 1, 2))
+        val row = progressed(only(tor()), "t", 30, 80, 5, pieces = set, inFlight = setOf(5, 6), peers = 7).list.single()
+        assertEquals(listOf(set, setOf(5, 6), 7, 30L), listOf(row.pieces, row.inFlight, row.peers, row.doneBytes))
+    }
+
+    @Test
+    fun aTorrentProgressWithoutPiecesIsTheRecheckAndNeitherLowersTheStoredClaimNorTheDoneBytes() {
+        val before = tor()
+        val row = progressed(only(before), "t", 0, 80, 0, connections = 0).list.single()
+        assertEquals(before.pieces, row.pieces)
+        assertEquals(20L, row.doneBytes)
+    }
+
+    @Test
+    fun aFreshTorrentProgressWithoutPiecesStillMovesTheDoneBytes() {
+        val row = progressed(only(tor(pieces = null, done = 0)), "t", 12, 80, 0).list.single()
+        assertEquals(12L, row.doneBytes)
+    }
+
+    @Test
+    fun aTorrentStartedTakesThePiecesThatHeldTheRecheck() {
+        val checked = PieceSet.of(8, listOf(0))
+        val row = started(only(tor()), EngineEvent.Started("t", "T", 80, null, null, 10, pieces = checked)).list.single()
+        assertEquals(listOf(checked, 10L), listOf(row.pieces, row.doneBytes))
+    }
+
+    @Test
+    fun stoppedAndFailedKeepThePiecesAndTakeTheEnginesWhenItSaysThem() {
+        val set = PieceSet.of(8, listOf(0, 1, 2))
+        val paused = only(tor(DownloadStatus.Paused))
+        assertEquals(set, stopped(paused, "t", 30, emptyList(), pieces = set).list.single().pieces)
+        assertEquals(paused.list.single().pieces, stopped(paused, "t", 30, emptyList()).list.single().pieces)
+        val failedRow = failed(only(tor()), "t", "No peers", 20, 1, pieces = set).list.single()
+        assertEquals(set, failedRow.pieces)
+        assertEquals(tor().pieces, failed(only(tor()), "t", "No peers", 20, 1).list.single().pieces)
+    }
+
+    // A row that never ran has no pieces: only Started (the engine's word that the files have the row's name) gives it some, so no
+    // other event can make a name the row only hoped for look settled (it would then be deleted with "also delete the files").
+    private val claim = PieceSet.of(8, emptyList())
+
+    @Test
+    fun aTorrentRowThatNeverStartedTakesNoPiecesFromFailedStoppedOrProgress() {
+        val fresh = tor(DownloadStatus.Downloading, pieces = null, done = 0)
+        assertEquals(null, failed(only(fresh), "t", "Disk full", 0, 1, pieces = claim).list.single().pieces)
+        assertEquals(
+            null,
+            stopped(only(fresh.copy(status = DownloadStatus.Paused)), "t", 0, emptyList(), pieces = claim).list.single().pieces,
+        )
+        assertEquals(null, progressed(only(fresh), "t", 0, 80, 0, pieces = claim).list.single().pieces)
+    }
+
+    @Test
+    fun aStoppedThatCameAfterAStartedTheRowDidNotSeeDoesNotMoveItsDoneBytesEither() {
+        val paused = tor(DownloadStatus.Paused, pieces = null, done = 0)
+        val row = stopped(only(paused), "t", 30, emptyList(), pieces = PieceSet.of(8, listOf(0, 1, 2))).list.single()
+        assertEquals(listOf(null, 0L), listOf(row.pieces, row.doneBytes))
+    }
+
+    @Test
+    fun onceStartedATorrentRowTakesThePiecesOfLaterEvents() {
+        val fresh = tor(DownloadStatus.Downloading, pieces = null, done = 0)
+        val begun = started(only(fresh), EngineEvent.Started("t", "T", 80, null, null, 0, pieces = claim))
+        val more = PieceSet.of(8, listOf(0, 1))
+        assertEquals(more, progressed(begun, "t", 20, 80, 0, pieces = more).list.single().pieces)
+        assertEquals(more, failed(begun, "t", "No peers", 20, 1, pieces = more).list.single().pieces)
+        assertEquals(more, stopped(pauseAll(begun, setOf("t"), 1), "t", 20, emptyList(), pieces = more).list.single().pieces)
+    }
+
+    @Test
+    fun aRowThatStopsRunningShowsNoPeersAndNothingInFlight() {
+        val live = progressed(only(tor()), "t", 30, 80, 5, inFlight = setOf(3), peers = 4)
+        val row = pauseAll(live, setOf("t"), 1).list.single()
+        assertEquals(listOf(0, emptySet<Int>()), listOf(row.peers, row.inFlight))
+        val bad = failed(live, "t", "No peers", 30, 1).list.single()
+        assertEquals(listOf(0, emptySet<Int>()), listOf(bad.peers, bad.inFlight))
+    }
+
+    @Test
+    fun aFinishedTorrentKeepsItsInfoHashAndHasEveryPieceSoItsMapStaysFull() {
+        val row = finished(only(tor()), "t", 80, 1).list.single()
+        assertEquals(listOf(hex, PieceSet.of(8, 0 until 8)), listOf(row.infoHash, row.pieces))
+        assertEquals(null, finished(only(tor(pieces = null)), "t", 80, 1).list.single().pieces)
+    }
+
+    @Test
+    fun resumingATorrentRowWithoutAnInfoHashFailsItWithCantResumeAndStartsNothing() {
+        val out = resumeAll(only(tor(DownloadStatus.Paused, pieces = null, infoHash = null).copy(noCopy = true)), setOf("t"), 3)
+        val row = out.list.single()
+        assertEquals(listOf(DownloadStatus.Failed, CANT_RESUME), listOf(row.status, row.error))
+        assertEquals(emptyList(), out.queue)
+    }
+
+    @Test
+    fun aSimulatedTorrentRowOfThisSessionStillResumesAsItDid() {
+        val row = resumeAll(only(tor(DownloadStatus.Paused, pieces = null, infoHash = null)), setOf("t"), 3).list.single()
+        assertEquals(DownloadStatus.Downloading, row.status)
+    }
+
+    @Test
+    fun resumingATorrentRowWithAnInfoHashStartsIt() {
+        val row = resumeAll(only(tor(DownloadStatus.Paused)), setOf("t"), 3).list.single()
+        assertEquals(DownloadStatus.Downloading, row.status)
     }
 }

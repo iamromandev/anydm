@@ -102,11 +102,12 @@ class DownloadEngine(
     maxTotalConnections: Int = MAX_TOTAL_CONNECTIONS,
     private val minSplit: Long = MIN_SPLIT,
     private val retry: RetryPolicy = RetryPolicy(),
+    /** The speed cap and the buckets of the running downloads; pass one that other engines use too to split the cap between them. */
+    val shares: RateShares = RateShares(),
 ) : Engine {
     private val jobScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
     private val bus = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 1024)
     override val events: SharedFlow<EngineEvent> = bus.asSharedFlow()
-    private val shares = RateShares()
     private val jobs = HashMap<String, Job>()
     private val permits = ConnectionPermits(maxTotalConnections)
 

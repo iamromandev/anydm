@@ -7,6 +7,8 @@ import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.LinkProber
 import dev.anydm.engine.http.PartFile
 import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.torrent.TorrentEngine
+import dev.anydm.engine.torrent.TorrentJob
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -84,6 +86,81 @@ class FakeEngine(
     }
 }
 
+/** Records every torrent start and stop; the test emits the events the engine would. Never touches the network or the disk. */
+class FakeTorrentEngine(
+    val guard: ThreadGuard = ThreadGuard(),
+) : TorrentEngine {
+    private val bus = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 256)
+    override val events: SharedFlow<EngineEvent> = bus
+    val starts = CopyOnWriteArrayList<TorrentJob>()
+    val stops = CopyOnWriteArrayList<String>()
+
+    /** Every call in the order it came: "start:1", "stop:1", "join:1", "forget:1". */
+    val log = CopyOnWriteArrayList<String>()
+
+    /** When set, [join] waits for it, as a job that is slow to wind down would make it. */
+    @Volatile var joinGate: CompletableDeferred<Unit>? = null
+
+    override fun start(job: TorrentJob) {
+        guard.check()
+        log.add("start:${job.id}")
+        starts.add(job)
+    }
+
+    override fun stop(id: String) {
+        guard.check()
+        log.add("stop:$id")
+        stops.add(id)
+    }
+
+    override suspend fun join(id: String) {
+        guard.check()
+        log.add("join:$id")
+        joinGate?.await()
+    }
+
+    override fun forget(id: String) {
+        guard.check()
+        log.add("forget:$id")
+    }
+
+    fun emit(e: EngineEvent) {
+        check(bus.tryEmit(e))
+    }
+}
+
+/** The app's `.torrent` copies in memory, by info hash. Counts calls from a forbidden (UI) thread. */
+class FakeTorrentFiles(
+    val guard: ThreadGuard = ThreadGuard(),
+) : TorrentFileStore {
+    val saved = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    val deleted = CopyOnWriteArrayList<String>()
+
+    @Volatile var failSave = false
+
+    override fun save(
+        hex: String,
+        bytes: ByteArray,
+    ) {
+        guard.check()
+        if (failSave) throw java.io.IOException("disk full")
+        saved[hex] = bytes
+    }
+
+    override fun path(hex: String): Path = Path.of("/app/torrents/$hex.torrent")
+
+    override fun read(hex: String): ByteArray? {
+        guard.check()
+        return saved[hex]
+    }
+
+    override fun delete(hex: String) {
+        guard.check()
+        saved.remove(hex)
+        deleted.add(hex)
+    }
+}
+
 /** Answers from [answers] by URL (default: [fallback]); [gate], when set, runs first so a test can hold a probe in flight. */
 class FakeProber(
     val guard: ThreadGuard = ThreadGuard(),
@@ -137,7 +214,7 @@ class FakeOpener(
 }
 
 /** A folder in memory: file name to bytes. Writes through [openPart] land in the map when the stream is flushed or closed. */
-class MemoryDiskIo(
+open class MemoryDiskIo(
     val guard: ThreadGuard = ThreadGuard(),
 ) : DiskIo {
     val files = ConcurrentHashMap<Path, ByteArray>()
@@ -198,6 +275,17 @@ class MemoryDiskIo(
         guard.check()
     }
 
+    /** The entries under [dir] that hold files, as a folder would list them; null when nothing is under it. */
+    override fun children(dir: Path): List<Path>? {
+        guard.check()
+        val kids =
+            files.keys
+                .filter { it != dir && it.startsWith(dir) }
+                .map { dir.resolve(dir.relativize(it).getName(0)) }
+                .distinct()
+        return kids.ifEmpty { null }
+    }
+
     /** Positional writes into the in-memory file, which is [size] long when given (zero-filled). */
     override fun openSpans(
         p: Path,
@@ -247,5 +335,20 @@ class MemoryDiskIo(
     override fun freeSpace(dir: Path): Long {
         guard.check()
         return Long.MAX_VALUE
+    }
+
+    override fun readAt(
+        p: Path,
+        pos: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
+        guard.check()
+        val bytes = files[p] ?: throw java.io.IOException("No such file")
+        if (pos >= bytes.size) return 0
+        val n = minOf(len.toLong(), bytes.size - pos).toInt()
+        System.arraycopy(bytes, pos.toInt(), buf, off, n)
+        return n
     }
 }

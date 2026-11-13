@@ -30,6 +30,8 @@ sealed interface BValue {
 sealed interface DecodeResult {
     data class Ok(
         val value: BValue,
+        /** Where the top-level `info` value sits in the input, exactly as written there; null when the root is no dict or has no `info`. */
+        val infoRange: IntRange? = null,
     ) : DecodeResult
 
     data class Err(
@@ -52,7 +54,7 @@ fun decodeBencode(
     return when {
         value == null -> DecodeResult.Err(parser.error ?: NOT_BENCODED)
         parser.at != bytes.size -> DecodeResult.Err(NOT_BENCODED)
-        else -> DecodeResult.Ok(value)
+        else -> DecodeResult.Ok(value, parser.infoRange)
     }
 }
 
@@ -68,6 +70,9 @@ private class Parser(
 ) {
     var at = 0
     var error: String? = null
+
+    /** Where the top-level dict's `info` value starts and ends in [src]; set while parsing it. */
+    var infoRange: IntRange? = null
     private var nodes = 0
 
     private fun fail(reason: String = NOT_BENCODED): BValue? {
@@ -162,13 +167,16 @@ private class Parser(
             if (src[at] !in DIGITS) return fail()
             val key = bytes()?.decodeToString() ?: return null
             if (key in entries) return fail()
+            val start = at
             entries[key] = value(depth) ?: return null
+            if (depth == 1 && key == INFO) infoRange = start until at
         }
         at++
         return BValue.BDict(entries)
     }
 
     private companion object {
+        const val INFO = "info"
         val I = 'i'.code.toByte()
         val L = 'l'.code.toByte()
         val D = 'd'.code.toByte()
@@ -177,5 +185,74 @@ private class Parser(
         val MINUS = '-'.code.toByte()
         val ZERO = '0'.code.toByte()
         val DIGITS = ZERO..'9'.code.toByte()
+    }
+}
+
+/** Encodes [value] canonically: dictionary keys in byte order, no whitespace. The inverse of [decodeBencode] for canonical input. */
+fun encodeBencode(value: BValue): ByteArray {
+    val out = Sink()
+    out.write(value)
+    return out.toByteArray()
+}
+
+/** A growing byte buffer; common code has no `ByteArrayOutputStream`. */
+private class Sink {
+    private var buf = ByteArray(256)
+    private var size = 0
+
+    fun toByteArray(): ByteArray = buf.copyOf(size)
+
+    private fun put(b: ByteArray) {
+        if (size + b.size > buf.size) buf = buf.copyOf(maxOf(buf.size * 2, size + b.size))
+        b.copyInto(buf, size)
+        size += b.size
+    }
+
+    private fun put(text: String) = put(text.encodeToByteArray())
+
+    fun write(v: BValue) {
+        when (v) {
+            is BValue.BInt -> {
+                put("i${v.v}e")
+            }
+
+            is BValue.BBytes -> {
+                bytes(v.b)
+            }
+
+            is BValue.BList -> {
+                put("l")
+                v.items.forEach { write(it) }
+                put("e")
+            }
+
+            is BValue.BDict -> {
+                put("d")
+                v.entries.entries
+                    .map { it.key.encodeToByteArray() to it.value }
+                    .sortedWith { a, b -> compareUnsigned(a.first, b.first) }
+                    .forEach { (k, item) ->
+                        bytes(k)
+                        write(item)
+                    }
+                put("e")
+            }
+        }
+    }
+
+    private fun bytes(b: ByteArray) {
+        put("${b.size}:")
+        put(b)
+    }
+
+    private fun compareUnsigned(
+        a: ByteArray,
+        b: ByteArray,
+    ): Int {
+        for (i in 0 until minOf(a.size, b.size)) {
+            val c = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (c != 0) return c
+        }
+        return a.size - b.size
     }
 }

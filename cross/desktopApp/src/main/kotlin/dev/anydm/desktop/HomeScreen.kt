@@ -64,6 +64,8 @@ import dev.anydm.engine.http.doneOf
 import dev.anydm.engine.http.finishedOver
 import dev.anydm.engine.http.sanitize
 import dev.anydm.engine.http.uniqueName
+import dev.anydm.engine.torrent.TorrentResult
+import dev.anydm.engine.torrent.readTorrent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -155,9 +157,21 @@ fun HomeScreen(
     val saveNow = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) }
     // New direct links, one at a time: each settles its name against the disk and the rows before the next one looks.
     val adds = remember { Channel<NewLink>(Channel.UNLIMITED) }
+    // New `.torrent` files, one at a time too: each is checked against the rows and copied into the app's folder before its row exists.
+    val torrentAdds = remember { Channel<NewTorrent>(Channel.UNLIMITED) }
     // Rows removed with "delete files" while their job ran, by id: the job may still finish and rename to its final file, and the
     // Finished event that follows then takes that file too. Forgotten at that event, at a failure, or when a new row takes the id.
     val removedRunning = remember { mutableMapOf<String, DownloadItem>() }
+    // The info hashes of `.torrent` files whose copy is being saved for a row that is not in the list yet: a delete of the copy of the
+    // same torrent (a row removed a moment ago) must not take what the new row runs from.
+    val pendingHashes =
+        remember {
+            java.util.concurrent.ConcurrentHashMap
+                .newKeySet<String>()
+        }
+    // Every id this session handed out: a removed row's id never comes round again, so the late events of its job (it may still be
+    // winding down) can never be taken for the events of a newer row.
+    val ids = remember { IdIssuer() }
     // The speeds each real download reported this session, for its detail chart. Not saved.
     val speedHistory = remember { mutableStateMapOf<String, List<Long>>() }
     var helpOpen by remember { mutableStateOf(false) }
@@ -195,6 +209,9 @@ fun HomeScreen(
 
     // Commands run later than they were composed, so they read the state as it is at that moment, not these snapshots.
     fun liveQueue() = QueueState(downloads.toList(), queue)
+
+    /** The info hashes of the rows now and of those being added; read by the engine consumer, off the UI thread. */
+    fun liveInfoHashes(): Set<String> = downloads.toList().mapNotNullTo(HashSet()) { it.infoHash } + pendingHashes
 
     fun liveVisible() = filtered(initial.copy(downloads = downloads.toList()), filter)
 
@@ -335,7 +352,8 @@ fun HomeScreen(
         ) {
             // The engine is asked in the same order the queue changed, on one IO consumer, so a stop never overtakes its start.
             // [after] (a file delete) rides in the same batch: it runs once the stop before it has finished.
-            val cmds = engineCommands(liveQueue(), next, defaultFolder(files.home)) + after
+            val cmds =
+                engineCommands(liveQueue(), next, defaultFolder(files.home), downloadEnv.torrentFiles, downloadEnv.peerId) + after
             if (cmds.isNotEmpty()) engineQueue.trySend(cmds)
             downloads.clear()
             downloads.addAll(next.list)
@@ -345,51 +363,70 @@ fun HomeScreen(
         // Engine calls run here, off the UI thread and one batch at a time.
         LaunchedEffect(downloadEnv) {
             for (batch in engineQueue) {
-                withContext(Dispatchers.IO) { batch.forEach { runEngineCommand(downloadEnv, it) } }
+                withContext(Dispatchers.IO) { batch.forEach { runEngineCommand(downloadEnv, it, liveHashes = ::liveInfoHashes) } }
             }
         }
-        LaunchedEffect(downloadEnv) {
-            downloadEnv.engine.events.collect { e ->
-                val q = liveQueue()
-                val concurrency = limits.concurrency
-                when (e) {
-                    is EngineEvent.Started -> {
-                        // Fresh ranges, or another `.part` file than the row's: the ranges and their identity go to disk now, not with
-                        // the next tick. Until they do, what is saved belongs to a file that may be gone.
-                        val fresh = e.spans != null || q.list.firstOrNull { it.id == e.id }?.partId != e.partId
-                        applyQueue(started(q, e))
-                        if (fresh) saveNow.tryEmit(Unit)
-                    }
 
-                    is EngineEvent.Progress -> {
-                        if (q.list.any { it.id == e.id && it.status == DownloadStatus.Downloading }) {
-                            speedHistory[e.id] = (speedHistory[e.id].orEmpty() + e.bytesPerSec).takeLast(SPEED_HISTORY)
-                        }
-                        applyQueue(progressed(q, e.id, e.done, e.total ?: UNKNOWN_SIZE, e.bytesPerSec, e.spans, e.connections, e.partId))
-                    }
+        // One handler for both engines: a row is run by one of them, and its events say the same things.
+        fun onEngineEvent(e: EngineEvent) {
+            val q = liveQueue()
+            val concurrency = limits.concurrency
+            when (e) {
+                is EngineEvent.Started -> {
+                    // Fresh ranges, or another `.part` file than the row's: the ranges and their identity go to disk now, not with
+                    // the next tick. Until they do, what is saved belongs to a file that may be gone.
+                    // A torrent that starts says the pieces that held and the name its files got: the same, and a resume trusts both.
+                    val fresh = e.spans != null || e.pieces != null || q.list.firstOrNull { it.id == e.id }?.partId != e.partId
+                    applyQueue(started(q, e))
+                    if (fresh) saveNow.tryEmit(Unit)
+                }
 
-                    is EngineEvent.Finished -> {
-                        // A row removed with its files while it ran: the job beat the cancel, so its final file is the row's own.
-                        removedRunning.remove(e.id)?.let { gone ->
-                            val late = filesOf(gone.copy(name = e.name ?: gone.name), files.home)?.first
-                            if (late != null) engineQueue.trySend(listOf(EngineCmd.Discard(emptySet(), listOf(late))))
-                        }
-                        applyQueue(finished(q, e.id, e.done, concurrency, e.name))
+                is EngineEvent.Progress -> {
+                    if (q.list.any { it.id == e.id && it.status == DownloadStatus.Downloading }) {
+                        speedHistory[e.id] = (speedHistory[e.id].orEmpty() + e.bytesPerSec).takeLast(SPEED_HISTORY)
                     }
+                    applyQueue(
+                        progressed(
+                            q,
+                            e.id,
+                            e.done,
+                            e.total ?: UNKNOWN_SIZE,
+                            e.bytesPerSec,
+                            e.spans,
+                            e.connections,
+                            e.partId,
+                            e.pieces,
+                            e.inFlight,
+                            e.peers,
+                        ),
+                    )
+                }
 
-                    is EngineEvent.Failed -> {
-                        removedRunning.remove(e.id)
-                        applyQueue(failed(q, e.id, e.reason, e.done, concurrency, e.spans, e.partId, e.cleared))
+                is EngineEvent.Finished -> {
+                    // A row removed with its files while it ran: the job beat the cancel, so its final file is the row's own.
+                    // (A torrent's files were looked for after its job had ended, so its final files are found there already.)
+                    removedRunning.remove(e.id)?.takeIf { !it.realTorrent() }?.let { gone ->
+                        val late = filesOf(gone.copy(name = e.name ?: gone.name), files.home)?.first
+                        if (late != null) engineQueue.trySend(listOf(EngineCmd.Discard(emptySet(), listOf(late))))
                     }
+                    applyQueue(finished(q, e.id, e.done, concurrency, e.name))
+                }
 
-                    // The exact ranges of a stopped segmented job, for the row that was paused (or queued, or failed) meanwhile.
-                    is EngineEvent.Stopped -> {
-                        applyQueue(stopped(q, e.id, e.done, e.spans, e.partId))
-                        saveNow.tryEmit(Unit)
-                    }
+                is EngineEvent.Failed -> {
+                    removedRunning.remove(e.id)
+                    applyQueue(failed(q, e.id, e.reason, e.done, concurrency, e.spans, e.partId, e.cleared, e.pieces))
+                }
+
+                // The exact ranges of a stopped segmented job, for the row that was paused (or queued, or failed) meanwhile.
+                is EngineEvent.Stopped -> {
+                    applyQueue(stopped(q, e.id, e.done, e.spans, e.partId, e.pieces))
+                    saveNow.tryEmit(Unit)
                 }
             }
         }
+        LaunchedEffect(downloadEnv) { downloadEnv.engine.events.collect { onEngineEvent(it) } }
+        LaunchedEffect(downloadEnv) { downloadEnv.torrents.events.collect { onEngineEvent(it) } }
+
         // A new direct link: the server's name when the probe was still out, then a name no file and no row has, then the row.
         // Only the disk is asked on IO; the rows are read here, so a row added a moment ago is already counted.
         LaunchedEffect(downloadEnv) {
@@ -399,16 +436,45 @@ fun HomeScreen(
                 val preview = if (link.preview.awaitingProbe) awaitedProbe(downloadEnv, link.preview) else link.preview
                 val taken = takenNames(downloads.toList(), link.folder, files.home)
                 val name = withContext(Dispatchers.IO) { freeName(preview.name, link.folder, taken, downloadEnv.disk) }
-                val id = nextId(downloads)
-                removedRunning.remove(id) // a removed row's id came round again: its job is not this one
+                val id = ids.next(downloads)
                 val item = newDownloadItem(preview, link.ticked, id, link.folder, link.connections).copy(name = name)
                 applyQueue(addDownload(liveQueue(), item, limits.concurrency))
+            }
+        }
+        // A new `.torrent`: a row with its info hash already there is selected instead (R4); else the app keeps a copy of the file
+        // (R2) and the row is added. The disk is read and written on IO; the rows are read here.
+        LaunchedEffect(downloadEnv) {
+            for (add in torrentAdds) {
+                snapshotFlow { downloadsLoaded }.first { it }
+                val hex = add.preview.infoHash ?: continue
+                val existing = downloads.firstOrNull { it.infoHash == hex }
+                if (existing != null) {
+                    filter = Filter.All
+                    selected = setOf(existing.id)
+                    continue
+                }
+                pendingHashes.add(hex)
+                try {
+                    if (!keepTorrentCopy(files.loader, downloadEnv.torrentFiles, add.preview)) {
+                        notice = Notice(TORRENT_NOT_SAVED, SETTINGS_NOTICE_MS)
+                        continue
+                    }
+                    val id = ids.next(downloads)
+                    applyQueue(addDownload(liveQueue(), newDownloadItem(add.preview, emptySet(), id, add.folder), limits.concurrency))
+                } finally {
+                    pendingHashes.remove(hex)
+                }
             }
         }
         // The total speed limit (or the slow-mode one) caps all running downloads together.
         LaunchedEffect(downloadEnv, limits.total, limits.slow, slow) {
             val cap = if (slow) limits.slow else limits.total
-            withContext(Dispatchers.IO) { downloadEnv.engine.setRate(cap) }
+            // Both engines draw on one RateShares in the real env, so the cap holds for their sum; the call to the engine keeps a
+            // fake engine informed, and the one to the shares is what reaches the torrents.
+            withContext(Dispatchers.IO) {
+                downloadEnv.engine.setRate(cap)
+                downloadEnv.rates.setRate(cap)
+            }
         }
 
         fun persistedFile() = toFile(themeChoice, unit, saveFolder, limits.copy(slowOn = slow), networks.toList())
@@ -614,7 +680,11 @@ fun HomeScreen(
                 flow {
                     while (true) {
                         delay(DOWNLOADS_PROGRESS_SAVE_MS)
-                        if (changed && downloads.any { it.status == DownloadStatus.Downloading && it.spans != null }) emit(current())
+                        if (changed &&
+                            downloads.any { it.status == DownloadStatus.Downloading && (it.spans != null || it.pieces != null) }
+                        ) {
+                            emit(current())
+                        }
                     }
                 },
                 // A stopped job's exact ranges: they come after the pause's own save, so they ask for one of their own.
@@ -655,12 +725,19 @@ fun HomeScreen(
             ids: Set<String>,
             deleteFiles: Boolean = false,
         ) {
-            val gone = downloads.filter { it.id in ids && it.url != null }
+            val gone = downloads.filter { it.id in ids && (it.url != null || it.realTorrent()) }
             val next = removeAll(liveQueue(), ids, limits.concurrency)
             // One command per row: a job that does not end in time spares only its own row's files. Without [deleteFiles] it has no
             // file to remove, but the engine still forgets the row (what it kept of its last run) once the job has ended.
             val discard =
-                gone.map { EngineCmd.Discard(setOf(it.id), if (deleteFiles) listOfNotNull(ownFile(it, files.home)) else emptyList()) }
+                gone.map {
+                    EngineCmd.Discard(
+                        setOf(it.id),
+                        if (deleteFiles && !it.realTorrent()) listOfNotNull(ownFile(it, files.home)) else emptyList(),
+                        listOfNotNull(it.infoHash),
+                        if (deleteFiles) listOfNotNull(ownTorrent(it, files.home)) else emptyList(),
+                    )
+                }
             if (deleteFiles) gone.filter { it.status == DownloadStatus.Downloading }.forEach { removedRunning[it.id] = it }
             applyQueue(next, discard)
             ids.forEach { speedHistory.remove(it) }
@@ -1166,9 +1243,11 @@ fun HomeScreen(
                     onDownload = { preview, ticked, folder, connections ->
                         if (preview is Preview.Direct) {
                             adds.trySend(NewLink(preview, ticked, folder, connections))
+                        } else if (preview is Preview.Torrent && preview.locked) {
+                            torrentAdds.trySend(NewTorrent(preview, folder))
                         } else {
-                            // A torrent row is simulated: no file, no name to settle.
-                            val item = newDownloadItem(preview, ticked, nextId(downloads), folder)
+                            // A magnet row is simulated: no file, no name to settle.
+                            val item = newDownloadItem(preview, ticked, ids.next(downloads), folder)
                             applyQueue(addDownload(liveQueue(), item, limits.concurrency))
                         }
                         saveFolder = folder
@@ -1251,6 +1330,39 @@ private class NewLink(
     val connections: Int,
 )
 
+/** A `.torrent` the user pressed Download on, until its row is added. */
+private class NewTorrent(
+    val preview: Preview.Torrent,
+    val folder: String,
+)
+
+private const val TORRENT_NOT_SAVED = "Couldn't keep a copy of the .torrent file, so it was not added"
+
+/**
+ * Saves the app's copy of the `.torrent` behind [preview], from the file as it is now. False when the file cannot be read again, is
+ * no longer the torrent the dialog showed (its info hash differs), or the copy cannot be written. Never throws.
+ */
+private suspend fun keepTorrentCopy(
+    files: TorrentLoader,
+    copies: TorrentFileStore,
+    preview: Preview.Torrent,
+): Boolean {
+    val hex = preview.infoHash ?: return false
+    val source = preview.source ?: return false
+    return try {
+        val bytes = files.bytes(source) ?: return false
+        withContext(Dispatchers.IO) {
+            if ((readTorrent(bytes) as? TorrentResult.Ok)?.meta?.infoHashHex != hex) return@withContext false
+            copies.save(hex, bytes)
+            true
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
+    }
+}
+
 /** How many speeds a download's chart keeps: one point per progress report. */
 private const val SPEED_HISTORY = 60
 
@@ -1311,13 +1423,28 @@ internal fun freeName(
 
 /** The saved rows without how far each got: what is left is what is worth a write while a download runs. */
 private fun DownloadsFile.withoutProgress(): DownloadsFile =
-    copy(downloads = downloads.map { d -> d.copy(done = 0, ranges = d.ranges?.map { it.copy(done = 0) }) })
+    copy(downloads = downloads.map { d -> d.copy(done = 0, ranges = d.ranges?.map { it.copy(done = 0) }, pieces = null) })
 
 /** The one file this download made: its final file once finished, else the `.part` it writes. Never a file it did not write. */
 private fun ownFile(
     item: DownloadItem,
     home: String,
 ): Path? = filesOf(item, home)?.let { (final, part) -> if (item.status == DownloadStatus.Finished) final else part }
+
+/**
+ * The torrent a row made files of, to go with the row: only once the row has run (it has stored pieces, which only a `Started` of the
+ * engine gives it, or it is finished): before that its name is the torrent's own, which may be a file or a folder of the user's that
+ * the engine will give another name to at the start. Null for a row that is not a real torrent or has not run.
+ */
+private fun ownTorrent(
+    item: DownloadItem,
+    home: String,
+): OwnTorrent? {
+    val hex = item.infoHash ?: return null
+    if (item.pieces == null && item.status != DownloadStatus.Finished) return null
+    val (final, _) = filesOf(item, home) ?: return null
+    return OwnTorrent(hex, final.parent, item.name, item.status == DownloadStatus.Finished)
+}
 
 /** Whether a `.part` file of [size] bytes can be the one the ranges [spans] (with their [partId]) were written for. */
 private fun partFits(
@@ -1339,6 +1466,9 @@ internal fun restoredRows(
     defaultFolder: String,
 ): List<DownloadItem> =
     fromDownloadsFile(file).map { item ->
+        // A torrent row with no info hash has nothing the torrent engine could run from: resuming it says so (NFR6). A magnet row made
+        // since magnet rows carry a mark is a simulation and stays one; one saved before the mark cannot be told from an old torrent row.
+        if (item.kind == DownloadKind.Torrent && item.infoHash == null && !item.simulated) return@map item.copy(noCopy = true)
         if (item.kind != DownloadKind.Direct || item.url == null || item.status == DownloadStatus.Finished) return@map item
         val size =
             try {

@@ -62,14 +62,26 @@ private class FakeLoader(
 ) : TorrentLoader {
     val loaded = mutableListOf<Path>()
 
+    /** The file each torrent that was loaded came from, as bytes: what the app copies when Download is pressed. */
+    val built = java.util.concurrent.ConcurrentHashMap<Path, ByteArray>()
+
     override suspend fun load(path: Path): TorrentResult {
         loaded.add(path)
         if (ignoreCancel) withContext(NonCancellable) { gate?.await() } else gate?.await()
-        return results[path] ?: TorrentResult.Err("Can't read file")
+        val r = results[path] ?: return TorrentResult.Err("Can't read file")
+        if (r !is TorrentResult.Ok) return r
+        // The torrent the test describes, as a real file: its info hash is the one of those bytes.
+        val bytes = TestTorrents.bytes(r.meta.name, r.meta.files.map { it.path to it.size }, r.meta.isSingle, r.meta.trackers)
+        built[path] = bytes
+        return TorrentResult.Ok(TestTorrents.meta(bytes))
     }
+
+    override suspend fun bytes(path: Path): ByteArray? = built[path]
 }
 
 private const val HOME = "/home/test"
+
+private val tr = listOf(listOf("http://tracker.test/announce"))
 
 @OptIn(ExperimentalTestApi::class)
 class FilesTest {
@@ -88,6 +100,7 @@ class FilesTest {
                 TorrentFile("Season 1/E02.mkv", 4_000_000),
                 TorrentFile("notes.txt", 0),
             ),
+            trackers = tr,
         )
 
     private fun ComposeUiTest.home(state: HomeState = emptySample()) =
@@ -143,24 +156,75 @@ class FilesTest {
         }
 
     @Test
-    fun tickingRealFilesUpdatesTheSummaryAndUntickingAllDisablesDownload() =
+    fun theTreeOfARealTorrentIsLockedAllTickedWithTheHintAndItsSummaryNeverChanges() =
         runComposeUiTest {
             home()
             openDialog()
             pickTorrent()
-            onNodeWithTag("file-Season 1/E02.mkv").performClick()
-            onNodeWithTag("file-Season 1/E02.mkv").assertIsOff()
-            onNodeWithTag("preview-detail").assertTextEquals("2 files · 2.9 MB")
-            onNodeWithTag("folder-toggle").assertIsOff()
+            onNodeWithTag("torrent-hint").assertTextEquals("Choosing files comes in a later version")
+            for (f in showMeta.files) {
+                onNodeWithTag("file-${f.path}").assertIsNotEnabled()
+                onNodeWithTag("file-${f.path}").performClick()
+                onNodeWithTag("file-${f.path}").assertIsOn()
+            }
+            onNodeWithTag("folder-toggle").assertIsNotEnabled()
             onNodeWithTag("folder-toggle").performClick()
-            for (f in showMeta.files) onNodeWithTag("file-${f.path}").assertIsOn()
-            onNodeWithTag("folder-toggle").performClick()
-            for (f in showMeta.files) onNodeWithTag("file-${f.path}").assertIsOff()
-            onNodeWithTag("preview-detail").assertTextEquals("0 files · 0 B")
-            onNodeWithTag("download").assertIsNotEnabled()
-            onNodeWithTag("folder-toggle").performClick()
-            onNodeWithTag("download").assertIsEnabled()
+            onNodeWithTag("folder-toggle").assertIsOn()
             onNodeWithTag("preview-detail").assertTextEquals("3 files · 6.7 MB")
+            onNodeWithTag("download").assertIsEnabled()
+        }
+
+    @Test
+    fun aTorrentWithNoTrackersIsRefusedWithTheTextAndNothingToDownload() =
+        runComposeUiTest {
+            home()
+            openDialog()
+            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Show", listOf(TorrentFile("a.bin", 5)))))
+            onNodeWithTag("torrent-refused")
+                .assertTextEquals("This torrent has no trackers. Trackerless torrents come in a later version.")
+            onNodeWithTag("torrent-error").assertDoesNotExist()
+            onNodeWithTag("preview-name").assertDoesNotExist()
+            onNodeWithTag("torrent-file").assertDoesNotExist()
+            onNodeWithTag("download").assertIsNotEnabled()
+        }
+
+    @Test
+    fun theRefusalGoesAwayOnTheNextGoodTorrentAndOnTyping() =
+        runComposeUiTest {
+            home()
+            openDialog()
+            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Show", listOf(TorrentFile("a.bin", 5)))))
+            pickTorrent()
+            onNodeWithTag("torrent-refused").assertDoesNotExist()
+            onNodeWithTag("preview-name").assertTextEquals("Show")
+            pickTorrent(other, TorrentResult.Ok(TorrentMeta("Bare", listOf(TorrentFile("a.bin", 5)))))
+            onNodeWithTag("torrent-refused").assertIsDisplayed()
+            onNodeWithTag("url-field").performTextInput("x")
+            onNodeWithTag("torrent-refused").assertDoesNotExist()
+        }
+
+    @Test
+    fun aTorrentThatIsRefusedAfterAGoodOneTakesTheGoodOneOutSoDownloadCannotAddIt() =
+        runComposeUiTest {
+            home()
+            openDialog()
+            pickTorrent()
+            onNodeWithTag("download").assertIsEnabled()
+            pickTorrent(other, TorrentResult.Ok(TorrentMeta("Bare", listOf(TorrentFile("a.bin", 5)))))
+            onNodeWithTag("torrent-refused").assertIsDisplayed()
+            onNodeWithTag("preview-name").assertDoesNotExist()
+            onNodeWithTag("torrent-file").assertDoesNotExist()
+            onNodeWithTag("download").assertIsNotEnabled()
+        }
+
+    @Test
+    fun aMagnetStillShowsTheSimulatedTreeWithTickableBoxesAndNoHint() =
+        runComposeUiTest {
+            home()
+            openDialog()
+            onNodeWithTag("url-field").performTextInput("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8")
+            onNodeWithTag("file-Sintel.mp4").assertIsEnabled()
+            onNodeWithTag("torrent-hint").assertDoesNotExist()
         }
 
     @Test
@@ -169,7 +233,10 @@ class FilesTest {
             home()
             openDialog()
             pickTorrent(
-                result = TorrentResult.Ok(TorrentMeta("ubuntu.iso", listOf(TorrentFile("ubuntu.iso", 5_000_000_000)), isSingle = true)),
+                result =
+                    TorrentResult.Ok(
+                        TorrentMeta("ubuntu.iso", listOf(TorrentFile("ubuntu.iso", 5_000_000_000)), isSingle = true, trackers = tr),
+                    ),
             )
             onNodeWithTag("preview-badge").assertTextEquals("ISO")
             onNodeWithTag("preview-detail").assertTextEquals("1 file · 4.7 GB")
@@ -181,25 +248,35 @@ class FilesTest {
         runComposeUiTest {
             home()
             openDialog()
-            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Show", listOf(TorrentFile("episode.mkv", 5_000_000)))))
+            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Show", listOf(TorrentFile("episode.mkv", 5_000_000)), trackers = tr)))
             onNodeWithTag("preview-badge").assertTextEquals("DIR")
         }
 
     @Test
-    fun downloadingATorrentAddsATorrentRowWithOnlyTickedBytes() =
+    fun downloadingATorrentAddsATorrentRowWithAllItsBytes() =
         runComposeUiTest {
             home()
             openDialog()
             pickTorrent()
-            onNodeWithTag("file-Season 1/E02.mkv").performClick()
             onNodeWithTag("download").performClick()
             onNodeWithTag("new-download-dialog").assertDoesNotExist()
+            waitUntilRow()
             onNodeWithTag("row-1").assertIsDisplayed()
             onNodeWithText("Show").assertIsDisplayed()
             onNodeWithTag("badge-1").assertTextEquals("TOR")
-            // Only E01 (3 000 000 bytes) and the empty notes file are ticked.
-            onNodeWithText("0% · 0 B of 2.9 MB", substring = true).assertIsDisplayed()
+            // The row is added once the app has its copy of the file; the bytes are the whole torrent's.
+            onNodeWithText("0% · 0 B of 6.7 MB", substring = true).assertIsDisplayed()
         }
+
+    /** The row appears after the copy of the `.torrent` was written on an IO thread. */
+    private fun ComposeUiTest.waitUntilRow() {
+        val end = System.nanoTime() + 5_000_000_000L
+        while (runCatching { onNodeWithTag("row-1").assertIsDisplayed() }.isFailure) {
+            check(System.nanoTime() < end) { "timed out waiting for the row" }
+            mainClock.advanceTimeByFrame()
+            Thread.sleep(5)
+        }
+    }
 
     @Test
     fun anInvalidTorrentShowsTheErrorAndKeepsThePreviousContent() =
@@ -216,15 +293,17 @@ class FilesTest {
         }
 
     @Test
-    fun anInvalidTorrentKeepsAPreviouslyLoadedOne() =
+    fun anInvalidTorrentTakesAPreviouslyLoadedOneOutSoDownloadCannotAddIt() =
         runComposeUiTest {
             home()
             openDialog()
             pickTorrent()
+            onNodeWithTag("download").assertIsEnabled()
             pickTorrent(bad, TorrentResult.Err("Not bencoded"))
             onNodeWithTag("torrent-error-reason").assertTextEquals("Not bencoded")
-            onNodeWithTag("torrent-file").assertTextEquals("show.torrent")
-            onNodeWithTag("preview-name").assertTextEquals("Show")
+            onNodeWithTag("torrent-file").assertDoesNotExist()
+            onNodeWithTag("preview-name").assertDoesNotExist()
+            onNodeWithTag("download").assertIsNotEnabled()
         }
 
     @Test
@@ -235,7 +314,6 @@ class FilesTest {
             pickTorrent(bad, TorrentResult.Err("Too large"))
             pickTorrent()
             onNodeWithTag("torrent-error").assertDoesNotExist()
-            pickTorrent(bad, TorrentResult.Err("Too large"))
             onNodeWithTag("torrent-clear").performClick()
             onNodeWithTag("torrent-error").assertDoesNotExist()
             pickTorrent(bad, TorrentResult.Err("Too large"))
@@ -262,8 +340,10 @@ class FilesTest {
             home()
             openDialog()
             pickTorrent()
-            onNodeWithTag("file-notes.txt").performClick()
-            pickTorrent(other, TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("x/y.bin", 10), TorrentFile("z.bin", 20)))))
+            pickTorrent(
+                other,
+                TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("x/y.bin", 10), TorrentFile("z.bin", 20)), trackers = tr)),
+            )
             onNodeWithTag("torrent-file").assertTextEquals("other.torrent")
             onNodeWithTag("preview-name").assertTextEquals("Other")
             onNodeWithTag("file-x/y.bin").assertIsOn()
@@ -277,7 +357,7 @@ class FilesTest {
             home()
             openDialog()
             val files = List(10_000) { TorrentFile("dir${it % 50}/file-$it.bin", 1_000L + it) }
-            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Big", files)))
+            pickTorrent(result = TorrentResult.Ok(TorrentMeta("Big", files, trackers = tr)))
             onNodeWithTag("preview-detail").assertTextEquals("10000 files · ${formatBytes(files.sumOf { it.size })}")
             onNodeWithTag("torrent-tree").performScrollToIndex(10_000)
             onNodeWithTag("file-dir49/file-9999.bin").assertIsDisplayed().assertIsOn()
@@ -371,7 +451,7 @@ class FilesTest {
             mainClock.advanceTimeBy(50)
             onNodeWithTag("torrent-file").assertTextEquals("show.torrent")
             val gate = CompletableDeferred<Unit>()
-            slowPick(other, TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("z.bin", 20)))), gate)
+            slowPick(other, TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("z.bin", 20)), trackers = tr)), gate)
             onNodeWithTag("torrent-clear").performClick()
             mainClock.advanceTimeBy(300)
             onNodeWithTag("torrent-reading").assertDoesNotExist()
@@ -431,7 +511,7 @@ class FilesTest {
             mainClock.advanceTimeBy(200)
             onNodeWithTag("torrent-reading").assertTextEquals("Reading…")
             val second = CompletableDeferred<Unit>()
-            slowPick(other, TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("z.bin", 20)))), second)
+            slowPick(other, TorrentResult.Ok(TorrentMeta("Other", listOf(TorrentFile("z.bin", 20)), trackers = tr)), second)
             mainClock.advanceTimeBy(50)
             // The cancelled first read must not hide the second read's state.
             onNodeWithTag("torrent-reading").assertTextEquals("Reading…")
@@ -455,22 +535,22 @@ class FilesTest {
                 TorrentFile("four.bin", 4_000_000),
                 TorrentFile("five.bin", 5_000_000),
             ),
+            trackers = tr,
         )
 
     @Test
-    fun theDetailOfATorrentWithTwoOfFiveFilesTickedShowsExactlyThoseTwo() =
+    fun theDetailOfATorrentShowsAllItsFiles() =
         runComposeUiTest {
             home()
             openDialog()
             pickTorrent(result = TorrentResult.Ok(fiveFiles))
-            for (p in listOf("a/two.bin", "b/three.bin", "five.bin")) onNodeWithTag("file-$p").performClick()
             onNodeWithTag("download").performClick()
+            waitUntilRow()
             onNodeWithTag("chevron-1").performClick()
-            onNodeWithTag("detail-files").assertTextEquals("2 files")
+            onNodeWithTag("detail-files").assertTextEquals("5 files")
             onNodeWithTag("detail-files").performClick()
             onNodeWithTag("detail-file-0").assert(hasText("a/one.bin", substring = true))
-            onNodeWithTag("detail-file-1").assert(hasText("four.bin", substring = true))
-            onNodeWithTag("detail-file-2").assertDoesNotExist()
+            onNodeWithTag("detail-file-4").assert(hasText("five.bin", substring = true))
             onNodeWithText("Sintel.mp4").assertDoesNotExist()
         }
 
@@ -479,8 +559,14 @@ class FilesTest {
         runComposeUiTest {
             home()
             openDialog()
-            pickTorrent(result = TorrentResult.Ok(TorrentMeta("ubuntu.iso", listOf(TorrentFile("ubuntu.iso", 5_000_000)), isSingle = true)))
+            pickTorrent(
+                result =
+                    TorrentResult.Ok(
+                        TorrentMeta("ubuntu.iso", listOf(TorrentFile("ubuntu.iso", 5_000_000)), isSingle = true, trackers = tr),
+                    ),
+            )
             onNodeWithTag("download").performClick()
+            waitUntilRow()
             onNodeWithTag("chevron-1").performClick()
             onNodeWithTag("detail-files").assertTextEquals("1 file")
         }

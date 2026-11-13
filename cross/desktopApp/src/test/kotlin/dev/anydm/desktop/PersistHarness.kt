@@ -39,6 +39,8 @@ class PersistHarness {
             picker,
             object : TorrentLoader {
                 override suspend fun load(path: Path): TorrentResult = TorrentResult.Err("Can't read file")
+
+                override suspend fun bytes(path: Path): ByteArray? = null
             },
             "/home/test",
         )

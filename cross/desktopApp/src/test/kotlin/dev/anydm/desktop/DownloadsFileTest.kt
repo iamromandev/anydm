@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.PieceSet
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -39,6 +40,30 @@ class DownloadsFileTest {
     fun aListRoundTripsInOrder() {
         val rows = listOf(row("2", DownloadStatus.Failed).copy(error = "HTTP 404"), row("1", DownloadStatus.Finished, 100))
         assertEquals(rows, fromDownloadsFile(toDownloadsFile(rows)))
+    }
+
+    @Test
+    fun theSimulatedMarkOfAMagnetRowIsSavedAndComesBack() {
+        val magnet = DownloadItem("1", "Sintel", 100, 0, 0, DownloadStatus.Paused, DownloadKind.Torrent, simulated = true)
+        val saved = toDownloadsFile(listOf(magnet))
+        assertEquals(true, saved.downloads.single().sim)
+        assertEquals(listOf(magnet), fromDownloadsFile(saved))
+        val json = downloadsJson.encodeToString(DownloadsFile.serializer(), saved)
+        assertEquals(
+            true,
+            downloadsJson
+                .decodeFromString(DownloadsFile.serializer(), json)
+                .downloads
+                .single()
+                .sim,
+        )
+    }
+
+    @Test
+    fun aRowSavedBeforeTheMarkExistedReadsAsNotSimulated() {
+        val old = """{"version":2,"downloads":[{"id":"1","name":"Sintel","status":"Paused","kind":"Torrent"}]}"""
+        val rows = fromDownloadsFile(downloadsJson.decodeFromString(DownloadsFile.serializer(), old))
+        assertEquals(false, rows.single().simulated)
     }
 
     @Test
@@ -251,5 +276,80 @@ class DownloadsFileTest {
     fun connectionsOutsideOneToSixteenAreClampedNotDropped() {
         val rows = fromDownloadsFile(file(dto("1").copy(connections = 40), dto("2").copy(connections = 0), dto("3").copy(connections = -5)))
         assertEquals(listOf(16, 1, 1), rows.map { it.connections })
+    }
+
+    // Real torrents: `infoHash`, `pieces` (base64) and `pieceCount` are optional fields of the same version (R14, NFR6)
+    private val hex = "ab".repeat(20)
+
+    private fun torrent(
+        infoHash: String? = hex,
+        pieces: PieceSet? = PieceSet.of(10, listOf(0, 3, 9)),
+    ) = DownloadItem(
+        "t",
+        "x",
+        100,
+        30,
+        0,
+        DownloadStatus.Paused,
+        DownloadKind.Torrent,
+        files = listOf(SampleFile("a", 100)),
+        infoHash = infoHash,
+        pieces = pieces,
+    )
+
+    @Test
+    fun aRealTorrentRowRoundTripsItsInfoHashAndPiecesThroughTheJson() {
+        val t = torrent()
+        val dto = toDownloadsFile(listOf(t)).downloads.single()
+        assertEquals(listOf(hex, t.pieces!!.toBase64(), 10), listOf(dto.infoHash, dto.pieces, dto.pieceCount))
+        val json = downloadsJson.encodeToString(DownloadsFile.serializer(), toDownloadsFile(listOf(t)))
+        assertEquals(listOf(t), fromDownloadsFile(downloadsJson.decodeFromString(DownloadsFile.serializer(), json)))
+    }
+
+    @Test
+    fun aTorrentRowThatNeverRanHasAnInfoHashAndNoPieces() {
+        val t = torrent(pieces = null)
+        val dto = toDownloadsFile(listOf(t)).downloads.single()
+        assertEquals(listOf<Any?>(hex, null, null), listOf(dto.infoHash, dto.pieces, dto.pieceCount))
+        assertEquals(listOf(t), fromDownloadsFile(toDownloadsFile(listOf(t))))
+    }
+
+    @Test
+    fun aRowFromBeforeRealTorrentsLoadsWithNeitherInfoHashNorPieces() {
+        val json =
+            """{"version":2,"downloads":[{"id":"1","name":"x","total":10,"done":0,"status":"Paused","kind":"Torrent",""" +
+                """"files":[{"name":"a","bytes":10}]}]}"""
+        val row = fromDownloadsFile(downloadsJson.decodeFromString(DownloadsFile.serializer(), json)).single()
+        assertEquals(listOf(DownloadKind.Torrent, null, null), listOf(row.kind, row.infoHash, row.pieces))
+    }
+
+    @Test
+    fun aRowWithABadInfoHashIsDroppedAndTheOthersAreKept() {
+        for (bad in listOf("", "ab", "AB".repeat(20), "zz".repeat(20), "ab".repeat(21))) {
+            val f = DownloadsFile(downloads = listOf(toDownloadsFile(listOf(torrent())).downloads.single().copy(infoHash = bad), dto("2")))
+            assertEquals(listOf("2"), usableRows(f).map { it.id }, "'$bad'")
+        }
+    }
+
+    @Test
+    fun piecesThatDoNotDecodeForTheirCountBecomeAnEmptyClaimNotAFreshStart() {
+        // Null pieces would mean "never ran": a fresh start that picks new file names. A damaged claim is a claim of nothing.
+        val good = toDownloadsFile(listOf(torrent())).downloads.single()
+        for (bad in listOf(
+            good.copy(pieces = "!!!!"),
+            good.copy(pieceCount = 999),
+            good.copy(pieceCount = null),
+            good.copy(pieceCount = -1),
+        )) {
+            val row = fromDownloadsFile(DownloadsFile(downloads = listOf(bad))).single()
+            assertEquals(0, row.pieces?.count, "$bad")
+        }
+    }
+
+    @Test
+    fun theInFlightSetAndThePeersAreNotSaved() {
+        val dto = toDownloadsFile(listOf(torrent().copy(inFlight = setOf(1, 2), peers = 5))).downloads.single()
+        val back = fromDownloadsFile(DownloadsFile(downloads = listOf(dto))).single()
+        assertEquals(listOf(emptySet<Int>(), 0), listOf(back.inFlight, back.peers))
     }
 }

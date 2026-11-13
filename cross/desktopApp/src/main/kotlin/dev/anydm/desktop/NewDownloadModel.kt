@@ -3,6 +3,7 @@ package dev.anydm.desktop
 import dev.anydm.engine.http.ProbeResult
 import dev.anydm.engine.torrent.TorrentMeta
 import java.net.URLDecoder
+import java.nio.file.Path
 
 private const val MIB = 1024L * 1024
 private const val SAMPLE_SPEED = 2 * MIB
@@ -42,7 +43,14 @@ sealed interface Preview {
         val files: List<SampleFile>,
         /** True for a single-file torrent; a folder torrent with one entry is still a folder. */
         val single: Boolean = false,
+        /** The info hash (40 hex) of a `.torrent` that was read: such a torrent downloads for real. Null for a magnet, which is simulated. */
+        val infoHash: String? = null,
+        /** The `.torrent` file it was read from, read again when Download is pressed to make the app's own copy. */
+        val source: Path? = null,
     ) : Preview {
+        /** Every file of a real torrent is downloaded: its tree is shown ticked and cannot be changed (R3). */
+        val locked: Boolean get() = infoHash != null
+
         /** A single-file torrent shows its file's badge; anything else, even a folder with one entry, is a folder. */
         override val badge: String
             get() = if (single) files.singleOrNull()?.name?.let(::badgeFor) ?: "DIR" else "DIR"
@@ -190,10 +198,21 @@ fun previewDetail(
 data class LoadedTorrent(
     val fileName: String,
     val meta: TorrentMeta,
+    /** Where it was read from. */
+    val path: Path? = null,
 )
 
 fun previewOf(t: LoadedTorrent): Preview.Torrent =
-    Preview.Torrent(t.meta.name, t.meta.files.map { SampleFile(it.path, it.size) }, t.meta.isSingle)
+    Preview.Torrent(t.meta.name, t.meta.files.map { SampleFile(it.path, it.size) }, t.meta.isSingle, t.meta.infoHashHex, t.path)
+
+/** Shown under the file tree of a real torrent, whose files cannot be picked yet. */
+const val LOCKED_TREE_HINT = "Choosing files comes in a later version"
+
+/** The refusal for a torrent that names no tracker: with no DHT yet, nothing would find it a peer. */
+const val NO_TRACKERS_TEXT = "This torrent has no trackers. Trackerless torrents come in a later version."
+
+/** Whether [meta] names at least one usable tracker (`readTorrent` keeps only http, https and udp ones). */
+fun hasTrackers(meta: TorrentMeta): Boolean = meta.trackers.any { it.isNotEmpty() }
 
 /** The files ticked when [preview] first shows: all of its own files, none for a direct link. */
 fun initialTicked(preview: Preview?): Set<String> = (preview as? Preview.Torrent)?.files?.mapTo(HashSet()) { it.name } ?: emptySet()
@@ -206,15 +225,17 @@ fun newDownloadItem(
     /** The count asked for; a row that cannot be split (no range support, unknown size, a torrent) keeps one. */
     connections: Int = 1,
 ): DownloadItem {
+    // A real torrent is downloaded whole, whatever [ticked] says; a magnet's simulated tree still takes the ticks.
+    val taken = if (preview is Preview.Torrent && preview.locked) preview.files.mapTo(HashSet()) { it.name } else ticked
     val total =
         when (preview) {
             is Preview.Direct -> preview.totalBytes ?: UNKNOWN_SIZE
-            is Preview.Torrent -> torrentSummary(preview.files, ticked).second
+            is Preview.Torrent -> torrentSummary(preview.files, taken).second
         }
     val kind = if (preview is Preview.Torrent) DownloadKind.Torrent else DownloadKind.Direct
-    val files = (preview as? Preview.Torrent)?.files?.filter { it.name in ticked }
-    // A direct link is a real download: it starts at 0 B/s and the engine's reports move it. A torrent row stays simulated.
-    val speed = if (preview is Preview.Torrent) SAMPLE_SPEED else 0L
+    val files = (preview as? Preview.Torrent)?.files?.filter { it.name in taken }
+    // A link and a `.torrent` are real downloads: they start at 0 B/s and the engines' reports move them. A magnet row stays simulated.
+    val speed = if (preview is Preview.Torrent && !preview.locked) SAMPLE_SPEED else 0L
     val url = (preview as? Preview.Direct)?.url
     val count =
         if (preview is Preview.Direct &&
@@ -224,7 +245,35 @@ fun newDownloadItem(
         } else {
             1
         }
-    return DownloadItem(id, preview.name, total, 0, speed, DownloadStatus.Downloading, kind, folder, files, url, connections = count)
+    return DownloadItem(
+        id,
+        preview.name,
+        total,
+        0,
+        speed,
+        DownloadStatus.Downloading,
+        kind,
+        folder,
+        files,
+        url,
+        connections = count,
+        infoHash = (preview as? Preview.Torrent)?.infoHash,
+        simulated = preview is Preview.Torrent && !preview.locked,
+    )
 }
 
 fun nextId(items: List<DownloadItem>): String = ((items.maxOfOrNull { it.id.toLongOrNull() ?: 0L } ?: 0L) + 1).toString()
+
+/**
+ * Hands out row ids that never come round again within one run: one more than the largest id in the list, and more than any id given
+ * before. A row that was removed while its job still winds down keeps its id to itself, so the job's late events cannot reach a new row.
+ */
+class IdIssuer {
+    private var last = 0L
+
+    fun next(items: List<DownloadItem>): String {
+        val n = maxOf(items.maxOfOrNull { it.id.toLongOrNull() ?: 0L } ?: 0L, last) + 1
+        last = n
+        return n.toString()
+    }
+}

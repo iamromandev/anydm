@@ -263,17 +263,52 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun theTotalOfARealTorrentCountsOnlyTickedFiles() {
-        val p = previewOf(loaded("Show", "a" to 100L, "b" to 20L))
-        assertEquals(20L, newDownloadItem(p, setOf("b"), "1").totalBytes)
+    fun aRealTorrentIsTakenWholeWhateverIsTicked() {
+        val p = previewOf(loaded("Show", "a" to 100L, "b" to 20L, "d/c" to 3L))
+        val item = newDownloadItem(p, setOf("b"), "1")
+        assertEquals(123L, item.totalBytes)
+        assertEquals(listOf(SampleFile("a", 100), SampleFile("b", 20), SampleFile("d/c", 3)), item.files)
     }
 
     @Test
-    fun aRealTorrentItemKeepsOnlyItsTickedFilesInOrder() {
-        val p = previewOf(loaded("Show", "a" to 1L, "d/b" to 2L, "c" to 3L, "d/e" to 4L, "f" to 5L))
-        val item = newDownloadItem(p, setOf("d/e", "a"), "1")
-        assertEquals(listOf(SampleFile("a", 1), SampleFile("d/e", 4)), item.files)
-        assertEquals(5L, item.totalBytes)
+    fun aMagnetsSimulatedTreeStillTakesTheTicks() {
+        val item = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all - "Sintel.mp4", "1")
+        assertEquals(torrentSummary(sintelFiles, all - "Sintel.mp4").second, item.totalBytes)
+        assertEquals(sintelFiles.filter { it.name != "Sintel.mp4" }, item.files)
+    }
+
+    private val hash = ByteArray(20) { (it + 1).toByte() }
+    private val hex = hash.joinToString("") { "%02x".format(it) }
+
+    @Test
+    fun aLoadedTorrentsPreviewCarriesItsInfoHashAndSourceAndIsLocked() {
+        val path =
+            java.nio.file.Path
+                .of("/t/show.torrent")
+        val meta = TorrentMeta("Show", listOf(TorrentFile("a", 1)), infoHash = hash)
+        val p = previewOf(LoadedTorrent("show.torrent", meta, path))
+        assertEquals(listOf<Any?>(hex, path, true), listOf(p.infoHash, p.source, p.locked))
+        assertEquals(false, assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc")).locked)
+    }
+
+    @Test
+    fun aRealTorrentRowCarriesItsInfoHashStartsAtZeroSpeedAndHasNoSimulatedSpeed() {
+        val meta = TorrentMeta("Show", listOf(TorrentFile("a", 5)), infoHash = hash)
+        val item = newDownloadItem(previewOf(LoadedTorrent("s.torrent", meta)), setOf("a"), "1", "/data")
+        assertEquals(
+            listOf<Any?>(hex, 0L, DownloadKind.Torrent, "/data", null),
+            listOf(item.infoHash, item.bytesPerSec, item.kind, item.folder, item.pieces),
+        )
+        assertNull(newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "2").infoHash)
+        assertEquals(2L * 1024 * 1024, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "2").bytesPerSec)
+    }
+
+    @Test
+    fun aTorrentWithNoUsableTrackerHasNoTrackers() {
+        val files = listOf(TorrentFile("a", 1))
+        assertEquals(false, hasTrackers(TorrentMeta("x", files)))
+        assertEquals(false, hasTrackers(TorrentMeta("x", files, trackers = listOf(emptyList()))))
+        assertEquals(true, hasTrackers(TorrentMeta("x", files, trackers = listOf(emptyList(), listOf("udp://t.test:80")))))
     }
 
     @Test
@@ -293,6 +328,31 @@ class NewDownloadModelTest {
         val items = listOf("1", "7", "x").map { DownloadItem(it, "n", 1, 0, 0, DownloadStatus.Paused) }
         assertEquals("8", nextId(items))
         assertEquals("1", nextId(emptyList()))
+    }
+
+    @Test
+    fun aMagnetRowIsMarkedSimulatedAndNoOtherRowIs() {
+        val all = initialTicked(parsePreview("magnet:?xt=urn:btih:abc"))
+        assertEquals(true, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1").simulated)
+        assertEquals(false, newDownloadItem(parsePreview("https://x.test/a.zip")!!, emptySet(), "2").simulated)
+        val real = Preview.Torrent("Show", listOf(SampleFile("a", 5)), false, "ab".repeat(20), null)
+        assertEquals(false, newDownloadItem(real, emptySet(), "3").simulated)
+    }
+
+    @Test
+    fun anIssuedIdIsNeverGivenAgainEvenWhenItsRowIsGone() {
+        val ids = IdIssuer()
+        val row = { id: String -> DownloadItem(id, "n", 1, 0, 0, DownloadStatus.Paused) }
+        assertEquals("1", ids.next(emptyList()))
+        assertEquals("2", ids.next(listOf(row("1"))))
+        assertEquals("3", ids.next(emptyList()), "rows 1 and 2 were removed")
+    }
+
+    @Test
+    fun anIdIssuerGoesPastTheLargestIdOfTheListToo() {
+        val ids = IdIssuer()
+        assertEquals("9", ids.next(listOf("8", "x").map { DownloadItem(it, "n", 1, 0, 0, DownloadStatus.Paused) }))
+        assertEquals("10", ids.next(emptyList()))
     }
 }
 

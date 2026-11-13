@@ -34,12 +34,17 @@ interface FilePicker {
 /** Reads and parses a `.torrent` off the UI thread. */
 interface TorrentLoader {
     suspend fun load(path: Path): TorrentResult
+
+    /** The raw bytes of the file at [path], for the app's own copy; null when it cannot be read (again). */
+    suspend fun bytes(path: Path): ByteArray?
 }
 
 /** Reads from disk on [io]. The size is checked before reading, and the read itself is capped, so a huge file is never loaded. */
 class DiskTorrentLoader(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : TorrentLoader {
+    override suspend fun bytes(path: Path): ByteArray? = withContext(io) { readBytes(path) }
+
     override suspend fun load(path: Path): TorrentResult =
         withContext(io) {
             try {
@@ -58,6 +63,20 @@ class DiskTorrentLoader(
             }
         }
 }
+
+/** Reads from disk on [io]; null for anything that is not a plain file of at most [MAX_TORRENT_BYTES]. */
+internal fun DiskTorrentLoader.readBytes(path: Path): ByteArray? =
+    try {
+        if (!Files.isRegularFile(path) || Files.size(path) > MAX_TORRENT_BYTES) {
+            null
+        } else {
+            Files.newInputStream(path).use { it.readNBytes(MAX_TORRENT_BYTES + 1) }.takeIf { it.size <= MAX_TORRENT_BYTES }
+        }
+    } catch (_: IOException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
 
 /** The path a native dialog answered with, or null when the platform cannot represent it. */
 fun pickedPath(
@@ -132,6 +151,8 @@ data class FilesEnv(
                 },
                 object : TorrentLoader {
                     override suspend fun load(path: Path): TorrentResult = TorrentResult.Err("Can't read file")
+
+                    override suspend fun bytes(path: Path): ByteArray? = null
                 },
                 "/home/user",
             )

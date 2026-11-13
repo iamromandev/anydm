@@ -761,16 +761,17 @@ class HttpDownloadsTest {
         }
 
     @Test
-    fun theSpeedHistoryOfARowIsDroppedWhenItIsRemoved() =
+    fun aRowAddedAfterARemovedOneStartsWithAnEmptySpeedChartAndTheRemovedOnesIdIsNotGivenAgain() =
         runComposeUiTest {
             startedRow()
             engine.emit(EngineEvent.Progress("1", 100, 1000, 3L * 1024 * 1024))
             await("speed") { runCatching { speed("1", "3.0 MB/s") }.isSuccess }
             removeVia("1", ticked = false)
             await("stop") { "1" in engine.stops }
-            add("https://x.test/b.zip") // the next row reuses the id 1
+            add("https://x.test/b.zip") // ids are not reused in a run: this is row 2
             await("restart") { engine.starts.size == 2 }
-            openDetail("1")
+            assertEquals("2", engine.starts.last().id)
+            openDetail("2")
             onNodeWithTag(
                 "detail-graph",
             ).assert(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Speed during this session, peak 0 B/s")))
