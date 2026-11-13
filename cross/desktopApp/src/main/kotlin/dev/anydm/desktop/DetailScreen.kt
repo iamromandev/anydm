@@ -472,7 +472,7 @@ private fun StatsStrip(
             listOf(
                 Triple("SIZE", "size", formatBytes(d.item.totalBytes)),
                 Triple("PEAK", "peak", formatSpeed(d.peak, unit)),
-                Triple("CONNECTIONS", "connections", "1"),
+                Triple("CONNECTIONS", "connections", connectionCount(d.item).toString()),
             )
         } else {
             listOf(

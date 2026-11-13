@@ -9,6 +9,7 @@ import dev.anydm.engine.http.HttpProber
 import dev.anydm.engine.http.JdkTransport
 import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.LinkProber
+import dev.anydm.engine.http.PartFile
 import dev.anydm.engine.http.ProbeOutcome
 import dev.anydm.engine.http.RealDiskIo
 import kotlinx.coroutines.CoroutineScope
@@ -142,6 +143,18 @@ data class DownloadEnv(
                     override fun delete(p: Path) = Unit
 
                     override fun mkdirs(p: Path) = Unit
+
+                    override fun openSpans(
+                        p: Path,
+                        size: Long?,
+                    ): PartFile = throw UnsupportedOperationException("inert disk")
+
+                    override fun freeSpace(dir: Path) = 0L
+
+                    override fun readTail(
+                        p: Path,
+                        len: Int,
+                    ): ByteArray? = null
                 },
             )
     }

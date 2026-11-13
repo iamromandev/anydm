@@ -47,6 +47,7 @@ class SettingsModelTest {
                 slowOn = true,
                 slow = 3 * mb,
                 concurrency = 4,
+                connections = 3,
                 schedule = Schedule(true, setOf(DayOfWeek.SATURDAY, DayOfWeek.MONDAY), "08:30", "22:15"),
                 networks =
                     mapOf(
@@ -189,6 +190,21 @@ class SettingsModelTest {
         assertNotNull(problem(file { copy(networks = listOf(proxyNet(host = "not a host"))) }))
         assertNull(problem(file { copy(networks = listOf(proxyNet())) }))
         assertNull(problem(file { copy(networks = listOf(proxyNet(port = 65535))) }))
+    }
+
+    @Test
+    fun aBadConnectionsCountIsInvalid() {
+        for (n in listOf(0, 17, -1)) assertNotNull(problem(file { copy(limits = limits.copy(connections = n)) }), "$n")
+        for (n in listOf(1, 16)) assertNull(problem(file { copy(limits = limits.copy(connections = n)) }), "$n")
+    }
+
+    @Test
+    fun aFileWithoutTheConnectionsFieldReadsAsEightAndKeepsVersionOne() {
+        val f = settingsJson.decodeFromString(SettingsFile.serializer(), """{"version":1,"limits":{"concurrency":3}}""")
+        assertNull(validate(f))
+        assertEquals(8, f.limits.connections)
+        assertEquals(8, fromFile(f, app, defaults).limits.connections)
+        assertEquals(1, SettingsFile().version)
     }
 
     @Test

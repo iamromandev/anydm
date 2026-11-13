@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.Span
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -37,11 +38,11 @@ class DetailModelTest {
     }
 
     @Test
-    fun aRealRowInventsNoPerNetworkRowsSharesOrChunks() {
+    fun aRealRowInventsNoPerNetworkRowsOrSharesButHasAChunkMapOfItsOwnBytes() {
         val d = buildDetail(real, two, history = listOf(mib))
         assertTrue(d.rows.isEmpty())
-        assertTrue(d.cells.isEmpty())
-        assertFalse(showMap(d))
+        assertTrue(d.cells.isNotEmpty())
+        assertTrue(showMap(d))
         assertNull(d.aloneFactor)
         assertEquals(0, d.retries)
         assertEquals(0, d.peers)
@@ -364,4 +365,120 @@ class DetailModelTest {
         assertEquals("~/Movies", folderLabel(project.copy(folder = "/Users/x/Movies"), "/Users/x"))
         assertEquals("/Volumes/Media", folderLabel(project.copy(folder = "/Volumes/Media"), "/Users/x"))
     }
+
+    private val seg = DownloadItem("9", "a.zip", 32 * mib, 0, 3 * mib, DownloadStatus.Downloading, url = "https://x.test/a.zip")
+
+    /** Four spans of 8 MiB: 4 MiB done, none done, all done, 2 MiB done. */
+    private val fourSpans =
+        listOf(
+            Span(0, 8 * mib - 1, 4 * mib),
+            Span(8 * mib, 16 * mib - 1, 0),
+            Span(16 * mib, 24 * mib - 1, 8 * mib),
+            Span(24 * mib, 32 * mib - 1, 2 * mib),
+        )
+
+    private fun count(
+        cells: List<Cell>,
+        state: CellState,
+    ) = cells.count { it.state == state }
+
+    @Test
+    fun aRunningRowShowsTheConnectionsOpenNowEvenWhenNoneIs() {
+        val row = seg.copy(connections = 4)
+        assertEquals(0, connectionCount(row.copy(liveConnections = 0)), "all connections are between two requests: not the setting")
+        assertEquals(3, connectionCount(row.copy(liveConnections = 3)))
+    }
+
+    @Test
+    fun aRowThatIsNotRunningShowsTheConnectionsItWasAddedWith() {
+        for (status in listOf(DownloadStatus.Paused, DownloadStatus.Failed, DownloadStatus.Queued, DownloadStatus.Finished)) {
+            assertEquals(4, connectionCount(seg.copy(connections = 4, status = status, liveConnections = 0)), "$status")
+        }
+    }
+
+    @Test
+    fun theChunkMapOfASegmentedRowMarksDoneInFlightAndPendingCellsFromItsSpans() {
+        val d = buildDetail(seg.copy(spans = fourSpans, doneBytes = doneOfSpans(fourSpans)), two)
+        assertEquals(128, d.cells.size)
+        assertEquals(256L * 1024, d.cellBytes)
+        // 4 MiB + 8 MiB + 2 MiB of 256 KiB cells
+        assertEquals(16 + 32 + 8, count(d.cells, CellState.Done))
+        assertEquals(3, count(d.cells, CellState.InFlight))
+        assertEquals(128 - 56 - 3, count(d.cells, CellState.Pending))
+        assertEquals(CellState.Done, d.cells[15].state)
+        assertEquals(CellState.InFlight, d.cells[16].state) // span 0's next byte, 4 MiB
+        assertEquals(CellState.Pending, d.cells[17].state)
+        assertEquals(CellState.InFlight, d.cells[32].state) // span 1 has not started: its next byte is its first
+        assertEquals(List(32) { CellState.Done }, d.cells.subList(64, 96).map { it.state })
+        assertEquals(CellState.InFlight, d.cells[104].state) // 26 MiB
+        assertTrue(showMap(d))
+    }
+
+    @Test
+    fun aPausedOrFailedSegmentedRowHasNoInFlightCells() {
+        for (status in listOf(DownloadStatus.Paused, DownloadStatus.Failed, DownloadStatus.Queued)) {
+            val d = buildDetail(seg.copy(spans = fourSpans, status = status), two)
+            assertEquals(0, count(d.cells, CellState.InFlight), "$status")
+            assertEquals(56, count(d.cells, CellState.Done), "$status")
+        }
+    }
+
+    @Test
+    fun aFinishedSpanOfTheMapHasNoInFlightCellEvenWhileDownloading() {
+        val all = listOf(Span(0, 16 * mib - 1, 16 * mib), Span(16 * mib, 32 * mib - 1, 16 * mib))
+        val d = buildDetail(seg.copy(spans = all), two)
+        assertEquals(128, count(d.cells, CellState.Done))
+    }
+
+    @Test
+    fun aCellIsDoneOnlyWhenEveryByteOfItIsDone() {
+        // Cells of 256 KiB; the span ends 100 KiB into cell 31, and the next span has not started: that cell is not done.
+        val edge = listOf(Span(0, 8 * mib - 100 * 1024 - 1, 8 * mib - 100 * 1024), Span(8 * mib - 100 * 1024, 32 * mib - 1, 0))
+        val d = buildDetail(seg.copy(spans = edge), two)
+        assertEquals(CellState.Done, d.cells[30].state)
+        assertEquals(CellState.InFlight, d.cells[31].state)
+        assertEquals(31, count(d.cells, CellState.Done))
+    }
+
+    @Test
+    fun doneNeighbouringSpansFillACellThatStraddlesThem() {
+        // Two spans meet 100 KiB before the end of cell 31 (256 KiB cells), and both are done around it: that cell is whole.
+        val cut = 8 * mib - 156 * 1024
+        val d = buildDetail(seg.copy(spans = listOf(Span(0, cut - 1, cut), Span(cut, 32 * mib - 1, 156 * 1024))), two)
+        assertEquals(CellState.Done, d.cells[31].state)
+    }
+
+    @Test
+    fun aRowWithoutSpansFillsTheMapFromTheStart() {
+        val d = buildDetail(seg.copy(totalBytes = 100 * mib, doneBytes = 40 * mib), two)
+        assertEquals(128, d.cells.size)
+        assertEquals(51, count(d.cells, CellState.Done)) // 40 of 100 MiB of 128 cells is 51.2
+        assertEquals(1, count(d.cells, CellState.InFlight))
+        assertEquals(CellState.InFlight, d.cells[51].state)
+        assertEquals(List(51) { CellState.Done }, d.cells.take(51).map { it.state })
+    }
+
+    @Test
+    fun aRealRowOfUnknownSizeHasNoCells() {
+        assertTrue(buildDetail(seg.copy(totalBytes = UNKNOWN_SIZE), two).cells.isEmpty())
+    }
+
+    @Test
+    fun aFinishedRealRowIsAllDone() {
+        val d = buildDetail(seg.copy(status = DownloadStatus.Finished, doneBytes = 32 * mib), two)
+        assertEquals(128, count(d.cells, CellState.Done))
+    }
+
+    @Test
+    fun theCellsOfAFiveGigabyteFileBuildInUnderOneFrame() {
+        val gb5 = 5L * 1024 * mib
+        val piece = gb5 / 16
+        val spans = List(16) { i -> Span(i * piece, (i + 1) * piece - 1, piece / 3 + i * 1000) }
+        val row = seg.copy(totalBytes = gb5, spans = spans)
+        repeat(200) { buildDetail(row, two) } // warm up the JIT
+        val best = (1..30).minOf { kotlin.system.measureNanoTime { buildDetail(row, two) } }
+        assertTrue(best < 16_000_000, "took $best ns")
+    }
+
+    private fun doneOfSpans(s: List<Span>) = s.sumOf { it.done }
 }

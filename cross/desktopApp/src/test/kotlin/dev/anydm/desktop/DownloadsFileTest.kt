@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.Span
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -79,7 +80,7 @@ class DownloadsFileTest {
 
     @Test
     fun aFileOfAnotherVersionIsRefusedWithAReason() {
-        listOf(DownloadsFile(version = 2), DownloadsFile(version = 0)).forEach {
+        listOf(DownloadsFile(version = 3), DownloadsFile(version = 0)).forEach {
             assertNotNull(validateDownloads(it), "should be refused: $it")
         }
     }
@@ -125,5 +126,130 @@ class DownloadsFileTest {
     @Test
     fun aRowWithoutAFolderUsesTheDefault() {
         assertNull(validateDownloads(file(dto(folder = null))))
+    }
+
+    private val v1Fixture =
+        """
+        {"version":1,"downloads":[
+          {"id":"1","url":"https://x.test/a.zip","name":"a.zip","folder":"/abs","total":100,"done":40,"status":"Paused","etag":"\"e\""}
+        ]}
+        """.trimIndent()
+
+    @Test
+    fun aVersionOneFileLoadsEveryRowWithOneConnectionAndNoRanges() {
+        val file = downloadsJson.decodeFromString(DownloadsFile.serializer(), v1Fixture)
+        assertNull(validateDownloads(file))
+        val row = fromDownloadsFile(file).single()
+        assertEquals(1, row.connections)
+        assertNull(row.spans)
+        assertEquals(40L, row.doneBytes)
+    }
+
+    @Test
+    fun theNextSaveAfterAVersionOneLoadWritesVersionTwo() {
+        val file = downloadsJson.decodeFromString(DownloadsFile.serializer(), v1Fixture)
+        val saved = toDownloadsFile(fromDownloadsFile(file))
+        assertEquals(2, saved.version)
+        assertEquals(
+            2,
+            downloadsJson
+                .decodeFromString(
+                    DownloadsFile.serializer(),
+                    downloadsJson.encodeToString(DownloadsFile.serializer(), saved),
+                ).version,
+        )
+    }
+
+    @Test
+    fun connectionsAndRangesRoundTripThroughTheJson() {
+        val spans = listOf(Span(0, 49, 50), Span(50, 99, 10))
+        val rows = listOf(row().copy(connections = 4, spans = spans))
+        val json = downloadsJson.encodeToString(DownloadsFile.serializer(), toDownloadsFile(rows))
+        val back = downloadsJson.decodeFromString(DownloadsFile.serializer(), json)
+        assertEquals(rows, fromDownloadsFile(back))
+        assertEquals(4, back.downloads.single().connections)
+        assertEquals(listOf(RangeDto(0, 49, 50), RangeDto(50, 99, 10)), back.downloads.single().ranges)
+    }
+
+    @Test
+    fun thePartIdOfARowRoundTripsNextToItsRanges() {
+        val rows = listOf(row().copy(connections = 4, spans = listOf(Span(0, 99, 10)), partId = "00112233445566778899aabbccddeeff"))
+        val json = downloadsJson.encodeToString(DownloadsFile.serializer(), toDownloadsFile(rows))
+        val back = downloadsJson.decodeFromString(DownloadsFile.serializer(), json)
+        assertEquals("00112233445566778899aabbccddeeff", back.downloads.single().partId)
+        assertEquals(rows, fromDownloadsFile(back))
+        assertEquals(DOWNLOADS_VERSION, back.version, "no schema bump")
+    }
+
+    @Test
+    fun aVersionTwoRowWithRangesButNoPartIdLoadsWithNone() {
+        val back = fromDownloadsFile(file(ranged(RangeDto(0, 9, 5)).copy(connections = 4)))
+        assertNull(back.single().partId)
+        assertEquals(listOf(Span(0, 9, 5)), back.single().spans)
+    }
+
+    @Test
+    fun aRowWithoutRangesWritesNone() {
+        assertNull(toDownloadsFile(listOf(row())).downloads.single().ranges)
+    }
+
+    private fun ranged(vararg r: RangeDto) = dto("x").copy(ranges = r.toList())
+
+    @Test
+    fun aRowWhoseRangesAreBrokenIsDroppedAndTheOthersAreKept() {
+        val bad =
+            listOf(
+                ranged(RangeDto(0, 5, 1), RangeDto(5, 9, 0)), // overlap
+                ranged(RangeDto(5, 9, 0), RangeDto(0, 4, 0)), // out of order
+                ranged(RangeDto(0, 9, 11)), // done past its length
+                ranged(RangeDto(0, 9, -1)), // negative done
+                ranged(RangeDto(0, 10, 0)), // past the total (10 bytes: 0..9)
+                ranged(RangeDto(5, 4, 0)), // end before start
+                ranged(RangeDto(-1, 4, 0)),
+            )
+        bad.forEach {
+            assertNull(validateDownloads(file(it)), "the file itself is fine: $it")
+            assertEquals(listOf("1", "2"), usable(dto("1"), it, dto("2")), "the bad row should be dropped: $it")
+        }
+    }
+
+    @Test
+    fun rangesThatPartitionTheFileAreKeptWhateverTheirProgress() {
+        assertEquals(listOf("x"), usable(ranged(RangeDto(0, 3, 4), RangeDto(4, 6, 1), RangeDto(7, 9, 0))))
+        assertEquals(listOf("x"), usable(ranged(RangeDto(0, 9, 3))))
+    }
+
+    @Test
+    fun rangesWithAGapBetweenThemDropTheRow() {
+        assertEquals(emptyList(), usable(ranged(RangeDto(0, 3, 4), RangeDto(4, 6, 1), RangeDto(8, 9, 0))))
+    }
+
+    @Test
+    fun rangesNotStartingAtZeroDropTheRow() {
+        assertEquals(emptyList(), usable(ranged(RangeDto(2, 9, 0))))
+    }
+
+    @Test
+    fun rangesThatStopShortOfTheTotalDropTheRow() {
+        assertEquals(emptyList(), usable(ranged(RangeDto(0, 3, 4), RangeDto(4, 6, 0)))) // the total is 10: bytes 7..9 are nobody's
+    }
+
+    @Test
+    fun anEmptyListOfRangesDropsTheRow() {
+        assertEquals(emptyList(), usable(dto("x").copy(ranges = emptyList())))
+    }
+
+    @Test
+    fun withTheTotalUnknownTheRangesStillHaveToBeContiguousFromZero() {
+        fun unknownTotal(vararg r: RangeDto) =
+            DownloadDto("x", "https://x.test/a.zip", "a.zip", "/abs", null, 0, DownloadStatus.Paused, ranges = r.toList())
+        assertEquals(listOf("x"), usable(unknownTotal(RangeDto(0, 3, 0), RangeDto(4, 6, 0))))
+        assertEquals(emptyList(), usable(unknownTotal(RangeDto(0, 3, 0), RangeDto(5, 6, 0))))
+    }
+
+    @Test
+    fun connectionsOutsideOneToSixteenAreClampedNotDropped() {
+        val rows = fromDownloadsFile(file(dto("1").copy(connections = 40), dto("2").copy(connections = 0), dto("3").copy(connections = -5)))
+        assertEquals(listOf(16, 1, 1), rows.map { it.connections })
     }
 }

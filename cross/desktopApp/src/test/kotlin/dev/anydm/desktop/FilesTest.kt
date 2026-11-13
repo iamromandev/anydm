@@ -640,7 +640,7 @@ class FilesTest {
                     initialText = "",
                     networks = emptySample().networks,
                     onCancel = {},
-                    onDownload = { _, _, _ -> },
+                    onDownload = { _, _, _, _ -> },
                     files = env,
                     saveFolder = "$HOME/Downloads",
                     initialTorrentPath = show,

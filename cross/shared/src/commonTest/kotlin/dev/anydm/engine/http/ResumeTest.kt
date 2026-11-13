@@ -27,4 +27,20 @@ class ResumeTest {
 
     @Test
     fun otherSuccessCodesFail() = assertEquals(ResumeDecision.Fail("HTTP 204"), resumeDecision(204, null, 0))
+
+    @Test
+    fun aStrongEtagIsTheIfRangeValidator() = assertEquals("\"v1\"", ifRangeOf("\"v1\"", "Wed, 21 Oct 2015 07:28:00 GMT"))
+
+    @Test
+    fun aWeakEtagNeverIsAnIfRangeValidatorSoTheLastModifiedIsUsed() =
+        assertEquals("Wed, 21 Oct 2015 07:28:00 GMT", ifRangeOf("W/\"v1\"", "Wed, 21 Oct 2015 07:28:00 GMT"))
+
+    @Test
+    fun aWeakEtagAloneLeavesNoIfRange() = assertEquals(null, ifRangeOf("W/\"v1\"", null))
+
+    @Test
+    fun noValidatorLeavesNoIfRange() = assertEquals(null, ifRangeOf(null, null))
+
+    @Test
+    fun theLastModifiedIsUsedWithoutAnEtag() = assertEquals("x", ifRangeOf(null, "x"))
 }

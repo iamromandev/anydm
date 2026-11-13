@@ -159,13 +159,49 @@ class NewDownloadModelTest {
         fun ready(
             total: Long?,
             resumable: Boolean,
-        ) = ProbeState.Ready(ProbeResult("a.zip", total, resumable)).let { previewDetail(probedPreview(d, it), all, it) }
-        assertEquals("400.0 MB · Resumable", ready(400L * 1024 * 1024, true))
+            connections: Int = 4,
+        ) = ProbeState.Ready(ProbeResult("a.zip", total, resumable)).let { previewDetail(probedPreview(d, it), all, it, connections) }
+        assertEquals("400.0 MB · Resumable · 4 connections", ready(400L * 1024 * 1024, true))
+        assertEquals("400.0 MB · Resumable · 1 connection", ready(400L * 1024 * 1024, true, 1))
         assertEquals("size unknown · Resumable", ready(null, true))
         assertEquals("1.0 KB · Uses one connection. This server doesn't support parallel downloads.", ready(1024, false))
         val t = parsePreview("magnet:?xt=urn:btih:abc")!!
         assertEquals("11 files · 123.3 MB", previewDetail(t, all))
         assertEquals("1 file · 1.5 KB", previewDetail(t, setOf(sintelFiles.last().name)))
+    }
+
+    @Test
+    fun theDetailKeepsTheOneConnectionTextWhateverTheCount() {
+        val d = direct("https://x.test/a.zip")
+        val noRange = ProbeState.Ready(ProbeResult("a.zip", 1024, false))
+        assertEquals(
+            "1.0 KB · Uses one connection. This server doesn't support parallel downloads.",
+            previewDetail(probedPreview(d, noRange), all, noRange, 8),
+        )
+    }
+
+    private fun probedFor(
+        total: Long?,
+        resumable: Boolean,
+    ) = probedPreview(direct("https://x.test/a.zip"), ProbeState.Ready(ProbeResult("a.zip", total, resumable)))
+
+    @Test
+    fun aRowGetsTheChosenConnectionsWhenTheServerCanBeSplit() {
+        assertEquals(4, newDownloadItem(probedFor(5000, true), all, "1", null, 4).connections)
+        assertEquals(16, newDownloadItem(probedFor(5000, true), all, "1", null, 40).connections)
+        assertEquals(1, newDownloadItem(probedFor(5000, true), all, "1", null, 0).connections)
+    }
+
+    @Test
+    fun aRowStaysOnOneConnectionWithoutRangeSupportOrKnownSize() {
+        assertEquals(1, newDownloadItem(probedFor(5000, false), all, "1", null, 8).connections)
+        assertEquals(1, newDownloadItem(probedFor(null, true), all, "1", null, 8).connections)
+        assertEquals(1, newDownloadItem(direct("https://x.test/a.zip"), all, "1", null, 8).connections)
+    }
+
+    @Test
+    fun aTorrentRowHasNoConnectionsToChoose() {
+        assertEquals(1, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1", null, 8).connections)
     }
 
     @Test

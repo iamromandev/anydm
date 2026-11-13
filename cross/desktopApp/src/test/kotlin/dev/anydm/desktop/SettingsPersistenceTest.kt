@@ -15,6 +15,8 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.v2.runComposeUiTest
+import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.http.ProbeResult
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
@@ -105,6 +107,54 @@ class SettingsPersistenceTest {
                 onNodeWithTag("select-1").assertIsOff()
                 onNodeWithTag("row-1").assertIsDisplayed()
                 onNodeWithTag("row-2").assertIsDisplayed()
+            }
+        }
+    }
+
+    @Test
+    fun theConnectionsSettingSurvivesARestartAndPrefillsTheNewDownloadDialog() {
+        val store = InMemorySettingsStore()
+        runComposeUiTest {
+            with(h) {
+                home(stores(store), dark = false)
+                await("the first load") { true }
+                modComma()
+                nav("speeddata")
+                onNodeWithTag("connections-value").assertTextEquals("8")
+                repeat(5) { onNodeWithTag("connections-minus").performClick() }
+                onNodeWithTag("connections-value").assertTextEquals("3")
+                onNodeWithTag("limits-save").performClick()
+                mainClock.advanceTimeBy(700)
+                await("the save") { store.saves.isNotEmpty() }
+                assertEquals(
+                    3,
+                    store.saves
+                        .last()
+                        .limits.connections,
+                )
+            }
+        }
+        runComposeUiTest {
+            val probed = FakeProber(fallback = ProbeOutcome.Ok(ProbeResult("a.zip", 5000, true)))
+            setContent {
+                HomeScreen(
+                    populatedSample(),
+                    true,
+                    clipboardText = { null },
+                    files = h.env,
+                    platform = Platform.Mac,
+                    stores = stores(store),
+                    downloadEnv = DownloadEnv(FakeEngine(), probed, FakeOpener(), MemoryDiskIo()),
+                )
+            }
+            with(h) {
+                await("the settings") { true }
+                onNodeWithTag("new-download").performClick()
+                onNodeWithTag("url-field").performTextInput("https://x.test/a.zip")
+                await(
+                    "the probe",
+                ) { runCatching { onNodeWithTag("preview-detail").assertTextEquals("4.9 KB · Resumable · 3 connections") }.isSuccess }
+                onNodeWithTag("connections-value").assertTextEquals("3")
             }
         }
     }

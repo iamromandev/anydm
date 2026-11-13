@@ -112,7 +112,7 @@ fun NewDownloadDialog(
     initialText: String,
     networks: List<Network>,
     onCancel: () -> Unit,
-    onDownload: (Preview, Set<String>, String) -> Unit,
+    onDownload: (Preview, Set<String>, String, Int) -> Unit,
     files: FilesEnv,
     saveFolder: String,
     onProxySave: (String, Proxy) -> Unit = { _, _ -> },
@@ -121,6 +121,8 @@ fun NewDownloadDialog(
     openPickerOnStart: Boolean = false,
     keychainNotes: Map<String, String> = emptyMap(),
     prober: LinkProber = remember { DownloadEnv.inert().prober },
+    /** The "Connections per download" setting: what the control starts at for a link that can be split. */
+    defaultConnections: Int = DEFAULT_CONNECTIONS,
 ) {
     val c = colors
     var text by remember { mutableStateOf(initialText) }
@@ -196,6 +198,14 @@ fun NewDownloadDialog(
             }
     }
     var streams by remember { mutableStateOf("auto") }
+    var connections by remember(defaultConnections) {
+        mutableStateOf(defaultConnections.coerceIn(MIN_CONNECTIONS, MAX_CONNECTIONS_PER_DOWNLOAD))
+    }
+    // Whether the Connections stepper applies: the probe is in and shows that the server takes ranges and the size is known.
+    val splittable = preview is Preview.Direct && probe !is ProbeState.Checking && canSplit(preview)
+    // The count the preview text shows. Download sends the stepper's [connections] as it is; newDownloadItem keeps it only for a link
+    // that canSplit, and gives any other row one connection.
+    val chosen = if (splittable) connections else 1
     val focus = remember { FocusRequester() }
     var proxyFor by remember { mutableStateOf<String?>(null) }
     val chips = remember { mutableStateMapOf<String, Rect>() }
@@ -266,7 +276,7 @@ fun NewDownloadDialog(
                 }
                 torrentError?.let { reason -> TorrentError(reason) }
                 if (preview != null) {
-                    PreviewBlock(preview, ticked, probe)
+                    PreviewBlock(preview, ticked, probe, chosen)
                     if (startsAfter != null) {
                         Text(
                             startsAfterText(startsAfter),
@@ -292,6 +302,16 @@ fun NewDownloadDialog(
                     )
                     Spacer(Modifier.width(12.dp))
                     OutlineButton("Change", "save-change", { files.picker.pickFolder(folder)?.let { folder = it } })
+                }
+                if (preview is Preview.Direct) {
+                    OptionRow("Connections") {
+                        // Disabled at 1 by a range of one value, as the Settings stepper is at its ends.
+                        if (splittable) {
+                            Stepper(connections, MIN_CONNECTIONS, MAX_CONNECTIONS_PER_DOWNLOAD, { connections = it }, "connections")
+                        } else {
+                            Stepper(1, 1, 1, {}, "connections")
+                        }
+                    }
                 }
                 OptionRow("Networks") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -322,7 +342,7 @@ fun NewDownloadDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
             ) {
                 OutlineButton("Cancel", "cancel", onCancel)
-                PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked, folder) }
+                PrimaryButton("Download", "download", valid) { if (preview != null) onDownload(preview, ticked, folder, connections) }
             }
         }
         val target = proxyFor?.let { id -> networks.firstOrNull { it.id == id } }
@@ -444,6 +464,7 @@ private fun PreviewBlock(
     preview: Preview,
     ticked: Set<String>,
     probe: ProbeState,
+    connections: Int,
 ) {
     val c = colors
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -476,7 +497,7 @@ private fun PreviewBlock(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                previewDetail(preview, ticked, probe),
+                previewDetail(preview, ticked, probe, connections),
                 color = c.textSecondary,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
@@ -562,7 +583,7 @@ private fun OptionRow(
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = colors.textSecondary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.width(76.dp))
+        Text(label, color = colors.textSecondary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.width(92.dp))
         content()
     }
 }

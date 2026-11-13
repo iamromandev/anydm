@@ -1,6 +1,8 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.JobSpec
+import dev.anydm.engine.http.Span
+import dev.anydm.engine.http.TRAILER_BYTES
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -147,7 +149,7 @@ class EngineBridgeTest {
         val disk = MemoryDiskIo()
         val a = Path.of("/d/a.zip.part")
         runBlocking { runEngineCommand(env(engine, opener, disk), EngineCmd.Discard(setOf("1", "2"), listOf(a))) }
-        assertEquals(listOf("join:1", "join:2"), engine.log.toList())
+        assertEquals(listOf("join:1", "join:2", "forget:1", "forget:2"), engine.log.toList())
         assertEquals(listOf(a), opener.trashed.toList())
         assertEquals(emptyList(), disk.deleted.toList())
     }
@@ -195,8 +197,90 @@ class EngineBridgeTest {
         assertEquals(listOf("1"), engine.starts.map { it.id })
     }
 
+    // m6: what the engine kept of a removed row goes even when its job was slow to end (a start under a reused id clears it too)
+    @Test
+    fun aRowWhoseJobDoesNotEndInTimeIsStillForgottenButItsFilesStay() {
+        val engine = FakeEngine().apply { joinGate = CompletableDeferred() } // never completes
+        val opener = FakeOpener()
+        val a = Path.of("/d/a.zip.part")
+        runBlocking { runEngineCommand(env(engine, opener), EngineCmd.Discard(setOf("1"), listOf(a)), joinWaitMs = 100) }
+        assertEquals(listOf("join:1", "forget:1"), engine.log.toList())
+        assertEquals(emptyList(), opener.trashed.toList())
+    }
+
     @Test
     fun aTorrentRowEvenWithAUrlNeverStarts() {
         assertTrue(cmds(state(), state(row("1", DownloadStatus.Downloading, kind = DownloadKind.Torrent))).isEmpty())
+    }
+
+    private val spans = listOf(Span(0, 49, 20), Span(50, 99, 5))
+
+    @Test
+    fun aSegmentedRowStartsWithItsConnectionsAndSpans() {
+        val seg = row("1", DownloadStatus.Downloading).copy(connections = 4, spans = spans, partId = "AA")
+        val out = cmds(state(), state(seg))
+        val sent = (out.single() as EngineCmd.Start).job
+        assertEquals(4, sent.connections)
+        assertEquals(spans, sent.spans)
+        assertEquals("AA", sent.partId)
+    }
+
+    @Test
+    fun aStartWithSpansAndAPartFileKeepsTheSpansAndTakesDoneFromThem() {
+        val disk = MemoryDiskIo()
+        disk.put("/d/a.zip.part", 100 + TRAILER_BYTES) // full size from the start, and the identity after it: the size says nothing
+        val engine = FakeEngine()
+        runBlocking {
+            runEngineCommand(env(engine, disk = disk), EngineCmd.Start(job.copy(done = 3, connections = 4, spans = spans, partId = "AA")))
+        }
+        val sent = engine.starts.single()
+        assertEquals(spans, sent.spans)
+        assertEquals("AA", sent.partId)
+        assertEquals(25L, sent.done)
+        assertEquals(4, sent.connections)
+        assertTrue(disk.deleted.isEmpty(), "the part file holds the ranges' bytes")
+    }
+
+    @Test
+    fun aStartWithSpansButNoPartFileStartsFromZeroWithoutSpans() {
+        val engine = FakeEngine()
+        runBlocking { runEngineCommand(env(engine), EngineCmd.Start(job.copy(done = 25, connections = 4, spans = spans, partId = "AA"))) }
+        val sent = engine.starts.single()
+        assertEquals(null, sent.spans)
+        assertEquals(null, sent.partId)
+        assertEquals(0L, sent.done)
+        assertEquals(4, sent.connections)
+    }
+
+    @Test
+    fun aRowOnSeveralConnectionsWithoutRangesLeavesItsPartFileToTheEngine() {
+        // Whether that file is one stream's partial or a segmented run's with gaps is the engine's to tell, after the row's
+        // predecessor has ended: at this point a pause just before has maybe not yet created it.
+        val disk = MemoryDiskIo()
+        disk.put("/d/a.zip.part", 30)
+        val engine = FakeEngine()
+        runBlocking { runEngineCommand(env(engine, disk = disk), EngineCmd.Start(job.copy(done = 100, total = 100, connections = 4))) }
+        val sent = engine.starts.single()
+        assertEquals(30L, sent.done)
+        assertEquals(null, sent.spans)
+        assertEquals(4, sent.connections)
+        assertTrue(disk.deleted.isEmpty(), "the engine decides what happens to the file")
+    }
+
+    @Test
+    fun aRowOnOneConnectionKeepsToday() {
+        val disk = MemoryDiskIo()
+        disk.put("/d/a.zip.part", 30)
+        val engine = FakeEngine()
+        runBlocking { runEngineCommand(env(engine, disk = disk), EngineCmd.Start(job.copy(connections = 1))) }
+        assertEquals(30L, engine.starts.single().done)
+        assertTrue(disk.deleted.isEmpty())
+    }
+
+    @Test
+    fun discardTellsTheEngineToForgetTheRowsAfterTheJobsHaveEnded() {
+        val engine = FakeEngine()
+        runBlocking { runEngineCommand(env(engine), EngineCmd.Discard(setOf("1"), listOf(Path.of("/d/a.zip.part")))) }
+        assertEquals(listOf("join:1", "forget:1"), engine.log.toList())
     }
 }

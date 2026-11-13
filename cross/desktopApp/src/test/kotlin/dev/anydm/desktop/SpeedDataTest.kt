@@ -213,6 +213,20 @@ class SpeedDataTest {
         }
 
     @Test
+    fun connectionsPerDownloadStartAtEightAndStayWithinOneAndSixteen() =
+        runComposeUiTest {
+            home()
+            openSpeedData()
+            onNodeWithTag("connections-value").assertTextEquals("8")
+            repeat(9) { onNodeWithTag("connections-minus").performClick() }
+            onNodeWithTag("connections-value").assertTextEquals("1")
+            onNodeWithTag("connections-minus").assertIsNotEnabled()
+            repeat(20) { onNodeWithTag("connections-plus").performClick() }
+            onNodeWithTag("connections-value").assertTextEquals("16")
+            onNodeWithTag("connections-plus").assertIsNotEnabled()
+        }
+
+    @Test
     fun stepperButtonsHaveLabels() =
         runComposeUiTest {
             home()
@@ -551,7 +565,8 @@ class SpeedDataTest {
 
     private val days = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
-    private fun ComposeUiTest.scheduleOn() = onNodeWithTag("schedule-enabled").performClick()
+    // The pane is taller with the connections stepper: the schedule switch may sit below the fold of a small window.
+    private fun ComposeUiTest.scheduleOn() = onNodeWithTag("schedule-enabled").performScrollTo().performClick()
 
     @Test
     fun scheduleOnShowsWeekdaysAndDefaultTimesAndOffHidesThemKeepingValues() =
@@ -583,7 +598,7 @@ class SpeedDataTest {
             scheduleOn()
             for (d in days.take(5)) onNodeWithTag("schedule-day-$d").performClick()
             onNodeWithTag("limits-save").assertIsNotEnabled()
-            onNodeWithTag("schedule-error").assertIsDisplayed()
+            onNodeWithTag("schedule-error").performScrollTo().assertIsDisplayed()
             onNodeWithTag("limits-nav-error-general", useUnmergedTree = true).assertIsDisplayed()
             onNodeWithTag("schedule-day-tue").performClick()
             onNodeWithTag("limits-save").assertIsEnabled()
@@ -598,7 +613,7 @@ class SpeedDataTest {
             onNodeWithTag("schedule-end").performTextClearance()
             onNodeWithTag("schedule-end").performTextInput("09:00")
             onNodeWithTag("limits-save").assertIsNotEnabled()
-            onNodeWithTag("schedule-error").assertIsDisplayed()
+            onNodeWithTag("schedule-error").performScrollTo().assertIsDisplayed()
             onNodeWithTag("schedule-end").performTextClearance()
             onNodeWithTag("schedule-end").performTextInput("09:01")
             onNodeWithTag("limits-save").assertIsEnabled()

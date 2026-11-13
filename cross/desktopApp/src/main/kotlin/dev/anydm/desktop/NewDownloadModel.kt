@@ -156,10 +156,17 @@ fun probedPreview(
         }
     }
 
+/** Whether a link can be fetched over several connections: the server takes ranges and the size is known. */
+fun canSplit(preview: Preview.Direct): Boolean = preview.resumable && preview.totalBytes != null
+
+fun connectionsText(n: Int): String = if (n == 1) "1 connection" else "$n connections"
+
 fun previewDetail(
     preview: Preview,
     ticked: Set<String>,
     probe: ProbeState = ProbeState.Idle,
+    /** The count chosen in the dialog, shown for a link that can be split. */
+    connections: Int = 1,
 ): String =
     when (preview) {
         is Preview.Direct -> {
@@ -167,6 +174,7 @@ fun previewDetail(
             when {
                 probe is ProbeState.Checking -> "Checking link…"
                 probe is ProbeState.Failed -> probe.reason
+                canSplit(preview) -> "$size · Resumable · ${connectionsText(connections)}"
                 preview.resumable -> "$size · Resumable"
                 else -> "$size · Uses one connection. This server doesn't support parallel downloads."
             }
@@ -195,6 +203,8 @@ fun newDownloadItem(
     ticked: Set<String>,
     id: String,
     folder: String? = null,
+    /** The count asked for; a row that cannot be split (no range support, unknown size, a torrent) keeps one. */
+    connections: Int = 1,
 ): DownloadItem {
     val total =
         when (preview) {
@@ -206,7 +216,15 @@ fun newDownloadItem(
     // A direct link is a real download: it starts at 0 B/s and the engine's reports move it. A torrent row stays simulated.
     val speed = if (preview is Preview.Torrent) SAMPLE_SPEED else 0L
     val url = (preview as? Preview.Direct)?.url
-    return DownloadItem(id, preview.name, total, 0, speed, DownloadStatus.Downloading, kind, folder, files, url)
+    val count =
+        if (preview is Preview.Direct &&
+            canSplit(preview)
+        ) {
+            connections.coerceIn(MIN_CONNECTIONS, MAX_CONNECTIONS_PER_DOWNLOAD)
+        } else {
+            1
+        }
+    return DownloadItem(id, preview.name, total, 0, speed, DownloadStatus.Downloading, kind, folder, files, url, connections = count)
 }
 
 fun nextId(items: List<DownloadItem>): String = ((items.maxOfOrNull { it.id.toLongOrNull() ?: 0L } ?: 0L) + 1).toString()

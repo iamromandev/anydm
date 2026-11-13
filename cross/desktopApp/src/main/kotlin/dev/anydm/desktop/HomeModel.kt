@@ -1,5 +1,7 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.Span
+
 enum class DownloadStatus { Downloading, Queued, Paused, Finished, Failed }
 
 /** A total size that the server did not tell: no percentage and no ETA. */
@@ -25,6 +27,14 @@ data class DownloadItem(
     val error: String? = null,
     val etag: String? = null,
     val lastModified: String? = null,
+    /** How many connections may fetch the file at once, fixed when the row is added. */
+    val connections: Int = 1,
+    /** The ranges of a segmented download with what is written; null: not segmented (yet), or a version 1 row. */
+    val spans: List<Span>? = null,
+    /** The identity of the `.part` file the [spans] were written for; ranges without it are not trusted on a resume. */
+    val partId: String? = null,
+    /** Connections open right now; not saved. */
+    val liveConnections: Int = 0,
 )
 
 data class HomeState(
