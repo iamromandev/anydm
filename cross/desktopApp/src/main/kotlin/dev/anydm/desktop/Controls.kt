@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -47,6 +48,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+private const val DISABLED_ALPHA = 0.55f
+
 @Composable
 fun CheckBox(
     checked: Boolean,
@@ -55,6 +58,8 @@ fun CheckBox(
     description: String,
     /** A mouse release on the box, not a key: lets the caller move the key focus off it after a click. */
     onPointerRelease: () -> Unit = {},
+    /** False shows the box dimmed and ignores clicks and keys: the value is shown but cannot be changed. */
+    enabled: Boolean = true,
 ) {
     val c = colors
     val pointerRelease by rememberUpdatedState(onPointerRelease)
@@ -70,9 +75,10 @@ fun CheckBox(
                         }
                     }
                 }.semantics { contentDescription = description }
+                .alpha(if (enabled) 1f else DISABLED_ALPHA)
                 .background(if (checked) c.accent else Color.Transparent, RoundedCornerShape(4.dp))
                 .border(1.dp, if (checked) c.accent else c.border, RoundedCornerShape(4.dp))
-                .toggleable(checked, role = Role.Checkbox, onValueChange = onChange),
+                .toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = onChange),
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {

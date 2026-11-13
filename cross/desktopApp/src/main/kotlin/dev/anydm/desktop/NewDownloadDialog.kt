@@ -128,6 +128,8 @@ fun NewDownloadDialog(
     var text by remember { mutableStateOf(initialText) }
     var torrent by remember { mutableStateOf<LoadedTorrent?>(null) }
     var torrentError by remember { mutableStateOf<String?>(null) }
+    // A torrent that was read and refused for what it is (no trackers), not for being unreadable.
+    var refusal by remember { mutableStateOf<String?>(null) }
     var reading by remember { mutableStateOf(false) }
     // Picked with Change; it applies to this dialog only. Home adopts it as the default when Download is pressed.
     var folder by remember { mutableStateOf(saveFolder) }
@@ -182,13 +184,22 @@ fun NewDownloadDialog(
                     if (!reads.isCurrent(token)) return@launch
                     when (r) {
                         is TorrentResult.Ok -> {
-                            torrent = LoadedTorrent(path.fileName?.toString().orEmpty(), r.meta)
                             torrentError = null
-                            text = ""
+                            if (hasTrackers(r.meta)) {
+                                torrent = LoadedTorrent(path.fileName?.toString().orEmpty(), r.meta, path)
+                                refusal = null
+                                text = ""
+                            } else {
+                                // the torrent shown before is gone too: Download must not add a torrent the dialog now says nothing of
+                                torrent = null
+                                refusal = NO_TRACKERS_TEXT
+                            }
                         }
 
                         is TorrentResult.Err -> {
+                            torrent = null
                             torrentError = r.reason
+                            refusal = null
                         }
                     }
                 } finally {
@@ -261,6 +272,7 @@ fun NewDownloadDialog(
                         cancelRead()
                         text = it
                         torrentError = null
+                        refusal = null
                     },
                     focus,
                     torrent?.fileName,
@@ -268,6 +280,7 @@ fun NewDownloadDialog(
                         cancelRead()
                         torrent = null
                         torrentError = null
+                        refusal = null
                     },
                     onOpenTorrent = { files.picker.pickTorrent()?.let(::load) },
                 )
@@ -275,6 +288,7 @@ fun NewDownloadDialog(
                     Text("Reading…", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("torrent-reading"))
                 }
                 torrentError?.let { reason -> TorrentError(reason) }
+                refusal?.let { text -> TorrentRefused(text) }
                 if (preview != null) {
                     PreviewBlock(preview, ticked, probe, chosen)
                     if (startsAfter != null) {
@@ -287,7 +301,16 @@ fun NewDownloadDialog(
                         )
                     }
                     if (preview is Preview.Torrent) {
-                        TorrentTree(preview, ticked, Modifier.weight(1f, fill = false)) { ticked = it }
+                        TorrentTree(preview, ticked, Modifier.weight(1f, fill = false), preview.locked) { ticked = it }
+                        if (preview.locked) {
+                            Text(
+                                LOCKED_TREE_HINT,
+                                color = c.textSecondary,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                modifier = Modifier.testTag("torrent-hint"),
+                            )
+                        }
                     }
                 }
                 OptionRow("Save to") {
@@ -460,6 +483,11 @@ private fun TorrentError(reason: String) {
 }
 
 @Composable
+private fun TorrentRefused(text: String) {
+    Text(text, color = colors.danger, fontSize = 13.sp, modifier = Modifier.testTag("torrent-refused"))
+}
+
+@Composable
 private fun PreviewBlock(
     preview: Preview,
     ticked: Set<String>,
@@ -512,6 +540,8 @@ private fun TorrentTree(
     preview: Preview.Torrent,
     ticked: Set<String>,
     modifier: Modifier,
+    /** Every file stays ticked and the boxes cannot be changed (a real torrent: choosing files comes later). */
+    locked: Boolean,
     onTicked: (Set<String>) -> Unit,
 ) {
     val c = colors
@@ -538,7 +568,7 @@ private fun TorrentTree(
                             emptySet()
                         },
                     )
-                }, "folder-toggle", "Select all files")
+                }, "folder-toggle", "Select all files", enabled = !locked)
                 Spacer(Modifier.width(8.dp))
                 FolderIcon(c.textSecondary)
                 Spacer(Modifier.width(8.dp))
@@ -559,6 +589,7 @@ private fun TorrentTree(
                     { on -> onTicked(if (on) ticked + f.name else ticked - f.name) },
                     "file-${f.name}",
                     "Select ${f.name}",
+                    enabled = !locked,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(

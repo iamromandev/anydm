@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.PieceSet
 
 enum class DownloadStatus { Downloading, Queued, Paused, Finished, Failed }
 
@@ -35,6 +36,27 @@ data class DownloadItem(
     val partId: String? = null,
     /** Connections open right now; not saved. */
     val liveConnections: Int = 0,
+    /** A real torrent's info hash (40 lowercase hex); null for a link, a magnet and a row from before torrents were real. */
+    val infoHash: String? = null,
+    /**
+     * A real torrent's verified pieces: what the engine last said, written to disk and checked. Null until the torrent first
+     * starts, and again once it is finished. A row that has it is a resume: the engine keeps the names its files have.
+     */
+    val pieces: PieceSet? = null,
+    /** A real torrent's connected peers; not saved. */
+    val peers: Int = 0,
+    /** A real torrent's pieces with a block asked for that are not verified yet; not saved. */
+    val inFlight: Set<Int> = emptySet(),
+    /**
+     * A magnet row made by this build: it is a simulation (no engine runs it), and says so in `downloads.json` so that after a restart
+     * it still pauses and resumes as one. A torrent row with no info hash and no such mark was saved before torrents were real.
+     */
+    val simulated: Boolean = false,
+    /**
+     * A torrent row from an earlier run with no info hash: it was made before torrents were real (or is a magnet saved before magnet rows were marked), has no `.torrent` copy
+     * to run from, and says so ("Can't resume: add the torrent again") when resumed. Not saved: set when the rows are loaded.
+     */
+    val noCopy: Boolean = false,
 )
 
 data class HomeState(

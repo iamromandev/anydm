@@ -10,6 +10,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -116,5 +117,109 @@ class RealDiskIoTest {
     @Test
     fun freeSpaceOfARealFolderIsPositive() {
         assertTrue(disk.freeSpace(dir) > 0)
+    }
+
+    @Test
+    fun readAtReturnsTheBytesAtAPositionAndFewerAtTheEnd() {
+        val p = dir.resolve("r.part")
+        Files.write(p, byteArrayOf(1, 2, 3, 4, 5, 6))
+        val buf = ByteArray(10)
+        assertEquals(3, disk.readAt(p, 2, buf, 1, 3))
+        assertContentEquals(byteArrayOf(0, 3, 4, 5, 0), buf.copyOf(5))
+        assertEquals(2, disk.readAt(p, 4, buf, 0, 5), "only what the file has")
+        assertEquals(0, disk.readAt(p, 6, buf, 0, 5), "at the end")
+        assertEquals(0, disk.readAt(p, 60, buf, 0, 5), "past the end")
+    }
+
+    @Test
+    fun readAtOfAMissingFileFails() {
+        assertFailsWith<IOException> { disk.readAt(dir.resolve("nope"), 0, ByteArray(1), 0, 1) }
+    }
+
+    @Test
+    fun readAtSeesWhatAPartFileWrote() {
+        val p = dir.resolve("rw.part")
+        disk.openSpans(p, 100).use { it.write(40, byteArrayOf(7, 8, 9), 0, 3) }
+        val buf = ByteArray(3)
+        assertEquals(3, disk.readAt(p, 40, buf, 0, 3))
+        assertContentEquals(byteArrayOf(7, 8, 9), buf)
+    }
+
+    @Test
+    fun deleteTreeRemovesAFolderWithEverythingInItAndAMissingPathIsNoError() {
+        val root = dir.resolve("tree")
+        disk.mkdirs(root.resolve("a/b"))
+        Files.writeString(root.resolve("a/b/f.part"), "x")
+        Files.writeString(root.resolve("g"), "y")
+        disk.deleteTree(root)
+        assertFalse(Files.exists(root))
+        disk.deleteTree(root)
+    }
+
+    @Test
+    fun deleteTreeRemovesALinkButNeverWhatItPointsTo() {
+        val outside = dir.resolve("outside")
+        disk.mkdirs(outside)
+        Files.writeString(outside.resolve("keep"), "k")
+        val root = dir.resolve("with-link")
+        disk.mkdirs(root)
+        try {
+            Files.createSymbolicLink(root.resolve("link"), outside)
+        } catch (_: UnsupportedOperationException) {
+            return // no links on this file system
+        }
+        disk.deleteTree(root)
+        assertFalse(Files.exists(root))
+        assertEquals("k", Files.readString(outside.resolve("keep")))
+    }
+
+    @Test
+    fun deleteTreeOfAFileIsDelete() {
+        val f = dir.resolve("one")
+        Files.writeString(f, "1")
+        disk.deleteTree(f)
+        assertFalse(Files.exists(f))
+    }
+
+    @Test
+    fun isLinkIsTrueForALinkItselfAndFalseForAFileAFolderAndAMissingPath() {
+        val outside = dir.resolve("outside-dir")
+        disk.mkdirs(outside)
+        val file = dir.resolve("plain")
+        Files.writeString(file, "x")
+        val link = dir.resolve("a-link")
+        try {
+            Files.createSymbolicLink(link, outside)
+        } catch (_: UnsupportedOperationException) {
+            return // no links on this file system
+        }
+        assertTrue(disk.isLink(link), "a link to a folder")
+        assertFalse(disk.isLink(outside))
+        assertFalse(disk.isLink(file))
+        assertFalse(disk.isLink(dir.resolve("missing")))
+    }
+
+    @Test
+    fun childrenListsAFoldersEntriesWithoutFollowingLinksAndIsNullForAFileALinkOrAMissingPath() {
+        val folder = dir.resolve("kids")
+        disk.mkdirs(folder.resolve("sub"))
+        Files.writeString(folder.resolve("f"), "x")
+        val outside = dir.resolve("outside-kids")
+        disk.mkdirs(outside)
+        Files.writeString(outside.resolve("o"), "o")
+        val link = folder.resolve("link")
+        val linked =
+            try {
+                Files.createSymbolicLink(link, outside)
+                true
+            } catch (_: UnsupportedOperationException) {
+                false
+            }
+        val kids = assertNotNull(disk.children(folder)).toSet()
+        assertEquals(setOf(folder.resolve("sub"), folder.resolve("f")) + if (linked) setOf(link) else emptySet(), kids)
+        assertEquals(emptyList(), disk.children(folder.resolve("sub")))
+        assertNull(disk.children(folder.resolve("f")), "a file")
+        assertNull(disk.children(dir.resolve("missing")))
+        if (linked) assertNull(disk.children(link), "a link is not followed")
     }
 }

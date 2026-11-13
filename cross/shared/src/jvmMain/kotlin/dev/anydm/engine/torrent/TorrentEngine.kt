@@ -1,0 +1,298 @@
+package dev.anydm.engine.torrent
+
+import dev.anydm.engine.http.Clock
+import dev.anydm.engine.http.ConnectionPermits
+import dev.anydm.engine.http.DiskIo
+import dev.anydm.engine.http.EngineEvent
+import dev.anydm.engine.http.Fail
+import dev.anydm.engine.http.RateShares
+import dev.anydm.engine.http.Reasons
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.InvalidPathException
+import java.nio.file.Path
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.logging.Level
+import java.util.logging.Logger
+import kotlin.random.Random
+
+interface TorrentEngine {
+    val events: SharedFlow<EngineEvent>
+
+    fun start(job: TorrentJob)
+
+    fun stop(id: String)
+
+    /** Returns once the job of [id], if one is running, has ended: after a [stop], its files are closed. */
+    suspend fun join(id: String) = Unit
+
+    /** The row of [id] is gone: drop what the engine remembers about it. */
+    fun forget(id: String) = Unit
+}
+
+/** The numbers a torrent engine runs by; the defaults are for real use, tests pass small ones. */
+data class TorrentLimits(
+    val perTorrent: Int = MAX_PEERS_PER_TORRENT,
+    val total: Int = MAX_PEERS_TOTAL,
+    val noPeersMs: Long = NO_PEERS_MS,
+    /** At least one `Progress` this often. */
+    val reportMs: Long = 500,
+    /** The most unverified piece data one torrent holds (or one piece, when that is more): see [bufferCap]. */
+    val maxBuffered: Long = MAX_BUFFERED.toLong(),
+    val connectTimeoutMs: Int = 10_000,
+    val handshakeMs: Long = 30_000,
+    /** Announces to one tracker are at least this far apart. */
+    val minAnnounceMs: Long = MIN_ANNOUNCE_MS,
+    /** The time the `completed` and `stopped` announces have, together. */
+    val farewellMs: Long = FAREWELL_MS,
+)
+
+/** How often a run looks at the clock: four times in a report interval, so a late tick cannot push a report far past its time. */
+internal fun TorrentLimits.tickMs(): Long = (reportMs / 4).coerceIn(10, 250)
+
+/**
+ * One coroutine per torrent (see [TorrentRun]); `stop` cancels it, which closes every peer connection at once and forces and
+ * closes the files, and a `Stopped` event says which pieces were verified. Jobs run under their own supervisor: one that fails never
+ * takes the others down. Peer connections of all torrents together are held to `limits.total`.
+ *
+ * A start with pieces (a resume) hashes those pieces again from the files before it trusts them (see [recheck]): `Progress` events with
+ * the bytes verified so far come meanwhile (no `pieces`: the row keeps its own), then `Started` with the pieces that held, before any
+ * peer is connected to. A pause during the check says the row's own pieces in `Stopped`. A job with no pieces (a row that never ran)
+ * claims none in `Failed` or `Stopped` until its `Started` has been told: before that its files have no settled name. [trackers] announces each torrent to its
+ * trackers (see [Announcer]); a job's own `peers` list is offered as well.
+ *
+ * The end of a job is told once its files are closed (`Failed`, `Stopped`) or renamed (`Finished`), and the events cannot be lost to
+ * a cancel. From the moment it is told the job counts as over: a `start` for the same id (a resume made on seeing `Failed`) is
+ * accepted at once and waits only for the old coroutine to finish its cleanup.
+ */
+class DefaultTorrentEngine(
+    private val transport: PeerTransport,
+    /** Where the peers come from besides a job's own list: the trackers of each torrent are announced to through this. */
+    private val trackers: TrackerClient,
+    private val disk: DiskIo,
+    private val clock: Clock,
+    scope: CoroutineScope,
+    /** The speed cap and the buckets of the running downloads; the HTTP engine uses the same object to split the cap with this one. */
+    val shares: RateShares = RateShares(),
+    private val random: Random = Random.Default,
+    private val limits: TorrentLimits = TorrentLimits(),
+) : TorrentEngine {
+    private val jobScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+    private val bus = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 1024)
+    override val events: SharedFlow<EngineEvent> = bus.asSharedFlow()
+    private val jobs = HashMap<String, Slot>()
+    private val permits = ConnectionPermits(limits.total)
+    private val runs = ConcurrentHashMap<String, TorrentRun>()
+
+    /** The last announces of the latest run of each job: a resume waits for them (see [TorrentEnv.farewells]). */
+    private val farewells = ConcurrentHashMap<String, Job>()
+
+    /** The root paths that running jobs write, by the id of the job: two jobs never write the same files. */
+    private val claims = HashMap<String, String>()
+
+    /** A job and whether it has told its end: from then on it no longer stands in the way of a start for the same id. */
+    private class Slot {
+        lateinit var job: Job
+
+        @Volatile var ended = false
+    }
+
+    private fun keyOf(path: Path): String = path.normalize().toString().lowercase(Locale.ROOT)
+
+    @Synchronized
+    override fun start(job: TorrentJob) {
+        val old = jobs[job.id]
+        if (old != null && old.job.isActive && !old.ended) return // already running; stop() first
+        val slot = Slot()
+        slot.job =
+            jobScope.launch(Dispatchers.IO, CoroutineStart.LAZY) {
+                old?.job?.join() // a stopped or failed predecessor may still be winding down on the same files
+                run(job, slot)
+            }
+        jobs[job.id] = slot
+        slot.job.invokeOnCompletion {
+            synchronized(this) { if (jobs[job.id] === slot) jobs.remove(job.id) }
+        }
+        slot.job.start()
+    }
+
+    @Synchronized
+    override fun stop(id: String) {
+        jobs[id]?.job?.cancel()
+    }
+
+    override suspend fun join(id: String) {
+        val slot = synchronized(this) { jobs[id] }
+        slot?.job?.join()
+    }
+
+    /** Offers [addrs] to the running torrent [id] as peers to connect to; nothing happens when it is not running. */
+    internal suspend fun offerPeers(
+        id: String,
+        addrs: List<PeerAddr>,
+    ) {
+        runs[id]?.offerPeers(addrs)
+    }
+
+    /** The run of [id] while it is going; tests read what it measured. */
+    internal fun runOf(id: String): TorrentRun? = runs[id]
+
+    private suspend fun run(
+        job: TorrentJob,
+        slot: Slot,
+    ) {
+        shares.register(job.id)
+        var meta: TorrentMeta? = null
+        var store: TorrentStore? = null
+        var run: TorrentRun? = null
+        var claimed: String? = null
+        var pieces: PieceSet? = job.pieces
+
+        // before the metainfo is read the figure is the row's own, handed back, never a 0 that would reset it
+        fun done(): Long = meta?.let { m -> pieces?.doneBytes(m) } ?: job.doneBytes
+
+        /** Tells how the job ended: the files are closed first, so whoever hears it may open them again; and not even a stop cuts it short. */
+        suspend fun end(event: () -> EngineEvent) {
+            withContext(NonCancellable) {
+                withContext(Dispatchers.IO) { store?.close() }
+                slot.ended = true
+                bus.emit(event())
+            }
+        }
+        try {
+            val loaded = load(job)
+            meta = loaded
+            job.pieces?.takeIf { it.size != loaded.pieceCount }?.let {
+                log.warning(
+                    "torrent job ${job.id}: the row claims pieces for ${it.size} pieces, the torrent has ${loaded.pieceCount}: ignored",
+                )
+            }
+            val have = job.pieces?.takeIf { it.size == loaded.pieceCount } ?: PieceSet.empty(loaded.pieceCount)
+            // A claim of the wrong size is handed back as an empty one of the right size; a row with no claim (it never ran) keeps
+            // none until Started: its name is settled only then, and any end before that must not tell the row it is.
+            if (job.pieces != null) pieces = have
+            // not cancellable: what open() made (files, a claim) must reach the cleanup below, never be lost to a stop that came meanwhile
+            val opened = withContext(Dispatchers.IO + NonCancellable) { open(job, loaded) }
+            store = opened.first
+            claimed = opened.second
+            // what the row claims is trusted after its bytes on disk hash right, not before; the claims stay the row's own until then
+            val checkEnv =
+                RecheckEnv(clock, Dispatchers.IO, maxOf(limits.maxBuffered, loaded.pieceLength), limits.reportMs, limits.tickMs())
+            val checked =
+                recheck(checkEnv, store, loaded, have) { bus.emit(EngineEvent.Progress(job.id, it, loaded.totalSize, 0, connections = 0)) }
+            // a stop that came during the open or the check ends the job here, before Started: no name was told, so no claim is made
+            currentCoroutineContext().ensureActive()
+            pieces = checked
+            bus.emit(EngineEvent.Started(job.id, store.root, loaded.totalSize, null, null, checked.doneBytes(loaded), pieces = checked))
+            val env =
+                TorrentEnv(
+                    transport,
+                    clock,
+                    { bus.emit(it) },
+                    shares.bucket(job.id),
+                    permits,
+                    random,
+                    limits,
+                    trackers,
+                    jobScope,
+                    farewells = farewells,
+                )
+            val torrentRun = TorrentRun(env, job, loaded, store, checked)
+            run = torrentRun
+            runs[job.id] = torrentRun
+            try {
+                torrentRun.run()
+            } finally {
+                pieces = torrentRun.verified
+            }
+            // Once every piece is in, the end is not interrupted: a stop now must not leave files renamed and the row paused.
+            withContext(NonCancellable) {
+                val name = withContext(Dispatchers.IO) { store.finish() }
+                slot.ended = true
+                bus.emit(EngineEvent.Finished(job.id, loaded.totalSize, name.takeIf { it != job.name }))
+            }
+        } catch (e: CancellationException) {
+            end { EngineEvent.Stopped(job.id, done(), pieces = pieces) }
+            throw e
+        } catch (e: Fail) {
+            end { EngineEvent.Failed(job.id, e.reason, done(), pieces = pieces) }
+        } catch (e: Throwable) {
+            // Anything unforeseen, an Error too, is this download's failure, not the engine's: the row says so, and the cause is logged.
+            log.log(Level.WARNING, "torrent job ${job.id} failed unexpectedly", e)
+            end { EngineEvent.Failed(job.id, Reasons.NETWORK, done(), pieces = pieces) }
+        } finally {
+            runs.remove(job.id, run)
+            withContext(NonCancellable) { store?.close() }
+            claimed?.let { release(it, job.id) }
+            shares.unregister(job.id)
+        }
+    }
+
+    /** The metainfo of the saved `.torrent` of [job]; a copy that is gone, too big or not a torrent any more is [CANT_RESUME]. */
+    private companion object {
+        val log: Logger = Logger.getLogger(DefaultTorrentEngine::class.java.name)
+    }
+
+    private suspend fun load(job: TorrentJob): TorrentMeta {
+        val bytes =
+            withContext(Dispatchers.IO) {
+                try {
+                    val path = Path.of(job.torrentPath)
+                    if (Files.size(path) > MAX_TORRENT_BYTES) null else Files.readAllBytes(path)
+                } catch (_: IOException) {
+                    null
+                } catch (_: InvalidPathException) {
+                    null
+                }
+            } ?: throw Fail(CANT_RESUME)
+        val meta = (readTorrent(bytes) as? TorrentResult.Ok)?.meta ?: throw Fail(CANT_RESUME)
+        if (meta.pieceHashes.size != meta.pieceCount) throw Fail(CANT_RESUME)
+        return meta
+    }
+
+    /** Opens the files and claims their root, in one step, so two jobs never pick the same free name. */
+    private fun open(
+        job: TorrentJob,
+        meta: TorrentMeta,
+    ): Pair<TorrentStore, String> {
+        val folder =
+            try {
+                Path.of(job.folder).normalize()
+            } catch (_: InvalidPathException) {
+                throw Fail(Reasons.NOT_WRITABLE)
+            }
+        synchronized(claims) {
+            val taken = { p: Path -> keyOf(p) in claims }
+            if (job.pieces != null && claims[keyOf(folder.resolve(job.name))].let { it != null && it != job.id }) {
+                throw Fail(Reasons.NOT_WRITABLE) // another running job writes these files
+            }
+            val store = TorrentStore.open(disk, meta, folder, job.name, resume = job.pieces != null, taken)
+            val key = keyOf(folder.resolve(store.root))
+            claims[key] = job.id
+            return store to key
+        }
+    }
+
+    private fun release(
+        key: String,
+        id: String,
+    ) {
+        synchronized(claims) { if (claims[key] == id) claims.remove(key) }
+    }
+}

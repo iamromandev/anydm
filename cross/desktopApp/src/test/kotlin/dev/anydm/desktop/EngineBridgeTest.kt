@@ -3,6 +3,8 @@ package dev.anydm.desktop
 import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.Span
 import dev.anydm.engine.http.TRAILER_BYTES
+import dev.anydm.engine.torrent.PieceSet
+import dev.anydm.engine.torrent.TorrentJob
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,7 +30,7 @@ class EngineBridgeTest {
     private fun cmds(
         prev: QueueState,
         next: QueueState,
-    ) = engineCommands(prev, next, "/home/u/Downloads")
+    ) = engineCommands(prev, next, "/home/u/Downloads", NoTorrentFiles, ByteArray(20))
 
     @Test
     fun aRowThatBecomesDownloadingStartsWithItsOwnDataAndTheDefaultFolder() {
@@ -283,4 +285,210 @@ class EngineBridgeTest {
         runBlocking { runEngineCommand(env(engine), EngineCmd.Discard(setOf("1"), listOf(Path.of("/d/a.zip.part")))) }
         assertEquals(listOf("join:1", "forget:1"), engine.log.toList())
     }
+
+    // Real torrents: rows with an info hash go to the torrent engine (step 14)
+    private val hex = "cd".repeat(20)
+    private val peerId = ByteArray(20) { it.toByte() }
+    private val copies = FakeTorrentFiles()
+
+    private fun tor(
+        id: String,
+        status: DownloadStatus,
+        pieces: PieceSet? = null,
+        infoHash: String? = hex,
+    ) = DownloadItem(
+        id,
+        "T$id",
+        100,
+        40,
+        0,
+        status,
+        DownloadKind.Torrent,
+        folder = "/data",
+        infoHash = infoHash,
+        pieces = pieces,
+    )
+
+    private fun torCmds(
+        prev: QueueState,
+        next: QueueState,
+    ) = engineCommands(prev, next, "/home/u/Downloads", copies, peerId)
+
+    @Test
+    fun aTorrentRowWithAnInfoHashStartsAJobFromItsCopyItsFolderAndItsPieces() {
+        val set = PieceSet.of(4, listOf(1))
+        val out = torCmds(state(), state(tor("1", DownloadStatus.Downloading, set)))
+        val job = (out.single() as EngineCmd.StartTorrent).job
+        assertEquals(
+            listOf("1", "/app/torrents/$hex.torrent", "/data", "T1", set, 40L),
+            listOf(job.id, job.torrentPath, job.folder, job.name, job.pieces, job.doneBytes),
+        )
+        assertTrue(peerId.contentEquals(job.peerId))
+        assertEquals(emptyList(), job.peers)
+    }
+
+    @Test
+    fun aTorrentRowThatNeverRanStartsWithNoPiecesSoTheEnginePicksAFreeName() {
+        val job = (torCmds(state(), state(tor("1", DownloadStatus.Downloading))).single() as EngineCmd.StartTorrent).job
+        assertEquals(null, job.pieces)
+    }
+
+    @Test
+    fun aTorrentRowWithoutAFolderStartsInTheDefaultFolder() {
+        val row = tor("1", DownloadStatus.Downloading).copy(folder = null)
+        assertEquals("/home/u/Downloads", (torCmds(state(), state(row)).single() as EngineCmd.StartTorrent).job.folder)
+    }
+
+    @Test
+    fun aTorrentRowThatStopsDownloadingStopsItsJob() {
+        for (to in listOf(DownloadStatus.Paused, DownloadStatus.Queued, DownloadStatus.Finished, DownloadStatus.Failed)) {
+            assertEquals(
+                listOf(EngineCmd.StopTorrent("1")),
+                torCmds(state(tor("1", DownloadStatus.Downloading)), state(tor("1", to))),
+                "$to",
+            )
+        }
+        assertEquals(listOf(EngineCmd.StopTorrent("1")), torCmds(state(tor("1", DownloadStatus.Downloading)), state()))
+    }
+
+    @Test
+    fun aTorrentRowWithoutAnInfoHashStaysSimulatedAndNeverReachesAnEngine() {
+        val old = tor("1", DownloadStatus.Downloading, infoHash = null)
+        assertEquals(emptyList(), torCmds(state(), state(old)))
+        assertEquals(emptyList(), torCmds(state(old), state()))
+    }
+
+    @Test
+    fun aHttpRowAndATorrentRowStartTogetherEachOnItsOwnEngine() {
+        val out = torCmds(state(), state(row("1", DownloadStatus.Downloading), tor("2", DownloadStatus.Downloading)))
+        assertEquals(listOf(true, true), listOf(out[0] is EngineCmd.Start, out[1] is EngineCmd.StartTorrent))
+    }
+
+    private fun torEnv(
+        torrents: FakeTorrentEngine = FakeTorrentEngine(),
+        engine: FakeEngine = FakeEngine(),
+        opener: FakeOpener = FakeOpener(),
+        disk: MemoryDiskIo = MemoryDiskIo(),
+    ) = DownloadEnv(engine, FakeProber(), opener, disk, torrents = torrents, torrentFiles = copies)
+
+    private val torJob = TorrentJob("1", "/app/torrents/$hex.torrent", "/data", "T1", null, peerId)
+
+    @Test
+    fun aTorrentStartAndStopGoToTheTorrentEngineOnly() {
+        val torrents = FakeTorrentEngine()
+        val engine = FakeEngine()
+        runBlocking {
+            runEngineCommand(torEnv(torrents, engine), EngineCmd.StartTorrent(torJob))
+            runEngineCommand(torEnv(torrents, engine), EngineCmd.StopTorrent("1"))
+        }
+        assertEquals(listOf("start:1", "stop:1"), torrents.log.toList())
+        assertEquals(emptyList(), engine.log.toList())
+    }
+
+    @Test
+    fun aTorrentStartThatThrowsDoesNotStopTheNextCommand() {
+        val engine = FakeEngine()
+        val e = DownloadEnv(engine, FakeProber(), FakeOpener(), MemoryDiskIo(), torrents = TorrentEngineThatThrows())
+        runBlocking {
+            runEngineCommand(e, EngineCmd.StartTorrent(torJob))
+            runEngineCommand(e, EngineCmd.Start(job))
+        }
+        assertEquals(1, engine.starts.size)
+    }
+
+    @Test
+    fun discardJoinsAndForgetsOnBothEnginesThenTrashesTheFilesAndDeletesTheCopy() {
+        val torrents = FakeTorrentEngine()
+        val engine = FakeEngine()
+        val opener = FakeOpener()
+        val folder = Path.of("/data/T1")
+        val part = Path.of("/data/T1.part")
+        runBlocking {
+            runEngineCommand(torEnv(torrents, engine, opener), EngineCmd.Discard(setOf("1"), listOf(folder, part), listOf(hex)))
+        }
+        assertEquals(listOf("join:1", "forget:1"), torrents.log.toList())
+        assertEquals(listOf("join:1", "forget:1"), engine.log.toList())
+        assertEquals(listOf(folder, part), opener.trashed.toList())
+        assertEquals(listOf(hex), copies.deleted.toList())
+    }
+
+    @Test
+    fun discardWithoutTheOsTrashDeletesAFolderWithEverythingInIt() {
+        val disk = RecordingTreeDisk()
+        val opener = FakeOpener(canTrash = false)
+        val folder = Path.of("/data/T1")
+        runBlocking { runEngineCommand(torEnv(opener = opener, disk = disk), EngineCmd.Discard(setOf("1"), listOf(folder))) }
+        assertEquals(listOf(folder), disk.trees.toList())
+    }
+
+    @Test
+    fun aCopyThatALiveRowHasAgainIsNotDeletedButTheOthersAre() {
+        val other = "ef".repeat(20)
+        runBlocking {
+            runEngineCommand(
+                torEnv(),
+                EngineCmd.Discard(setOf("1"), emptyList(), listOf(hex, other)),
+                liveHashes = { setOf(hex) },
+            )
+        }
+        assertEquals(listOf(other), copies.deleted.toList())
+    }
+
+    @Test
+    fun theLiveRowsAreAskedAtTheMomentTheCopyWouldGoNotBefore() {
+        val torrents = FakeTorrentEngine().apply { joinGate = CompletableDeferred() }
+        val live =
+            java.util.concurrent.atomic
+                .AtomicReference<Set<String>>(emptySet())
+        runBlocking {
+            val call =
+                launch(Dispatchers.Default) {
+                    runEngineCommand(
+                        torEnv(torrents),
+                        EngineCmd.Discard(setOf("1"), emptyList(), listOf(hex)),
+                        liveHashes = { live.get() },
+                    )
+                }
+            while ("join:1" !in torrents.log) delay(5)
+            live.set(setOf(hex)) // the same torrent was added while the discard waited for the job
+            torrents.joinGate!!.complete(Unit)
+            call.join()
+        }
+        assertEquals(emptyList(), copies.deleted.toList())
+    }
+
+    @Test
+    fun theCopyIsDeletedEvenWhenTheJobDoesNotEndInTimeButItsFilesStay() {
+        val torrents = FakeTorrentEngine().apply { joinGate = CompletableDeferred() } // never completes
+        val opener = FakeOpener()
+        val folder = Path.of("/data/T1")
+        runBlocking {
+            runEngineCommand(
+                torEnv(torrents, opener = opener),
+                EngineCmd.Discard(setOf("1"), listOf(folder), listOf(hex)),
+                joinWaitMs = 100,
+            )
+        }
+        assertEquals(emptyList(), opener.trashed.toList(), "a job still writing keeps its files")
+        assertEquals(listOf("join:1", "forget:1"), torrents.log.toList())
+        assertEquals(listOf(hex), copies.deleted.toList())
+    }
+}
+
+/** A disk that records the trees it was asked to delete. */
+private class RecordingTreeDisk : MemoryDiskIo() {
+    val trees = java.util.concurrent.CopyOnWriteArrayList<Path>()
+
+    override fun deleteTree(p: Path) {
+        trees.add(p)
+    }
+}
+
+/** A torrent engine whose start fails, as one with a bug would. */
+private class TorrentEngineThatThrows : dev.anydm.engine.torrent.TorrentEngine {
+    override val events = kotlinx.coroutines.flow.MutableSharedFlow<dev.anydm.engine.http.EngineEvent>()
+
+    override fun start(job: TorrentJob) = error("engine bug")
+
+    override fun stop(id: String) = Unit
 }

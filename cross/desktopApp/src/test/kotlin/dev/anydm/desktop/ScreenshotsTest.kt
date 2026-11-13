@@ -27,6 +27,7 @@ import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.ProbeOutcome
 import dev.anydm.engine.http.ProbeResult
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.PieceSet
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentMeta
 import dev.anydm.engine.torrent.TorrentResult
@@ -433,6 +434,8 @@ class ScreenshotsTest {
         },
         object : TorrentLoader {
             override suspend fun load(path: Path): TorrentResult = torrent
+
+            override suspend fun bytes(path: Path): ByteArray? = null
         },
         "/Users/x",
     )
@@ -450,6 +453,7 @@ class ScreenshotsTest {
                         TorrentFile("Subs/English.srt", 90_000),
                         TorrentFile("notes.txt", 0),
                     ),
+                    trackers = listOf(listOf("udp://tracker.example.org:6969/announce")),
                 ),
             )
         for ((theme, dark) in listOf("dark" to true, "light" to false)) {
@@ -489,6 +493,99 @@ class ScreenshotsTest {
                 shot("files-drop-message-$size", populatedSample(), dark, w, h, files = env2) {
                     runOnIdle { env2.drops.drop(DropItems(listOf(Path.of("/t/pic.png")), null)) }
                     waitForIdle()
+                }
+            }
+        }
+    }
+
+    /** AC22: New download for a real torrent (single, multi-file, no trackers), Home with one running, and its detail view. */
+    @Test
+    fun captureRealTorrents() {
+        val mb = 1024L * 1024
+        val trackers = listOf(listOf("udp://tracker.example.org:6969/announce"), listOf("http://tracker.example.net/announce"))
+        val single =
+            TorrentResult.Ok(
+                TorrentMeta(
+                    "ubuntu-24.04-desktop-amd64.iso",
+                    listOf(TorrentFile("ubuntu-24.04-desktop-amd64.iso", 5_800 * mb)),
+                    true,
+                    trackers = trackers,
+                ),
+            )
+        val multi =
+            TorrentResult.Ok(
+                TorrentMeta(
+                    "The.Show.S01.1080p",
+                    listOf(
+                        TorrentFile("Season 1/E01.The.Pilot.mkv", 1_800_000_000),
+                        TorrentFile("Season 1/E02.The.Second.One.mkv", 1_650_000_000),
+                        TorrentFile("Subs/English.srt", 90_000),
+                    ),
+                    trackers = trackers,
+                ),
+            )
+        val trackerless = TorrentResult.Ok(TorrentMeta("The.Show.S01.1080p", listOf(TorrentFile("E01.mkv", 1_800_000_000))))
+        // 2900 pieces of 2 MiB (5.7 GB); about 40% verified, scattered, and a dozen in flight.
+        val pieceCount = 2_900
+        val random = kotlin.random.Random(7)
+        val verified = PieceSet.of(pieceCount, (0 until pieceCount).filter { random.nextInt(100) < 40 })
+        val inFlight =
+            (0 until pieceCount)
+                .filter { !verified.has(it) }
+                .shuffled(random)
+                .take(12)
+                .toSet()
+        val total = 5_800 * mb
+        val real =
+            DownloadItem(
+                "1",
+                "ubuntu-24.04-desktop-amd64.iso",
+                total,
+                verified.count * 2 * mb,
+                12 * mb,
+                DownloadStatus.Downloading,
+                DownloadKind.Torrent,
+                files = listOf(SampleFile("ubuntu-24.04-desktop-amd64.iso", total)),
+                infoHash = "ab".repeat(20),
+                pieces = verified,
+                inFlight = inFlight,
+                peers = 23,
+            )
+        val state = populatedSample().copy(downloads = listOf(real) + populatedSample().downloads.drop(1))
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                for ((name, result) in listOf("single" to single, "multi" to multi, "no-trackers" to trackerless)) {
+                    shot("torrent-new-$name-$size", emptySample(), dark, w, h, files = filesEnv(result)) {
+                        onNodeWithTag("new-download").performClick()
+                        onNodeWithTag("open-torrent").performClick()
+                        waitForIdle()
+                    }
+                }
+                val feed = FakeTorrentEngine()
+                val env = DownloadEnv.inert().copy(torrents = feed)
+                shot("torrent-home-running-$size", state, dark, w, h, env = env) {
+                    waitForIdle()
+                    listOf(9, 11, 12, 10, 13, 12).forEach { v ->
+                        feed.emit(
+                            EngineEvent.Progress("1", real.doneBytes, total, v * mb, pieces = verified, inFlight = inFlight, peers = 23),
+                        )
+                        mainClock.advanceTimeByFrame()
+                    }
+                    waitForIdle()
+                }
+                val feed2 = FakeTorrentEngine()
+                shot("torrent-detail-$size", state, dark, w, h, env = DownloadEnv.inert().copy(torrents = feed2)) {
+                    waitForIdle()
+                    listOf(9, 11, 12, 10, 13, 12).forEach { v ->
+                        feed2.emit(
+                            EngineEvent.Progress("1", real.doneBytes, total, v * mb, pieces = verified, inFlight = inFlight, peers = 23),
+                        )
+                        mainClock.advanceTimeByFrame()
+                    }
+                    waitForIdle()
+                    onNodeWithTag("chevron-1").performClick()
+                    onNodeWithTag("detail-map").performScrollTo()
                 }
             }
         }

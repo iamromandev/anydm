@@ -1,9 +1,11 @@
 package dev.anydm.engine.torrent
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.measureTime
 
@@ -11,6 +13,9 @@ class TorrentReaderTest {
     private fun read(bytes: ByteArray): TorrentMeta = assertIs<TorrentResult.Ok>(readTorrent(bytes)).meta
 
     private fun reason(bytes: ByteArray): String = assertIs<TorrentResult.Err>(readTorrent(bytes)).reason
+
+    /** The piece entries of a one-byte torrent, for tests that write the `info` dictionary by hand. */
+    private fun onePiece() = arrayOf("piece length" to bint(16_384), "pieces" to bstr(ByteArray(20)))
 
     @Test
     fun singleFileTorrentHasOneFileNamedAfterTheTorrent() {
@@ -55,7 +60,7 @@ class TorrentReaderTest {
 
     @Test
     fun nameUtf8IsPreferredWhenPresent() {
-        val info = bdict("name" to bstr("legacy"), "name.utf-8" to bstr("modern"), "length" to bint(1))
+        val info = bdict("name" to bstr("legacy"), "name.utf-8" to bstr("modern"), "length" to bint(1), *onePiece())
         assertEquals("modern", read(bdict("info" to info)).name)
     }
 
@@ -68,7 +73,7 @@ class TorrentReaderTest {
     @Test
     fun invalidUtf8IsReplacedNotRejected() {
         val bad = byteArrayOf('a'.code.toByte(), 0xFF.toByte(), 'b'.code.toByte())
-        val info = bdict("name" to bstr(bad), "length" to bint(1))
+        val info = bdict("name" to bstr(bad), "length" to bint(1), *onePiece())
         assertEquals("a�b", read(bdict("info" to info)).name)
         val file = bdict("length" to bint(1), "path" to blist(bstr(bad)))
         assertEquals("a�b", read(multiTorrent("t", listOf(file))).files.single().path)
@@ -121,8 +126,8 @@ class TorrentReaderTest {
     fun totalSizeThatOverflowsIsRejected() {
         val big = Long.MAX_VALUE / 2 + 1
         assertEquals("Bad file size", reason(multiTorrent("t", listOf(fileEntry(big, "a"), fileEntry(big, "b")))))
-        val m = read(multiTorrent("t", listOf(fileEntry(Long.MAX_VALUE - 1, "a"), fileEntry(1, "b"))))
-        assertEquals(Long.MAX_VALUE, m.totalSize)
+        // A total that fits a Long is still no torrent: its piece hashes could never fit the file. The size maths must not wrap.
+        assertEquals("Bad pieces", reason(multiTorrent("t", listOf(fileEntry(Long.MAX_VALUE - 1, "a"), fileEntry(1, "b")))))
     }
 
     @Test
@@ -189,9 +194,9 @@ class TorrentReaderTest {
     @Test
     fun aTenMegabyteValidFixtureReadsInUnderOneSecond() {
         val files = List(90_000) { fileEntry(1_000L + it, "dir${it % 100}", "file-$it.bin") }
-        val withoutFiller = multiTorrent("big", files, listOf("pieces" to bstr(ByteArray(0))))
+        val withoutFiller = multiTorrent("big", files, listOf("pad" to bstr(ByteArray(0))))
         val filler = ByteArray(MAX_TORRENT_BYTES - withoutFiller.size - 16) { (it % 251).toByte() }
-        val bytes = multiTorrent("big", files, listOf("pieces" to bstr(filler)))
+        val bytes = multiTorrent("big", files, listOf("pad" to bstr(filler)))
         assertTrue(bytes.size in 10_000_000..MAX_TORRENT_BYTES, "fixture is ${bytes.size} bytes")
         var meta: TorrentMeta? = null
         val took = measureTime { meta = read(bytes) }
@@ -318,5 +323,279 @@ class TorrentReaderTest {
         val took = measureTime { meta = read(bytes) }
         assertEquals(MAX_FILES, meta!!.files.size)
         assertTrue(took.inWholeMilliseconds < 1_000, "took $took")
+    }
+
+    @Test
+    fun theInfoHashIsTheSha1OfTheInfoDictionaryAsWritten() {
+        val built = torrentOf(listOf("a.bin" to 40_000), 16_384, contentOf(40_000), single = true)
+        val m = read(built.bytes)
+        assertEquals(20, m.infoHash.size)
+        assertContentEquals(sha1(built.info), m.infoHash)
+        assertEquals(m.infoHash.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }, m.infoHashHex)
+        assertEquals(40, m.infoHashHex.length)
+    }
+
+    @Test
+    fun theInfoHashCoversTheRawBytesNotACanonicalReEncode() {
+        // Keys out of order: name before length. A reader that re-encodes would sort them and hash something else.
+        val pieces = sha1(ByteArray(5))
+        val info =
+            concat(
+                listOf(
+                    "d4:name1:a".encodeToByteArray(),
+                    "6:lengthi5e".encodeToByteArray(),
+                    "12:piece lengthi16384e".encodeToByteArray(),
+                    "6:pieces20:".encodeToByteArray(),
+                    pieces,
+                    "e".encodeToByteArray(),
+                ),
+            )
+        val file = concat(listOf("d4:info".encodeToByteArray(), info, "8:url-list0:e".encodeToByteArray()))
+        val m = read(file)
+        assertContentEquals(sha1(info), m.infoHash)
+        val decoded = assertIs<DecodeResult.Ok>(decodeBencode(info)).value
+        assertFalse(sha1(encodeBencode(decoded)).contentEquals(m.infoHash), "the sorted re-encode must differ from the raw bytes")
+    }
+
+    @Test
+    fun theInfoHashIgnoresWhatSurroundsTheInfoDictionary() {
+        val built = torrentOf(listOf("a.bin" to 100), 16_384, contentOf(100), single = true)
+        val withTrackers = torrentOf(listOf("a.bin" to 100), 16_384, contentOf(100), single = true, announce = "http://t/a")
+        assertContentEquals(read(built.bytes).infoHash, read(withTrackers.bytes).infoHash)
+    }
+
+    @Test
+    fun pieceLengthAndPieceHashesAreReadFromTheFile() {
+        val data = contentOf(40_000, seed = 3)
+        val m = read(torrentOf(listOf("a.bin" to 40_000), 16_384, data, single = true).bytes)
+        assertEquals(16_384L, m.pieceLength)
+        assertEquals(3, m.pieceHashes.size)
+        assertEquals(3, m.pieceCount)
+        assertContentEquals(sha1(data, 0, 16_384), m.pieceHashes[0])
+        assertContentEquals(sha1(data, 16_384, 16_384), m.pieceHashes[1])
+        assertContentEquals(sha1(data, 32_768, 40_000 - 32_768), m.pieceHashes[2])
+    }
+
+    @Test
+    fun pieceSizesAreFullExceptForAShortLastPiece() {
+        val m = read(torrentOf(listOf("a.bin" to 40_000), 16_384, contentOf(40_000), single = true).bytes)
+        assertEquals(listOf(16_384L, 16_384L, 40_000L - 32_768), List(3) { m.pieceSize(it) })
+        assertEquals(0L, m.pieceSize(-1))
+        assertEquals(0L, m.pieceSize(3))
+        val exact = read(torrentOf(listOf("a.bin" to 32_768), 16_384, contentOf(32_768), single = true).bytes)
+        assertEquals(listOf(16_384L, 16_384L), List(exact.pieceCount) { exact.pieceSize(it) })
+        assertEquals(exact.totalSize, List(exact.pieceCount) { exact.pieceSize(it) }.sum())
+    }
+
+    @Test
+    fun aMultiFileTorrentHashesPiecesAcrossFileBorders() {
+        val data = contentOf(50_000, seed = 5)
+        val built = torrentOf(listOf("d/a" to 20_000, "e" to 0, "d/b" to 30_000), 16_384, data)
+        val m = read(built.bytes)
+        assertEquals(listOf("d/a", "e", "d/b"), m.files.map { it.path })
+        assertEquals(4, m.pieceCount)
+        assertContentEquals(sha1(data, 16_384, 16_384), m.pieceHashes[1])
+        assertContentEquals(sha1(data, 49_152, 50_000 - 49_152), m.pieceHashes[3])
+    }
+
+    @Test
+    fun trackersKeepTheirTiersAndOrder() {
+        val tiers = listOf(listOf("udp://a:1/announce", "http://b/announce"), listOf("https://c/announce"))
+        val m =
+            read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announce = "http://ignored/", announceList = tiers).bytes)
+        assertEquals(tiers, m.trackers)
+    }
+
+    @Test
+    fun withoutAnAnnounceListTheAnnounceUrlIsTheOnlyTracker() {
+        val m = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announce = "http://t/announce").bytes)
+        assertEquals(listOf(listOf("http://t/announce")), m.trackers)
+    }
+
+    @Test
+    fun noTrackersAtAllIsAnEmptyList() {
+        assertEquals(emptyList(), read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true).bytes).trackers)
+        assertEquals(emptyList(), read(singleTorrent()).trackers)
+    }
+
+    @Test
+    fun trackersWithOtherSchemesOrNoHostAreDroppedAndEmptyTiersVanish() {
+        val tiers =
+            listOf(
+                listOf("wss://a/x", "ftp://b/x", "http://", "", "magnet:?x"),
+                listOf("UDP://Keep:80/a", "udp://also:6969"),
+                listOf("http://has space/x", "http://ctl\u0001/x", "http://é/x"),
+            )
+        val m = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announceList = tiers).bytes)
+        assertEquals(listOf(listOf("udp://Keep:80/a", "udp://also:6969")), m.trackers)
+    }
+
+    @Test
+    fun trackerUrlsAreStoredWithTheSchemeInLowerCaseAndTheRestAsWritten() {
+        val tiers = listOf(listOf("UDP://Keep:80/A?X=Y", "HTTP://Host/Announce", "HtTpS://h/p"))
+        val m = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announceList = tiers).bytes)
+        assertEquals(listOf(listOf("udp://Keep:80/A?X=Y", "http://Host/Announce", "https://h/p")), m.trackers)
+        val one = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announce = "HTTP://T/Announce").bytes)
+        assertEquals(listOf(listOf("http://T/Announce")), one.trackers)
+    }
+
+    @Test
+    fun aPieceLengthOfEightKibIsRefusedAsBadPieces() {
+        // The minimum piece length is 16 KiB: a block is 16 KiB, so a smaller piece would make no sense for the picker.
+        val info =
+            bdict(
+                "info" to
+                    bdict("name" to bstr("a"), "length" to bint(1), "piece length" to bint(8_192), "pieces" to bstr(ByteArray(20))),
+            )
+        assertEquals("Bad pieces", reason(info))
+    }
+
+    @Test
+    fun anAnnounceListWithNothingUsableFallsBackToTheAnnounceUrl() {
+        val m =
+            read(
+                torrentOf(
+                    listOf("a" to 1),
+                    16_384,
+                    contentOf(1),
+                    single = true,
+                    announce = "http://t/announce",
+                    announceList = listOf(listOf("wss://x/")),
+                ).bytes,
+            )
+        assertEquals(listOf(listOf("http://t/announce")), m.trackers)
+    }
+
+    @Test
+    fun anUnusableAnnounceAndNoListMeansNoTrackers() {
+        val m = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announce = "wss://x/").bytes)
+        assertEquals(emptyList(), m.trackers)
+    }
+
+    @Test
+    fun malformedAnnounceListEntriesAreSkippedNotFatal() {
+        val info = assertIs<DecodeResult.Ok>(decodeBencode(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true).bytes)).value
+        val infoBytes = encodeBencode((info as BValue.BDict).entries.getValue("info"))
+        val list = blist(bstr("http://notalist/"), blist(bint(1), bstr("http://ok/a")), bint(7))
+        val m = read(bdict("announce-list" to list, "info" to infoBytes))
+        assertEquals(listOf(listOf("http://ok/a")), m.trackers)
+    }
+
+    @Test
+    fun anOverlongTrackerUrlIsDropped() {
+        val long = "http://h/" + "a".repeat(MAX_TRACKER_URL_BYTES)
+        val m =
+            read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announceList = listOf(listOf(long, "http://ok/"))).bytes)
+        assertEquals(listOf(listOf("http://ok/")), m.trackers)
+    }
+
+    @Test
+    fun atMostMaxTrackersAreKept() {
+        val tiers = List(MAX_TRACKERS + 50) { listOf("http://t$it/") }
+        val m = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, announceList = tiers).bytes)
+        assertEquals(MAX_TRACKERS, m.trackers.sumOf { it.size })
+        assertEquals("http://t0/", m.trackers.first().first())
+    }
+
+    @Test
+    fun thePrivateFlagIsReadAndDefaultsToFalse() {
+        fun private(flag: Boolean?) = read(torrentOf(listOf("a" to 1), 16_384, contentOf(1), single = true, private = flag).bytes).private
+        assertTrue(private(true))
+        assertFalse(private(false))
+        assertFalse(private(null))
+    }
+
+    @Test
+    fun aPiecesStringOfTheWrongLengthIsBadPieces() {
+        val pieceLength = 16_384L
+
+        fun withPieces(pieces: ByteArray) =
+            bdict(
+                "info" to
+                    bdict(
+                        "name" to bstr("a"),
+                        "length" to bint(40_000),
+                        "piece length" to bint(pieceLength),
+                        "pieces" to bstr(pieces),
+                    ),
+            )
+        assertIs<TorrentResult.Ok>(readTorrent(withPieces(ByteArray(60))))
+        for (n in listOf(0, 19, 20, 40, 59, 61, 80, 120)) assertEquals("Bad pieces", reason(withPieces(ByteArray(n))), "$n bytes of hashes")
+    }
+
+    @Test
+    fun missingOrWrongTypedPiecesAndPieceLengthAreBadPieces() {
+        fun info(vararg extra: Pair<String, ByteArray>) = bdict("info" to bdict(listOf("name" to bstr("a"), "length" to bint(1)) + extra))
+        assertEquals("Bad pieces", reason(info()))
+        assertEquals("Bad pieces", reason(info("piece length" to bint(16_384))))
+        assertEquals("Bad pieces", reason(info("pieces" to bstr(ByteArray(20)))))
+        assertEquals("Bad pieces", reason(info("piece length" to bint(16_384), "pieces" to bint(5))))
+        assertEquals("Bad pieces", reason(info("piece length" to bstr("16384"), "pieces" to bstr(ByteArray(20)))))
+    }
+
+    @Test
+    fun thePieceLengthMustBeAPowerOfTwoFromSixteenKibToSixtyFourMib() {
+        fun withPieceLength(pieceLength: Long) =
+            bdict(
+                "info" to
+                    bdict("name" to bstr("a"), "length" to bint(1), "piece length" to bint(pieceLength), "pieces" to bstr(ByteArray(20))),
+            )
+        for (ok in listOf(16_384L, 32_768L, 1L shl 20, 64L shl 20)) assertIs<TorrentResult.Ok>(readTorrent(withPieceLength(ok)), "$ok")
+        for (bad in listOf(0L, -16_384L, 1L, 8_192L, 16_383L, 3 * 16_384L, 24_576L, 100_000L, 128L shl 20, Long.MAX_VALUE, 1L shl 62)) {
+            assertEquals("Bad pieces", reason(withPieceLength(bad)), "piece length $bad")
+        }
+    }
+
+    @Test
+    fun aTorrentOfNothingHasNoPiecesAndNeedsNone() {
+        fun empty(pieces: ByteArray) =
+            bdict(
+                "info" to
+                    bdict(
+                        "name" to bstr("a"),
+                        "files" to blist(fileEntry(0, "x")),
+                        "piece length" to bint(16_384),
+                        "pieces" to bstr(pieces),
+                    ),
+            )
+        val m = read(empty(ByteArray(0)))
+        assertEquals(0, m.pieceCount)
+        assertEquals(emptyList(), m.pieceHashes)
+        assertEquals("Bad pieces", reason(empty(ByteArray(20))))
+    }
+
+    @Test
+    fun pieceCountMathDoesNotWrapForHugeTotals() {
+        // 2^62 bytes in 16 KiB pieces would need 2^48 hashes; the file has one.
+        val info = bdict("name" to bstr("a"), "length" to bint(1L shl 62), "piece length" to bint(16_384), "pieces" to bstr(ByteArray(20)))
+        assertEquals("Bad pieces", reason(bdict("info" to info)))
+    }
+
+    @Test
+    fun metasWithTheSameContentAreEqualWhateverTheArrayIdentity() {
+        val a =
+            TorrentMeta(
+                "n",
+                listOf(TorrentFile("n", 1)),
+                true,
+                ByteArray(20) { 1 },
+                16_384,
+                listOf(ByteArray(20) { 2 }),
+                listOf(listOf("http://t/")),
+            )
+        val b =
+            TorrentMeta(
+                "n",
+                listOf(TorrentFile("n", 1)),
+                true,
+                ByteArray(20) { 1 },
+                16_384,
+                listOf(ByteArray(20) { 2 }),
+                listOf(listOf("http://t/")),
+            )
+        assertEquals(a, b)
+        assertEquals(a.hashCode(), b.hashCode())
+        assertNotEquals(a, b.copy(infoHash = ByteArray(20) { 9 }))
+        assertNotEquals(a, b.copy(pieceHashes = listOf(ByteArray(20) { 3 })))
     }
 }

@@ -5,8 +5,10 @@ import dev.anydm.engine.torrent.BValue.BDict
 import dev.anydm.engine.torrent.BValue.BInt
 import dev.anydm.engine.torrent.BValue.BList
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class BencodeTest {
@@ -161,5 +163,66 @@ class BencodeTest {
             val bytes = concat(listOf("l".encodeToByteArray(), repeated(unit, 5_000_000), "e".encodeToByteArray()))
             assertEquals("Too complex", assertIs<DecodeResult.Err>(decodeBencode(bytes)).reason, "unit $unit")
         }
+    }
+
+    private fun encoded(v: BValue) = encodeBencode(v).decodeToString()
+
+    @Test
+    fun encodesEachKindOfValue() {
+        assertEquals("i42e", encoded(BInt(42)))
+        assertEquals("i-7e", encoded(BInt(-7)))
+        assertEquals("i0e", encoded(BInt(0)))
+        assertEquals("4:spam", encoded(BBytes("spam".encodeToByteArray())))
+        assertEquals("0:", encoded(BBytes(ByteArray(0))))
+        assertEquals("li1e1:ae", encoded(BList(listOf(BInt(1), BBytes("a".encodeToByteArray())))))
+        assertEquals("le", encoded(BList(emptyList())))
+        assertEquals("de", encoded(BDict(emptyMap())))
+    }
+
+    @Test
+    fun encodedDictionaryKeysAreInByteOrder() {
+        val d = BDict(linkedMapOf("b" to BInt(2), "a" to BInt(1), "B" to BInt(0)))
+        assertEquals("d1:Bi0e1:ai1e1:bi2ee", encoded(d))
+        // Byte order is not UTF-16 order: U+FF5E (3 bytes, EF BD 9E) sorts before U+10000 (4 bytes, F0 ..), but not as chars.
+        val wide = BDict(linkedMapOf("\uD800\uDC00" to BInt(1), "\uFF5E" to BInt(2)))
+        val keys = (assertIs<DecodeResult.Ok>(decodeBencode(encodeBencode(wide))).value as BDict).entries.keys.toList()
+        assertEquals(listOf("\uFF5E", "\uD800\uDC00"), keys)
+    }
+
+    @Test
+    fun binaryStringsEncodeByteForByte() {
+        val raw = ByteArray(256) { it.toByte() }
+        val out = encodeBencode(BBytes(raw))
+        assertEquals("256:", out.copyOf(4).decodeToString())
+        assertContentEquals(raw, out.copyOfRange(4, out.size))
+    }
+
+    @Test
+    fun decodingWhatWasEncodedGivesTheSameValue() {
+        val v = BDict(linkedMapOf("k" to BList(listOf(BInt(-3), BBytes(byteArrayOf(0, -1)), BDict(linkedMapOf("x" to BInt(1)))))))
+        assertEquals(v, assertIs<DecodeResult.Ok>(decodeBencode(encodeBencode(v))).value)
+    }
+
+    @Test
+    fun theInfoRangeIsTheRawBytesOfTheTopLevelInfoValue() {
+        val src = "d3:aaai1e4:infod1:b1:a1:ai2ee3:zzzi3ee".encodeToByteArray()
+        val range = assertIs<DecodeResult.Ok>(decodeBencode(src)).infoRange
+        assertEquals("d1:b1:a1:ai2ee", range?.let { src.copyOfRange(it.first, it.last + 1).decodeToString() })
+    }
+
+    @Test
+    fun theInfoRangeIsNullWithoutATopLevelInfoDict() {
+        assertNull(assertIs<DecodeResult.Ok>(decode("d1:ai1ee")).infoRange)
+        assertNull(assertIs<DecodeResult.Ok>(decode("li1ee")).infoRange)
+        assertNull(assertIs<DecodeResult.Ok>(decode("i1e")).infoRange)
+        assertNull(assertIs<DecodeResult.Ok>(decode("d1:xd4:infoi1eee")).infoRange, "an info key below the top level does not count")
+        assertNull(assertIs<DecodeResult.Ok>(decode("l" + "d4:infoi1ee" + "e")).infoRange)
+    }
+
+    @Test
+    fun theInfoRangeOfANonDictInfoCoversThatValueToo() {
+        val src = "d4:info3:abce".encodeToByteArray()
+        val range = assertIs<DecodeResult.Ok>(decodeBencode(src)).infoRange
+        assertEquals("3:abc", range?.let { src.copyOfRange(it.first, it.last + 1).decodeToString() })
     }
 }

@@ -2,6 +2,8 @@ package dev.anydm.desktop
 
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.CANT_RESUME
+import dev.anydm.engine.torrent.PieceSet
 
 /** The download list and the order of the Queued rows (their ids, first in line first). */
 data class QueueState(
@@ -20,12 +22,15 @@ private fun QueueState.setStatus(
         list =
             list.map {
                 if (it.id in ids && it.status in from) {
-                    it.copy(status = to, liveConnections = if (to == DownloadStatus.Downloading) it.liveConnections else 0)
+                    if (to == DownloadStatus.Downloading) it.copy(status = to) else it.copy(status = to).idle()
                 } else {
                     it
                 }
             },
     )
+
+/** The row as it is when nothing moves for it: no connections, no peers, nothing in flight. */
+private fun DownloadItem.idle() = copy(liveConnections = 0, peers = 0, inFlight = emptySet())
 
 /** Starts the first queued rows while a slot is free (R3). Never stops a running row. */
 fun settle(
@@ -65,6 +70,11 @@ fun resumeAll(
     var out = s
     for (it in s.list) {
         if (it.id !in ids || (it.status != DownloadStatus.Paused && it.status != DownloadStatus.Failed)) continue
+        if (it.noCopy) {
+            // From before torrents were real (NFR6): there is no `.torrent` copy to run from, and no engine to ask.
+            out = out.update(it.id, null) { r -> r.copy(status = DownloadStatus.Failed, error = CANT_RESUME) }
+            continue
+        }
         // A retry starts clean: the old reason goes with the Failed status.
         val cleared = out.copy(list = out.list.map { r -> if (r.id == it.id) r.copy(error = null) else r })
         val from = setOf(DownloadStatus.Paused, DownloadStatus.Failed)
@@ -103,17 +113,38 @@ fun progressed(
     spans: List<Span>? = null,
     connections: Int = 1,
     partId: String? = null,
+    /** A torrent's verified pieces; null from a torrent that is still checking what the row claims (see below). */
+    pieces: PieceSet? = null,
+    inFlight: Set<Int> = emptySet(),
+    peers: Int = 0,
 ): QueueState =
     s.update(id, DownloadStatus.Downloading) {
+        // A resumed torrent checks the pieces the row claims against the files before it says which hold: its reports until then have
+        // no pieces and count the bytes checked so far from 0. They must not lower what the row claims (or what is saved for it).
+        val checking = it.infoHash != null && pieces == null && it.pieces != null
         it.copy(
-            doneBytes = done,
+            doneBytes = if (checking) it.doneBytes else done,
             totalBytes = total,
             bytesPerSec = bytesPerSec,
             spans = spans,
             partId = partId,
             liveConnections = connections,
+            pieces = claimed(it, pieces),
+            inFlight = inFlight,
+            peers = peers,
         )
     }
+
+/**
+ * The pieces [row] claims after an engine event that says [reported]: the engine's when it says some and the row has them already
+ * (it has started), else the row's own. A row with none has never run, so its name is only the torrent's: it gets pieces from
+ * [started] alone, which is the engine's word that its files have the name the row shows. Any other event that came with a claim
+ * (a job that failed or was stopped, or was only paused while its first report was on the way) changes nothing.
+ */
+private fun claimed(
+    row: DownloadItem,
+    reported: PieceSet?,
+): PieceSet? = if (row.pieces == null) null else reported ?: row.pieces
 
 /** The engine got its first response: the name, size and validators are now known (a restart reports done = 0). */
 fun started(
@@ -130,6 +161,8 @@ fun started(
             spans = e.spans,
             partId = e.partId,
             liveConnections = 1, // the first response is open
+            // A torrent says the pieces that held the re-check; the row's claim is replaced by it, never kept past it.
+            pieces = e.pieces ?: it.pieces,
         )
     }
 
@@ -143,12 +176,20 @@ fun stopped(
     done: Long,
     spans: List<Span>,
     partId: String? = null,
+    /** A torrent's verified pieces at the stop; null keeps the row's own. */
+    pieces: PieceSet? = null,
 ): QueueState =
     s.copy(
         list =
             s.list.map {
                 val idle = it.status == DownloadStatus.Paused || it.status == DownloadStatus.Queued || it.status == DownloadStatus.Failed
-                if (it.id == id && idle) it.copy(doneBytes = done, spans = spans, partId = partId) else it
+                if (it.id == id && idle) {
+                    // pieces from an engine that the row never saw start are not taken, nor are the bytes that go with them
+                    val unseen = pieces != null && it.pieces == null
+                    it.copy(doneBytes = if (unseen) it.doneBytes else done, spans = spans, partId = partId, pieces = claimed(it, pieces))
+                } else {
+                    it
+                }
             },
     )
 
@@ -165,17 +206,19 @@ fun finished(
     if (row.status == DownloadStatus.Finished) return s
     val next =
         s.update(id, null) {
-            it.copy(
-                name = name ?: it.name,
-                status = DownloadStatus.Finished,
-                doneBytes = done,
-                totalBytes = done,
-                bytesPerSec = 0,
-                error = null,
-                spans = null,
-                partId = null,
-                liveConnections = 0,
-            )
+            it
+                .copy(
+                    name = name ?: it.name,
+                    status = DownloadStatus.Finished,
+                    doneBytes = done,
+                    totalBytes = done,
+                    bytesPerSec = 0,
+                    error = null,
+                    spans = null,
+                    partId = null,
+                    // every piece is in: the detail view keeps its full map (null stays null: a row that never reported pieces)
+                    pieces = it.pieces?.let { p -> PieceSet.of(p.size, 0 until p.size) },
+                ).idle()
         }
     return settle(next.copy(queue = next.queue.filter { it != id }), limit)
 }
@@ -192,25 +235,28 @@ fun failed(
     partId: String? = null,
     /** The engine deleted the `.part` file and left none: the row keeps no ranges and shows nothing done. */
     cleared: Boolean = false,
+    /** A torrent's verified pieces at the failure; null keeps the row's own. */
+    pieces: PieceSet? = null,
 ): QueueState =
     settle(
         s.update(id, DownloadStatus.Downloading) {
-            it.copy(
-                status = DownloadStatus.Failed,
-                error = reason,
-                doneBytes = if (cleared) 0 else done,
-                bytesPerSec = 0,
-                spans = if (cleared) null else spans ?: it.spans,
-                partId =
-                    if (cleared) {
-                        null
-                    } else if (spans != null) {
-                        partId
-                    } else {
-                        it.partId
-                    },
-                liveConnections = 0,
-            )
+            it
+                .copy(
+                    status = DownloadStatus.Failed,
+                    error = reason,
+                    doneBytes = if (cleared) 0 else done,
+                    bytesPerSec = 0,
+                    spans = if (cleared) null else spans ?: it.spans,
+                    partId =
+                        if (cleared) {
+                            null
+                        } else if (spans != null) {
+                            partId
+                        } else {
+                            it.partId
+                        },
+                    pieces = claimed(it, pieces),
+                ).idle()
         },
         limit,
     )

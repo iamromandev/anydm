@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.Span
+import dev.anydm.engine.torrent.PieceSet
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -481,4 +482,95 @@ class DetailModelTest {
     }
 
     private fun doneOfSpans(s: List<Span>) = s.sumOf { it.done }
+
+    // A real torrent (R17): the piece map from the verified pieces and the ones in flight
+    private val pieceLen = 16_384L
+
+    private fun tor(
+        pieces: PieceSet?,
+        count: Int = pieces?.size ?: 10,
+        status: DownloadStatus = DownloadStatus.Downloading,
+        inFlight: Set<Int> = emptySet(),
+        peers: Int = 0,
+    ) = DownloadItem(
+        "7",
+        "Show",
+        count * pieceLen,
+        (pieces?.count ?: 0) * pieceLen,
+        3 * mib,
+        status,
+        DownloadKind.Torrent,
+        infoHash = "ab".repeat(20),
+        pieces = pieces,
+        inFlight = inFlight,
+        peers = peers,
+    )
+
+    @Test
+    fun aRealTorrentsCellsAreItsPiecesDoneInFlightAndMissing() {
+        val d = buildDetail(tor(PieceSet.of(10, listOf(0, 1, 5)), inFlight = setOf(2, 6)), two)
+        val d0 = CellState.Done
+        val f = CellState.InFlight
+        val p = CellState.Pending
+        assertEquals(listOf(d0, d0, f, p, p, d0, f, p, p, p), d.cells.map { it.state })
+        assertTrue(d.cells.all { it.network == -1 })
+        assertEquals(pieceLen, d.cellBytes)
+    }
+
+    @Test
+    fun aRealTorrentThatIsNotRunningHasNothingInFlight() {
+        val d = buildDetail(tor(PieceSet.of(10, listOf(0)), status = DownloadStatus.Paused, inFlight = setOf(2, 6)), two)
+        assertEquals(0, d.cells.count { it.state == CellState.InFlight })
+        assertEquals(1, d.cells.count { it.state == CellState.Done })
+    }
+
+    @Test
+    fun aRealTorrentHasPeersAndNoPerNetworkRowsOrSharesOrNetworkTable() {
+        val d = buildDetail(tor(PieceSet.of(10, listOf(0)), peers = 7), two, history = listOf(mib, 3 * mib))
+        assertTrue(d.real)
+        assertEquals(7, d.peers)
+        assertTrue(d.rows.isEmpty())
+        assertNull(d.aloneFactor)
+        assertEquals(0, d.retries)
+        assertTrue(showMap(d))
+        assertEquals(List(58) { 0L } + listOf(mib, 3 * mib), d.series.single())
+        assertEquals(3 * mib, d.total)
+    }
+
+    @Test
+    fun aPausedRealTorrentShowsNoPeers() {
+        assertEquals(0, buildDetail(tor(PieceSet.empty(10), status = DownloadStatus.Paused, peers = 7), two).peers)
+    }
+
+    @Test
+    fun aRealTorrentWithNoPiecesYetHasNoMapAndAFinishedOneIsAllDone() {
+        assertTrue(buildDetail(tor(null), two).cells.isEmpty())
+        val done = buildDetail(tor(PieceSet.of(10, 0 until 10), status = DownloadStatus.Finished), two)
+        assertEquals(10, done.cells.count { it.state == CellState.Done })
+    }
+
+    @Test
+    fun aRealTorrentWithMorePiecesThanCellsGroupsThem() {
+        // 5000 pieces: three to a cell. A cell is done when all three are, in flight when any one is, else missing.
+        val done = PieceSet.of(5000, listOf(0, 1, 2, 3, 6, 7))
+        val d = buildDetail(tor(done, inFlight = setOf(8, 4000)), two)
+        assertEquals(1667, d.cells.size)
+        assertEquals(CellState.Done, d.cells[0].state) // 0 1 2
+        assertEquals(CellState.Pending, d.cells[1].state) // 3 4 5: only 3 is done
+        assertEquals(CellState.InFlight, d.cells[2].state) // 6 7 8: 8 in flight
+        assertEquals(CellState.InFlight, d.cells[4000 / 3].state)
+        assertEquals(3 * pieceLen, d.cellBytes)
+        assertEquals(5000, d.groupedPieces)
+        assertEquals(0, buildDetail(tor(PieceSet.of(10, listOf(0))), two).groupedPieces)
+    }
+
+    @Test
+    fun aHundredThousandPieceTorrentsMapBuildsFast() {
+        val n = 100_000
+        val row = tor(PieceSet.of(n, (0 until n step 3).toList()), inFlight = (1 until 200 step 7).toSet())
+        repeat(100) { buildDetail(row, two) } // warm up the JIT
+        val best = (1..20).minOf { kotlin.system.measureNanoTime { buildDetail(row, two) } }
+        println("100,000-piece detail build: best of 20 = ${best / 1000} us")
+        assertTrue(best < 100_000_000, "took $best ns")
+    }
 }

@@ -1,5 +1,7 @@
 package dev.anydm.engine.http
 
+import dev.anydm.engine.torrent.PieceSet
+
 fun interface Clock {
     fun nowMs(): Long
 }
@@ -93,6 +95,8 @@ sealed interface EngineEvent {
         val spans: List<Span>? = null,
         /** Non-null with [spans]: the identity of the `.part` file, already on disk. */
         val partId: String? = null,
+        /** A torrent's verified pieces as the run starts with them. */
+        val pieces: PieceSet? = null,
     ) : EngineEvent
 
     data class Progress(
@@ -104,6 +108,12 @@ sealed interface EngineEvent {
         /** Connections open right now. */
         val connections: Int = 1,
         val partId: String? = null,
+        /** A torrent's verified pieces. */
+        val pieces: PieceSet? = null,
+        /** A torrent's pieces with a block requested or received that are not verified yet. */
+        val inFlight: Set<Int> = emptySet(),
+        /** A torrent's peers that have shaken hands and are connected. */
+        val peers: Int = 0,
     ) : EngineEvent
 
     data class Finished(
@@ -122,14 +132,20 @@ sealed interface EngineEvent {
         val partId: String? = null,
         /** The engine deleted the `.part` file and left none: whatever ranges the row holds are gone. */
         val cleared: Boolean = false,
+        /** A torrent's verified pieces at the failure; null keeps the row's own. */
+        val pieces: PieceSet? = null,
     ) : EngineEvent
 
-    /** A stopped segmented job has closed (and forced) its part file; [spans] are exact. Not emitted for a one-connection job. */
+    /**
+     * A stopped segmented job has closed (and forced) its part file; [spans] are exact. A stopped torrent has closed its files and
+     * says its verified [pieces] (with no [spans]). Not emitted for a one-connection job.
+     */
     data class Stopped(
         override val id: String,
         val done: Long,
-        val spans: List<Span>,
+        val spans: List<Span> = emptyList(),
         val partId: String? = null,
+        val pieces: PieceSet? = null,
     ) : EngineEvent
 }
 
