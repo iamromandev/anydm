@@ -2,6 +2,7 @@ package dev.anydm.engine.http
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -133,6 +134,20 @@ class SpanPlannerTest {
         assertEquals(emptyList(), compact(emptyList()))
         val spans = listOf(Span(0, 9, 3), Span(10, 19, 0))
         assertEquals(spans, compact(spans))
+    }
+
+    @Test
+    fun finishedOverIsTrueOnlyForFinishedRangesThatCoverTheWholeFile() {
+        assertTrue(finishedOver(listOf(Span(0, 9, 10), Span(10, 19, 10)), 20))
+        assertTrue(finishedOver(listOf(Span(10, 19, 10), Span(0, 9, 10)), 20), "in any order")
+        assertTrue(finishedOver(listOf(Span(0, 19, 20)), 20))
+        assertFalse(finishedOver(listOf(Span(0, 9, 10), Span(10, 19, 9)), 20), "one byte missing")
+        assertFalse(finishedOver(listOf(Span(0, 9, 10)), 20), "stops short of the total")
+        assertFalse(finishedOver(listOf(Span(0, 9, 10), Span(11, 19, 9)), 20), "a gap")
+        assertFalse(finishedOver(listOf(Span(0, 9, 10), Span(5, 19, 15)), 20), "an overlap")
+        assertFalse(finishedOver(listOf(Span(0, 19, 20)), 19), "past the total")
+        assertFalse(finishedOver(emptyList(), 20))
+        assertFalse(finishedOver(listOf(Span(0, 9, 10)), 0))
     }
 
     @Test

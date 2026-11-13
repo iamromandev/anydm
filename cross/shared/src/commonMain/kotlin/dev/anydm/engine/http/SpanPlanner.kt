@@ -44,6 +44,20 @@ fun steal(
 
 fun doneOf(spans: List<Span>): Long = spans.sumOf { it.done }
 
+/** Whether [spans] are all finished and, side by side, are exactly bytes `0..total-1`: everything of a file of [total] bytes is written. */
+fun finishedOver(
+    spans: List<Span>,
+    total: Long,
+): Boolean {
+    if (total <= 0 || spans.isEmpty()) return false
+    var next = 0L
+    for (s in spans.sortedBy { it.start }) {
+        if (s.start != next || s.done != s.end - s.start + 1) return false
+        next = s.end + 1
+    }
+    return next == total
+}
+
 /** Merges finished neighbours that touch, so a stored list stays short. Unfinished spans are never merged. */
 fun compact(spans: List<Span>): List<Span> {
     val out = ArrayList<Span>(spans.size)

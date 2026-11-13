@@ -62,4 +62,18 @@ class ConnectionPermitsTest {
             assertTrue(p.tryAcquireExtra(), "the permit is free again")
             delay(1)
         }
+
+    @Test
+    fun aPermitHandedToAWaiterThatIsCancelledBeforeItResumesIsNotLost() =
+        runBlocking {
+            val p = ConnectionPermits(1)
+            p.acquireFirst()
+            val waiter = async(start = CoroutineStart.UNDISPATCHED) { p.acquireFirst() }
+            p.release() // goes straight to the waiter, which is resumed only when this thread gets to it
+            assertFalse(waiter.isCompleted, "the waiter has not run yet")
+            waiter.cancelAndJoin()
+            assertTrue(waiter.isCancelled, "the waiter was cancelled while its permit was on its way")
+            assertFalse(p.shouldYield(), "nobody waits any more")
+            assertTrue(p.tryAcquireExtra(), "the permit that was handed over came back")
+        }
 }

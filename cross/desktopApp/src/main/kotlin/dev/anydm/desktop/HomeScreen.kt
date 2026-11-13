@@ -61,6 +61,7 @@ import dev.anydm.engine.http.ProbeOutcome
 import dev.anydm.engine.http.Span
 import dev.anydm.engine.http.TRAILER_BYTES
 import dev.anydm.engine.http.doneOf
+import dev.anydm.engine.http.finishedOver
 import dev.anydm.engine.http.sanitize
 import dev.anydm.engine.http.uniqueName
 import kotlinx.coroutines.CancellationException
@@ -1328,7 +1329,8 @@ private fun partFits(
 /**
  * The saved rows, Paused where they were running. A one-connection download's size is what its `.part` file holds (0 when it is
  * gone); a segmented one's is the sum of its saved ranges, since its `.part` is full size from the start (a file that is missing,
- * or not the length the ranges were made for, or ranges without an identity: back to zero).
+ * or not the length the ranges were made for, or ranges without an identity: back to zero). Ranges that are all finished over a file
+ * of exactly the total are a finished download waiting for its rename: they stay, with the total as done.
  * A row on several connections without ranges has nothing trustworthy on disk, so it shows zero.
  */
 internal fun restoredRows(
@@ -1348,6 +1350,10 @@ internal fun restoredRows(
             }
         val spans = item.spans
         when {
+            // A download that was finished when its rename failed (or the app ended): the file is cut to the total, without its identity,
+            // and the ranges are all finished. The engine goes straight to the rename (it checks the same).
+            spans != null && size == item.totalBytes && finishedOver(spans, item.totalBytes) -> item.copy(doneBytes = item.totalBytes)
+
             // The file is `total + TRAILER_BYTES` long, and its identity is the one the ranges were saved with (the engine reads that).
             spans != null && !partFits(spans, item.partId, size) -> item.copy(doneBytes = 0L, spans = null, partId = null)
 

@@ -195,6 +195,9 @@ internal class SegmentedRun(
     private var totalDone = doneOf(initial)
     private var liveConnections = 0
     private var alive = 0
+
+    /** Workers that have been told to give their permit away and have not yet done so: they still count in [alive]. */
+    private var yieldsClaimed = 0
     private var maxConnections = job.connections.coerceIn(1, MAX_CONNECTIONS)
     private val meter = SpeedMeter()
     private var lastReport = 0L
@@ -364,20 +367,49 @@ internal class SegmentedRun(
                 if (yielded) {
                     // The permit goes to the download that has none; this connection asks again once one is free.
                     held = false
-                    st.yieldClaimed = false
-                    synchronized(lock) { alive-- }
-                    env.permits.release(yielded = true)
+                    giveBackPermit(st)
                     if (!regain()) return
                     held = true
                 }
             }
         } finally {
-            if (held) {
-                synchronized(lock) { alive-- }
-                env.permits.release(yielded = current?.yieldClaimed == true)
-            }
+            if (held) giveBackPermit(current)
         }
     }
+
+    /** This worker is done with its permit: it leaves the run's count, and it settles a yield it was asked for (if any) with the pool. */
+    private fun giveBackPermit(st: SpanState?) {
+        val yielded =
+            synchronized(lock) {
+                alive--
+                (st?.yieldClaimed == true).also {
+                    if (it) {
+                        st!!.yieldClaimed = false
+                        yieldsClaimed--
+                    }
+                }
+            }
+        env.permits.release(yielded)
+    }
+
+    /**
+     * Whether this extra connection should give its permit away to a download that has none. Never the run's last connection (worker 0
+     * never does, and an extra that would leave the run with none does not either: it could not get a permit back while the pool is
+     * full). The check and the claim are one step, so two connections cannot both leave. Claimed: [SpanState.yieldClaimed] is set.
+     */
+    private fun shouldYield(
+        idx: Int,
+        st: SpanState,
+    ): Boolean =
+        idx != 0 &&
+            synchronized(lock) {
+                (alive - yieldsClaimed > 1 && env.permits.shouldYield()).also {
+                    if (it) {
+                        yieldsClaimed++
+                        st.yieldClaimed = true
+                    }
+                }
+            }
 
     /** Waits for a permit that is free (the downloads that were waiting have theirs); false when there is nothing left to do. */
     private suspend fun regain(): Boolean {
@@ -399,10 +431,7 @@ internal class SegmentedRun(
     ): Boolean {
         var left = ms
         while (left > 0) {
-            if (idx != 0 && env.permits.shouldYield()) {
-                st.yieldClaimed = true
-                return false
-            }
+            if (shouldYield(idx, st)) return false
             val slice = minOf(left, PAUSE_SLICE_MS)
             delay(slice)
             left -= slice
@@ -576,10 +605,7 @@ internal class SegmentedRun(
             try {
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    if (idx != 0 && env.permits.shouldYield()) {
-                        st.yieldClaimed = true
-                        throw Yielded()
-                    }
+                    if (shouldYield(idx, st)) throw Yielded()
                     val remaining = synchronized(lock) { st.end - st.next + 1 }
                     if (remaining <= 0) break
                     val want = minOf(buf.size.toLong(), env.bucket.maxChunk().toLong(), remaining).toInt()

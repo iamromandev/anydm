@@ -126,6 +126,12 @@ class SegmentedDownloadTest {
         return eventsOf(id).last { it is EngineEvent.Finished || it is EngineEvent.Failed }
     }
 
+    /** The collector runs on another thread: a job that `join` says has ended may have its `Stopped` still on its way. */
+    private fun awaitStopped(id: String = "1"): EngineEvent.Stopped {
+        await("Stopped", id = id) { eventsOf(id).any { it is EngineEvent.Stopped } }
+        return eventsOf(id).filterIsInstance<EngineEvent.Stopped>().first()
+    }
+
     private fun failed(id: String = "1") = awaitTerminal(id) as EngineEvent.Failed
 
     private fun ranged(path: String) = server.requests(path).filter { it.method == "GET" && it.headers["range"] != null }
@@ -426,12 +432,33 @@ class SegmentedDownloadTest {
             assertEquals(size.toLong(), p.total)
             assertTrue(p.connections in 1..4)
         }
-        val gaps = progress.zipWithNext { a, b -> (b.first - a.first) / 1_000_000 }
-        val slack = if (System.getenv("CI") == null) 200L else 1_000L
-        assertTrue(gaps.all { it < 500 + slack }, "gaps $gaps")
         val last = progress.last().second as EngineEvent.Progress
         assertTrue(last.bytesPerSec > 0)
         assertTrue(progress.map { (it.second as EngineEvent.Progress).done }.zipWithNext().all { (a, b) -> b >= a }, "done went backwards")
+    }
+
+    // AC6, the cadence: on the engine's own clock, so that how busy the test machine is cannot change the outcome
+    @Test
+    fun progressIsReportedEveryReportIntervalOfEngineTimeEvenWhenNoByteArrives() {
+        val clock = FakeClock()
+        val go = CountDownLatch(1)
+        val parked = CountDownLatch(2)
+        val transport = ScriptedTransport(2L * MB) { from, to -> ScriptedBody(from, to, parkAt = from, parked = parked, go = go) }
+        val e = engine(clock = clock, transport = transport, reportMs = 500, stallMs = 600_000)
+        try {
+            e.start(twoRangeJobOfA())
+            assertTrue(parked.await(10, TimeUnit.SECONDS), "both connections should be waiting for their first byte")
+            repeat(4) { round ->
+                val before = eventsOf("a").count { it is EngineEvent.Progress }
+                clock.advance(500) // one report interval of engine time: a report is due, whatever the machine is doing
+                await("a progress report for interval ${round + 1}", timeoutMs = 10_000, id = "a") {
+                    eventsOf("a").count { it is EngineEvent.Progress } > before
+                }
+            }
+        } finally {
+            go.countDown()
+            e.stop("a")
+        }
     }
 
     // AC11
@@ -624,7 +651,7 @@ class SegmentedDownloadTest {
         assertTrue(eventsOf().filterIsInstance<EngineEvent.Progress>().all { it.partId == id })
         e.stop("1")
         runBlocking { e.join("1") }
-        val stopped = eventsOf().filterIsInstance<EngineEvent.Stopped>().single()
+        val stopped = awaitStopped()
         assertEquals(id, stopped.partId)
         assertEquals(size.toLong() + TRAILER_BYTES, Files.size(dir.resolve("f.bin.part")))
     }
@@ -647,7 +674,7 @@ class SegmentedDownloadTest {
         await("bytes") { progressDone() > 4_000_000 }
         e.stop("1")
         runBlocking { e.join("1") }
-        val stopped = eventsOf().filterIsInstance<EngineEvent.Stopped>().single()
+        val stopped = awaitStopped()
         val second = engine() // no memory of the run: only the spans and the identity, as after a restart
         events.clear()
         second.start(
@@ -816,6 +843,7 @@ class SegmentedDownloadTest {
         runBlocking { e.join("1") }
         val took = (System.nanoTime() - t0) / 1_000_000
         assertTrue(took < 1_000, "took $took ms to stop")
+        awaitStopped()
         assertEquals(1, eventsOf().filterIsInstance<EngineEvent.Stopped>().size)
     }
 
@@ -1133,7 +1161,7 @@ class SegmentedDownloadTest {
         runBlocking { e.join("1") }
         val joined = (System.nanoTime() - t0) / 1_000_000
         assertTrue(joined < 1_000, "took $joined ms to stop")
-        val stopped = eventsOf().filterIsInstance<EngineEvent.Stopped>().single()
+        val stopped = awaitStopped()
         assertEquals(doneOf(stopped.spans), stopped.done)
         assertTrue(eventsOf().none { it is EngineEvent.Finished || it is EngineEvent.Failed })
         val before = part().count { it != 0.toByte() }
@@ -1211,7 +1239,7 @@ class SegmentedDownloadTest {
                 await("run $run to reach $at") { progressDone(id) >= at }
                 first.stop(id)
                 runBlocking { first.join(id) }
-                val stopped = eventsOf(id).filterIsInstance<EngineEvent.Stopped>().single()
+                val stopped = awaitStopped(id)
                 spans = stopped.spans
                 partId = stopped.partId
             }
@@ -1420,5 +1448,232 @@ class SegmentedDownloadTest {
         await("restarted") { eventsOf().filterIsInstance<EngineEvent.Started>().size == 2 }
         assertEquals(doneOf(stale), eventsOf().filterIsInstance<EngineEvent.Started>().last().done)
         e.stop("1")
+    }
+
+    /**
+     * The body of a ranged answer, byte for byte the server's. At [parkAt] it waits, reporting on [parked], until [go] opens, and
+     * then goes on slowly (16 KiB every 10 ms) so that a test has time to change what the run sees between two chunks.
+     */
+    private class ScriptedBody(
+        private val from: Long,
+        private val to: Long,
+        private val parkAt: Long? = null,
+        private val parked: CountDownLatch? = null,
+        private val go: CountDownLatch? = null,
+        private val served: CountDownLatch? = null,
+    ) : InputStream() {
+        private var pos = from
+        private var released = false
+
+        @Volatile private var closed = false
+
+        override fun read(): Int = throw UnsupportedOperationException()
+
+        override fun read(
+            b: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            if (parkAt != null && pos >= parkAt && !released) {
+                parked?.countDown()
+                while (!go!!.await(10, TimeUnit.MILLISECONDS)) if (closed) throw IOException("closed")
+                released = true
+            }
+            if (closed) throw IOException("closed")
+            if (pos > to) return -1
+            val limit =
+                if (parkAt != null && pos < parkAt) {
+                    parkAt - pos
+                } else if (released) {
+                    16L * 1024
+                } else {
+                    Long.MAX_VALUE
+                }
+            if (released) Thread.sleep(10)
+            val n = minOf(len.toLong(), to + 1 - pos, limit).toInt()
+            for (i in 0 until n) b[off + i] = TestServer.byteAt(pos + i)
+            pos += n
+            if (pos > to) served?.countDown()
+            return n
+        }
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    /** A body that never delivers a byte and ends in an error when it is closed: a download that holds its connection. */
+    private class IdleBody : InputStream() {
+        @Volatile private var closed = false
+
+        override fun read(): Int = throw UnsupportedOperationException()
+
+        override fun read(
+            b: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            while (!closed) Thread.sleep(10)
+            throw IOException("closed")
+        }
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    /**
+     * Download "a" (a link ending in `/a`) is served by ranged answers from [range], which may throw to refuse; any other link is a
+     * single stream that never delivers. [opened] lists every request as `name` or `name:range`.
+     */
+    private class ScriptedTransport(
+        private val total: Long,
+        private val range: (from: Long, to: Long) -> InputStream,
+    ) : HttpTransport {
+        val opened = CopyOnWriteArrayList<String>()
+
+        override suspend fun open(
+            url: String,
+            method: String,
+            headers: Map<String, String>,
+        ): HttpOpen {
+            val name = url.substringAfterLast('/')
+            val asked = headers["Range"]?.removePrefix("bytes=")
+            opened.add(if (asked == null) name else "$name:$asked")
+            if (name != "a" || asked == null) {
+                return HttpOpen(200, mapOf("content-length" to listOf("1000000")), url, IdleBody())
+            }
+            val (a, b) = asked.split('-').map { it.toLong() }
+            val h = mapOf("content-range" to listOf("bytes $a-$b/$total"), "etag" to listOf("\"v1\""), "accept-ranges" to listOf("bytes"))
+            return HttpOpen(206, h, url, range(a, b))
+        }
+    }
+
+    /**
+     * Download "a" of 2 MiB over two connections, from scratch: the probe's answer is worker 0's, so worker 0 is the one on the
+     * first range and the extra connection is the one on the second.
+     */
+    private fun twoRangeJobOfA() = job("/a", id = "a", name = "a.bin", connections = 2, total = 2L * MB)
+
+    private val secondRangeOfA = initialSpans(2L * MB, 2).also { assertEquals(2, it.size) }[1].let { "a:${it.start}-${it.end}" }
+
+    private fun idleJob(id: String) = job("/$id", id = id, name = "$id.bin", connections = 1, total = 1_000_000)
+
+    // Finding 2: the last connection of a download is never the one that gives way
+    @Test
+    fun aDownloadKeepsItsLastConnectionWhenAnotherWaitsForItsFirstWithTheCapFull() {
+        val parked = CountDownLatch(1)
+        val go = CountDownLatch(1)
+        val firstRangeServed = CountDownLatch(1)
+        val transport =
+            ScriptedTransport(2L * MB) { from, to ->
+                if (from == 0L) ScriptedBody(from, to, served = firstRangeServed) else ScriptedBody(from, to, from + 256 * 1024, parked, go)
+            }
+        val e = engine(maxTotalConnections = 2, transport = transport, minSplit = 16L * MB)
+        try {
+            e.start(twoRangeJobOfA())
+            // the second range is mid-read (its connection is the only one left once the first range is done and its worker is gone)
+            assertTrue(parked.await(10, TimeUnit.SECONDS), "the second range never got going")
+            assertTrue(firstRangeServed.await(10, TimeUnit.SECONDS), "the first range never ended")
+            e.start(idleJob("c"))
+            await("c to take the permit the first worker gave back", timeoutMs = 10_000, id = "c") { transport.opened.contains("c") }
+            e.start(idleJob("b")) // the cap of two is full: this download has no connection and waits
+            go.countDown()
+            await("a to finish on the connection it has", timeoutMs = 10_000, id = "a") { eventsOf("a").any { it is EngineEvent.Finished } }
+            assertFileIs(2 * MB, "a.bin")
+            assertTrue(eventsOf("b").none { it is EngineEvent.Finished || it is EngineEvent.Failed })
+        } finally {
+            go.countDown()
+            listOf("a", "b", "c").forEach { e.stop(it) }
+        }
+    }
+
+    // Finding 5a: a connection that waits to retry gives its permit away, or a download without one waits out the whole backoff
+    @Test
+    fun anExtraConnectionWaitingToRetryGivesItsPermitToADownloadThatHasNone() {
+        val go = CountDownLatch(1)
+        val transport =
+            ScriptedTransport(2L * MB) { from, to ->
+                // the second range always fails
+                if (from == 0L) ScriptedBody(from, to, parkAt = 0, go = go) else throw IOException("refused")
+            }
+        // a failed range waits a minute: only a permit given away can get b going within the test
+        val e =
+            engine(
+                maxTotalConnections = 2,
+                transport = transport,
+                minSplit = 16L * MB,
+                retry = RetryPolicy(backoffMs = 60_000, yieldRetryMs = 50),
+            )
+        try {
+            e.start(twoRangeJobOfA())
+            await("the second range to have failed once", timeoutMs = 10_000, id = "a") { transport.opened.contains(secondRangeOfA) }
+            e.start(idleJob("b")) // both permits are a's: one on the first range, one waiting to retry the second
+            await("b to get a permit while a's second range waits to retry", timeoutMs = 5_000, id = "b") { transport.opened.contains("b") }
+            assertEquals(1, transport.opened.count { it == secondRangeOfA }, "the retry is still a minute away")
+        } finally {
+            go.countDown()
+            listOf("a", "b").forEach { e.stop(it) }
+        }
+    }
+
+    /** A disk whose first rename fails, as in a folder that has gone read-only or is not there for a moment. */
+    private class RenameFailsOnce(
+        private val real: DiskIo,
+    ) : DiskIo by real {
+        private val failed =
+            java.util.concurrent.atomic
+                .AtomicBoolean()
+
+        override fun move(
+            from: Path,
+            to: Path,
+        ) {
+            if (failed.compareAndSet(false, true)) throw IOException("injected")
+            real.move(from, to)
+        }
+    }
+
+    // Finding 1: the file is cut to its total before it is renamed, and with the trailer gone only the ranges say it is finished
+    @Test
+    fun aFinishedDownloadWhoseRenameFailedIsRenamedOnTheRetryWithoutAnyRequest() {
+        val size = 8 * MB
+        val e = engine(disk = RenameFailsOnce(disk))
+        e.start(job("/file?size=$size&cap=16000000", total = size.toLong()))
+        val f = failed()
+        assertEquals(Reasons.NOT_WRITABLE, f.reason)
+        assertEquals(size.toLong(), Files.size(dir.resolve("f.bin.part")), "cut to its total: no identity left")
+        val requests = server.requests("/file").size
+        runBlocking { e.join("1") }
+        events.clear()
+        e.start(job("/file?size=$size", total = size.toLong(), spans = f.spans, partId = f.partId))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertFalse(Files.exists(dir.resolve("f.bin.part")))
+        assertEquals(requests, server.requests("/file").size, "the retry fetched nothing")
+    }
+
+    @Test
+    fun aTotalSizedPartWithAllRangesFinishedIsRenamedWithoutAnyRequestOrDeletion() {
+        // the app died between the cut and the rename: the ranges are all finished and the identity is gone from the file
+        val size = 8 * MB
+        Files.write(dir.resolve("f.bin.part"), TestServer.expected(size))
+        val spans = listOf(Span(0, 4L * MB - 1, 4L * MB), Span(4L * MB, 8L * MB - 1, 4L * MB))
+        engine().start(job("/file?size=$size", total = size.toLong(), spans = spans, partId = tokenA))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertEquals(emptyList(), server.requests("/file"))
+    }
+
+    @Test
+    fun aTotalSizedPartWithOneRangeUnfinishedIsNotTrustedAndTheDownloadStartsOver() {
+        val size = 8 * MB
+        Files.write(dir.resolve("f.bin.part"), ByteArray(size)) // the first range's bytes are not there either
+        val spans = listOf(Span(0, 4L * MB - 1, 4L * MB), Span(4L * MB, 8L * MB - 1, 3L * MB))
+        engine().start(job("/file?size=$size&cap=16000000", total = size.toLong(), spans = spans, etag = "\"v1\"", partId = tokenA))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertEquals(0L, eventsOf().filterIsInstance<EngineEvent.Started>().first().done)
+        assertTrue(gets("/file").isNotEmpty())
     }
 }

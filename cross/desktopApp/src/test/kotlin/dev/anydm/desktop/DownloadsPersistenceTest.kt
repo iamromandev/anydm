@@ -447,6 +447,25 @@ class DownloadsPersistenceTest {
         assertEquals(listOf(Span(0, 499, 120), Span(500, 999, 30)), row.spans)
     }
 
+    // A finished download whose rename failed (or whose app died before it) has a part file of exactly the total, with no identity
+    @Test
+    fun aRestoredSegmentedRowWithAllRangesFinishedOverATotalSizedPartFileKeepsItsBytesAndRanges() {
+        disk.put(part.toString(), 1000)
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 500), Span(500, 999, 500))), disk, folder).single()
+        assertEquals(1000L, row.doneBytes)
+        assertEquals(listOf(Span(0, 499, 500), Span(500, 999, 500)), row.spans)
+        assertEquals("AA", row.partId)
+    }
+
+    @Test
+    fun aRestoredSegmentedRowWithARangeUnfinishedOverATotalSizedPartFileStartsOver() {
+        disk.put(part.toString(), 1000)
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 500), Span(500, 999, 499))), disk, folder).single()
+        assertEquals(0L, row.doneBytes)
+        assertEquals(null, row.spans)
+        assertEquals(null, row.partId)
+    }
+
     @Test
     fun aRestoredSegmentedRowWhosePartFileIsGoneStartsOverWithoutSpans() {
         val row = restoredRows(saved(4, listOf(Span(0, 499, 120), Span(500, 999, 30))), disk, folder).single()

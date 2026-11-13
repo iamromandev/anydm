@@ -315,6 +315,15 @@ class DownloadEngine(
         }
         val known = if (job.name.isBlank()) null else pathsOf(folder, job.name)
         val bucket = shares.bucket(job.id)
+        // A segmented job whose ranges are all finished and whose file is already cut to its total (its identity trailer is gone) was
+        // finished by an earlier run, and only the rename is left: no request, and the file is not touched (it is not "untrusted").
+        if (known != null && finishedOnDisk(job, known.second)) {
+            val total = job.total!!
+            claim(known.second, job.id, live)
+            live.done = total
+            live.total = total
+            return complete(folder, job.name, known.second, total)
+        }
         // A segmented job's part file is full size from the start: its ranges, not the file's size, say what is done.
         val resume = if (known != null) resumeSpans(job, known.second) else null
         if (known != null && resume != null) {
@@ -558,6 +567,20 @@ class DownloadEngine(
         val own = if (job.partId == identity && given.maxOf { it.end } + 1 == total) SavedRanges(given, identity) else null
         val kept = lastSpans[job.id]?.takeIf { it.partId == identity && it.spans.maxOf { s -> s.end } + 1 == total }
         return listOfNotNull(kept, own).maxByOrNull { doneOf(it.spans) }
+    }
+
+    /**
+     * Whether the ranges of [job] are all finished over its known total and its `.part` file is exactly that long: a segmented run
+     * cuts the file to its total (dropping the identity trailer) when the last range is finished, so what is left is the rename.
+     * Ranges that are not all finished over a file of this size are no such thing, and stay untrusted (see [resumeSpans]).
+     */
+    private fun finishedOnDisk(
+        job: JobSpec,
+        part: Path,
+    ): Boolean {
+        val total = job.total ?: return false
+        val spans = job.spans ?: return false
+        return finishedOver(spans, total) && onDisk { disk.size(part) } == total
     }
 
     private fun <T> onDisk(block: () -> T): T =
