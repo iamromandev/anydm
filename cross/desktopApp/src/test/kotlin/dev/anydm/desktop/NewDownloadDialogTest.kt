@@ -140,7 +140,7 @@ class NewDownloadDialogTest {
         runComposeUiTest {
             home(prober = answering("Project.zip", 400L * 1024 * 1024, true))
             open("http://127.0.0.1:8765/Project.zip")
-            awaitDetail("400.0 MB · Resumable")
+            awaitDetail("400.0 MB · Resumable · 8 connections")
             onNodeWithTag("streams-auto").assertIsSelected()
             onNodeWithTag("streams-8").performClick()
             onNodeWithTag("streams-8").assertIsSelected()
@@ -153,7 +153,7 @@ class NewDownloadDialogTest {
         runComposeUiTest {
             home(emptySample(), prober = answering("Project.zip", 400L * 1024 * 1024, true))
             open("http://localhost/Project.zip")
-            awaitDetail("400.0 MB · Resumable")
+            awaitDetail("400.0 MB · Resumable · 8 connections")
             onNodeWithTag("streams-auto").assertDoesNotExist()
             onNodeWithTag("network-Wi-Fi").assertIsDisplayed()
             onNodeWithTag("network-USB Tethering").assertDoesNotExist()
@@ -380,7 +380,7 @@ class NewDownloadDialogTest {
             onNodeWithTag("preview-detail").assertTextEquals("Checking link…")
             onNodeWithTag("download").assertIsEnabled()
             gate.complete(Unit)
-            awaitDetail("5.7 GB · Resumable")
+            awaitDetail("5.7 GB · Resumable · 8 connections")
             onNodeWithTag("preview-name").assertTextEquals("ubuntu.iso")
             onNodeWithTag("preview-badge").assertTextEquals("ISO")
         }
@@ -413,7 +413,7 @@ class NewDownloadDialogTest {
                 Thread.sleep(5)
             }
             onNodeWithTag("url-field").performTextReplacement("https://example.com/b.zip")
-            awaitDetail("2.0 KB · Resumable")
+            awaitDetail("2.0 KB · Resumable · 8 connections")
             check(prober.cancelled == listOf("https://example.com/a.zip")) { "cancelled: ${prober.cancelled}" }
         }
 
@@ -425,7 +425,7 @@ class NewDownloadDialogTest {
             open("https://example.com/a.zip")
             onNodeWithTag("url-field").performTextReplacement("https://example.com/b.zip")
             onNodeWithTag("url-field").performTextReplacement("https://example.com/c.zip")
-            awaitDetail("10 B · Resumable")
+            awaitDetail("10 B · Resumable · 8 connections")
             check(prober.probed.toList() == listOf("https://example.com/c.zip")) { "probed: ${prober.probed}" }
         }
 
@@ -439,6 +439,73 @@ class NewDownloadDialogTest {
             Thread.sleep(100)
             mainClock.advanceTimeBy(1_000)
             check(prober.probed.isEmpty())
+        }
+
+    private fun ComposeUiTest.connections(n: Int) = onNodeWithTag("connections-value").assertTextEquals(n.toString())
+
+    @Test
+    fun aResumableLinkShowsTheConnectionsControlPrefilledFromTheSettingAndThePreviewFollowsIt() =
+        runComposeUiTest {
+            home(prober = answering("Project.zip", 400L * 1024 * 1024, true))
+            open("http://127.0.0.1:8765/Project.zip")
+            awaitDetail("400.0 MB · Resumable · 8 connections")
+            connections(8)
+            onNodeWithTag("connections-minus").assertIsEnabled()
+            repeat(4) { onNodeWithTag("connections-minus").performClick() }
+            connections(4)
+            onNodeWithTag("preview-detail").assertTextEquals("400.0 MB · Resumable · 4 connections")
+            repeat(3) { onNodeWithTag("connections-minus").performClick() }
+            onNodeWithTag("preview-detail").assertTextEquals("400.0 MB · Resumable · 1 connection")
+            onNodeWithTag("connections-minus").assertIsNotEnabled()
+            repeat(20) { onNodeWithTag("connections-plus").performClick() }
+            connections(16)
+            onNodeWithTag("connections-plus").assertIsNotEnabled()
+        }
+
+    @Test
+    fun theControlIsDisabledAtOneWhenTheServerHasNoRangeSupport() =
+        runComposeUiTest {
+            home(prober = answering("a.zip", 1000, false))
+            open("https://x.test/a.zip")
+            awaitDetail("1000 B · Uses one connection. This server doesn't support parallel downloads.")
+            connections(1)
+            onNodeWithTag("connections-minus").assertIsNotEnabled()
+            onNodeWithTag("connections-plus").assertIsNotEnabled()
+        }
+
+    @Test
+    fun theControlIsDisabledAtOneWhenTheSizeIsUnknown() =
+        runComposeUiTest {
+            home(prober = answering("a.zip", null, true))
+            open("https://x.test/a.zip")
+            awaitDetail("size unknown · Resumable")
+            connections(1)
+            onNodeWithTag("connections-plus").assertIsNotEnabled()
+        }
+
+    @Test
+    fun theControlWaitsDisabledWhileCheckingAndOpensWhenTheProbeSaysResumable() =
+        runComposeUiTest {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            home(prober = FakeProber(fallback = ProbeOutcome.Ok(ProbeResult("a.zip", 5000, true)), gate = { gate.await() }))
+            open("https://x.test/a.zip")
+            onNodeWithTag("preview-detail").assertTextEquals("Checking link…")
+            connections(1)
+            onNodeWithTag("connections-plus").assertIsNotEnabled()
+            gate.complete(Unit)
+            awaitDetail("4.9 KB · Resumable · 8 connections")
+            connections(8)
+            onNodeWithTag("connections-plus").assertIsEnabled()
+        }
+
+    @Test
+    fun aTorrentHasNoConnectionsControl() =
+        runComposeUiTest {
+            home()
+            open(magnet)
+            onNodeWithTag("preview-detail").assertIsDisplayed()
+            onNodeWithTag("connections-value").assertDoesNotExist()
+            onNodeWithTag("connections-plus").assertDoesNotExist()
         }
 }
 

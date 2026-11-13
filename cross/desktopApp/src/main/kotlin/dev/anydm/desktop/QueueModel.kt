@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.EngineEvent
+import dev.anydm.engine.http.Span
 
 /** The download list and the order of the Queued rows (their ids, first in line first). */
 data class QueueState(
@@ -14,7 +15,17 @@ private fun QueueState.setStatus(
     ids: Set<String>,
     from: Set<DownloadStatus>,
     to: DownloadStatus,
-): QueueState = copy(list = list.map { if (it.id in ids && it.status in from) it.copy(status = to) else it })
+): QueueState =
+    copy(
+        list =
+            list.map {
+                if (it.id in ids && it.status in from) {
+                    it.copy(status = to, liveConnections = if (to == DownloadStatus.Downloading) it.liveConnections else 0)
+                } else {
+                    it
+                }
+            },
+    )
 
 /** Starts the first queued rows while a slot is free (R3). Never stops a running row. */
 fun settle(
@@ -79,14 +90,30 @@ private fun QueueState.update(
     change: (DownloadItem) -> DownloadItem,
 ): QueueState = copy(list = list.map { if (it.id == id && (only == null || it.status == only)) change(it) else it })
 
-/** A progress report from the engine. It never changes a status; a report for a row that is no longer Downloading is stale and dropped. */
+/**
+ * A progress report from the engine. It never changes a status; a report for a row that is no longer Downloading is stale and
+ * dropped. [spans] are the ranges of a segmented download (null for a one-connection one), [connections] the ones open now.
+ */
 fun progressed(
     s: QueueState,
     id: String,
     done: Long,
     total: Long,
     bytesPerSec: Long,
-): QueueState = s.update(id, DownloadStatus.Downloading) { it.copy(doneBytes = done, totalBytes = total, bytesPerSec = bytesPerSec) }
+    spans: List<Span>? = null,
+    connections: Int = 1,
+    partId: String? = null,
+): QueueState =
+    s.update(id, DownloadStatus.Downloading) {
+        it.copy(
+            doneBytes = done,
+            totalBytes = total,
+            bytesPerSec = bytesPerSec,
+            spans = spans,
+            partId = partId,
+            liveConnections = connections,
+        )
+    }
 
 /** The engine got its first response: the name, size and validators are now known (a restart reports done = 0). */
 fun started(
@@ -100,8 +127,30 @@ fun started(
             etag = e.etag,
             lastModified = e.lastModified,
             doneBytes = e.done,
+            spans = e.spans,
+            partId = e.partId,
+            liveConnections = 1, // the first response is open
         )
     }
+
+/**
+ * The exact ranges of a job that stopped and closed its part file. They go to a row that is not running (Paused, Queued or
+ * Failed) and never change its status; a Downloading row was resumed before this arrived, and runs from the engine's newer ranges.
+ */
+fun stopped(
+    s: QueueState,
+    id: String,
+    done: Long,
+    spans: List<Span>,
+    partId: String? = null,
+): QueueState =
+    s.copy(
+        list =
+            s.list.map {
+                val idle = it.status == DownloadStatus.Paused || it.status == DownloadStatus.Queued || it.status == DownloadStatus.Failed
+                if (it.id == id && idle) it.copy(doneBytes = done, spans = spans, partId = partId) else it
+            },
+    )
 
 /** The file is complete, also when a pause came a moment too late to stop it. The total becomes the real size. */
 fun finished(
@@ -123,6 +172,9 @@ fun finished(
                 totalBytes = done,
                 bytesPerSec = 0,
                 error = null,
+                spans = null,
+                partId = null,
+                liveConnections = 0,
             )
         }
     return settle(next.copy(queue = next.queue.filter { it != id }), limit)
@@ -135,10 +187,30 @@ fun failed(
     reason: String,
     done: Long,
     limit: Int,
+    /** The ranges at the failure, with the identity of their file; null keeps the row's own. */
+    spans: List<Span>? = null,
+    partId: String? = null,
+    /** The engine deleted the `.part` file and left none: the row keeps no ranges and shows nothing done. */
+    cleared: Boolean = false,
 ): QueueState =
     settle(
         s.update(id, DownloadStatus.Downloading) {
-            it.copy(status = DownloadStatus.Failed, error = reason, doneBytes = done, bytesPerSec = 0)
+            it.copy(
+                status = DownloadStatus.Failed,
+                error = reason,
+                doneBytes = if (cleared) 0 else done,
+                bytesPerSec = 0,
+                spans = if (cleared) null else spans ?: it.spans,
+                partId =
+                    if (cleared) {
+                        null
+                    } else if (spans != null) {
+                        partId
+                    } else {
+                        it.partId
+                    },
+                liveConnections = 0,
+            )
         },
         limit,
     )

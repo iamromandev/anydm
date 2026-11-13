@@ -5,6 +5,7 @@ import dev.anydm.engine.http.Engine
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.LinkProber
+import dev.anydm.engine.http.PartFile
 import dev.anydm.engine.http.ProbeOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -71,6 +72,11 @@ class FakeEngine(
     override fun setRate(bytesPerSec: Long?) {
         guard.check()
         rates.add(bytesPerSec)
+    }
+
+    override fun forget(id: String) {
+        guard.check()
+        log.add("forget:$id")
     }
 
     fun emit(e: EngineEvent) {
@@ -190,5 +196,56 @@ class MemoryDiskIo(
 
     override fun mkdirs(p: Path) {
         guard.check()
+    }
+
+    /** Positional writes into the in-memory file, which is [size] long when given (zero-filled). */
+    override fun openSpans(
+        p: Path,
+        size: Long?,
+    ): PartFile {
+        guard.check()
+        files.compute(p) { _, old ->
+            val bytes = old ?: ByteArray(0)
+            if (size != null && bytes.size.toLong() != size) bytes.copyOf(size.toInt()) else bytes
+        }
+        return object : PartFile {
+            override fun write(
+                offset: Long,
+                buf: ByteArray,
+                off: Int,
+                len: Int,
+            ) {
+                guard.check()
+                files.compute(p) { _, old ->
+                    val bytes = old ?: ByteArray(0)
+                    val grown = if (bytes.size < offset + len) bytes.copyOf((offset + len).toInt()) else bytes
+                    System.arraycopy(buf, off, grown, offset.toInt(), len)
+                    grown
+                }
+            }
+
+            override fun force() = guard.check()
+
+            override fun truncate(size: Long) {
+                guard.check()
+                files.compute(p) { _, old -> old?.let { if (it.size > size) it.copyOf(size.toInt()) else it } }
+            }
+
+            override fun close() = Unit
+        }
+    }
+
+    override fun readTail(
+        p: Path,
+        len: Int,
+    ): ByteArray? {
+        guard.check()
+        val bytes = files[p] ?: return null
+        return if (bytes.size < len) null else bytes.copyOfRange(bytes.size - len, bytes.size)
+    }
+
+    override fun freeSpace(dir: Path): Long {
+        guard.check()
+        return Long.MAX_VALUE
     }
 }

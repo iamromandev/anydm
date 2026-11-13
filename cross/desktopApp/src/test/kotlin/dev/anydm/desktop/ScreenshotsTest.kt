@@ -26,6 +26,7 @@ import androidx.compose.ui.text.AnnotatedString
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.ProbeOutcome
 import dev.anydm.engine.http.ProbeResult
+import dev.anydm.engine.http.Span
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentMeta
 import dev.anydm.engine.torrent.TorrentResult
@@ -126,7 +127,7 @@ class ScreenshotsTest {
                 shot("downloads-probe-checking-$size", emptySample(), dark, w, h, env = ok) { typeLink(link) }
                 shot("downloads-probe-ready-$size", emptySample(), dark, w, h, env = ok) {
                     typeLink(link)
-                    awaitDetail("5.7 GB · Resumable")
+                    awaitDetail("5.7 GB · Resumable · 8 connections")
                 }
                 shot("downloads-probe-unknown-$size", emptySample(), dark, w, h, env = unknown) {
                     typeLink(link)
@@ -157,6 +158,50 @@ class ScreenshotsTest {
                 shot("downloads-detail-finished-$size", realRows(), dark, w, h) {
                     onNodeWithTag("download-list").performScrollToKey("6") // below the fold in the small window
                     onNodeWithTag("chevron-6").performClick()
+                }
+            }
+        }
+    }
+
+    /** The segmented-downloads views: the Connections control on and off, its setting, and the detail of a four-connection download. */
+    @Test
+    fun captureSegmentedDownloads() {
+        val mb = 1024L * 1024
+        val link = "https://example.com/files/ubuntu-24.04.iso"
+        val ok = prober(ProbeOutcome.Ok(ProbeResult("ubuntu-24.04.iso", 5_800L * mb, true)))
+        val noRange = prober(ProbeOutcome.Ok(ProbeResult("ubuntu-24.04.iso", 5_800L * mb, false)))
+        // Four ranges of 1450 MB: 1100 MB done, 400 MB done, all done, 700 MB done.
+        val piece = 1_450 * mb
+        val spans =
+            listOf(1_100 * mb, 400 * mb, piece, 700 * mb).mapIndexed { i, done -> Span(i * piece, (i + 1) * piece - 1, done) }
+        val done = spans.sumOf { it.done }
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("segmented-dialog-enabled-$size", emptySample(), dark, w, h, env = ok) {
+                    typeLink(link)
+                    awaitDetail("5.7 GB · Resumable · 8 connections")
+                    repeat(4) { onNodeWithTag("connections-minus").performClick() }
+                }
+                shot("segmented-dialog-disabled-$size", emptySample(), dark, w, h, env = noRange) {
+                    typeLink(link)
+                    awaitDetail("5.7 GB · Uses one connection. This server doesn't support parallel downloads.")
+                }
+                shot("segmented-settings-speeddata-$size", populatedSample(), dark, w, h) {
+                    openSettings()
+                    onNodeWithTag("settings-nav-speeddata").performClick()
+                    onNodeWithTag("schedule-enabled").performScrollTo()
+                }
+                val engine = FakeEngine()
+                shot("segmented-detail-running-$size", realRows(), dark, w, h, env = DownloadEnv.inert().copy(engine = engine)) {
+                    waitForIdle()
+                    listOf(8, 10, 12, 11, 13, 12).forEach { v ->
+                        engine.emit(EngineEvent.Progress("1", done, 5_800 * mb, v * mb, spans, 4))
+                        mainClock.advanceTimeByFrame()
+                    }
+                    waitForIdle()
+                    onNodeWithTag("chevron-1").performClick()
+                    onNodeWithTag("detail-map").performScrollTo()
                 }
             }
         }

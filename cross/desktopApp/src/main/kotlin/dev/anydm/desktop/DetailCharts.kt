@@ -84,7 +84,7 @@ private fun statLine(
     withStyle(SpanStyle(color = c.text, fontWeight = FontWeight.Bold)) { append(value) }
 }
 
-/** What stands where the speed diagram is for a real download: one connection, and the speed it measured. */
+/** What stands where the speed diagram is for a real download: its connection count, and the speed it measured. */
 @Composable
 fun SingleConnectionSpeed(
     d: Detail,
@@ -93,13 +93,14 @@ fun SingleConnectionSpeed(
 ) {
     val c = colors
     val total = formatSpeed(d.total, unit)
+    val n = connectionCount(d.item)
     Column(
         modifier
             .testTag("detail-diagram")
-            .semantics { contentDescription = "Speed $total over one connection" },
+            .semantics { contentDescription = "Speed $total over ${if (n == 1) "one connection" else "$n connections"}" },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Mono("1 CONNECTION", c.textSecondary, 10, spacing = 1)
+        Mono(if (n == 1) "1 CONNECTION" else "$n CONNECTIONS", c.textSecondary, 10, spacing = 1)
         Mono(total, c.text, 24, Modifier.testTag("detail-single-speed"), bold = true)
     }
 }
@@ -351,7 +352,8 @@ fun ChunkMap(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val cols = ((maxWidth + CellGap) / (CellSize + CellGap)).toInt().coerceAtLeast(1)
             val rows = (d.cells.size + cols - 1) / cols
-            val coloursByRow = d.rows.map { networkColor(it.kind, it.color, c) }
+            // A real download has no networks to colour by: its done cells take the accent.
+            val coloursByRow = if (d.real) listOf(c.accent) else d.rows.map { networkColor(it.kind, it.color, c) }
             val full = (CellSize + CellGap) * rows - CellGap
             val scrolls = d.item.kind == DownloadKind.Torrent && rows > PIECE_ROWS
             val frame =

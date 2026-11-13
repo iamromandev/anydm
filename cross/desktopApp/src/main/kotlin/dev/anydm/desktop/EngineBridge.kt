@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.JobSpec
+import dev.anydm.engine.http.doneOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
@@ -45,6 +46,9 @@ fun jobOf(
         item.etag,
         item.lastModified,
         item.totalBytes.takeIf { it > 0 },
+        item.connections,
+        item.spans,
+        item.partId,
     )
 
 /** Stops for rows that were Downloading and no longer are (or are gone), then starts for rows that now are Downloading and were not. */
@@ -88,8 +92,12 @@ private suspend fun discard(
     cmd: EngineCmd.Discard,
     joinWaitMs: Long,
 ) {
+    val ended = cmd.ids.all { id -> withTimeoutOrNull(joinWaitMs) { env.engine.join(id) } != null }
+    // The rows are gone either way: what the engine kept for them goes too. A job that is still winding down may put its entry back,
+    // and a start under a reused id clears that (see DownloadEngine.start), so forgetting early is safe.
+    cmd.ids.forEach { env.engine.forget(it) }
     // A job that does not end in time may still be writing: its files stay, and the commands after this one are not held up.
-    for (id in cmd.ids) if (withTimeoutOrNull(joinWaitMs) { env.engine.join(id) } == null) return
+    if (!ended) return
     for (path in cmd.paths) {
         try {
             if (!env.opener.trash(path)) env.disk.delete(path)
@@ -101,12 +109,24 @@ private suspend fun discard(
     }
 }
 
+/**
+ * What a start goes from. A one-connection row: the `.part` file's size, the truth (a stopped job may have written past its
+ * last report). A segmented row's `.part` is full size from the start (plus the identity trailer), so its stored ranges are the
+ * truth instead, and a missing file means zero; whether the file is the one the ranges were made for is the engine's to check. A row on several connections without ranges is left to the engine: the file may be one stream's partial or a
+ * pre-sized one with gaps, and only the engine, once the row's predecessor has ended, can tell which.
+ */
 private fun prepared(
     env: DownloadEnv,
     job: JobSpec,
 ): JobSpec =
     try {
-        job.copy(done = env.disk.size(Path.of(job.folder).resolve("${job.name}.part")) ?: 0L)
+        val size = env.disk.size(Path.of(job.folder).resolve("${job.name}.part"))
+        val spans = job.spans
+        when {
+            spans != null && size != null -> job.copy(done = doneOf(spans))
+            spans != null -> job.copy(done = 0L, spans = null, partId = null)
+            else -> job.copy(done = size ?: 0L)
+        }
     } catch (_: RuntimeException) {
         job // an unusable folder or name fails inside the engine, with a reason
     } catch (_: IOException) {

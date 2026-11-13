@@ -62,6 +62,7 @@ data class LimitsDto(
     val slowOn: Boolean = false,
     val slow: Long = initialLimits(emptyList(), emptyMap()).slow,
     val concurrency: Int = DEFAULT_CONCURRENCY,
+    val connections: Int = DEFAULT_CONNECTIONS,
     val schedule: ScheduleDto = ScheduleDto(),
     val networks: Map<String, NetworkLimitsDto> = emptyMap(),
 )
@@ -126,6 +127,7 @@ fun toFile(
             limits.slowOn,
             limits.slow,
             limits.concurrency,
+            limits.connections,
             ScheduleDto(limits.schedule.enabled, daysToNames(limits.schedule.days), limits.schedule.start, limits.schedule.end),
             limits.networks.mapValues { (_, n) -> NetworkLimitsDto(n.speed, n.data, n.period) },
         ),
@@ -161,6 +163,7 @@ fun fromFile(
             limits.slowOn,
             limits.slow,
             limits.concurrency,
+            limits.connections,
             Schedule(
                 limits.schedule.enabled,
                 limits.schedule.days.mapTo(mutableSetOf()) {
@@ -231,6 +234,10 @@ fun validate(f: SettingsFile): String? {
 
         l.concurrency !in MIN_CONCURRENCY..MAX_CONCURRENCY -> {
             "downloads at once out of range"
+        }
+
+        l.connections !in MIN_CONNECTIONS..MAX_CONNECTIONS_PER_DOWNLOAD -> {
+            "connections per download out of range"
         }
 
         speedProblem != null -> {

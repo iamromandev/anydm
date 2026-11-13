@@ -171,6 +171,14 @@ class LimitsModelTest {
     }
 
     @Test
+    fun theConnectionsPerDownloadGoThroughTheDraftAndBack() {
+        assertEquals(8, seed.connections)
+        assertEquals(8, draft().general.connections)
+        val l = limitsOf(draft().editGeneral { it.copy(connections = 3) }, SpeedUnit.MBps)!!
+        assertEquals(3, l.connections)
+    }
+
+    @Test
     fun errorPanesIsEmptyForAValidDraft() {
         assertEquals(emptySet(), errorPanes(draft()))
     }
@@ -306,6 +314,7 @@ class LimitsModelTest {
         assertFalse(g.slowOn)
         assertEquals("2", g.slowText)
         assertEquals(2, g.concurrency)
+        assertEquals(8, g.connections)
         assertEquals(DEFAULT_SCHEDULE, g.schedule)
         assertEquals("16", defaultGeneral(SpeedUnit.Mbps).slowText)
     }

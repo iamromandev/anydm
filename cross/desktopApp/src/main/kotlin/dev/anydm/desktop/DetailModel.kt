@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.Span
 import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -148,8 +149,59 @@ private fun buildCells(
 }
 
 /**
+ * The chunk map of a real download, from the bytes it really has: [MAX_CHUNKS] cells of equal size over the file. A cell is done
+ * when every byte of it is done (in one span's done part, or in the touching done parts of neighbours), in flight when it holds
+ * the next byte of a span that is still being fetched, else pending. Only the row is read, and the work is a sweep over the cells
+ * and the spans, so a 5 GB file costs no more than a small one.
+ */
+private fun realCells(item: DownloadItem): Pair<List<Cell>, Long> {
+    val total = item.totalBytes
+    if (total <= 0) return emptyList<Cell>() to 0L
+    val spans = item.spans?.takeIf { it.isNotEmpty() } ?: listOf(Span(0, total - 1, item.doneBytes.coerceIn(0, total)))
+    val count = minOf(MAX_CHUNKS.toLong(), total).toInt()
+    val size = (total + count - 1) / count
+    val doneRuns = doneRuns(spans)
+    val running = item.status == DownloadStatus.Downloading
+    val inFlight = BooleanArray(count)
+    if (running) {
+        for (s in spans) if (!s.finished && s.next in 0 until total) inFlight[(s.next / size).toInt().coerceAtMost(count - 1)] = true
+    }
+    var run = 0
+    val cells =
+        List(count) { i ->
+            val from = i * size
+            val to = minOf(total - 1, from + size - 1)
+            while (run < doneRuns.size && doneRuns[run].last < from) run++
+            val whole = run < doneRuns.size && doneRuns[run].first <= from && doneRuns[run].last >= to
+            when {
+                whole -> Cell(CellState.Done, -1)
+                inFlight[i] -> Cell(CellState.InFlight, -1)
+                else -> Cell(CellState.Pending, -1)
+            }
+        }
+    return cells to size
+}
+
+/** The byte runs that are done, in file order, with touching ones joined. */
+private fun doneRuns(spans: List<Span>): List<LongRange> {
+    val runs = ArrayList<LongRange>()
+    for (s in spans.sortedBy { it.start }) {
+        if (s.done <= 0) continue
+        val last = s.start + s.done - 1
+        val tail = runs.lastOrNull()
+        if (tail != null && s.start <= tail.last + 1) {
+            runs[runs.lastIndex] = tail.first..maxOf(tail.last, last)
+        } else {
+            runs += s.start..last
+        }
+    }
+    return runs
+}
+
+/**
  * A real download's detail: what was measured, nothing invented. Its traffic is not bound to a network, so there are no per-network
- * rows or shares, and no chunk map; the chart is the last [POINTS] speeds [history] holds (this session only), older ones as 0.
+ * rows or shares; the chunk map is built from the row's own ranges, and the chart is the last [POINTS] speeds [history] holds (this
+ * session only), older ones as 0.
  */
 private fun realDetail(
     item: DownloadItem,
@@ -161,6 +213,7 @@ private fun realDetail(
     val samples = if (running || item.status == DownloadStatus.Finished) history else history + 0L
     val tail = samples.takeLast(POINTS)
     val points = List(POINTS - tail.size) { 0L } + tail
+    val (cells, cellBytes) = realCells(item)
     return Detail(
         item = item,
         rows = emptyList(),
@@ -169,8 +222,8 @@ private fun realDetail(
         peak = points.max(),
         aloneFactor = null,
         series = listOf(points),
-        cells = emptyList(),
-        cellBytes = 0,
+        cells = cells,
+        cellBytes = cellBytes,
         retries = 0,
         peers = 0,
         elapsedSec = 0,
@@ -287,7 +340,10 @@ fun toggleOff(
     return if (live <= 1) off else off + target.id
 }
 
-fun showMap(d: Detail): Boolean = d.cells.isNotEmpty() && (d.item.kind == DownloadKind.Torrent || d.rows.count { it.on } >= 2)
+fun showMap(d: Detail): Boolean = d.cells.isNotEmpty() && (d.real || d.item.kind == DownloadKind.Torrent || d.rows.count { it.on } >= 2)
+
+/** The connections a real download shows: the open ones while it runs (none included), else the count it was added with. */
+fun connectionCount(item: DownloadItem): Int = if (item.status == DownloadStatus.Downloading) item.liveConnections else item.connections
 
 /** Three round tick values in the display unit, returned in bytes per second. */
 fun niceTicks(

@@ -20,6 +20,7 @@ import androidx.compose.ui.test.v2.runComposeUiTest
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.ProbeOutcome
 import dev.anydm.engine.http.ProbeResult
+import dev.anydm.engine.http.Span
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import java.nio.file.Path
@@ -183,7 +184,7 @@ class HttpDownloadsTest {
             onNodeWithTag("new-download").performClick()
             onNodeWithTag("url-field").performTextInput("https://x.test/a.zip")
             await("probe") { prober.probed.isNotEmpty() }
-            await("ready") { runCatching { onNodeWithText("1000 B · Resumable").assertIsDisplayed() }.isSuccess }
+            await("ready") { runCatching { onNodeWithText("1000 B · Resumable · 8 connections").assertIsDisplayed() }.isSuccess }
             onNodeWithTag("download").performClick()
             await("start") { engine.starts.size == 1 }
             engine.emit(EngineEvent.Failed("1", "Network error", 0))
@@ -346,6 +347,17 @@ class HttpDownloadsTest {
         }
 
     @Test
+    fun removeWithTheBoxUntickedStillMakesTheEngineForgetTheRowAfterItsJobHasEnded() =
+        runComposeUiTest {
+            startedRow()
+            removeVia("1", ticked = false)
+            await("forget") { "forget:1" in engine.log }
+            assertEquals(listOf("start:1", "stop:1", "join:1", "forget:1"), engine.log.toList())
+            assertEquals(emptyList(), disk.deleted.toList())
+            assertEquals(emptyList(), opener.trashed.toList())
+        }
+
+    @Test
     fun theDeleteBoxStartsUnticked() =
         runComposeUiTest {
             startedRow()
@@ -459,6 +471,52 @@ class HttpDownloadsTest {
             val job = engine.starts.single()
             assertEquals(listOf("report.pdf", 2048L), listOf(job.name, job.total))
             onNodeWithText("report.pdf").assertIsDisplayed()
+        }
+
+    private fun ComposeUiTest.addProbed(
+        probe: ProbeResult,
+        ready: String,
+    ) {
+        home()
+        prober.fallback = ProbeOutcome.Ok(probe)
+        onNodeWithTag("new-download").performClick()
+        onNodeWithTag("url-field").performTextInput("https://x.test/a.zip")
+        await("ready") { runCatching { onNodeWithText(ready).assertIsDisplayed() }.isSuccess }
+    }
+
+    @Test
+    fun theConnectionsChosenInTheDialogGoToTheRowAndTheEngineJob() =
+        runComposeUiTest {
+            addProbed(ProbeResult("a.zip", 5000, true), "4.9 KB · Resumable · 8 connections")
+            repeat(5) { onNodeWithTag("connections-minus").performClick() }
+            onNodeWithTag("download").performClick()
+            await("start") { engine.starts.size == 1 }
+            assertEquals(3, engine.starts.single().connections)
+        }
+
+    @Test
+    fun aLinkWithoutRangeSupportStartsOnOneConnection() =
+        runComposeUiTest {
+            addProbed(ProbeResult("a.zip", 5000, false), "4.9 KB · Uses one connection. This server doesn't support parallel downloads.")
+            onNodeWithTag("download").performClick()
+            await("start") { engine.starts.size == 1 }
+            assertEquals(1, engine.starts.single().connections)
+        }
+
+    @Test
+    fun downloadPressedBeforeAProbeThatFindsNoRangeSupportStartsOnOneConnection() =
+        runComposeUiTest {
+            home()
+            val gate = CompletableDeferred<Unit>()
+            prober.gate = { gate.await() }
+            prober.fallback = ProbeOutcome.Ok(ProbeResult("a.zip", 5000, false))
+            onNodeWithTag("new-download").performClick()
+            onNodeWithTag("url-field").performTextInput("https://x.test/a.zip")
+            await("the probe is in flight") { prober.probed.isNotEmpty() }
+            onNodeWithTag("download").performClick()
+            gate.complete(Unit)
+            await("start") { engine.starts.size == 1 }
+            assertEquals(1, engine.starts.single().connections)
         }
 
     @Test
@@ -628,6 +686,67 @@ class HttpDownloadsTest {
             onNodeWithText("1 CONNECTION").assertIsDisplayed()
             onNodeWithTag("detail-table").assertDoesNotExist()
             onNodeWithTag("detail-diagram").assertIsDisplayed()
+        }
+
+    private val mib = 1024L * 1024
+
+    private val fourSpans =
+        listOf(
+            Span(0, 8 * mib - 1, 4 * mib),
+            Span(8 * mib, 16 * mib - 1, 0),
+            Span(16 * mib, 24 * mib - 1, 8 * mib),
+            Span(24 * mib, 32 * mib - 1, 2 * mib),
+        )
+
+    /** A 32 MiB row added over 4 connections and reporting [fourSpans] with [live] connections open, its detail open. */
+    private fun ComposeUiTest.segmentedDetail(live: Int = 4) {
+        addProbed(ProbeResult("a.zip", 32 * mib, true), "32.0 MB · Resumable · 8 connections")
+        repeat(4) { onNodeWithTag("connections-minus").performClick() }
+        onNodeWithTag("download").performClick()
+        await("start") { engine.starts.size == 1 }
+        assertEquals(4, engine.starts.single().connections)
+        engine.emit(EngineEvent.Started("1", "a.zip", 32 * mib, null, null, 14 * mib, fourSpans))
+        engine.emit(EngineEvent.Progress("1", 14 * mib, 32 * mib, 3 * mib, fourSpans, live))
+        await("speed") { runCatching { speed("1", "3.0 MB/s") }.isSuccess }
+        openDetail("1")
+    }
+
+    @Test
+    fun theDetailOfARunningFourConnectionRowShowsItsLiveConnectionsAndTheMapOfItsRanges() =
+        runComposeUiTest {
+            segmentedDetail()
+            onNodeWithText("4 CONNECTIONS").assertIsDisplayed()
+            onNodeWithTag("detail-map").assertIsDisplayed()
+            onNodeWithTag(
+                "detail-map",
+            ).assert(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Chunk map, 128 chunks, 56 done")))
+            onNodeWithTag("detail-map-caption").assertTextEquals("128 chunks · 256.0 KB each")
+            onNodeWithTag("detail-table").assertDoesNotExist()
+        }
+
+    @Test
+    fun aConnectionThatDroppedShowsInTheLiveCount() =
+        runComposeUiTest {
+            segmentedDetail(live = 3)
+            onNodeWithText("3 CONNECTIONS").assertIsDisplayed()
+        }
+
+    @Test
+    fun aPausedFourConnectionRowShowsItsOwnCountAndNoCellInFlight() =
+        runComposeUiTest {
+            segmentedDetail()
+            onNodeWithTag("detail-pause").performClick()
+            await("paused") { "1" in engine.stops }
+            onNodeWithText("4 CONNECTIONS").assertIsDisplayed()
+            onNodeWithTag("detail-map").assertIsDisplayed()
+        }
+
+    @Test
+    fun theFinishedDetailOfAFourConnectionRowStatesItsConnections() =
+        runComposeUiTest {
+            segmentedDetail()
+            engine.emit(EngineEvent.Finished("1", 32 * mib))
+            await("finished") { runCatching { onNodeWithTag("detail-stat-connections").assertTextEquals("4") }.isSuccess }
         }
 
     @Test

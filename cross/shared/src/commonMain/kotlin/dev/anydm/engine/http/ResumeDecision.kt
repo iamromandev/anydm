@@ -41,3 +41,12 @@ fun resumeDecision(
             ResumeDecision.Fail(Reasons.http(status))
         }
     }
+
+/**
+ * The validator for an `If-Range` header: a strong ETag, else the `Last-Modified` date, else none. A weak ETag (`W/"..."`) never
+ * matches an `If-Range` (RFC 9110, 13.1.5), so sending one makes the server answer 200 to every ranged request.
+ */
+fun ifRangeOf(
+    etag: String?,
+    modified: String?,
+): String? = etag?.takeUnless { it.trimStart().startsWith("W/") } ?: modified

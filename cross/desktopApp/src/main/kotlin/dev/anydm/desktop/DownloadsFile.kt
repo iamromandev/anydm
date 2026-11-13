@@ -1,11 +1,14 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.MAX_CONNECTIONS
+import dev.anydm.engine.http.Span
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 
-const val DOWNLOADS_VERSION = 1
+/** Version 2 adds each row's connections and ranges; version 1 files are still read (every row on one connection). */
+const val DOWNLOADS_VERSION = 2
 const val DOWNLOADS_FILE_NAME = "downloads.json"
 const val MAX_DOWNLOADS_BYTES = 16 * 1024 * 1024
 private const val MAX_DOWNLOADS_TEXT = 4096
@@ -31,6 +34,14 @@ data class SampleFileDto(
     val bytes: Long,
 )
 
+/** A byte range of a segmented download, [end] inclusive, of which the first [done] bytes are written. */
+@Serializable
+data class RangeDto(
+    val start: Long,
+    val end: Long,
+    val done: Long,
+)
+
 @Serializable
 data class DownloadDto(
     /** A row without an id or a name is an unusable row (dropped on load), not an unreadable file. */
@@ -48,6 +59,12 @@ data class DownloadDto(
     val lastModified: String? = null,
     val kind: DownloadKind = DownloadKind.Direct,
     val files: List<SampleFileDto>? = null,
+    /** 1..16 ([MAX_CONNECTIONS]); a version 1 row has none and reads as 1. */
+    val connections: Int = 1,
+    /** In file order; null for a download that is not segmented (yet). */
+    val ranges: List<RangeDto>? = null,
+    /** The identity of the `.part` file the [ranges] belong to; a row with ranges and none has ranges that are not trusted. */
+    val partId: String? = null,
 )
 
 fun toDownloadsFile(list: List<DownloadItem>): DownloadsFile =
@@ -67,6 +84,9 @@ fun toDownloadsFile(list: List<DownloadItem>): DownloadsFile =
                     it.lastModified,
                     it.kind,
                     it.files?.map { f -> SampleFileDto(f.name, f.bytes) },
+                    it.connections,
+                    it.spans?.map { r -> RangeDto(r.start, r.end, r.done) },
+                    it.partId,
                 )
             },
     )
@@ -95,6 +115,9 @@ fun fromDownloadsFile(file: DownloadsFile): List<DownloadItem> =
             error = it.error,
             etag = it.etag,
             lastModified = it.lastModified,
+            connections = it.connections.coerceIn(1, MAX_CONNECTIONS),
+            spans = it.ranges?.map { r -> Span(r.start, r.end, r.done) },
+            partId = it.partId,
         )
     }
 
@@ -109,8 +132,27 @@ private fun rowProblem(d: DownloadDto): String? =
         d.folder != null && !isUsableFolder(d.folder) -> "bad download folder"
         d.done < 0 || (d.total != null && d.total < 0) -> "negative download size"
         d.kind == DownloadKind.Direct && (d.url == null || !isHttpUrl(d.url)) -> "bad download link"
+        d.ranges != null && !rangesUsable(d.ranges, d.total) -> "bad download ranges"
         else -> null
     }
+
+/**
+ * Ranges that partition the file: some, in file order, the first at byte 0 and each starting right after the one before, each
+ * with `done` inside its length, and the last ending at the [total] when it is known. A gap or a short list would leave bytes
+ * that nothing fetches, and the file would be renamed as complete.
+ */
+private fun rangesUsable(
+    ranges: List<RangeDto>,
+    total: Long?,
+): Boolean {
+    if (ranges.isEmpty()) return false
+    var next = 0L
+    for (r in ranges) {
+        if (r.start != next || r.end < r.start || r.done < 0 || r.done > r.end - r.start + 1) return false
+        next = r.end + 1
+    }
+    return total == null || next == total
+}
 
 /** The rows worth keeping: one unusable row (or a repeated id) is left out, so it cannot take the whole list with it. */
 fun usableRows(f: DownloadsFile): List<DownloadDto> {
@@ -122,7 +164,7 @@ fun usableRows(f: DownloadsFile): List<DownloadDto> {
 fun validateDownloads(f: DownloadsFile): String? =
     when {
         f.version > DOWNLOADS_VERSION -> "newer downloads version ${f.version}"
-        f.version < DOWNLOADS_VERSION -> "unknown downloads version ${f.version}"
+        f.version < 1 -> "unknown downloads version ${f.version}"
         else -> null
     }
 

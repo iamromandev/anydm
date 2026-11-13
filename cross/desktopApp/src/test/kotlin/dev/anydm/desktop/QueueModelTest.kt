@@ -1,5 +1,8 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.http.EngineEvent
+import dev.anydm.engine.http.Reasons
+import dev.anydm.engine.http.Span
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -504,5 +507,112 @@ class QueueModelTest {
     fun pauseAllLeavesFailedRowsAlone() {
         val s = QueueState(listOf(fail("1")), emptyList())
         assertEquals(s, pauseAll(s, setOf("1"), 1))
+    }
+
+    private val spans = listOf(Span(0, 49, 20), Span(50, 99, 5))
+
+    @Test
+    fun startedStoresTheSpansAndNoSpansForAOneConnectionStart() {
+        val segmented = started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 25, spans))
+        assertEquals(spans, segmented.list.single().spans)
+        val restarted = started(segmented, EngineEvent.Started("d1", "x.zip", 100, null, null, 0))
+        assertNull(restarted.list.single().spans)
+    }
+
+    @Test
+    fun progressedStoresTheSpansAndTheLiveConnections() {
+        val row = progressed(state(1), "d1", 25, 100, 7, spans, 3).list.single()
+        assertEquals(spans, row.spans)
+        assertEquals(3, row.liveConnections)
+    }
+
+    @Test
+    fun leavingDownloadingZeroesTheLiveConnections() {
+        val running = progressed(state(1), "d1", 25, 100, 7, spans, 3)
+        assertEquals(0, pauseAll(running, setOf("d1"), 1).list.single().liveConnections)
+        assertEquals(0, failed(running, "d1", "Network error", 25, 1, spans).list.single().liveConnections)
+        assertEquals(0, finished(running, "d1", 100, 1).list.single().liveConnections)
+    }
+
+    @Test
+    fun failedKeepsTheSpansItCarriesAndOtherwiseTheRowsOwn() {
+        val running = progressed(state(1), "d1", 25, 100, 7, spans, 3)
+        val more = listOf(Span(0, 49, 30), Span(50, 99, 5))
+        assertEquals(more, failed(running, "d1", "Network error", 35, 1, more).list.single().spans)
+        assertEquals(spans, failed(running, "d1", "HTTP 503", 25, 1).list.single().spans)
+    }
+
+    @Test
+    fun finishedDropsTheSpans() {
+        val running = progressed(state(1), "d1", 25, 100, 7, spans, 3)
+        assertNull(finished(running, "d1", 100, 1).list.single().spans)
+    }
+
+    @Test
+    fun stoppedUpdatesDoneAndSpansOfAPausedQueuedOrFailedRowWithoutChangingItsStatus() {
+        for (row in listOf(p("1"), q("1"), fail("1"))) {
+            val s = QueueState(listOf(row), if (row.status == DownloadStatus.Queued) listOf("1") else emptyList())
+            val out = stopped(s, "1", 30, spans)
+            val got = out.list.single()
+            assertEquals(listOf(30L, spans, row.status), listOf(got.doneBytes, got.spans, got.status), "${row.status}")
+            assertEquals(s.queue, out.queue)
+        }
+    }
+
+    @Test
+    fun stoppedLeavesADownloadingRowAloneBecauseItAlreadyRunsFromTheEnginesNewerSpans() {
+        val s = state(1)
+        assertEquals(s, stopped(s, "d1", 30, spans))
+    }
+
+    @Test
+    fun stoppedIgnoresAMissingRowAndAFinishedOne() {
+        val s = QueueState(listOf(f("1")), emptyList())
+        assertEquals(s, stopped(s, "1", 30, spans))
+        assertEquals(s, stopped(s, "gone", 30, spans))
+    }
+
+    // M1: the identity of the part file travels with the ranges
+    @Test
+    fun startedProgressedAndStoppedCarryThePartIdWithTheSpans() {
+        val started = started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 25, spans, "AA"))
+        assertEquals("AA", started.list.single().partId)
+        assertEquals("BB", progressed(started, "d1", 30, 100, 7, spans, 2, "BB").list.single().partId)
+        val idle = QueueState(listOf(p("d1")), emptyList())
+        assertEquals("CC", stopped(idle, "d1", 30, spans, "CC").list.single().partId)
+        assertNull(
+            started(started, EngineEvent.Started("d1", "x.zip", 100, null, null, 0)).list.single().partId,
+            "a one-connection start has none",
+        )
+    }
+
+    @Test
+    fun failedKeepsTheRowsPartIdUnlessItCarriesSpansWithAnother() {
+        val running = started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 25, spans, "AA"))
+        assertEquals("AA", failed(running, "d1", "HTTP 503", 25, 1).list.single().partId)
+        val more = listOf(Span(0, 49, 30), Span(50, 99, 5))
+        val out = failed(running, "d1", "Network error", 35, 1, more, "BB").list.single()
+        assertEquals(listOf(more, "BB"), listOf(out.spans, out.partId))
+    }
+
+    // m5: a failure that says the engine deleted the part file leaves no ranges on the row
+    @Test
+    fun aClearedFailureDropsTheRangesThePartIdAndTheDoneBytes() {
+        val running = started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 25, spans, "AA"))
+        val out = failed(running, "d1", Reasons.CHANGED, 0, 1, cleared = true).list.single()
+        assertEquals(DownloadStatus.Failed, out.status)
+        assertNull(out.spans)
+        assertNull(out.partId)
+        assertEquals(0L, out.doneBytes)
+    }
+
+    // n1
+    @Test
+    fun startedSeedsOneLiveConnectionBecauseTheFirstResponseIsOpen() {
+        assertEquals(
+            1,
+            started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 0, spans, "AA")).list.single().liveConnections,
+        )
+        assertEquals(1, started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 0)).list.single().liveConnections)
     }
 }

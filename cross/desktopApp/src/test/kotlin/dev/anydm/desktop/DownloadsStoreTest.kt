@@ -63,7 +63,7 @@ class DownloadsStoreTest {
     @Test
     fun theFileIsDownloadsJsonWithTheVersion() {
         FileDownloadsStore(dir).save(sample)
-        assertTrue(path.readText().contains("\"version\": 1"))
+        assertTrue(path.readText().contains("\"version\": 2"))
     }
 
     @Test

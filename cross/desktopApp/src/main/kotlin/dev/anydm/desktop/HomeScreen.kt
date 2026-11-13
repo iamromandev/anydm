@@ -58,19 +58,29 @@ import androidx.compose.ui.unit.dp
 import dev.anydm.engine.http.DiskIo
 import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.ProbeOutcome
+import dev.anydm.engine.http.Span
+import dev.anydm.engine.http.TRAILER_BYTES
+import dev.anydm.engine.http.doneOf
+import dev.anydm.engine.http.finishedOver
 import dev.anydm.engine.http.sanitize
 import dev.anydm.engine.http.uniqueName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -141,6 +151,8 @@ fun HomeScreen(
     var removing by remember { mutableStateOf<Set<String>?>(null) }
     var menu by remember { mutableStateOf<RowMenuState?>(null) }
     val engineQueue = remember { Channel<List<EngineCmd>>(Channel.UNLIMITED) }
+    // Asks the downloads file for a save within DOWNLOADS_SAVE_MS, whatever changed (the exact ranges of a stopped job).
+    val saveNow = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) }
     // New direct links, one at a time: each settles its name against the disk and the rows before the next one looks.
     val adds = remember { Channel<NewLink>(Channel.UNLIMITED) }
     // Rows removed with "delete files" while their job ran, by id: the job may still finish and rename to its final file, and the
@@ -342,14 +354,18 @@ fun HomeScreen(
                 val concurrency = limits.concurrency
                 when (e) {
                     is EngineEvent.Started -> {
+                        // Fresh ranges, or another `.part` file than the row's: the ranges and their identity go to disk now, not with
+                        // the next tick. Until they do, what is saved belongs to a file that may be gone.
+                        val fresh = e.spans != null || q.list.firstOrNull { it.id == e.id }?.partId != e.partId
                         applyQueue(started(q, e))
+                        if (fresh) saveNow.tryEmit(Unit)
                     }
 
                     is EngineEvent.Progress -> {
                         if (q.list.any { it.id == e.id && it.status == DownloadStatus.Downloading }) {
                             speedHistory[e.id] = (speedHistory[e.id].orEmpty() + e.bytesPerSec).takeLast(SPEED_HISTORY)
                         }
-                        applyQueue(progressed(q, e.id, e.done, e.total ?: UNKNOWN_SIZE, e.bytesPerSec))
+                        applyQueue(progressed(q, e.id, e.done, e.total ?: UNKNOWN_SIZE, e.bytesPerSec, e.spans, e.connections, e.partId))
                     }
 
                     is EngineEvent.Finished -> {
@@ -363,7 +379,13 @@ fun HomeScreen(
 
                     is EngineEvent.Failed -> {
                         removedRunning.remove(e.id)
-                        applyQueue(failed(q, e.id, e.reason, e.done, concurrency))
+                        applyQueue(failed(q, e.id, e.reason, e.done, concurrency, e.spans, e.partId, e.cleared))
+                    }
+
+                    // The exact ranges of a stopped segmented job, for the row that was paused (or queued, or failed) meanwhile.
+                    is EngineEvent.Stopped -> {
+                        applyQueue(stopped(q, e.id, e.done, e.spans, e.partId))
+                        saveNow.tryEmit(Unit)
                     }
                 }
             }
@@ -379,7 +401,7 @@ fun HomeScreen(
                 val name = withContext(Dispatchers.IO) { freeName(preview.name, link.folder, taken, downloadEnv.disk) }
                 val id = nextId(downloads)
                 removedRunning.remove(id) // a removed row's id came round again: its job is not this one
-                val item = newDownloadItem(preview, link.ticked, id, link.folder).copy(name = name)
+                val item = newDownloadItem(preview, link.ticked, id, link.folder, link.connections).copy(name = name)
                 applyQueue(addDownload(liveQueue(), item, limits.concurrency))
             }
         }
@@ -572,13 +594,32 @@ fun HomeScreen(
         // so a download that reports twice a second cannot starve the save the way a debounce would.
         LaunchedEffect(downloadsLoaded) {
             if (!downloadsLoaded) return@LaunchedEffect
-            snapshotFlow { toDownloadsFile(downloads.toList()) }
-                // The list as the load left it needs no write; one with rows added meanwhile does, and so does everything after.
-                .dropWhile { it == downloadsOnDisk }
-                // How many bytes are done changes twice a second and is not worth a write: a restart reads it from the `.part`
-                // file. Whatever else changes (status, name, size, validators) still saves within DOWNLOADS_SAVE_MS.
-                .distinctUntilChanged { a, b -> a.withoutProgress() == b.withoutProgress() }
-                .map { stores.downloadsChanged(it) }
+            val current = { toDownloadsFile(downloads.toList()) }
+            // Set once the list first differs from the file: until then there is nothing to write (no empty file for a first run).
+            var changed = false
+            merge(
+                snapshotFlow(current)
+                    // The list as the load left it needs no write; one with rows added meanwhile does, and so does everything after.
+                    .dropWhile { it == downloadsOnDisk }
+                    .onEach {
+                        changed = true
+                        stores.downloadsChanged(it)
+                    }
+                    // How many bytes are done changes twice a second and is not worth a write: a restart reads it from the `.part`
+                    // file, or for a segmented row from its ranges, which the ticker below saves. Whatever else changes (status,
+                    // name, size, validators, the ranges appearing or splitting) still saves within DOWNLOADS_SAVE_MS.
+                    .distinctUntilChanged { a, b -> a.withoutProgress() == b.withoutProgress() },
+                // Range progress: the full file, offered every DOWNLOADS_PROGRESS_SAVE_MS while a segmented row runs (any other row's
+                // progress is read from its .part file); a file equal to the one on disk is not written.
+                flow {
+                    while (true) {
+                        delay(DOWNLOADS_PROGRESS_SAVE_MS)
+                        if (changed && downloads.any { it.status == DownloadStatus.Downloading && it.spans != null }) emit(current())
+                    }
+                },
+                // A stopped job's exact ranges: they come after the pause's own save, so they ask for one of their own.
+                saveNow.filter { changed }.map { current() },
+            ).map { stores.downloadsChanged(it) }
                 .sample(DOWNLOADS_SAVE_MS)
                 .collect { change ->
                     val r =
@@ -616,13 +657,10 @@ fun HomeScreen(
         ) {
             val gone = downloads.filter { it.id in ids && it.url != null }
             val next = removeAll(liveQueue(), ids, limits.concurrency)
-            // One command per row: a job that does not end in time spares only its own row's files.
+            // One command per row: a job that does not end in time spares only its own row's files. Without [deleteFiles] it has no
+            // file to remove, but the engine still forgets the row (what it kept of its last run) once the job has ended.
             val discard =
-                if (deleteFiles) {
-                    gone.map { EngineCmd.Discard(setOf(it.id), listOfNotNull(ownFile(it, files.home))) }
-                } else {
-                    emptyList()
-                }
+                gone.map { EngineCmd.Discard(setOf(it.id), if (deleteFiles) listOfNotNull(ownFile(it, files.home)) else emptyList()) }
             if (deleteFiles) gone.filter { it.status == DownloadStatus.Downloading }.forEach { removedRunning[it.id] = it }
             applyQueue(next, discard)
             ids.forEach { speedHistory.remove(it) }
@@ -1125,9 +1163,9 @@ fun HomeScreen(
                     dialogInitial,
                     networks.filter { it.enabled },
                     onCancel = { dialogOpen = false },
-                    onDownload = { preview, ticked, folder ->
+                    onDownload = { preview, ticked, folder, connections ->
                         if (preview is Preview.Direct) {
-                            adds.trySend(NewLink(preview, ticked, folder))
+                            adds.trySend(NewLink(preview, ticked, folder, connections))
                         } else {
                             // A torrent row is simulated: no file, no name to settle.
                             val item = newDownloadItem(preview, ticked, nextId(downloads), folder)
@@ -1145,6 +1183,7 @@ fun HomeScreen(
                     onProxySave = { id, proxy -> commitNetworks(setProxy(networks.toList(), id, proxy)) },
                     keychainNotes = keychainNote,
                     prober = downloadEnv.prober,
+                    defaultConnections = limits.connections,
                 )
             }
             removing?.let { ids ->
@@ -1174,6 +1213,9 @@ private const val DROP_MESSAGE_MS = 3_000L
 private const val SETTINGS_NOTICE_MS = 6_000L
 private const val SAVE_DEBOUNCE_MS = 500L
 private const val DOWNLOADS_SAVE_MS = 1_000L
+
+/** How often the progress of a segmented download's ranges is offered for a save while it runs. */
+private const val DOWNLOADS_PROGRESS_SAVE_MS = 5_000L
 private const val DOWNLOADS_RESET = "Downloads couldn't be read and were reset"
 private const val DOWNLOADS_NOT_SAVED = "Downloads couldn't be saved; they will not be restored after you quit"
 private const val SETTINGS_RESET = "Settings couldn't be read and were reset"
@@ -1206,6 +1248,7 @@ private class NewLink(
     val preview: Preview.Direct,
     val ticked: Set<String>,
     val folder: String,
+    val connections: Int,
 )
 
 /** How many speeds a download's chart keeps: one point per progress report. */
@@ -1267,7 +1310,8 @@ internal fun freeName(
 }
 
 /** The saved rows without how far each got: what is left is what is worth a write while a download runs. */
-private fun DownloadsFile.withoutProgress(): DownloadsFile = copy(downloads = downloads.map { it.copy(done = 0) })
+private fun DownloadsFile.withoutProgress(): DownloadsFile =
+    copy(downloads = downloads.map { d -> d.copy(done = 0, ranges = d.ranges?.map { it.copy(done = 0) }) })
 
 /** The one file this download made: its final file once finished, else the `.part` it writes. Never a file it did not write. */
 private fun ownFile(
@@ -1275,7 +1319,20 @@ private fun ownFile(
     home: String,
 ): Path? = filesOf(item, home)?.let { (final, part) -> if (item.status == DownloadStatus.Finished) final else part }
 
-/** The saved rows, Paused where they were running; a real download's size is what its `.part` file holds (0 when it is gone). */
+/** Whether a `.part` file of [size] bytes can be the one the ranges [spans] (with their [partId]) were written for. */
+private fun partFits(
+    spans: List<Span>,
+    partId: String?,
+    size: Long?,
+): Boolean = partId != null && size != null && spans.isNotEmpty() && size == spans.maxOf { it.end } + 1 + TRAILER_BYTES
+
+/**
+ * The saved rows, Paused where they were running. A one-connection download's size is what its `.part` file holds (0 when it is
+ * gone); a segmented one's is the sum of its saved ranges, since its `.part` is full size from the start (a file that is missing,
+ * or not the length the ranges were made for, or ranges without an identity: back to zero). Ranges that are all finished over a file
+ * of exactly the total are a finished download waiting for its rename: they stay, with the total as done.
+ * A row on several connections without ranges has nothing trustworthy on disk, so it shows zero.
+ */
 internal fun restoredRows(
     file: DownloadsFile,
     disk: DiskIo,
@@ -1289,7 +1346,21 @@ internal fun restoredRows(
             } catch (_: InvalidPathException) {
                 null
             } catch (_: IOException) {
-                item.doneBytes
+                return@map item // the disk would not say: the row stays as it was saved
             }
-        item.copy(doneBytes = size ?: 0L)
+        val spans = item.spans
+        when {
+            // A download that was finished when its rename failed (or the app ended): the file is cut to the total, without its identity,
+            // and the ranges are all finished. The engine goes straight to the rename (it checks the same).
+            spans != null && size == item.totalBytes && finishedOver(spans, item.totalBytes) -> item.copy(doneBytes = item.totalBytes)
+
+            // The file is `total + TRAILER_BYTES` long, and its identity is the one the ranges were saved with (the engine reads that).
+            spans != null && !partFits(spans, item.partId, size) -> item.copy(doneBytes = 0L, spans = null, partId = null)
+
+            spans != null -> item.copy(doneBytes = doneOf(spans))
+
+            item.connections > 1 -> item.copy(doneBytes = 0L)
+
+            else -> item.copy(doneBytes = size ?: 0L)
+        }
     }

@@ -337,6 +337,12 @@ private fun GeneralPane(
             Text("No active downloads", color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
         }
     }
+    Section("Connections per download") {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Stepper(d.connections, MIN_CONNECTIONS, MAX_CONNECTIONS_PER_DOWNLOAD, { onChange(d.copy(connections = it)) }, "connections")
+            Text("For each new download", color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
+        }
+    }
     Section("Download schedule") {
         ScheduleEditor(d.schedule) { onChange(d.copy(schedule = it)) }
     }

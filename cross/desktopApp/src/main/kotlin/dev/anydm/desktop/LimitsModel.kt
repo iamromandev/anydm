@@ -34,6 +34,8 @@ data class Limits(
     val slowOn: Boolean,
     val slow: Long,
     val concurrency: Int,
+    /** How many connections a new download may use at once; each row keeps the count it was added with. */
+    val connections: Int,
     val schedule: Schedule,
     val networks: Map<String, NetworkLimits>,
 )
@@ -56,6 +58,7 @@ data class GeneralDraft(
     val slowOn: Boolean,
     val slowText: String,
     val concurrency: Int,
+    val connections: Int,
     val schedule: Schedule,
     val slowKept: Kept? = null,
 )
@@ -76,6 +79,9 @@ const val MAX_LIMIT = 100_000.0
 const val MIN_CONCURRENCY = 1
 const val MAX_CONCURRENCY = 10
 const val DEFAULT_CONCURRENCY = 2
+const val MIN_CONNECTIONS = 1
+const val MAX_CONNECTIONS_PER_DOWNLOAD = 16
+const val DEFAULT_CONNECTIONS = 8
 const val DEFAULT_SLOW_MBPS = 2.0
 const val GENERAL_PANE = "general"
 const val DAYS_ERROR = "Pick at least one day"
@@ -168,6 +174,7 @@ fun draftOf(
             slowOn,
             display(bytesToSpeed(limits.slow, unit)),
             limits.concurrency,
+            limits.connections,
             limits.schedule,
             keptOf(limits.slow, bytesToSpeed(limits.slow, unit)),
         ),
@@ -253,6 +260,7 @@ fun limitsOf(
         g.slowOn,
         slowBytes(g, unit),
         g.concurrency,
+        g.connections,
         g.schedule,
         draft.networks.mapValues { (_, n) ->
             NetworkLimits(speedBytes(n.speed, unit), dataBytes(n.data), n.period, n.used)
@@ -298,6 +306,7 @@ fun defaultGeneral(unit: SpeedUnit) =
         false,
         display(bytesToSpeed(speedToBytes(DEFAULT_SLOW_MBPS, SpeedUnit.MBps), unit)),
         DEFAULT_CONCURRENCY,
+        DEFAULT_CONNECTIONS,
         DEFAULT_SCHEDULE,
         keptOf(speedToBytes(DEFAULT_SLOW_MBPS, SpeedUnit.MBps), bytesToSpeed(speedToBytes(DEFAULT_SLOW_MBPS, SpeedUnit.MBps), unit)),
     )
@@ -312,6 +321,7 @@ fun initialLimits(
     false,
     speedToBytes(DEFAULT_SLOW_MBPS, SpeedUnit.MBps),
     DEFAULT_CONCURRENCY,
+    DEFAULT_CONNECTIONS,
     DEFAULT_SCHEDULE,
     networks.associate { it.id to NetworkLimits(null, null, DataPeriod.Month, usage[it.id] ?: 0L) },
 )

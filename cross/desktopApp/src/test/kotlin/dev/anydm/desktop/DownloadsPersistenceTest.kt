@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.v2.runComposeUiTest
 import dev.anydm.engine.http.EngineEvent
+import dev.anydm.engine.http.Span
+import dev.anydm.engine.http.TRAILER_BYTES
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
@@ -264,5 +266,243 @@ class DownloadsPersistenceTest {
             s.stores.flush()
         }
         assertEquals(0, guard.violations)
+    }
+
+    private val halves = listOf(Span(0, 499, 0), Span(500, 999, 0))
+
+    private fun ranges(spans: List<Span>) = spans.map { RangeDto(it.start, it.end, it.done) }
+
+    /** Waits on the real clock only: the virtual one stays where the test put it. */
+    private fun pollReal(
+        what: String,
+        cond: () -> Boolean,
+    ) {
+        val end = System.nanoTime() + 3_000_000_000L
+        while (!cond()) {
+            check(System.nanoTime() < end) { "timed out waiting for $what" }
+            Thread.sleep(5)
+        }
+    }
+
+    private fun ComposeUiTest.startSegmented(s: Session) {
+        add("https://x.test/a.zip")
+        await("start") { s.engine.starts.isNotEmpty() }
+        s.engine.emit(EngineEvent.Started("1", "a.zip", 1000, "\"e\"", null, 0, halves, "AA"))
+    }
+
+    @Test
+    fun theSpansOfAStartedSegmentedJobAreSavedWithinTheStateInterval() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            startSegmented(s)
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
+            assertEquals(ranges(halves), last().single().ranges)
+        }
+
+    @Test
+    fun rangeProgressIsSavedWithinFiveSecondsAndNotOnEveryReport() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            startSegmented(s)
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
+            val before = downloads.saves.size
+            var latest = halves
+            repeat(40) {
+                latest = listOf(Span(0, 499, 5L + it), Span(500, 999, 3L + it))
+                s.engine.emit(EngineEvent.Progress("1", 8L + 2 * it, 1000, 2L * 1024 * 1024, latest, 2, "AA"))
+                mainClock.advanceTimeBy(20)
+            }
+            await("the last progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            mainClock.advanceTimeBy(2_500)
+            Thread.sleep(100)
+            assertEquals(before, downloads.saves.size, "range progress alone must not be saved every second")
+            mainClock.advanceTimeBy(3_000) // more than five seconds since the last save
+            pollReal("the range progress") { last().single().ranges == ranges(latest) }
+        }
+
+    /** Segmented and running, with sixty percent of the ranges and the token AA saved (the ticker's save is the last one). */
+    private fun ComposeUiTest.runningWithSavedProgress(s: Session): List<Span> {
+        startSegmented(s)
+        mainClock.advanceTimeBy(1_100)
+        pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
+        val sixty = listOf(Span(0, 499, 300), Span(500, 999, 300))
+        s.engine.emit(EngineEvent.Progress("1", 600, 1000, 2L * 1024 * 1024, sixty, 2, "AA"))
+        await("the progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+        mainClock.advanceTimeBy(2_500)
+        mainClock.advanceTimeBy(3_000)
+        pollReal("the saved progress") { last().single().ranges == ranges(sixty) }
+        return sixty
+    }
+
+    // M1b: fresh ranges reach the disk at once, even when they differ from the saved ones only in what is done
+    @Test
+    fun aStartedWithFreshRangesDifferingOnlyInDoneIsSavedWithinTheStateInterval() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            runningWithSavedProgress(s)
+            s.engine.emit(EngineEvent.Started("1", "a.zip", 1000, "\"e\"", null, 0, halves, "AA")) // the file was started over
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the fresh ranges") { last().single().ranges == ranges(halves) }
+        }
+
+    @Test
+    fun aStartedWithAnotherPartIdIsSavedWithinTheStateInterval() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            val sixty = runningWithSavedProgress(s)
+            s.engine.emit(EngineEvent.Started("1", "a.zip", 1000, "\"e\"", null, 600, sixty, "BB"))
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the new identity") { last().single().partId == "BB" }
+        }
+
+    @Test
+    fun theProgressTickerSavesNothingWhileOnlyRowsWithoutRangesAreRunning() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            add("https://x.test/a.zip")
+            await("start") { s.engine.starts.isNotEmpty() }
+            s.engine.emit(EngineEvent.Started("1", "a.zip", 1000, null, null, 0)) // one connection: no ranges
+            await("the save of the start") { downloads.saves.isNotEmpty() && last().single().total == 1000L }
+            val before = downloads.saves.size
+            repeat(40) {
+                s.engine.emit(EngineEvent.Progress("1", 10L + it, 1000, 2L * 1024 * 1024))
+                mainClock.advanceTimeBy(20)
+            }
+            await("the last progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            repeat(3) {
+                // well past the five seconds of the ticker, and its save interval
+                mainClock.advanceTimeBy(3_000)
+                Thread.sleep(100)
+            }
+            assertEquals(before, downloads.saves.size, "a row without ranges is read from its .part file: nothing to tick for")
+        }
+
+    @Test
+    fun theStoppedSpansOfAPausedJobAreSavedWithinTheStateInterval() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            startSegmented(s)
+            s.engine.emit(EngineEvent.Progress("1", 10, 1000, 2L * 1024 * 1024, listOf(Span(0, 499, 6), Span(500, 999, 4)), 2, "AA"))
+            await("progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            onNodeWithTag("pause-1").performClick()
+            await("the paused save") { downloads.saves.isNotEmpty() && last().singleOrNull()?.status == DownloadStatus.Paused }
+            val exact = listOf(Span(0, 499, 9), Span(500, 999, 8))
+            s.engine.emit(EngineEvent.Stopped("1", 17, exact, "AA"))
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the stopped ranges") { last().single().ranges == ranges(exact) }
+            assertEquals(17L, last().single().done)
+        }
+
+    @Test
+    fun theExitFlushWritesTheLatestRanges() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            startSegmented(s)
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
+            val latest = listOf(Span(0, 499, 77), Span(500, 999, 66))
+            s.engine.emit(EngineEvent.Progress("1", 143, 1000, 2L * 1024 * 1024, latest, 2, "AA"))
+            await("the progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            s.stores.flush()
+            assertEquals(ranges(latest), last().single().ranges)
+        }
+
+    private fun saved(
+        connections: Int,
+        spans: List<Span>?,
+        done: Long = 7,
+        partId: String? = "AA",
+    ) = DownloadsFile(
+        downloads =
+            listOf(
+                DownloadDto(
+                    "1",
+                    "https://x.test/a.zip",
+                    "a.zip",
+                    folder,
+                    1000,
+                    done,
+                    DownloadStatus.Paused,
+                    connections = connections,
+                    ranges = spans?.let { ranges(it) },
+                    partId = partId,
+                ),
+            ),
+    )
+
+    @Test
+    fun aRestoredSegmentedRowTakesItsDoneFromItsRangesNotFromTheFullSizePartFile() {
+        disk.put(part.toString(), 1000 + TRAILER_BYTES) // the data, and the identity after it
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 120), Span(500, 999, 30))), disk, folder).single()
+        assertEquals(150L, row.doneBytes)
+        assertEquals(listOf(Span(0, 499, 120), Span(500, 999, 30)), row.spans)
+    }
+
+    // A finished download whose rename failed (or whose app died before it) has a part file of exactly the total, with no identity
+    @Test
+    fun aRestoredSegmentedRowWithAllRangesFinishedOverATotalSizedPartFileKeepsItsBytesAndRanges() {
+        disk.put(part.toString(), 1000)
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 500), Span(500, 999, 500))), disk, folder).single()
+        assertEquals(1000L, row.doneBytes)
+        assertEquals(listOf(Span(0, 499, 500), Span(500, 999, 500)), row.spans)
+        assertEquals("AA", row.partId)
+    }
+
+    @Test
+    fun aRestoredSegmentedRowWithARangeUnfinishedOverATotalSizedPartFileStartsOver() {
+        disk.put(part.toString(), 1000)
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 500), Span(500, 999, 499))), disk, folder).single()
+        assertEquals(0L, row.doneBytes)
+        assertEquals(null, row.spans)
+        assertEquals(null, row.partId)
+    }
+
+    @Test
+    fun aRestoredSegmentedRowWhosePartFileIsGoneStartsOverWithoutSpans() {
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 120), Span(500, 999, 30))), disk, folder).single()
+        assertEquals(0L, row.doneBytes)
+        assertEquals(null, row.spans)
+    }
+
+    // m5: a part file of another length than the ranges were made for says nothing of what they call done
+    @Test
+    fun aRestoredSegmentedRowWhosePartFileHasAnotherLengthThanTotalPlusTrailerStartsOver() {
+        val spans = listOf(Span(0, 499, 120), Span(500, 999, 30))
+        for (size in listOf(1000, 1000 + TRAILER_BYTES - 1, 1000 + TRAILER_BYTES + 1, 40)) {
+            disk.put(part.toString(), size)
+            val row = restoredRows(saved(4, spans), disk, folder).single()
+            assertEquals(0L, row.doneBytes, "size $size")
+            assertEquals(null, row.spans, "size $size")
+            assertEquals(null, row.partId, "size $size")
+        }
+    }
+
+    @Test
+    fun aRestoredSegmentedRowWithRangesButNoPartIdIsNotTrusted() {
+        disk.put(part.toString(), 1000 + TRAILER_BYTES)
+        val row = restoredRows(saved(4, listOf(Span(0, 499, 120), Span(500, 999, 30)), partId = null), disk, folder).single()
+        assertEquals(0L, row.doneBytes)
+        assertEquals(null, row.spans)
+    }
+
+    @Test
+    fun aRestoredRowOnSeveralConnectionsWithoutRangesShowsZeroWhateverThePartFileHolds() {
+        disk.put(part.toString(), 1000)
+        assertEquals(0L, restoredRows(saved(4, null), disk, folder).single().doneBytes)
+    }
+
+    @Test
+    fun aRestoredRowOnOneConnectionStillTakesTheSizeOfThePartFile() {
+        disk.put(part.toString(), 410)
+        assertEquals(410L, restoredRows(saved(1, null), disk, folder).single().doneBytes)
     }
 }
