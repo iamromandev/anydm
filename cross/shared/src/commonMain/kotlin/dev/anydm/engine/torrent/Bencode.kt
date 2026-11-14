@@ -58,6 +58,26 @@ fun decodeBencode(
     }
 }
 
+/** The value [decodeBencodePrefix] found and how many bytes of the input it took. */
+class BencodePrefix(
+    val value: BValue,
+    val length: Int,
+)
+
+/**
+ * Decodes the bencoded value that starts [bytes] and leaves whatever follows it alone (the `ut_metadata` data message is a bencoded
+ * header followed by raw bytes). Null when the input does not begin with a whole valid value. Never throws.
+ */
+fun decodeBencodePrefix(
+    bytes: ByteArray,
+    maxDepth: Int = MAX_DEPTH,
+    maxNodes: Int = MAX_NODES,
+): BencodePrefix? {
+    val parser = Parser(bytes, maxDepth, maxNodes)
+    val value = parser.value(0) ?: return null
+    return BencodePrefix(value, parser.at)
+}
+
 /**
  * Index-based recursive parser. Recursion is bounded by [maxDepth], so hostile nesting cannot overflow the stack, and the
  * total number of values by [maxNodes], so a few megabytes of `le` or `0:` cannot allocate millions of objects.

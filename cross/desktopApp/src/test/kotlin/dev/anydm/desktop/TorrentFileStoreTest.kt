@@ -52,6 +52,28 @@ class TorrentFileStoreTest {
     }
 
     @Test
+    fun deleteAlsoRemovesTheUnfinishedCopyAMagnetFetchLeftBehindButNotOtherFiles() {
+        val store = DiskTorrentFileStore(dir)
+        Files.createDirectories(dir)
+        val tmp = dir.resolve("$hex.torrent.tmp") // what the engine writes before it moves the metadata into place
+        val other = dir.resolve("${"cd".repeat(20)}.torrent.tmp")
+        Files.write(tmp, byteArrayOf(1))
+        Files.write(other, byteArrayOf(2))
+        store.delete(hex)
+        assertFalse(tmp.exists(), "the leftover of this hash goes with its row")
+        assertTrue(other.exists(), "another torrent's file is not touched")
+    }
+
+    @Test
+    fun deleteWorksWhenOnlyTheUnfinishedCopyIsThere() {
+        val store = DiskTorrentFileStore(dir)
+        Files.createDirectories(dir)
+        Files.write(dir.resolve("$hex.torrent.tmp"), byteArrayOf(1))
+        store.delete(hex)
+        assertEquals(emptyList(), dir.listDirectoryEntries())
+    }
+
+    @Test
     fun theFolderIsNotMadeUntilTheFirstSave() {
         DiskTorrentFileStore(dir)
         assertFalse(dir.exists())

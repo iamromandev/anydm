@@ -23,9 +23,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
@@ -77,6 +82,10 @@ internal fun TorrentLimits.tickMs(): Long = (reportMs / 4).coerceIn(10, 250)
  * claims none in `Failed` or `Stopped` until its `Started` has been told: before that its files have no settled name. [trackers] announces each torrent to its
  * trackers (see [Announcer]); a job's own `peers` list is offered as well.
  *
+ * A job with a `magnet` and no `.torrent` copy yet starts with the metadata: it is fetched from peers ([MetadataFetch]), saved as the
+ * copy, told in a `Metadata` event, and then the job goes on as any other: a pause, a failure or a stop before that claims no pieces
+ * (no `Started` has been told), and the row's own `doneBytes` is handed back. The fetch uses the same peers cap, permits and speed cap.
+ *
  * The end of a job is told once its files are closed (`Failed`, `Stopped`) or renamed (`Finished`), and the events cannot be lost to
  * a cancel. From the moment it is told the job counts as over: a `start` for the same id (a resume made on seeing `Failed`) is
  * accepted at once and waits only for the old coroutine to finish its cleanup.
@@ -111,6 +120,9 @@ class DefaultTorrentEngine(
         lateinit var job: Job
 
         @Volatile var ended = false
+
+        /** Its row is gone: it must save no `.torrent` copy (guarded by the engine's monitor, as the save is). */
+        var forgotten = false
     }
 
     private fun keyOf(path: Path): String = path.normalize().toString().lowercase(Locale.ROOT)
@@ -137,6 +149,12 @@ class DefaultTorrentEngine(
         jobs[id]?.job?.cancel()
     }
 
+    /** A job still winding down may be in the middle of saving a copy for a row that is gone: after this it saves none. */
+    @Synchronized
+    override fun forget(id: String) {
+        jobs[id]?.forgotten = true
+    }
+
     override suspend fun join(id: String) {
         val slot = synchronized(this) { jobs[id] }
         slot?.job?.join()
@@ -154,9 +172,12 @@ class DefaultTorrentEngine(
     internal fun runOf(id: String): TorrentRun? = runs[id]
 
     private suspend fun run(
-        job: TorrentJob,
+        start: TorrentJob,
         slot: Slot,
     ) {
+        // the job as it goes on: a magnet job that fetched its metadata takes the torrent's own name (see below)
+        var job = start
+        var startedTrackers: Set<String> = emptySet()
         shares.register(job.id)
         var meta: TorrentMeta? = null
         var store: TorrentStore? = null
@@ -175,7 +196,42 @@ class DefaultTorrentEngine(
                 bus.emit(event())
             }
         }
+        val env =
+            TorrentEnv(
+                transport,
+                clock,
+                { bus.emit(it) },
+                shares.bucket(job.id),
+                permits,
+                random,
+                limits,
+                trackers,
+                jobScope,
+                farewells = farewells,
+            )
         try {
+            // a magnet row that has no usable copy yet: the metadata comes first, and is saved as the copy the run below reads
+            val magnet = start.magnet
+            if (magnet != null) {
+                val copy = usableCopy(start, magnet)
+                val known: TorrentMeta
+                if (copy == null) {
+                    discardCopy(start)
+                    val fetched = fetchMetadata(env, start, magnet, slot)
+                    startedTrackers = fetched.startedTrackers
+                    known = fetched.meta
+                } else {
+                    // The copy is there already (a stop after the fetch, a copy put there): a row that has no pieces has not been told it.
+                    // A row that has pieces was told before its first Started, so it is not told again.
+                    if (start.pieces == null) {
+                        withContext(NonCancellable) { bus.emit(EngineEvent.Metadata(start.id, copy.name, copy.totalSize, copy.files)) }
+                    }
+                    known = copy
+                }
+                // The row's name is the link's `dn` or the hash, never what the files are called: the torrent's own name is. A row that
+                // has pieces has settled its name already (its files are there), and keeps it.
+                if (start.pieces == null) job = start.copy(name = known.name)
+            }
             val loaded = load(job)
             meta = loaded
             job.pieces?.takeIf { it.size != loaded.pieceCount }?.let {
@@ -200,20 +256,7 @@ class DefaultTorrentEngine(
             currentCoroutineContext().ensureActive()
             pieces = checked
             bus.emit(EngineEvent.Started(job.id, store.root, loaded.totalSize, null, null, checked.doneBytes(loaded), pieces = checked))
-            val env =
-                TorrentEnv(
-                    transport,
-                    clock,
-                    { bus.emit(it) },
-                    shares.bucket(job.id),
-                    permits,
-                    random,
-                    limits,
-                    trackers,
-                    jobScope,
-                    farewells = farewells,
-                )
-            val torrentRun = TorrentRun(env, job, loaded, store, checked)
+            val torrentRun = TorrentRun(env, job, loaded, store, checked, startedTrackers)
             run = torrentRun
             runs[job.id] = torrentRun
             try {
@@ -225,7 +268,7 @@ class DefaultTorrentEngine(
             withContext(NonCancellable) {
                 val name = withContext(Dispatchers.IO) { store.finish() }
                 slot.ended = true
-                bus.emit(EngineEvent.Finished(job.id, loaded.totalSize, name.takeIf { it != job.name }))
+                bus.emit(EngineEvent.Finished(job.id, loaded.totalSize, name.takeIf { it != start.name }))
             }
         } catch (e: CancellationException) {
             end { EngineEvent.Stopped(job.id, done(), pieces = pieces) }
@@ -241,6 +284,117 @@ class DefaultTorrentEngine(
             withContext(NonCancellable) { store?.close() }
             claimed?.let { release(it, job.id) }
             shares.unregister(job.id)
+        }
+    }
+
+    /**
+     * The `.torrent` copy of the magnet [job], when it can be used: a regular file that reads as a torrent with the magnet's info hash.
+     * Anything else (a folder, an empty or damaged file, the copy of another torrent) gives null: it is replaced, not a reason to give up.
+     */
+    private suspend fun usableCopy(
+        job: TorrentJob,
+        magnet: MagnetLink,
+    ): TorrentMeta? =
+        withContext(Dispatchers.IO) {
+            try {
+                val path = Path.of(job.torrentPath)
+                if (!Files.isRegularFile(path)) return@withContext null
+                val size = Files.size(path)
+                if (size <= 0 || size > MAX_TORRENT_BYTES) return@withContext null
+                val meta = (readTorrent(Files.readAllBytes(path)) as? TorrentResult.Ok)?.meta ?: return@withContext null
+                meta.takeIf { it.pieceHashes.size == it.pieceCount && it.infoHash.contentEquals(magnet.infoHash) }
+            } catch (_: IOException) {
+                null
+            } catch (_: InvalidPathException) {
+                null
+            }
+        }
+
+    /** Removes what is at the copy's path (a copy that cannot be used), so the fetch can save a new one; what cannot be removed is [Reasons.NOT_WRITABLE]. */
+    private suspend fun discardCopy(job: TorrentJob) {
+        withContext(Dispatchers.IO) {
+            try {
+                Files.deleteIfExists(Path.of(job.torrentPath))
+            } catch (e: IOException) {
+                log.log(Level.WARNING, "torrent job ${job.id}: the unusable copy could not be removed", e)
+                throw Fail(Reasons.NOT_WRITABLE)
+            } catch (_: InvalidPathException) {
+                throw Fail(Reasons.NOT_WRITABLE)
+            }
+        }
+    }
+
+    /** The metadata of a magnet, as saved, and the trackers that heard `started` while it was fetched. */
+    private class Fetched(
+        val meta: TorrentMeta,
+        val startedTrackers: Set<String>,
+    )
+
+    /**
+     * Fetches the metadata of [magnet] from peers, and saves it as the `.torrent` copy of [job]: written to a temp file next to it,
+     * forced to disk, and moved over the real name in one step, so a crash never leaves half a copy under it. The write and the
+     * `Metadata` event that follows it are not cancellable: a copy that is on disk is always told, and one is not saved for a row that
+     * was forgotten (see [forget]). A copy that cannot be written is
+     * [Reasons.NOT_WRITABLE]; metadata that matches the hash but is no torrent this client reads is [METADATA_INVALID].
+     */
+    private suspend fun fetchMetadata(
+        env: TorrentEnv,
+        job: TorrentJob,
+        magnet: MagnetLink,
+        slot: Slot,
+    ): Fetched {
+        val fetch = MetadataFetch(env, job.id, magnet, job.peerId, job.peers)
+        val info =
+            fetch.run { n ->
+                bus.emit(EngineEvent.Progress(job.id, job.doneBytes, null, 0, connections = n, peers = n))
+            }
+        val bytes = torrentFileBytes(info, magnet.trackers)
+        val meta = (readTorrent(bytes) as? TorrentResult.Ok)?.meta ?: throw Fail(METADATA_INVALID)
+        if (meta.pieceHashes.size != meta.pieceCount) throw Fail(METADATA_INVALID)
+        // the hash covers the bytes as received: bytes after the dictionary (which a torrent file reads as keys of its own) change it
+        if (!meta.infoHash.contentEquals(magnet.infoHash)) throw Fail(METADATA_INVALID)
+        withContext(NonCancellable) {
+            withContext(Dispatchers.IO) {
+                // checked and saved under the monitor `forget` takes: a forgotten job saves nothing, and a copy saved before it is
+                // there for whoever forgot to delete
+                synchronized(this@DefaultTorrentEngine) {
+                    if (slot.forgotten) throw CancellationException("the row is gone")
+                    saveCopy(job, bytes)
+                }
+            }
+            bus.emit(EngineEvent.Metadata(job.id, meta.name, meta.totalSize, meta.files))
+        }
+        return Fetched(meta, fetch.startedTrackers())
+    }
+
+    private fun saveCopy(
+        job: TorrentJob,
+        bytes: ByteArray,
+    ) {
+        val target =
+            try {
+                Path.of(job.torrentPath)
+            } catch (_: InvalidPathException) {
+                throw Fail(Reasons.NOT_WRITABLE)
+            }
+        val tmp = target.resolveSibling("${target.fileName}.tmp")
+        try {
+            target.parent?.let { Files.createDirectories(it) }
+            FileChannel.open(tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING).use { ch ->
+                val buf = ByteBuffer.wrap(bytes)
+                while (buf.hasRemaining()) ch.write(buf)
+                ch.force(true)
+            }
+            try {
+                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } catch (e: IOException) {
+            log.log(Level.WARNING, "torrent job ${job.id}: the metadata could not be saved", e)
+            throw Fail(Reasons.NOT_WRITABLE)
+        } finally {
+            runCatching { Files.deleteIfExists(tmp) }
         }
     }
 

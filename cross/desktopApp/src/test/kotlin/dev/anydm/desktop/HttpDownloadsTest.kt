@@ -167,7 +167,7 @@ class HttpDownloadsTest {
     fun torrentAndMagnetRowsNeverReachTheEngine() =
         runComposeUiTest {
             home()
-            add("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8")
+            add("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337")
             onNodeWithText("Sintel").assertIsDisplayed()
             onNodeWithTag("pause-1").performClick()
             onNodeWithTag("pause-1").performClick()

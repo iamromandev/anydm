@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.v2.runComposeUiTest
@@ -509,37 +510,241 @@ class TorrentDownloadsTest {
             assertTrue(!runCatching { onNodeWithTag("speed-2").assertTextEquals("Network error") }.isSuccess, "row 2 did not fail")
         }
 
+    private val magnetUrl = "magnet:?xt=urn:btih:$hex&dn=Sintel&tr=udp%3A%2F%2Ft.example%3A1337"
+    private val magnetFiles = meta.files
+
+    private fun ComposeUiTest.addMagnet(text: String = magnetUrl) {
+        onNodeWithTag("new-download").performClick()
+        onNodeWithTag("url-field").performTextInput(text)
+        onNodeWithTag("download").performClick()
+    }
+
+    private fun ComposeUiTest.speedIs(text: String) = runCatching { onNodeWithTag("speed-1").assertTextEquals(text) }.isSuccess
+
+    private fun ComposeUiTest.restartedFrom(saved: DownloadsFile) =
+        home(
+            s = AppStores(InMemorySettingsStore(), InMemorySecretStore(), 500, GuardedDownloadsStore(guard, InMemoryDownloadsStore(saved))),
+        )
+
+    /** A magnet row that is fetching its metadata, as saved after a first session. */
     private fun magnetSaved(): DownloadsFile {
         var saved: DownloadsFile? = null
         runComposeUiTest {
             home()
-            onNodeWithTag("new-download").performClick()
-            onNodeWithTag("url-field").performTextInput("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8")
-            onNodeWithTag("download").performClick()
+            addMagnet()
             await("the row is saved") { downloads.saves.isNotEmpty() && last().singleOrNull()?.kind == DownloadKind.Torrent }
             saved = downloads.saves.last()
         }
+        torrents.starts.clear() // the first session's start is not the next one's
         return checkNotNull(saved)
     }
 
     @Test
-    fun aMagnetRowOfAnEarlierSessionStillPausesAndResumesAsTheSimulationItIs() {
-        val saved = magnetSaved()
-        assertEquals(true, saved.downloads.single().sim, "the row is saved as simulated")
+    fun aMagnetRowIsARealTorrentRowThatStartsAJobWithItsMagnetAndWritesNoCopyItself() =
         runComposeUiTest {
-            val s =
-                AppStores(InMemorySettingsStore(), InMemorySecretStore(), 500, GuardedDownloadsStore(guard, InMemoryDownloadsStore(saved)))
-            home(s = s)
-            await("the row") { shown("row-1") }
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            val job = torrents.starts.single()
+            assertEquals(listOf("1", "/app/torrents/$hex.torrent", folder, "Sintel"), listOf(job.id, job.torrentPath, job.folder, job.name))
+            assertEquals(hex, job.magnet?.infoHashHex)
+            assertEquals(listOf("udp://t.example:1337"), job.magnet?.trackers)
+            assertNull(job.pieces, "a row that never ran asks for a free name")
+            assertEquals(emptyMap(), copies.saved.toMap(), "the engine writes the copy, not the desktop")
+            assertEquals(0, engine.starts.size)
+            assertEquals(0, guard.violations)
+        }
+
+    @Test
+    fun aMagnetRowShowsFetchingMetadataAndAnUnknownSizeUntilTheMetadataArrives() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            onNodeWithTag("speed-1").assertTextEquals(FETCHING_METADATA)
+            torrents.emit(EngineEvent.Progress("1", 0, null, 0, peers = 3))
+            await("peers") { runCatching { onNodeWithText("Size unknown until metadata arrives · 3 peers").assertIsDisplayed() }.isSuccess }
+            assertTrue(speedIs(FETCHING_METADATA))
+            await("the save") { downloads.saves.isNotEmpty() }
+            val row = last().single()
+            assertEquals(listOf<Any?>(hex, false, null, null, null), listOf(row.infoHash, row.sim, row.total, row.files, row.pieces))
+            assertEquals(magnetUrl, row.url, "the saved link is the magnet rebuilt from what was parsed")
+        }
+
+    @Test
+    fun theMetadataGivesTheRowItsRealNameSizeAndFilesAndIsSaved() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            torrents.emit(EngineEvent.Metadata("1", "Show", total, magnetFiles))
+            await("the save") { downloads.saves.isNotEmpty() && last().single().files != null }
+            val row = last().single()
+            assertEquals(listOf("Show", total), listOf(row.name, row.total))
+            assertEquals(listOf("a.bin", "d/b.bin"), row.files?.map { it.name })
+            await("the status") { !speedIs(FETCHING_METADATA) }
+            onNodeWithText("Show").assertIsDisplayed()
+            assertEquals(0, guard.violations)
+        }
+
+    @Test
+    fun aRowThatFetchedItsMetadataAndThenStartedResumesWithTheRealNameAndItsPieces() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            torrents.emit(EngineEvent.Metadata("1", "Show", total, magnetFiles))
+            torrents.emit(EngineEvent.Started("1", "Show (2)", total, null, null, 0, pieces = set()))
+            torrents.emit(EngineEvent.Progress("1", doneOf(firstTen), total, 0, pieces = firstTen))
+            await("the pieces are saved") { downloads.saves.isNotEmpty() && last().single().pieces != null }
             onNodeWithTag("pause-1").performClick()
+            await("stop") { "1" in torrents.stops }
+            onNodeWithTag("pause-1").performClick()
+            await("the resume") { torrents.starts.size == 2 }
+            val job = torrents.starts.last()
+            assertEquals(listOf<Any?>("Show (2)", firstTen), listOf(job.name, job.pieces))
+            assertEquals(hex, job.magnet?.infoHashHex)
+        }
+
+    @Test
+    fun pausingWhileFetchingStopsTheJobAndResumingStartsTheFetchAgain() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            onNodeWithTag("pause-1").performClick()
+            await("stop") { "1" in torrents.stops }
+            torrents.emit(EngineEvent.Stopped("1", 0, pieces = null))
             pump()
-            assertTrue(
-                !runCatching { onNodeWithTag("speed-1").assertTextEquals(CANT_RESUME) }.isSuccess,
-                "a magnet row made by this build does not fail with Can't resume",
+            onNodeWithTag("speed-1").assertTextEquals("Paused")
+            onNodeWithTag("pause-1").performClick()
+            await("the resume") { torrents.starts.size == 2 }
+            assertEquals(
+                hex,
+                torrents.starts
+                    .last()
+                    .magnet
+                    ?.infoHashHex,
             )
-            assertEquals(emptyList(), torrents.starts.toList())
+            assertNull(torrents.starts.last().pieces)
+        }
+
+    @Test
+    fun aQuitDuringTheFetchComesBackPausedAndStillWaitingForMetadataAndResumeFetchesAgain() {
+        val saved = magnetSaved()
+        runComposeUiTest {
+            restartedFrom(saved)
+            await("the row") { shown("row-1") }
+            onNodeWithTag("speed-1").assertTextEquals("Paused")
+            assertEquals(emptyList(), torrents.starts.toList(), "nothing starts by itself")
+            onNodeWithTag("pause-1").performClick()
+            await("the resume") { torrents.starts.isNotEmpty() }
+            assertEquals(
+                hex,
+                torrents.starts
+                    .single()
+                    .magnet
+                    ?.infoHashHex,
+            )
+            onNodeWithTag("speed-1").assertTextEquals(FETCHING_METADATA)
+            assertEquals(0, guard.violations)
         }
     }
+
+    @Test
+    fun aMagnetWhoseCopyIsAlreadyWrittenWhenTheAppStartsTakesItsNameSizeAndFilesFromIt() {
+        val saved = magnetSaved()
+        copies.saved[hex] = bytes // the engine wrote the copy, and the app ended before the metadata was saved
+        runComposeUiTest {
+            restartedFrom(saved)
+            await("the row") { shown("row-1") }
+            await("the real name") { runCatching { onNodeWithText("Show").assertIsDisplayed() }.isSuccess }
+            onNodeWithTag("pause-1").performClick()
+            await("the resume") { torrents.starts.isNotEmpty() }
+            assertEquals("Show", torrents.starts.single().name)
+        }
+    }
+
+    @Test
+    fun noPeersAndMetadataInvalidShowAsFailuresAndRetryStartsTheFetchAgain() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            for ((n, reason) in listOf("No peers", "Metadata invalid").withIndex()) {
+                torrents.emit(EngineEvent.Failed("1", reason, 0))
+                await(reason) { speedIs(reason) }
+                onNodeWithTag("pause-1").performClick() // Retry
+                await("the retry") { torrents.starts.size == n + 2 }
+                assertEquals(
+                    hex,
+                    torrents.starts
+                        .last()
+                        .magnet
+                        ?.infoHashHex,
+                )
+                await("fetching again") { speedIs(FETCHING_METADATA) }
+            }
+        }
+
+    @Test
+    fun aMagnetWithTheHashOfARowThatExistsAddsNoRowAndSelectsThatRow() =
+        runComposeUiTest {
+            picked.bytes[show] = bytes
+            home()
+            addTorrent()
+            await("start") { torrents.starts.isNotEmpty() }
+            addMagnet()
+            pump()
+            assertTrue(!shown("row-2"), "no second row")
+            onNodeWithTag("select-1").assertIsOn()
+            assertEquals(1, torrents.starts.size)
+        }
+
+    @Test
+    fun theSameMagnetPastedWhileItsRowIsStillFetchingAddsNoRow() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            addMagnet("magnet:?xt=urn:btih:${hex.uppercase()}&tr=udp%3A%2F%2Fother.example%3A1")
+            pump()
+            assertTrue(!shown("row-2"))
+            onNodeWithTag("select-1").assertIsOn()
+            assertEquals(1, torrents.starts.size)
+        }
+
+    @Test
+    fun removingAMagnetRowStillWaitingForMetadataDeletesItsCopyAndTempFileButNoContentFiles() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            disk.put("$folder/Sintel/a.bin", (total / 2).toInt()) // the user's own folder of the dn's name
+            removeWithFiles()
+            await("the copy goes") { copies.deleted.isNotEmpty() }
+            pump()
+            assertEquals(listOf(hex), copies.deleted.toList(), "the store removes the copy and a leftover temp file by the hash")
+            assertTrue("1" in torrents.stops)
+            assertTrue("forget:1" in torrents.log)
+            assertEquals(emptyList(), opener.trashed.toList())
+            assertEquals(emptyList(), disk.deleted.toList())
+            assertTrue(disk.files.containsKey(Path.of("$folder/Sintel/a.bin")), "the user's file")
+        }
+
+    @Test
+    fun theDetailOfARowWaitingForMetadataSaysSoInPlaceOfThePieceMap() =
+        runComposeUiTest {
+            home()
+            addMagnet()
+            await("start") { torrents.starts.isNotEmpty() }
+            onNodeWithTag("chevron-1").performClick()
+            await("the detail") { shown("detail-awaiting-metadata") }
+            onNodeWithTag("detail-awaiting-metadata").assertTextEquals("Waiting for metadata")
+            assertTrue(!shown("detail-map"))
+            torrents.emit(EngineEvent.Metadata("1", "Show", total, magnetFiles))
+            await("the metadata") { !shown("detail-awaiting-metadata") }
+        }
 
     // AC20: rows written before torrents were real
     private val legacy =
@@ -566,6 +771,35 @@ class TorrentDownloadsTest {
             await("the http start") { engine.starts.size == 1 }
             pump()
             assertEquals(emptyList(), torrents.starts.toList())
+            assertEquals(0, guard.violations)
+        }
+
+    // AC12 at the screen. Row 1 is a shape the previous build really wrote (it kept no link for a magnet row). Rows 2 and 3 (a magnet
+    // url, marked simulated or not) are hypothetical: no previous build wrote them, they are what the migration must read should a file
+    // have one.
+    private val oldFileWithHypotheticalMagnetRows =
+        """
+        {"version":2,"downloads":[
+          {"id":"1","name":"Sintel","total":123,"done":50,"status":"Downloading","kind":"Torrent","sim":true},
+          {"id":"2","name":"Marked","url":"$magnetUrl","total":123,"done":50,"status":"Downloading","kind":"Torrent","sim":true},
+          {"id":"3","name":"Unmarked","url":"$magnetUrl","total":123,"done":50,"status":"Paused","kind":"Torrent"}
+        ]}
+        """.trimIndent()
+
+    @Test
+    fun oldMagnetRowsWithALinkStartRealFetchesAtZeroAndOneWithNoLinkSaysItCannotResume() =
+        runComposeUiTest {
+            restartedFrom(downloadsJson.decodeFromString(DownloadsFile.serializer(), oldFileWithHypotheticalMagnetRows))
+            await("the rows") { shown("row-1") && shown("row-2") && shown("row-3") }
+            onNodeWithTag("pause-1").performClick()
+            await("cannot resume") { speedIs(CANT_RESUME) }
+            onNodeWithTag("pause-2").performClick()
+            onNodeWithTag("pause-3").performClick()
+            await("two fetches") { torrents.starts.size == 2 }
+            assertEquals(listOf("2", "3"), torrents.starts.map { it.id }.sorted())
+            for (job in torrents.starts) {
+                assertEquals(listOf<Any?>(hex, 0L, null), listOf(job.magnet?.infoHashHex, job.doneBytes, job.pieces))
+            }
             assertEquals(0, guard.violations)
         }
 }

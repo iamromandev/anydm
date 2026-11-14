@@ -31,7 +31,7 @@ interface TorrentFileStore {
     /** The bytes of the copy of [hex]; null when there is none or it cannot be read. Blocks on the disk. */
     fun read(hex: String): ByteArray?
 
-    /** Removes the copy of [hex]; no error when there is none. */
+    /** Removes the copy of [hex], and the unfinished one a magnet fetch may have left; no error when there is none. */
     fun delete(hex: String)
 }
 
@@ -81,7 +81,14 @@ class DiskTorrentFileStore(
         }
 
     override fun delete(hex: String) {
-        Files.deleteIfExists(path(hex))
+        val copy = path(hex)
+        // The engine writes a magnet's metadata to this name first and moves it over the copy: a crash can leave it behind.
+        val unfinished = copy.resolveSibling("${copy.fileName}.tmp")
+        try {
+            Files.deleteIfExists(copy)
+        } finally {
+            Files.deleteIfExists(unfinished)
+        }
     }
 }
 

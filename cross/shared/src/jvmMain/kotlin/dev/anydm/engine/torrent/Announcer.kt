@@ -73,6 +73,8 @@ internal class Announcer(
     private val downloaded: () -> Long,
     random: Random,
     private val timing: AnnounceTiming,
+    /** Trackers (by URL) that heard `started` for this torrent from an earlier announcer of the same job: they are sent no second one. */
+    private val alreadyStarted: Set<String> = emptySet(),
     private val report: suspend (AnnounceReport) -> Unit,
 ) {
     private val tiers: List<MutableList<String>> = tiers.map { it.toMutableList().apply { if (size > 1) shuffle(random) } }
@@ -81,6 +83,12 @@ internal class Announcer(
     /** Trackers that gave a good answer in this run: the ones that are told when it ends. */
     private val heard = LinkedHashSet<String>()
     private var startedHeard = false
+
+    /** Trackers that answered an announce carrying `started`, plus those that had heard it before this announcer. */
+    private val startedBy = LinkedHashSet<String>(alreadyStarted)
+
+    /** The trackers that have heard `started` for this torrent. */
+    fun startedTrackers(): Set<String> = synchronized(startedBy) { startedBy.toSet() }
 
     private fun request(event: AnnounceEvent?): AnnounceRequest {
         val done = downloaded().coerceIn(0, total)
@@ -105,6 +113,8 @@ internal class Announcer(
         val tier: MutableList<String>,
         val url: String,
         val reply: TrackerReply?,
+        /** The request carried `started`. */
+        val started: Boolean,
     )
 
     /**
@@ -133,7 +143,9 @@ internal class Announcer(
                 val (tier, url) = order[next++]
                 startedAt = clock.nowMs()
                 waiting++
-                launch { gate.withPermit { answers.send(Answer(tier, url, ask(url, request(event)))) } }
+                // a tracker that heard `started` before is not told twice
+                val sent = event.takeUnless { url in alreadyStarted }
+                launch { gate.withPermit { answers.send(Answer(tier, url, ask(url, request(sent)), sent != null)) } }
             }
 
             while (waiting > 0 || next < order.size) {
@@ -154,6 +166,7 @@ internal class Announcer(
                             a.tier.add(0, a.url)
                         }
                         synchronized(heard) { heard.add(a.url) }
+                        if (a.started) synchronized(startedBy) { startedBy.add(a.url) }
                         peers.addAll(reply.peers)
                         if (reply.peers.isNotEmpty()) break
                     }

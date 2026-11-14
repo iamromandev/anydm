@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -72,8 +73,8 @@ class WireTest {
 
     @Test
     fun anUnknownIdIsReportedAndItsPayloadIsSkipped() {
-        val data = frame(20, ByteArray(300) { 9 }) + encodeMessage(PeerMsg.Choke)
-        assertEquals(listOf(PeerMsg.Unknown(20), PeerMsg.Choke), decode(data))
+        val data = frame(21, ByteArray(300) { 9 }) + encodeMessage(PeerMsg.Choke)
+        assertEquals(listOf(PeerMsg.Unknown(21), PeerMsg.Choke), decode(data))
         assertEquals(listOf(PeerMsg.Unknown(9)), decode(frame(9, bytes(0x1A, 0xE1))))
         assertEquals(listOf(PeerMsg.Unknown(255)), decode(frame(255)))
         assertEquals(listOf(PeerMsg.Unknown(200)), decode(encodeMessage(PeerMsg.Unknown(200))))
@@ -103,11 +104,12 @@ class WireTest {
                 PeerMsg.Have(7),
                 PeerMsg.Piece(1, 0, ByteArray(500) { it.toByte() }),
                 PeerMsg.Request(2, 0, BLOCK),
-                PeerMsg.Unknown(20),
+                PeerMsg.Unknown(21),
+                PeerMsg.Extended(1, ByteArray(40) { it.toByte() }),
                 PeerMsg.Choke,
             )
-        // Unknown(20) is what an extension message with a 40-byte payload decodes to.
-        val wire = concat(msgs.map { if (it == PeerMsg.Unknown(20)) frame(20, ByteArray(40)) else encodeMessage(it) })
+        // Unknown(21) is what a message with an id of no standard meaning and a 40-byte payload decodes to.
+        val wire = concat(msgs.map { if (it == PeerMsg.Unknown(21)) frame(21, ByteArray(40)) else encodeMessage(it) })
         for (chunk in listOf(1, 2, 3, 5, 7, 64, wire.size)) {
             val d = WireDecoder()
             val out = ArrayList<PeerMsg>()
@@ -239,7 +241,7 @@ class WireTest {
     @Test
     fun aKeepAliveOrAnUnknownMessageDoesNotUseUpTheBitfieldSlot() {
         // Neither says anything about the peer's pieces, and some peers send one first; dropping them would cost real peers.
-        state(PeerMsg.KeepAlive, PeerMsg.Unknown(20), PeerMsg.Bitfield(bytes(0xFF)))
+        state(PeerMsg.KeepAlive, PeerMsg.Unknown(21), PeerMsg.Bitfield(bytes(0xFF)))
     }
 
     @Test
@@ -406,5 +408,75 @@ class WireTest {
     fun encodingAHandshakeWithTheWrongSizedPartsIsAProgrammingError() {
         assertFailsWith<IllegalArgumentException> { encodeHandshake(ByteArray(19), ByteArray(20)) }
         assertFailsWith<IllegalArgumentException> { encodeHandshake(ByteArray(20), ByteArray(21)) }
+    }
+
+    // ---- extension messages (BEP 10)
+
+    @Test
+    fun anExtendedMessageIsIdTwentyThenTheExtensionIdThenItsPayload() {
+        val payload = bytes(1, 2, 3)
+        assertContentEquals(bytes(0, 0, 0, 5, 20, 7, 1, 2, 3), encodeMessage(PeerMsg.Extended(7, payload)))
+        assertContentEquals(bytes(0, 0, 0, 2, 20, 0), encodeMessage(PeerMsg.Extended(0, ByteArray(0))))
+        roundTrip(PeerMsg.Extended(7, payload))
+        roundTrip(PeerMsg.Extended(0, ByteArray(0)))
+        roundTrip(PeerMsg.Extended(255, ByteArray(1000) { (it * 3).toByte() }))
+    }
+
+    @Test
+    fun anExtendedMessageKeepsItsBytesAndIsComparedByThem() {
+        assertEquals(PeerMsg.Extended(1, bytes(9)), PeerMsg.Extended(1, bytes(9)))
+        assertEquals(PeerMsg.Extended(1, bytes(9)).hashCode(), PeerMsg.Extended(1, bytes(9)).hashCode())
+        assertNotEquals(PeerMsg.Extended(1, bytes(9)), PeerMsg.Extended(1, bytes(8)))
+        assertNotEquals(PeerMsg.Extended(1, bytes(9)), PeerMsg.Extended(2, bytes(9)))
+    }
+
+    @Test
+    fun anExtendedMessageWithNoExtensionIdIsRefused() {
+        assertFailsWith<WireError> { decode(frame(20)) }
+    }
+
+    @Test
+    fun anExtendedMessageOverTheCapIsRefusedFromItsLengthAlone() {
+        assertFailsWith<WireError> { decode(int(101) + bytes(20), WireDecoder(maxMessage = 100)) }
+        assertEquals(
+            PeerMsg.Extended(3, ByteArray(98)),
+            decode(frame(20, bytes(3) + ByteArray(98)), WireDecoder(maxMessage = 100)).single(),
+        )
+    }
+
+    @Test
+    fun aDecoderThatDoesNotTakeExtensionsSkipsThemLikeAnyUnknownMessage() {
+        val data = frame(20, ByteArray(300) { 9 }) + encodeMessage(PeerMsg.Choke)
+        assertEquals(listOf(PeerMsg.Unknown(20), PeerMsg.Choke), decode(data, WireDecoder(extensions = false)))
+    }
+
+    @Test
+    fun anExtendedMessageDoesNotUseUpTheBitfieldSlot() {
+        state(PeerMsg.Extended(0, bytes(1)), PeerMsg.Bitfield(bytes(0xFF)))
+        assertFailsWith<WireError> { state(PeerMsg.Bitfield(bytes(0xFF)), PeerMsg.Extended(0, bytes(1)), PeerMsg.Bitfield(bytes(0xFF))) }
+    }
+
+    @Test
+    fun theHandshakeAdvertisesExtensionsOnlyWhenAsked() {
+        val plain = assertNotNull(parseHandshake(encodeHandshake(ByteArray(20), ByteArray(20))))
+        assertEquals(false, plain.supportsExtensions)
+        val wire = encodeHandshake(ByteArray(20), ByteArray(20), extensions = true)
+        assertEquals(0x10, wire[25].toInt())
+        assertContentEquals(ByteArray(5), wire.copyOfRange(20, 25))
+        assertContentEquals(ByteArray(2), wire.copyOfRange(26, 28))
+        assertEquals(true, assertNotNull(parseHandshake(wire)).supportsExtensions)
+    }
+
+    @Test
+    fun supportsExtensionsReadsOnlyTheExtensionBit() {
+        fun with(
+            index: Int,
+            value: Int,
+        ) = encodeHandshake(ByteArray(20), ByteArray(20)).also { it[20 + index] = value.toByte() }
+        assertEquals(true, assertNotNull(parseHandshake(with(5, 0x10))).supportsExtensions)
+        assertEquals(true, assertNotNull(parseHandshake(with(5, 0xFF))).supportsExtensions)
+        assertEquals(false, assertNotNull(parseHandshake(with(5, 0xEF))).supportsExtensions)
+        assertEquals(false, assertNotNull(parseHandshake(with(4, 0x10))).supportsExtensions)
+        assertEquals(false, assertNotNull(parseHandshake(with(7, 0x10))).supportsExtensions)
     }
 }

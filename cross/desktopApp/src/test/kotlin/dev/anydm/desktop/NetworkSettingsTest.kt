@@ -783,7 +783,9 @@ class NetworkSettingsTest {
     ) = runDesktopComposeUiTest(width, height) {
         setContent { HomeScreen(populatedSample(), true) }
         openNewDownload()
-        onNodeWithTag("url-field").performTextInput("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8")
+        onNodeWithTag(
+            "url-field",
+        ).performTextInput("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337")
         onNodeWithTag("proxy-chip-usb").performClick()
         proxyType("http", "chip-usb")
         val chip = onNodeWithTag("proxy-chip-usb").fetchSemanticsNode().boundsInRoot

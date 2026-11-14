@@ -4,6 +4,7 @@ import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.Span
 import dev.anydm.engine.torrent.CANT_RESUME
 import dev.anydm.engine.torrent.PieceSet
+import dev.anydm.engine.torrent.TorrentFile
 
 /** The download list and the order of the Queued rows (their ids, first in line first). */
 data class QueueState(
@@ -145,6 +146,26 @@ private fun claimed(
     row: DownloadItem,
     reported: PieceSet?,
 ): PieceSet? = if (row.pieces == null) null else reported ?: row.pieces
+
+/**
+ * A magnet row's metadata arrived (and its `.torrent` copy is on disk): the row gets the torrent's total size and files, and its real
+ * name unless it has run before (then its files already have the name it shows, which the engine keeps). Applied whatever the status,
+ * since a pause may have come just after the copy was written. A row that is gone is left alone.
+ */
+fun metadataArrived(
+    s: QueueState,
+    id: String,
+    name: String,
+    total: Long,
+    files: List<TorrentFile>,
+): QueueState =
+    s.update(id, null) {
+        it.copy(
+            name = if (it.pieces == null) name else it.name,
+            totalBytes = total,
+            files = files.map { f -> SampleFile(f.path, f.size) },
+        )
+    }
 
 /** The engine got its first response: the name, size and validators are now known (a restart reports done = 0). */
 fun started(

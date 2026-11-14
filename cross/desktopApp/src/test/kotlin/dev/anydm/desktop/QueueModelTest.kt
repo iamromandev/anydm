@@ -4,7 +4,10 @@ import dev.anydm.engine.http.EngineEvent
 import dev.anydm.engine.http.Reasons
 import dev.anydm.engine.http.Span
 import dev.anydm.engine.torrent.CANT_RESUME
+import dev.anydm.engine.torrent.METADATA_INVALID
+import dev.anydm.engine.torrent.NO_PEERS
 import dev.anydm.engine.torrent.PieceSet
+import dev.anydm.engine.torrent.TorrentFile
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -629,6 +632,85 @@ class QueueModelTest {
     ) = DownloadItem("t", "T", 80, done, 0, status, DownloadKind.Torrent, infoHash = infoHash, pieces = pieces)
 
     private fun only(row: DownloadItem) = QueueState(listOf(row), emptyList())
+
+    private val files = listOf(TorrentFile("a.bin", 50), TorrentFile("d/b.bin", 30))
+
+    private fun magnetRow(
+        status: DownloadStatus = DownloadStatus.Downloading,
+        pieces: PieceSet? = null,
+    ) = DownloadItem(
+        "t",
+        "dn name",
+        UNKNOWN_SIZE,
+        0,
+        0,
+        status,
+        DownloadKind.Torrent,
+        url = "magnet:?xt=urn:btih:$hex&tr=udp%3A%2F%2Ft.example%3A1",
+        infoHash = hex,
+        pieces = pieces,
+    )
+
+    @Test
+    fun theMetadataOfAMagnetRowGivesItsRealNameSizeAndFilesAndKeepsItsStatus() {
+        for (status in listOf(DownloadStatus.Downloading, DownloadStatus.Paused, DownloadStatus.Failed, DownloadStatus.Queued)) {
+            val out = metadataArrived(only(magnetRow(status)), "t", "Real", 80, files).list.single()
+            assertEquals(
+                listOf<Any?>("Real", 80L, listOf(SampleFile("a.bin", 50), SampleFile("d/b.bin", 30)), status, 0L),
+                listOf(out.name, out.totalBytes, out.files, out.status, out.doneBytes),
+                "$status",
+            )
+            assertEquals(false, out.awaitingMetadata)
+        }
+    }
+
+    // review M1: the engine tells the metadata of a copy that was there already, before Started; the row is then never "awaiting"
+    @Test
+    fun aMagnetRowThatStartsAndFinishesAfterItsMetadataNeverAwaitsAndNamesItsFilesByTheTorrent() {
+        val started = EngineEvent.Started("t", "Real", 80, null, null, 0, pieces = PieceSet.of(8, emptyList()))
+        val s = started(metadataArrived(only(magnetRow()), "t", "Real", 80, files), started)
+        val row = s.list.single()
+        assertEquals(false, row.awaitingMetadata)
+        assertEquals(listOf("Real", 2), listOf(row.name, row.files?.size))
+        val done = finished(s, "t", 80, 3, "Real").list.single()
+        assertEquals(false, done.awaitingMetadata)
+    }
+
+    @Test
+    fun aMagnetRowThatStartsOrFinishesWithNoFilesIsNotAwaitingAnyMore() {
+        val started = EngineEvent.Started("t", "Real", 80, null, null, 0, pieces = PieceSet.of(8, emptyList()))
+        val running = started(only(magnetRow()), started).list.single()
+        assertEquals(null, running.files)
+        assertEquals(false, running.awaitingMetadata, "it has pieces: its files are there")
+        val done = finished(only(magnetRow()), "t", 80, 3, "Real").list.single()
+        assertEquals(false, done.awaitingMetadata, "it is finished: its files are there")
+    }
+
+    @Test
+    fun theMetadataOfARowThatRanBeforeKeepsTheNameItsFilesHave() {
+        val out = metadataArrived(only(magnetRow(pieces = PieceSet.of(8, listOf(0)))), "t", "Real", 80, files).list.single()
+        assertEquals(listOf("dn name", 80L), listOf(out.name, out.totalBytes))
+        assertEquals(2, out.files?.size)
+    }
+
+    @Test
+    fun theMetadataOfAnotherOrARemovedRowChangesNothing() {
+        val s = only(magnetRow())
+        assertEquals(s, metadataArrived(s, "other", "Real", 80, files))
+        val empty = QueueState(emptyList(), emptyList())
+        assertEquals(empty, metadataArrived(empty, "t", "Real", 80, files))
+    }
+
+    @Test
+    fun aMagnetRowThatFailedForNoMetadataShowsWhyAndRetriesAsAnyFailedRow() {
+        for (reason in listOf(NO_PEERS, METADATA_INVALID)) {
+            val failed = failed(only(magnetRow()), "t", reason, 0, 3)
+            assertEquals(listOf(DownloadStatus.Failed, reason), failed.list.single().let { listOf(it.status, it.error) })
+            val retried = resumeAll(failed, setOf("t"), 3).list.single()
+            assertEquals(listOf(DownloadStatus.Downloading, null), listOf(retried.status, retried.error), reason)
+            assertEquals(true, retried.awaitingMetadata, "it still waits for the metadata")
+        }
+    }
 
     @Test
     fun aTorrentProgressTakesItsPiecesInFlightSetAndPeers() {

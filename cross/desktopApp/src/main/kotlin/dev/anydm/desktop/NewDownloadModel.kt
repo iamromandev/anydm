@@ -1,24 +1,18 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.ProbeResult
+import dev.anydm.engine.torrent.MagnetLink
+import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.TorrentMeta
+import dev.anydm.engine.torrent.parseMagnet
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.nio.file.Path
-
-private const val MIB = 1024L * 1024
-private const val SAMPLE_SPEED = 2 * MIB
-private const val SINTEL = "Sintel"
 
 data class SampleFile(
     val name: String,
     val bytes: Long,
 )
-
-/** Fixed sample tree shown for every magnet link; no torrent metadata is fetched. */
-val sintelFiles: List<SampleFile> =
-    listOf(SampleFile("Sintel.mp4", 129_280_000L)) +
-        listOf("en", "de", "es", "fr", "it", "nl", "pl", "pt", "ru", "tr")
-            .mapIndexed { i, lang -> SampleFile("Sintel.$lang.srt", 1536L + i * 2) }
 
 sealed interface Preview {
     val name: String
@@ -43,10 +37,12 @@ sealed interface Preview {
         val files: List<SampleFile>,
         /** True for a single-file torrent; a folder torrent with one entry is still a folder. */
         val single: Boolean = false,
-        /** The info hash (40 hex) of a `.torrent` that was read: such a torrent downloads for real. Null for a magnet, which is simulated. */
+        /** The info hash (40 hex) of a `.torrent` that was read or of a magnet: such a torrent downloads for real. */
         val infoHash: String? = null,
-        /** The `.torrent` file it was read from, read again when Download is pressed to make the app's own copy. */
+        /** The `.torrent` file it was read from, read again when Download is pressed to make the app's own copy. Null for a magnet. */
         val source: Path? = null,
+        /** The magnet link behind this preview: its metadata is not known yet, so it has no files and no size. */
+        val magnet: MagnetLink? = null,
     ) : Preview {
         /** Every file of a real torrent is downloaded: its tree is shown ticked and cannot be changed (R3). */
         val locked: Boolean get() = infoHash != null
@@ -87,7 +83,7 @@ fun pasteLink(
 /** Derives a preview from the field text: the name from the link, nothing else is known until the probe answers. */
 fun parsePreview(raw: String): Preview? {
     val text = raw.trim()
-    if (text.startsWith("magnet:?", ignoreCase = true)) return magnetPreview(text)
+    if (isMagnetText(text)) return magnetPreview(text)
     val m = linkPattern.matchEntire(text) ?: return null
     val host = m.groupValues[2]
     if (!hostPattern.matches(host)) return null
@@ -104,17 +100,45 @@ fun parsePreview(raw: String): Preview? {
     )
 }
 
-private fun magnetPreview(text: String): Preview? {
-    val params = text.substringAfter('?').split('&').map { it.substringBefore('=') to it.substringAfter('=', "") }
-    if (params.none { (k, v) -> k.equals("xt", true) && v.startsWith("urn:btih:", true) }) return null
-    val dn =
-        params
-            .firstOrNull { it.first.equals("dn", true) }
-            ?.second
-            ?.let { decode(it, plusIsSpace = true) }
-            ?.takeIf { it.isNotBlank() }
-    return Preview.Torrent(dn ?: SINTEL, sintelFiles)
+/** What the dialog says for a magnet with no usable info hash (R2). */
+const val INVALID_MAGNET_TEXT = "Not a valid magnet link"
+
+/** What the dialog says for a magnet with no tracker to announce to (R3). */
+const val MAGNET_NO_TRACKERS_TEXT = "This magnet has no trackers"
+
+/** The size and files line of a magnet before its metadata arrives (R5). */
+const val MAGNET_UNKNOWN_TEXT = "Unknown until metadata arrives"
+
+private fun isMagnetText(raw: String): Boolean = raw.trim().startsWith("magnet:", ignoreCase = true)
+
+/** Why [raw] is a magnet the app cannot use, for the dialog; null when it is not a magnet or is a usable one. */
+fun magnetProblem(raw: String): String? {
+    if (!isMagnetText(raw)) return null
+    return when (parseMagnet(raw)) {
+        is MagnetResult.Ok -> null
+        MagnetResult.Invalid -> INVALID_MAGNET_TEXT
+        MagnetResult.NoTrackers -> MAGNET_NO_TRACKERS_TEXT
+    }
 }
+
+/** The name from `dn` (cleaned by the parser) or, without one, the info hash in hex; the files and the size come with the metadata. */
+private fun magnetPreview(text: String): Preview? {
+    val link = (parseMagnet(text) as? MagnetResult.Ok)?.link ?: return null
+    return Preview.Torrent(link.name ?: link.infoHashHex, emptyList(), infoHash = link.infoHashHex, magnet = link)
+}
+
+private fun encodeParam(s: String): String = URLEncoder.encode(s, Charsets.UTF_8).replace("+", "%20")
+
+/**
+ * The link a magnet row keeps (and is resumed from): rebuilt from what the parser took, so the row never holds more than the
+ * hash, the cleaned name and the usable trackers, however much the pasted text had.
+ */
+fun magnetUrl(link: MagnetLink): String =
+    buildString {
+        append("magnet:?xt=urn:btih:").append(link.infoHashHex)
+        link.name?.let { append("&dn=").append(encodeParam(it)) }
+        link.trackers.forEach { append("&tr=").append(encodeParam(it)) }
+    }
 
 fun torrentSummary(
     files: List<SampleFile>,
@@ -189,8 +213,12 @@ fun previewDetail(
         }
 
         is Preview.Torrent -> {
-            val (n, bytes) = torrentSummary(preview.files, ticked)
-            "$n ${if (n == 1) "file" else "files"} · ${formatBytes(bytes)}"
+            if (preview.magnet != null) {
+                MAGNET_UNKNOWN_TEXT
+            } else {
+                val (n, bytes) = torrentSummary(preview.files, ticked)
+                "$n ${if (n == 1) "file" else "files"} · ${formatBytes(bytes)}"
+            }
         }
     }
 
@@ -225,18 +253,23 @@ fun newDownloadItem(
     /** The count asked for; a row that cannot be split (no range support, unknown size, a torrent) keeps one. */
     connections: Int = 1,
 ): DownloadItem {
-    // A real torrent is downloaded whole, whatever [ticked] says; a magnet's simulated tree still takes the ticks.
-    val taken = if (preview is Preview.Torrent && preview.locked) preview.files.mapTo(HashSet()) { it.name } else ticked
+    // A torrent is downloaded whole, whatever [ticked] says (choosing files comes later).
+    val taken = if (preview is Preview.Torrent) preview.files.mapTo(HashSet()) { it.name } else ticked
     val total =
         when (preview) {
             is Preview.Direct -> preview.totalBytes ?: UNKNOWN_SIZE
-            is Preview.Torrent -> torrentSummary(preview.files, taken).second
+
+            // a magnet's size is not known until its metadata arrives
+            is Preview.Torrent -> if (preview.magnet != null) UNKNOWN_SIZE else torrentSummary(preview.files, taken).second
         }
     val kind = if (preview is Preview.Torrent) DownloadKind.Torrent else DownloadKind.Direct
-    val files = (preview as? Preview.Torrent)?.files?.filter { it.name in taken }
-    // A link and a `.torrent` are real downloads: they start at 0 B/s and the engines' reports move them. A magnet row stays simulated.
-    val speed = if (preview is Preview.Torrent && !preview.locked) SAMPLE_SPEED else 0L
-    val url = (preview as? Preview.Direct)?.url
+    // A magnet has no files yet: null until the metadata gives them (the row is waiting for it).
+    val files = (preview as? Preview.Torrent)?.takeIf { it.magnet == null }?.files?.filter { it.name in taken }
+    val url =
+        when (preview) {
+            is Preview.Direct -> preview.url
+            is Preview.Torrent -> preview.magnet?.let(::magnetUrl)
+        }
     val count =
         if (preview is Preview.Direct &&
             canSplit(preview)
@@ -250,7 +283,7 @@ fun newDownloadItem(
         preview.name,
         total,
         0,
-        speed,
+        0,
         DownloadStatus.Downloading,
         kind,
         folder,
@@ -258,7 +291,6 @@ fun newDownloadItem(
         url,
         connections = count,
         infoHash = (preview as? Preview.Torrent)?.infoHash,
-        simulated = preview is Preview.Torrent && !preview.locked,
     )
 }
 

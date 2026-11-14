@@ -51,8 +51,9 @@ fun menuActions(
         if (allFinished(t)) {
             add(MenuAction.Open)
             add(MenuAction.ShowInFolder)
-        } else if (t.all { it.url != null }) {
-            // A real download that is still running has a `.part` file to show.
+        } else if (t.all { (it.url != null || it.realTorrent()) && !it.awaitingMetadata }) {
+            // A real download that is still running has a `.part` file (a torrent its files) to show; a magnet row waiting for its
+            // metadata has nothing on disk yet.
             add(MenuAction.ShowInFolder)
         }
         add(MenuAction.Remove)

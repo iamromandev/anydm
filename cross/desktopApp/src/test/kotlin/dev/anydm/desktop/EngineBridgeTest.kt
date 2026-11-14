@@ -3,8 +3,10 @@ package dev.anydm.desktop
 import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.Span
 import dev.anydm.engine.http.TRAILER_BYTES
+import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.PieceSet
 import dev.anydm.engine.torrent.TorrentJob
+import dev.anydm.engine.torrent.parseMagnet
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -358,6 +360,51 @@ class EngineBridgeTest {
         assertEquals(emptyList(), torCmds(state(old), state()))
     }
 
+    private val magnetHex = "08ada5a7a6183aae1e09d831df6748d566095a10"
+    private val magnetUrl = "magnet:?xt=urn:btih:$magnetHex&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337"
+
+    private fun magnetRow(
+        url: String? = magnetUrl,
+        pieces: PieceSet? = null,
+    ) = tor(
+        "1",
+        DownloadStatus.Downloading,
+        pieces,
+        infoHash = magnetHex,
+    ).copy(url = url, name = "Sintel", files = null, totalBytes = UNKNOWN_SIZE, doneBytes = 0)
+
+    @Test
+    fun aMagnetRowStartsATorrentJobCarryingItsMagnetAndTheCopyPathItsMetadataWillBeSavedAt() {
+        val job = (torCmds(state(), state(magnetRow())).single() as EngineCmd.StartTorrent).job
+        val link = (parseMagnet(magnetUrl) as MagnetResult.Ok).link
+        assertEquals(link, job.magnet)
+        assertEquals(listOf("1", "/app/torrents/$magnetHex.torrent", "Sintel"), listOf(job.id, job.torrentPath, job.name))
+        assertEquals(null, job.pieces, "a magnet row that never ran asks for a free name")
+        assertEquals(0L, job.doneBytes)
+    }
+
+    @Test
+    fun aMagnetRowThatRanKeepsTheNameAndPiecesItHasSoTheEngineKeepsItsFiles() {
+        val set = PieceSet.of(4, listOf(1))
+        val job = (torCmds(state(), state(magnetRow(pieces = set).copy(name = "Real name"))).single() as EngineCmd.StartTorrent).job
+        assertEquals(listOf<Any?>("Real name", set), listOf(job.name, job.pieces))
+    }
+
+    @Test
+    fun aTorrentRowWithNoMagnetLinkOrAnUnreadableOneStartsAJobWithNoMagnet() {
+        assertEquals(null, (torCmds(state(), state(tor("1", DownloadStatus.Downloading))).single() as EngineCmd.StartTorrent).job.magnet)
+        val bad = magnetRow(url = "magnet:?xt=urn:btih:abc")
+        assertEquals(null, (torCmds(state(), state(bad)).single() as EngineCmd.StartTorrent).job.magnet)
+    }
+
+    @Test
+    fun aMagnetRowThatStopsDownloadingStopsItsJobLikeAnyTorrent() {
+        assertEquals(
+            listOf(EngineCmd.StopTorrent("1")),
+            torCmds(state(magnetRow()), state(magnetRow().copy(status = DownloadStatus.Paused))),
+        )
+    }
+
     @Test
     fun aHttpRowAndATorrentRowStartTogetherEachOnItsOwnEngine() {
         val out = torCmds(state(), state(row("1", DownloadStatus.Downloading), tor("2", DownloadStatus.Downloading)))
@@ -472,6 +519,28 @@ class EngineBridgeTest {
         assertEquals(emptyList(), opener.trashed.toList(), "a job still writing keeps its files")
         assertEquals(listOf("join:1", "forget:1"), torrents.log.toList())
         assertEquals(listOf(hex), copies.deleted.toList())
+    }
+
+    // review m4: the engine skips a copy for a forgotten row, so the row is forgotten before its copy goes, job ended or not
+    @Test
+    fun theTorrentEngineForgetsTheRowBeforeItsCopyIsDeletedSoAJobStillWindingDownCannotLeaveOneBehind() {
+        val torrents = FakeTorrentEngine().apply { joinGate = CompletableDeferred() } // never completes
+        val seenAtDelete = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+        val store =
+            object : TorrentFileStore by copies {
+                override fun delete(hex: String) {
+                    seenAtDelete.add(torrents.log.toList())
+                    copies.delete(hex)
+                }
+            }
+        runBlocking {
+            runEngineCommand(
+                DownloadEnv(FakeEngine(), FakeProber(), FakeOpener(), MemoryDiskIo(), torrents = torrents, torrentFiles = store),
+                EngineCmd.Discard(setOf("1"), emptyList(), listOf(hex)),
+                joinWaitMs = 100,
+            )
+        }
+        assertEquals(listOf(listOf("join:1", "forget:1")), seenAtDelete.toList())
     }
 }
 

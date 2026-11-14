@@ -1,5 +1,6 @@
 package dev.anydm.desktop
 
+import dev.anydm.engine.torrent.PieceSet
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -103,5 +104,55 @@ class HomeModelTest {
         val row = DownloadItem("9", "a.zip", UNKNOWN_SIZE, 10, 5, DownloadStatus.Downloading)
         assertEquals(0, percent(row))
         assertEquals(0f, progress(row))
+    }
+
+    private val magnetUrl = "magnet:?xt=urn:btih:${"ab".repeat(20)}&tr=udp%3A%2F%2Ft.example%3A1"
+    private val magnetRow =
+        DownloadItem(
+            "9",
+            "dn",
+            UNKNOWN_SIZE,
+            0,
+            0,
+            DownloadStatus.Downloading,
+            DownloadKind.Torrent,
+            url = magnetUrl,
+            infoHash = "ab".repeat(20),
+        )
+
+    @Test
+    fun aMagnetRowWithNoFilesYetIsAwaitingItsMetadataAndOneWithFilesIsNot() {
+        assertEquals(true, magnetRow.awaitingMetadata)
+        assertEquals(false, magnetRow.copy(files = listOf(SampleFile("a", 1))).awaitingMetadata)
+        assertEquals(true, magnetRow.copy(url = magnetUrl.uppercase().replace("%3A", "%3a")).awaitingMetadata, "any case of the scheme")
+    }
+
+    // review M1: a row that has pieces or is Finished has its files on disk, whatever the row's file list says
+    @Test
+    fun aMagnetRowThatHasPiecesOrIsFinishedIsNotAwaitingItsMetadata() {
+        assertEquals(false, magnetRow.copy(pieces = PieceSet.of(8, listOf(0))).awaitingMetadata)
+        assertEquals(false, magnetRow.copy(status = DownloadStatus.Finished).awaitingMetadata)
+    }
+
+    // review m2: a magnet row has a url too, but it makes no file named after it next to an http download's
+    @Test
+    fun onlyDirectDownloadsReserveNamesAgainstANewHttpDownload() {
+        val direct = item("1", DownloadStatus.Downloading, name = "a.zip").copy(url = "https://x.test/a.zip", folder = "/dl")
+        val sameFolderMagnet = magnetRow.copy(name = "movie", folder = "/dl")
+        assertEquals(setOf("a.zip", "a.zip.part"), takenNames(listOf(direct, sameFolderMagnet), "/dl", "/home"))
+        assertEquals(emptySet(), takenNames(listOf(sameFolderMagnet), "/dl", "/home"))
+    }
+
+    @Test
+    fun noOtherRowAwaitsMetadata() {
+        assertEquals(false, magnetRow.copy(infoHash = null).awaitingMetadata)
+        assertEquals(false, magnetRow.copy(url = null).awaitingMetadata, "a .torrent row has its copy from the start")
+        assertEquals(false, magnetRow.copy(kind = DownloadKind.Direct, url = "https://x.test/a").awaitingMetadata)
+    }
+
+    @Test
+    fun aMagnetRowWaitingForMetadataListsNoFilesNotTheSintelSample() {
+        assertEquals(emptyList(), magnetRow.fileList())
+        assertEquals(sintelFiles, DownloadItem("1", "Sintel", 1, 0, 0, DownloadStatus.Paused, DownloadKind.Torrent).fileList())
     }
 }

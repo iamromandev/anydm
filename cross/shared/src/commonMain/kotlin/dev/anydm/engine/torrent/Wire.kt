@@ -5,7 +5,7 @@ class WireError(
     message: String,
 ) : Exception(message)
 
-/** The peer wire messages of BEP 3 (ids 0 to 8), plus [KeepAlive] and [Unknown]. */
+/** The peer wire messages of BEP 3 (ids 0 to 8), plus [Extended] (BEP 10, id 20), [KeepAlive] and [Unknown]. */
 sealed interface PeerMsg {
     data object KeepAlive : PeerMsg
 
@@ -56,7 +56,22 @@ sealed interface PeerMsg {
         val length: Int,
     ) : PeerMsg
 
-    /** A message with an id this client does not know (an extension); its payload is skipped, never stored. */
+    /**
+     * An extension message (BEP 10, id 20): [extId] says which extension (0 is the extension handshake) and [payload] is what it
+     * carries. Its size is held to the decoder's `maxMessage`.
+     */
+    class Extended(
+        val extId: Int,
+        val payload: ByteArray,
+    ) : PeerMsg {
+        override fun equals(other: Any?): Boolean = other is Extended && extId == other.extId && payload.contentEquals(other.payload)
+
+        override fun hashCode(): Int = 31 * extId + payload.contentHashCode()
+
+        override fun toString(): String = "Extended($extId, ${payload.size} bytes)"
+    }
+
+    /** A message with an id this client does not know; its payload is skipped, never stored. */
     data class Unknown(
         val id: Int,
     ) : PeerMsg
@@ -71,6 +86,7 @@ private const val ID_BITFIELD = 5
 private const val ID_REQUEST = 6
 private const val ID_PIECE = 7
 private const val ID_CANCEL = 8
+private const val ID_EXTENDED = 20
 
 /** Payload bytes of a piece message besides the block: piece index and offset. */
 private const val PIECE_HEADER = 8
@@ -158,6 +174,13 @@ fun encodeMessage(msg: PeerMsg): ByteArray =
             }
         }
 
+        is PeerMsg.Extended -> {
+            frame(ID_EXTENDED, 1 + msg.payload.size).also {
+                it[5] = msg.extId.toByte()
+                msg.payload.copyInto(it, 6)
+            }
+        }
+
         is PeerMsg.Unknown -> {
             frame(msg.id, 0)
         }
@@ -176,15 +199,26 @@ class Handshake(
     val peerId: ByteArray,
 )
 
-/** Our handshake for [infoHash] and [peerId] (20 bytes each), reserved bits all zero. */
+/** Reserved byte 5, bit 0x10: the peer speaks the extension protocol (BEP 10). */
+private const val EXTENSION_BYTE = 5
+private const val EXTENSION_BIT = 0x10
+
+/** True when the peer says it speaks the extension protocol (BEP 10). */
+val Handshake.supportsExtensions: Boolean get() =
+    reserved.size > EXTENSION_BYTE &&
+        (reserved[EXTENSION_BYTE].toInt() and EXTENSION_BIT) != 0
+
+/** Our handshake for [infoHash] and [peerId] (20 bytes each); the reserved bits are zero, except the extension bit when [extensions]. */
 fun encodeHandshake(
     infoHash: ByteArray,
     peerId: ByteArray,
+    extensions: Boolean = false,
 ): ByteArray {
     require(infoHash.size == ID_SIZE && peerId.size == ID_SIZE) { "info hash and peer id are 20 bytes each" }
     val out = ByteArray(HANDSHAKE_SIZE)
     out[0] = PROTOCOL.length.toByte()
     PROTOCOL.encodeToByteArray().copyInto(out, 1)
+    if (extensions) out[20 + EXTENSION_BYTE] = EXTENSION_BIT.toByte()
     infoHash.copyInto(out, 28)
     peerId.copyInto(out, 48)
     return out
@@ -215,11 +249,15 @@ fun parseHandshake(
  * can name bytes outside its files: a `piece` must be exactly one block, a `request` or `cancel` (never answered) only has to lie
  * inside its piece. Order rules, such as the `bitfield` coming first, are [PeerProtocolState]'s.
  *
+ * An extension message (id 20) is [PeerMsg.Extended] with its payload stored, up to [maxMessage]; with [extensions] false it is
+ * reported as [PeerMsg.Unknown] and skipped like any other id, for a connection that has no use for them.
+ *
  * Not thread safe: one decoder per connection, fed from one reader.
  */
 class WireDecoder(
     private val maxMessage: Int = 1 shl 20,
     private val layout: Layout? = null,
+    private val extensions: Boolean = true,
 ) {
     private var buf = ByteArray(32)
     private var fill = 0
@@ -320,10 +358,11 @@ class WireDecoder(
                 ID_BITFIELD -> layout == null || length - 1 == (layout.pieceCount + 7) / 8
                 ID_REQUEST, ID_CANCEL -> length == 13
                 ID_PIECE -> length > 1 + PIECE_HEADER && length <= 1 + PIECE_HEADER + BLOCK
+                ID_EXTENDED -> !extensions || length >= 2
                 else -> true
             }
         if (!ok) throw WireError("Bad length for message $id")
-        if (id > ID_CANCEL) {
+        if (id > ID_CANCEL && !(id == ID_EXTENDED && extensions)) {
             out += PeerMsg.Unknown(id)
             skip = length - 1L
             reset()
@@ -378,6 +417,10 @@ class WireDecoder(
                 PeerMsg.Piece(buf.int(5), buf.int(9), data)
             }
 
+            ID_EXTENDED -> {
+                PeerMsg.Extended(buf[5].toInt() and 0xFF, buf.copyOfRange(6, 4 + length))
+            }
+
             else -> {
                 throw WireError("Unexpected message $id")
             }
@@ -423,9 +466,9 @@ class WireDecoder(
  * The order rules of BEP 3 that a single message cannot show, for one connection. The torrent run passes every message the
  * [WireDecoder] returns, in order, to [accept] and drops the peer when it throws [WireError].
  *
- * Today that is one rule: a `bitfield` is only valid as the first message after the handshake, and only once. A [PeerMsg.KeepAlive]
- * or [PeerMsg.Unknown] message does not count as the first message: they say nothing about the peer's pieces and some peers send one
- * first, so refusing them would lose real peers.
+ * Today that is one rule: a `bitfield` is only valid as the first message after the handshake, and only once. A [PeerMsg.KeepAlive],
+ * [PeerMsg.Extended] or [PeerMsg.Unknown] message does not count as the first message: they say nothing about the peer's pieces and some
+ * peers send one first (the extension handshake, for one), so refusing them would lose real peers.
  *
  * Not thread safe: one per connection.
  */
@@ -434,7 +477,7 @@ class PeerProtocolState {
 
     /** Notes [msg] as the next message from the peer. Throws [WireError] for a `bitfield` that is not the first real message. */
     fun accept(msg: PeerMsg) {
-        if (msg == PeerMsg.KeepAlive || msg is PeerMsg.Unknown) return
+        if (msg == PeerMsg.KeepAlive || msg is PeerMsg.Unknown || msg is PeerMsg.Extended) return
         if (msg is PeerMsg.Bitfield && started) throw WireError("Bitfield is only valid as the first message")
         started = true
     }

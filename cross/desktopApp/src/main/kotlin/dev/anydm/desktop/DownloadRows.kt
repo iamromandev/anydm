@@ -201,6 +201,7 @@ fun DownloadRow(
                             queued -> "Queued"
                             failed -> item.error ?: "Failed"
                             item.status == DownloadStatus.Paused -> "Paused"
+                            item.awaitingMetadata -> FETCHING_METADATA
                             else -> formatSpeed(item.bytesPerSec, unit)
                         },
                         color = if (failed) c.danger else c.text,
@@ -250,11 +251,24 @@ fun DownloadRow(
     }
 }
 
+/** The status of a magnet row that is running and has not got its metadata yet. */
+const val FETCHING_METADATA = "Fetching metadata…"
+
+/** What a magnet row shows under its name before its metadata arrives: no size to speak of, and the peers it has found. */
+fun awaitingDetails(item: DownloadItem): String =
+    if (item.status == DownloadStatus.Downloading) {
+        "Size unknown until metadata arrives · ${item.peers} ${if (item.peers == 1) "peer" else "peers"}"
+    } else {
+        "Size unknown until metadata arrives"
+    }
+
 private fun details(
     item: DownloadItem,
     unit: SpeedUnit,
 ): String =
-    if (item.status == DownloadStatus.Finished) {
+    if (item.awaitingMetadata && item.status != DownloadStatus.Finished) {
+        awaitingDetails(item)
+    } else if (item.status == DownloadStatus.Finished) {
         formatBytes(item.totalBytes)
     } else if (item.totalBytes <= 0) {
         // Size unknown: no percentage and no ETA, only what has arrived and how fast.

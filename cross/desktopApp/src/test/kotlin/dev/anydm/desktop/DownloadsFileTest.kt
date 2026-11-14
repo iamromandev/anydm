@@ -352,4 +352,130 @@ class DownloadsFileTest {
         val back = fromDownloadsFile(DownloadsFile(downloads = listOf(dto))).single()
         assertEquals(listOf(emptySet<Int>(), 0), listOf(back.inFlight, back.peers))
     }
+
+    // AC12: downloads.json as the previous build wrote it. That build kept no link for a magnet row (only a link row had a url), so
+    // only rows 1, 2, 6 and 7 are shapes it really wrote. Rows 3, 4 and 5 (a magnet url, marked simulated or not) are hypothetical:
+    // no previous build wrote them, they are what the migration must read should a file have one.
+    private val magnetHex = "08ada5a7a6183aae1e09d831df6748d566095a10"
+    private val magnetUrl = "magnet:?xt=urn:btih:$magnetHex&dn=Sintel&tr=udp%3A%2F%2Ft.example%3A1337"
+    private val rowsPreviousBuildWrote =
+        """
+        {"id":"1","name":"Sintel","total":123,"done":50,"status":"Downloading","kind":"Torrent","sim":true,"files":[{"name":"Sintel.mp4","bytes":123}]},
+        {"id":"2","name":"Sintel","total":123,"done":0,"status":"Finished","kind":"Torrent","sim":true},
+        {"id":"6","name":"Old","total":100,"done":40,"status":"Paused","kind":"Torrent"},
+        {"id":"7","name":"a.zip","url":"https://x.test/a.zip","total":100,"done":0,"status":"Paused"}
+        """.trimIndent()
+    private val hypotheticalMagnetRows =
+        """
+        {"id":"3","name":"Marked","url":"$magnetUrl","total":123,"done":50,"status":"Downloading","kind":"Torrent","sim":true,"files":[{"name":"x","bytes":1}]},
+        {"id":"4","name":"Unmarked","url":"$magnetUrl","total":123,"done":50,"status":"Paused","kind":"Torrent"},
+        {"id":"5","name":"Finished marked","url":"$magnetUrl","total":123,"done":123,"status":"Finished","kind":"Torrent","sim":true}
+        """.trimIndent()
+    private val oldFileWithHypotheticalMagnetRows =
+        """{"version":2,"downloads":[$rowsPreviousBuildWrote,$hypotheticalMagnetRows]}"""
+
+    private fun restored(copies: TorrentFileStore = NoTorrentFiles) =
+        restoredRows(
+            downloadsJson.decodeFromString(DownloadsFile.serializer(), oldFileWithHypotheticalMagnetRows),
+            MemoryDiskIo(),
+            "/home/u/Downloads",
+            copies,
+        ).associateBy { it.id }
+
+    @Test
+    fun anOldMagnetRowWithItsLinkBecomesARealMagnetRowAtZeroWhetherMarkedSimulatedOrNot() {
+        for (id in listOf("3", "4", "5")) {
+            val r = restored().getValue(id)
+            assertEquals(
+                listOf<Any?>(magnetHex, false, 0L, null, null, UNKNOWN_SIZE, DownloadStatus.Paused, false, null),
+                listOf(r.infoHash, r.simulated, r.doneBytes, r.pieces, r.files, r.totalBytes, r.status, r.noCopy, r.error),
+                id,
+            )
+            assertEquals(true, r.awaitingMetadata, id)
+            assertEquals(magnetUrl, r.url, id)
+        }
+    }
+
+    @Test
+    fun anOldSimulatedMagnetRowWithNoLinkHasNothingToFetchFromSoItCannotResumeAndKeepsNoSimulation() {
+        for (id in listOf("1", "2")) {
+            val r = restored().getValue(id)
+            assertEquals(
+                listOf<Any?>(null, false, 0L, DownloadStatus.Paused, true, false),
+                listOf(r.infoHash, r.simulated, r.doneBytes, r.status, r.noCopy, r.awaitingMetadata),
+                id,
+            )
+            // review m3: nothing of the simulation is left to show ("0 of 123 B", a made-up file list)
+            assertEquals(listOf<Any?>(UNKNOWN_SIZE, null), listOf(r.totalBytes, r.files), id)
+        }
+    }
+
+    @Test
+    fun anOldTorrentRowWithNoHashAndNoMarkStaysCantResumeAndLinkRowsAreUntouched() {
+        val old = restored().getValue("6")
+        assertEquals(listOf(true, 40L, DownloadStatus.Paused), listOf(old.noCopy, old.doneBytes, old.status))
+        assertEquals(false, restored().getValue("7").noCopy)
+    }
+
+    @Test
+    fun aMagnetRowWhoseCopyIsThereTakesItsFilesAndTotalAndANeverRunRowItsNameFromIt() {
+        val bytes = TestTorrents.bytes("Real", listOf("a.bin" to 40L, "d/b.bin" to 60L))
+        val hex = TestTorrents.meta(bytes).infoHashHex
+        val url = "magnet:?xt=urn:btih:$hex&tr=udp%3A%2F%2Ft.example%3A1337"
+        val copies = FakeTorrentFiles().also { it.saved[hex] = bytes }
+
+        fun rowOf(pieces: PieceSet?) =
+            DownloadsFile(
+                downloads =
+                    listOf(
+                        DownloadDto(
+                            "1",
+                            url,
+                            "dn",
+                            null,
+                            null,
+                            0,
+                            DownloadStatus.Paused,
+                            null,
+                            null,
+                            null,
+                            DownloadKind.Torrent,
+                            null,
+                            infoHash = hex,
+                        ).let { if (pieces == null) it else it.copy(pieces = pieces.toBase64(), pieceCount = pieces.size) },
+                    ),
+            )
+        val fresh = restoredRows(rowOf(null), MemoryDiskIo(), "/h", copies).single()
+        assertEquals(listOf("Real", 100L, listOf("a.bin", "d/b.bin")), listOf(fresh.name, fresh.totalBytes, fresh.files?.map { it.name }))
+        assertEquals(false, fresh.awaitingMetadata)
+        val ran = restoredRows(rowOf(PieceSet.of(8, listOf(0))), MemoryDiskIo(), "/h", copies).single()
+        assertEquals(listOf("dn", 100L), listOf(ran.name, ran.totalBytes), "a row that ran keeps the name its files have")
+        assertEquals(2, ran.files?.size)
+    }
+
+    @Test
+    fun aMagnetRowWhoseCopyIsMissingOrUnreadableStaysWaiting() {
+        val hex = "ab".repeat(20)
+        val row =
+            DownloadDto(
+                "1",
+                "magnet:?xt=urn:btih:$hex&tr=udp%3A%2F%2Ft.example%3A1",
+                "dn",
+                null,
+                null,
+                0,
+                DownloadStatus.Paused,
+                null,
+                null,
+                null,
+                DownloadKind.Torrent,
+                null,
+                infoHash = hex,
+            )
+        val junk = FakeTorrentFiles().also { it.saved[hex] = byteArrayOf(1, 2, 3) }
+        for (copies in listOf(FakeTorrentFiles(), junk)) {
+            val r = restoredRows(DownloadsFile(downloads = listOf(row)), MemoryDiskIo(), "/h", copies).single()
+            assertEquals(listOf(true, "dn"), listOf(r.awaitingMetadata, r.name))
+        }
+    }
 }
