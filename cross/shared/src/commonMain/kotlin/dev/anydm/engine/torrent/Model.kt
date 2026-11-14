@@ -64,6 +64,9 @@ const val PEER_ID_PREFIX = "-AD0001-"
 /** Row error: no tracker gave a peer and none connected in time. */
 const val NO_PEERS = "No peers"
 
+/** Row error: peers were reached but none gave metadata that matches the magnet's info hash. */
+const val METADATA_INVALID = "Metadata invalid"
+
 /** Row error: the saved `.torrent` is gone or unreadable. */
 const val CANT_RESUME = "Can't resume: add the torrent again"
 
@@ -99,4 +102,9 @@ data class TorrentJob(
      * failure to read it), when it cannot work the figure out from [pieces]: so such an event never resets the row to 0.
      */
     val doneBytes: Long = 0,
+    /**
+     * Set for a magnet row: when the `.torrent` copy at [torrentPath] does not exist yet, the engine first fetches the metadata from
+     * the peers the magnet's trackers give, and saves it there. Null for a row added from a `.torrent` file.
+     */
+    val magnet: MagnetLink? = null,
 )

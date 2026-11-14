@@ -56,7 +56,31 @@ internal data class PeerScript(
     val peerId: ByteArray? = null,
     /** Waits this long before it answers each request, in real time. */
     val answerDelayMs: Long = 0,
+    /**
+     * The `info` bytes it serves over `ut_metadata` (BEP 9), and with it the extension bit in its handshake and an extension handshake
+     * right after. Null: it does not speak the extension protocol at all.
+     */
+    val serveMetadata: ByteArray? = null,
+    /** Corrupts the first byte of every metadata block it sends. */
+    val metadataLie: Boolean = false,
+    /** Closes the connection after it has sent this many metadata blocks on it. */
+    val metadataDropAfter: Int? = null,
+    /** Claims this `metadata_size` (in the extension handshake and in every data message) instead of the real one. */
+    val metadataClaimSize: Long? = null,
+    /** Answers every metadata request with a reject. */
+    val metadataReject: Boolean = false,
+    /** Accepts metadata requests and never answers them. */
+    val metadataNeverAnswer: Boolean = false,
+    /** Speaks the extension protocol but offers no `ut_metadata`. */
+    val noUtMetadata: Boolean = false,
+    /** Sends a data message with a block of this many bytes, whatever was asked, instead of the right one (a block of the wrong length). */
+    val metadataBlockBytes: Int? = null,
+    /** Sends the extension message with the metadata request number (and the data) under this id instead of the one the client gave. */
+    val metadataAnswerUnderId: Int? = null,
 )
+
+/** The id this fake peer gives `ut_metadata`; the client's own is 1, so a mix-up of the two shows. */
+internal const val FAKE_UT_METADATA = 3
 
 /** A torrent a fake peer serves: the generated file with its content, and what the reader makes of it. */
 internal class Served(
@@ -94,6 +118,13 @@ internal class FakePeer(
 
     /** Requests answered with a block. */
     val answers: Int get() = answered.get()
+
+    /** The numbers of the metadata blocks the client asked for, in order, over all connections. */
+    val metadataRequests = CopyOnWriteArrayList<Int>()
+
+    /** Metadata data messages sent. */
+    val metadataAnswers: Int get() = metaAnswered.get()
+    private val metaAnswered = AtomicInteger()
 
     private val sockets = CopyOnWriteArrayList<Socket>()
     private val waiting = CopyOnWriteArrayList<Socket>()
@@ -190,8 +221,12 @@ internal class FakePeer(
                 }
 
                 else -> {
-                    write(s, encodeHandshake(meta.infoHash, id))
+                    write(s, encodeHandshake(meta.infoHash, id, extensions = script.serveMetadata != null))
                 }
+            }
+            script.serveMetadata?.let { info ->
+                val size = script.metadataClaimSize ?: info.size.toLong()
+                write(s, PeerMsg.Extended(0, extHandshakePayload(FAKE_UT_METADATA.takeUnless { script.noUtMetadata }, size)))
             }
             if (script.silent) {
                 drain(s.getInputStream())
@@ -236,6 +271,8 @@ internal class FakePeer(
         val buf = ByteArray(16 * 1024)
         val input = s.getInputStream()
         var onThisConnection = 0
+        var metaOnThisConnection = 0
+        var clientMetaId: Int? = null
         var choked = false
         val started = System.nanoTime()
         var sent = 0L
@@ -279,6 +316,36 @@ internal class FakePeer(
                             write(s, PeerMsg.Choke)
                         }
                         if (script.dropAfterAnswers == onThisConnection) return
+                    }
+
+                    is PeerMsg.Extended -> {
+                        if (msg.extId == 0) {
+                            clientMetaId = decodeExtHandshake(msg.payload)?.utMetadata
+                        } else if (msg.extId == FAKE_UT_METADATA) {
+                            val request = decodeMetaMsg(msg.payload) as? MetaMsg.Request ?: continue
+                            metadataRequests.add(request.piece)
+                            if (script.metadataNeverAnswer) continue
+                            if (script.answerDelayMs > 0) Thread.sleep(script.answerDelayMs)
+                            val to = script.metadataAnswerUnderId ?: clientMetaId ?: continue
+                            val info = script.serveMetadata ?: continue
+                            if (script.metadataReject) {
+                                write(s, PeerMsg.Extended(to, metaRejectPayload(request.piece)))
+                                continue
+                            }
+                            val from = request.piece * METADATA_BLOCK
+                            if (from >= info.size) {
+                                write(s, PeerMsg.Extended(to, metaRejectPayload(request.piece)))
+                                continue
+                            }
+                            var block = info.copyOfRange(from, minOf(from + METADATA_BLOCK, info.size))
+                            script.metadataBlockBytes?.let { block = ByteArray(it) }
+                            if (script.metadataLie) block = block.copyOf().also { if (it.isNotEmpty()) it[0] = (it[0] + 1).toByte() }
+                            val total = script.metadataClaimSize ?: info.size.toLong()
+                            write(s, PeerMsg.Extended(to, metaDataPayload(request.piece, total, block)))
+                            metaAnswered.incrementAndGet()
+                            metaOnThisConnection++
+                            if (script.metadataDropAfter == metaOnThisConnection) return
+                        }
                     }
 
                     else -> {

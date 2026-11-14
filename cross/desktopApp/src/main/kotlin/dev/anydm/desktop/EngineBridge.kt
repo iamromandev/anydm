@@ -2,7 +2,10 @@ package dev.anydm.desktop
 
 import dev.anydm.engine.http.JobSpec
 import dev.anydm.engine.http.doneOf
+import dev.anydm.engine.torrent.MagnetLink
+import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.TorrentJob
+import dev.anydm.engine.torrent.parseMagnet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
@@ -50,7 +53,7 @@ const val JOIN_WAIT_MS = 5_000L
 /** A row with an http(s) link is a real download for the HTTP engine. */
 private fun DownloadItem.realHttp(): Boolean = kind == DownloadKind.Direct && url != null
 
-/** A torrent row with an info hash is a real torrent. Magnets, sample rows and torrent rows from before torrents were real stay simulated. */
+/** A torrent row with an info hash is a real torrent, a magnet row too. A torrent row from before torrents were real has none and never moves. */
 internal fun DownloadItem.realTorrent(): Boolean = kind == DownloadKind.Torrent && infoHash != null
 
 fun torrentJobOf(
@@ -68,7 +71,18 @@ fun torrentJobOf(
         item.pieces,
         peerId,
         doneBytes = item.doneBytes,
+        magnet = magnetOf(item),
     )
+
+/**
+ * The magnet a row was made from, for the engine to fetch the metadata with when the `.torrent` copy is missing; null for a `.torrent`
+ * row or a link that is no longer a usable magnet (the engine then resumes only from the copy, as for any `.torrent`).
+ */
+private fun magnetOf(item: DownloadItem): MagnetLink? {
+    val url = item.url ?: return null
+    if (item.kind != DownloadKind.Torrent) return null
+    return (parseMagnet(url) as? MagnetResult.Ok)?.link?.takeIf { it.infoHashHex == item.infoHash }
+}
 
 fun jobOf(
     item: DownloadItem,

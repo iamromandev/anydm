@@ -487,4 +487,416 @@ class TorrentEngineTest {
     }
 
     private fun digestOf(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
+
+    // ---- magnet jobs: the metadata first, then the torrent (AC6, AC9, AC11, AC14)
+
+    private fun metadataOf(t: TestTorrent) = PeerScript(serveMetadata = t.built.info)
+
+    private fun kinds(id: String = "1") = rig.eventsOf(id).map { it::class.simpleName }
+
+    // AC6
+    @Test
+    fun aMagnetJobFetchesItsMetadataSavesTheCopyAndDownloadsTheContent() {
+        val t = rig.torrent(listOf("a.bin" to 40_000, "d/b.bin" to 70_000), name = "movie")
+        val swarm = rig.swarm(t, metadataOf(t), metadataOf(t))
+        val engine = rig.engine()
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save, trackers = listOf("http://tracker.invalid/announce")))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        t.assertDownloaded(rig.save)
+        val metadata = assertIs<EngineEvent.Metadata>(rig.eventsOf().first { it is EngineEvent.Metadata })
+        assertEquals("movie", metadata.name)
+        assertEquals(110_000L, metadata.total)
+        assertEquals(t.meta.files, metadata.files)
+        val ks = kinds()
+        assertEquals(1, ks.count { it == "Metadata" })
+        assertTrue(ks.indexOf("Metadata") < ks.indexOf("Started"), "the metadata is told before any piece is claimed: $ks")
+        assertTrue(
+            rig.eventsOf().takeWhile { it !is EngineEvent.Metadata }.none {
+                it is EngineEvent.Started ||
+                    (it is EngineEvent.Progress && it.pieces != null)
+            },
+        )
+        val copy = Files.readAllBytes(t.magnetCopy)
+        assertContentEquals(torrentFileBytes(t.built.info, listOf("http://tracker.invalid/announce")), copy)
+        val meta = assertIs<TorrentResult.Ok>(readTorrent(copy)).meta
+        assertContentEquals(t.meta.infoHash, meta.infoHash)
+        assertEquals(
+            listOf(t.magnetCopy.fileName.toString()),
+            Files.list(t.magnetCopy.parent).use { s ->
+                s.map { it.fileName.toString() }.toList()
+            },
+            "no temp file is left",
+        )
+    }
+
+    @Test
+    fun beforeTheMetadataArrivesTheRowIsToldHowManyPeersAreConnectedAndNothingElse() {
+        val t = small(0)
+        val swarm = rig.swarm(t, PeerScript(serveMetadata = t.built.info, metadataNeverAnswer = true))
+        val engine = rig.engine()
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save, doneBytes = 0))
+        rig.await("a progress with the peer") {
+            rig.clock.advance(100) // reports are paced by the clock
+            rig.eventsOf().any { it is EngineEvent.Progress && it.peers == 1 }
+        }
+        val p = rig.eventsOf().filterIsInstance<EngineEvent.Progress>().first { it.peers == 1 }
+        assertNull(p.total, "the size is not known yet")
+        assertEquals(0L, p.done)
+        assertNull(p.pieces)
+        assertTrue(rig.eventsOf().none { it is EngineEvent.Started || it is EngineEvent.Metadata })
+    }
+
+    // AC9
+    @Test
+    fun aStopDuringTheFetchEndsWithStoppedClaimsNoPiecesAndLeavesNoFile() {
+        val t = small(0)
+        val swarm = rig.swarm(t, PeerScript(serveMetadata = t.built.info, metadataNeverAnswer = true))
+        val engine = rig.engine()
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save, doneBytes = 123))
+        rig.await("a request") {
+            swarm.peers
+                .single()
+                .metadataRequests
+                .isNotEmpty()
+        }
+        engine.stop("1")
+        val stopped = rig.awaitStopped()
+        assertNull(stopped.pieces, "no pieces are claimed before the files are settled")
+        assertEquals(123L, stopped.done, "the row's own figure is handed back")
+        runBlocking { engine.join("1") }
+        rig.await("the connection to close") { swarm.peers.single().open == 0 }
+        val seen =
+            swarm.peers
+                .single()
+                .received.size
+        Thread.sleep(300)
+        assertEquals(
+            seen,
+            swarm.peers
+                .single()
+                .received.size,
+            "nothing is sent after the stop",
+        )
+        assertTrue(Files.notExists(t.magnetCopy), "no copy")
+        assertTrue(Files.notExists(Path.of("${t.magnetCopy}.tmp")), "no temp copy")
+        assertTrue(rig.eventsOf().none { it is EngineEvent.Started || it is EngineEvent.Metadata || it is EngineEvent.Failed })
+    }
+
+    @Test
+    fun aMagnetJobStartedAgainAfterAStopFetchesAndFinishes() {
+        val t = small(0)
+        val stuck = rig.swarm(t, PeerScript(serveMetadata = t.built.info, metadataNeverAnswer = true))
+        val engine = rig.engine()
+        engine.start(t.magnetJob(peers = stuck.addrs, folder = rig.save))
+        rig.await("a request") {
+            stuck.peers
+                .single()
+                .metadataRequests
+                .isNotEmpty()
+        }
+        engine.stop("1")
+        val good = rig.swarm(t, metadataOf(t))
+        engine.start(t.magnetJob(peers = good.addrs, folder = rig.save))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        t.assertDownloaded(rig.save)
+    }
+
+    // AC11
+    @Test
+    fun aMagnetJobWithNoPeersFailsWithNoPeersAndNoPiecesClaimed() {
+        val t = small(0)
+        val engine = rig.engine(limits = TorrentLimits(reportMs = 50, noPeersMs = 2_000))
+        engine.start(t.magnetJob(peers = listOf(deadAddr()), folder = rig.save, doneBytes = 7))
+        rig.await("the failure") {
+            rig.clock.advance(1_000)
+            rig.eventsOf().any { it is EngineEvent.Failed }
+        }
+        val failed = rig.eventsOf().filterIsInstance<EngineEvent.Failed>().single()
+        assertEquals(NO_PEERS, failed.reason)
+        assertNull(failed.pieces)
+        assertEquals(7L, failed.done)
+        assertTrue(Files.notExists(t.magnetCopy))
+    }
+
+    @Test
+    fun aMagnetJobWhoseEveryPeerSendsBadMetadataFailsWithMetadataInvalid() {
+        val t = small(0)
+        val swarm =
+            rig.swarm(
+                t,
+                PeerScript(serveMetadata = t.built.info, metadataLie = true),
+                PeerScript(serveMetadata = t.built.info, metadataLie = true),
+            )
+        val engine = rig.engine(limits = TorrentLimits(reportMs = 50, noPeersMs = 2_000))
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        rig.await("the failure") {
+            rig.clock.advance(1_000)
+            rig.eventsOf().any { it is EngineEvent.Failed }
+        }
+        assertEquals(
+            METADATA_INVALID,
+            rig
+                .eventsOf()
+                .filterIsInstance<EngineEvent.Failed>()
+                .single()
+                .reason,
+        )
+        assertTrue(Files.notExists(t.magnetCopy), "bad metadata is never saved")
+    }
+
+    @Test
+    fun metadataThatMatchesTheHashButIsNoTorrentIsMetadataInvalidAndNotSaved() {
+        val junk = contentOf(500, seed = 77)
+        val served =
+            Served(
+                BuiltTorrent(ByteArray(0), junk, ByteArray(0), 16 * KB),
+                TorrentMeta(
+                    "x",
+                    listOf(TorrentFile("x", 1)),
+                    infoHash = sha1(junk),
+                    pieceLength =
+                        16L * KB,
+                    pieceHashes = listOf(ByteArray(20)),
+                ),
+            )
+        FakeSwarm(listOf(served), listOf(PeerScript(serveMetadata = junk))).use { swarm ->
+            val t = small(0)
+            val job = t.magnetJob(peers = swarm.addrs, folder = rig.save).copy(magnet = MagnetLink(sha1(junk), null, emptyList()))
+            rig.engine().start(job)
+            val failed = assertIs<EngineEvent.Failed>(rig.awaitTerminal())
+            assertEquals(METADATA_INVALID, failed.reason)
+            assertTrue(Files.notExists(t.magnetCopy))
+        }
+    }
+
+    @Test
+    fun aCopyThatCannotBeWrittenIsNotWritableAndNoPieceIsDownloaded() {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        val blocker = Files.write(rig.dir.resolve("blocker"), byteArrayOf(1)) // a file where the copy's folder should be
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, copy = blocker.resolve("x.torrent")))
+        val failed = assertIs<EngineEvent.Failed>(rig.awaitTerminal())
+        assertEquals(Reasons.NOT_WRITABLE, failed.reason)
+        assertTrue(rig.eventsOf().none { it is EngineEvent.Started || it is EngineEvent.Metadata })
+        assertEquals(0, swarm.peers.single().answers, "no piece was asked for")
+    }
+
+    @Test
+    fun aLeftOverTempCopyIsReplacedAndNotKept() {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        Files.createDirectories(t.magnetCopy.parent)
+        Files.write(Path.of("${t.magnetCopy}.tmp"), ByteArray(5000) { 9 })
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        assertTrue(Files.notExists(Path.of("${t.magnetCopy}.tmp")))
+        assertEquals(t.meta.infoHashHex, (readTorrent(Files.readAllBytes(t.magnetCopy)) as TorrentResult.Ok).meta.infoHashHex)
+    }
+
+    // AC10, the start of it: a job that has its copy is a `.torrent` job
+    @Test
+    fun aMagnetJobThatAlreadyHasItsCopyDoesNotFetchAnything() {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, copy = t.torrentFile))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        assertTrue(
+            swarm.peers
+                .single()
+                .metadataRequests
+                .isEmpty(),
+            "no metadata was asked for",
+        )
+        t.assertDownloaded(rig.save)
+    }
+
+    // review M1: the row never heard the metadata of a copy that was already there, and stayed "awaiting"
+    @Test
+    fun aMagnetJobThatAlreadyHasItsCopyTellsTheMetadataBeforeStartedAndDownloadsUnderTheTorrentsName() {
+        val t = rig.torrent(listOf("a.bin" to 40_000, "d/b.bin" to 30_000), name = "real name")
+        val swarm = rig.swarm(t, metadataOf(t))
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, name = "From The Link", copy = t.torrentFile))
+        val finished = finishedOf()
+        val metadata = assertIs<EngineEvent.Metadata>(rig.eventsOf().single { it is EngineEvent.Metadata })
+        assertEquals("real name", metadata.name)
+        assertEquals(70_000L, metadata.total)
+        assertEquals(t.meta.files, metadata.files)
+        val ks = kinds()
+        assertTrue(ks.indexOf("Metadata") < ks.indexOf("Started"), "the metadata is told before any piece is claimed: $ks")
+        t.assertDownloaded(rig.save, root = "real name")
+        assertTrue(Files.notExists(rig.save.resolve("From The Link")))
+        assertEquals("real name", finished.name)
+    }
+
+    // review m4: a row removed while its metadata is on the way must leave no copy behind, whenever the job ends
+    @Test
+    fun aMagnetJobWhoseRowWasForgottenDuringTheFetchSavesNoCopyAndTellsNoMetadata() {
+        val t = small(0)
+        val swarm = rig.swarm(t, PeerScript(serveMetadata = t.built.info, answerDelayMs = 600))
+        val engine = rig.engine()
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        rig.await("a request") {
+            swarm.peers
+                .single()
+                .metadataRequests
+                .isNotEmpty()
+        }
+        engine.forget("1")
+        runBlocking { engine.join("1") }
+        assertTrue(Files.notExists(t.magnetCopy), "no copy")
+        assertTrue(Files.notExists(Path.of("${t.magnetCopy}.tmp")), "no temp copy")
+        assertTrue(rig.eventsOf().none { it is EngineEvent.Metadata || it is EngineEvent.Started })
+    }
+
+    @Test
+    fun aMagnetJobStartedAfterItsIdWasForgottenFetchesAsAlways() {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        val engine = rig.engine()
+        engine.forget("1")
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        assertTrue(Files.isRegularFile(t.magnetCopy))
+    }
+
+    // AC14
+    @Test
+    fun theMetadataFetchIsHeldToTheSharedSpeedLimit() {
+        // 5,000 one-byte files: about 170 KB of metadata and a single piece
+        val t = rig.torrent(List(5_000) { "d/f$it.bin" to 1 }, name = "many")
+        assertTrue(t.built.info.size > 150_000, "${t.built.info.size}")
+        val swarm = rig.swarm(t, metadataOf(t))
+        val shares = RateShares()
+        shares.setRate(100_000)
+        val engine = rig.engine(clock = real, shares = shares)
+        val start = System.nanoTime()
+        engine.start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        rig.await("the metadata") { rig.eventsOf().any { it is EngineEvent.Metadata } }
+        val ms = (System.nanoTime() - start) / 1_000_000
+        assertTrue(ms >= 1_000, "${t.built.info.size} bytes at 100 KB/s cannot take $ms ms")
+        engine.stop("1")
+    }
+
+    // ---- review: the name, the check of the hash, a copy that cannot be used, `started` once
+
+    private fun finishedOf(id: String = "1") = assertIs<EngineEvent.Finished>(rig.awaitTerminal(id))
+
+    @Test
+    fun aMagnetJobWhoseNameIsNotTheTorrentsDownloadsUnderTheTorrentsName() {
+        val t = rig.torrent(listOf("a.bin" to 40_000, "d/b.bin" to 30_000), name = "real name")
+        val swarm = rig.swarm(t, metadataOf(t))
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, name = "From The Link"))
+        val finished = finishedOf()
+        t.assertDownloaded(rig.save, root = "real name")
+        assertTrue(Files.notExists(rig.save.resolve("From The Link")), "nothing is made under the link's name")
+        assertEquals("real name", finished.name, "the row hears the name its files have")
+    }
+
+    @Test
+    fun aMagnetNameWithASlashIsNoPathAndTheFilesGoUnderTheTorrentsName() {
+        val t = rig.torrent(listOf("a.bin" to 40_000), name = "plain", single = true)
+        val swarm = rig.swarm(t, metadataOf(t))
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, name = "a/b"))
+        assertEquals("plain", finishedOf().name)
+        t.assertDownloaded(rig.save, root = "plain")
+    }
+
+    @Test
+    fun aMagnetWithNoNameIsNamedByItsHashUntilTheMetadataGivesTheRealOne() {
+        val t = rig.torrent(listOf("a.bin" to 40_000), name = "movie")
+        val swarm = rig.swarm(t, metadataOf(t))
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save, name = t.meta.infoHashHex))
+        assertEquals("movie", finishedOf().name)
+        t.assertDownloaded(rig.save, root = "movie")
+        assertTrue(Files.notExists(rig.save.resolve(t.meta.infoHashHex)))
+    }
+
+    @Test
+    fun metadataWithBytesAfterItsDictionaryIsInvalidAndNotSavedEvenThoughItsHashMatches() {
+        val t = small(0)
+        // the hash holds for the dictionary and the pair behind it; read as a torrent, only the dictionary is the info
+        val padded = t.built.info + "1:x1:y".encodeToByteArray()
+        val served =
+            Served(
+                BuiltTorrent(ByteArray(0), padded, ByteArray(0), 16 * KB),
+                TorrentMeta(
+                    "x",
+                    listOf(TorrentFile("x", 1)),
+                    infoHash = sha1(padded),
+                    pieceLength = 16L * KB,
+                    pieceHashes = listOf(ByteArray(20)),
+                ),
+            )
+        FakeSwarm(listOf(served), listOf(PeerScript(serveMetadata = padded))).use { swarm ->
+            val job = t.magnetJob(peers = swarm.addrs, folder = rig.save).copy(magnet = MagnetLink(sha1(padded), null, emptyList()))
+            rig.engine().start(job)
+            assertEquals(METADATA_INVALID, assertIs<EngineEvent.Failed>(rig.awaitTerminal()).reason)
+            assertTrue(Files.notExists(t.magnetCopy))
+        }
+    }
+
+    private fun aMagnetJobReplacesAnUnusableCopy(makeCopy: (TestTorrent) -> Unit) {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        Files.createDirectories(t.magnetCopy.parent)
+        makeCopy(t)
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        t.assertDownloaded(rig.save)
+        assertTrue(rig.eventsOf().any { it is EngineEvent.Metadata }, "the metadata was fetched again")
+        assertEquals(t.meta.infoHashHex, (readTorrent(Files.readAllBytes(t.magnetCopy)) as TorrentResult.Ok).meta.infoHashHex)
+    }
+
+    @Test
+    fun aMagnetJobWithAnEmptyCopyFetchesTheMetadataAgain() = aMagnetJobReplacesAnUnusableCopy { Files.write(it.magnetCopy, ByteArray(0)) }
+
+    @Test
+    fun aMagnetJobWithACopyThatIsNoTorrentFetchesTheMetadataAgain() =
+        aMagnetJobReplacesAnUnusableCopy { Files.write(it.magnetCopy, ByteArray(300) { b -> b.toByte() }) }
+
+    @Test
+    fun aMagnetJobWithTheCopyOfAnotherTorrentFetchesTheMetadataAgain() =
+        aMagnetJobReplacesAnUnusableCopy {
+            val other = small(5)
+            Files.copy(other.torrentFile, it.magnetCopy)
+        }
+
+    @Test
+    fun aMagnetJobWithAnEmptyFolderWhereTheCopyShouldBeFetchesTheMetadataAgain() =
+        aMagnetJobReplacesAnUnusableCopy { Files.createDirectory(it.magnetCopy) }
+
+    @Test
+    fun aCopyThatCannotBeRemovedIsNotWritableAndNothingIsFetched() {
+        val t = small(0)
+        val swarm = rig.swarm(t, metadataOf(t))
+        Files.createDirectories(t.magnetCopy.resolve("inside")) // a folder with something in it: it is no file to replace
+        rig.engine().start(t.magnetJob(peers = swarm.addrs, folder = rig.save))
+        assertEquals(Reasons.NOT_WRITABLE, assertIs<EngineEvent.Failed>(rig.awaitTerminal()).reason)
+        assertTrue(
+            swarm.peers
+                .single()
+                .metadataRequests
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun theTrackersHearStartedOnceAcrossTheMetadataFetchAndTheDownloadThatFollows() {
+        // ten pieces behind a slow peer: the download is still going when its first announce is made
+        val t = rig.torrent(listOf("f.bin" to 10 * 16 * KB), single = true, name = "f.bin", seed = 21)
+        val swarm = rig.swarm(t, PeerScript(serveMetadata = t.built.info, answerDelayMs = 25))
+        val http = FakeHttpTracker().also { tr -> tr.answer = { _, _ -> TrackerAnswer.Body(FakeHttpTracker.peersReply(swarm.addrs)) } }
+        try {
+            val client = SchemeTrackerClient(HttpTrackerClient(timeoutMs = 3_000), UdpTrackerClient(rig.clock, tickMs = 5))
+            rig.engine(trackers = client).start(t.magnetJob(folder = rig.save, trackers = listOf(http.announceUrl)))
+            rig.await("the announce of the download") { http.seen.size >= 2 }
+            assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+            rig.await("the farewell") { http.events.contains("stopped") }
+            assertEquals("started", http.events.first())
+            assertEquals(1, http.events.count { it == "started" }, "events: ${http.events}")
+            assertNull(http.events[1], "the download's first announce is a plain one: ${http.events}")
+        } finally {
+            http.close()
+        }
+    }
 }

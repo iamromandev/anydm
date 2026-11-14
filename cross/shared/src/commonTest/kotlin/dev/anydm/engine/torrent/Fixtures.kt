@@ -161,3 +161,25 @@ internal fun repeated(
     for (i in 0 until times) u.copyInto(out, i * u.size)
     return out
 }
+
+/** The payload of a `ut_metadata` data message: the bencoded header, then the raw [block]. */
+internal fun metaDataPayload(
+    piece: Int,
+    total: Long,
+    block: ByteArray,
+): ByteArray = concat(listOf(bdict("msg_type" to bint(1), "piece" to bint(piece.toLong()), "total_size" to bint(total)), block))
+
+/** The payload of a `ut_metadata` reject message. */
+internal fun metaRejectPayload(piece: Int): ByteArray = bdict("msg_type" to bint(2), "piece" to bint(piece.toLong()))
+
+/** The payload of an extension handshake that offers `ut_metadata` as [id] and, when set, [size] bytes of metadata. */
+internal fun extHandshakePayload(
+    id: Int?,
+    size: Long?,
+): ByteArray =
+    bdict(
+        listOfNotNull(
+            "m" to bdict(listOfNotNull(id?.let { "ut_metadata" to bint(it.toLong()) })),
+            size?.let { "metadata_size" to bint(it) },
+        ),
+    )

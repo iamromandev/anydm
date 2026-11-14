@@ -174,6 +174,15 @@ private fun ActiveBody(
     FileCard(detail, onFiles, onChip)
     if (showMap(detail)) {
         ChunkMap(detail, Modifier.padding(horizontal = 20.dp).padding(bottom = 14.dp))
+    } else if (detail.item.awaitingMetadata) {
+        // A magnet has no pieces to draw until its metadata arrives.
+        Text(
+            WAITING_FOR_METADATA,
+            color = colors.textSecondary,
+            fontSize = 13.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 14.dp).testTag("detail-awaiting-metadata"),
+        )
     }
     // A real download's traffic is not bound to a network: there is nothing to break down per network.
     if (!detail.real) NetworkTable(detail, unit) { id -> setOff(toggleOff(off, networks, id)) }
@@ -692,7 +701,7 @@ private fun FileCard(
                         maxLines = 1,
                         modifier = Modifier.testTag("detail-card"),
                     )
-                    if (torrent) {
+                    if (torrent && !item.awaitingMetadata) {
                         FilesChip(item.fileList().size, onFiles, onChip)
                         etaText(item)?.let {
                             Text(
@@ -746,8 +755,12 @@ private fun etaText(item: DownloadItem): String? =
         null
     }
 
+/** Stands in the detail view where the piece map is, for a magnet row whose metadata has not arrived. */
+const val WAITING_FOR_METADATA = "Waiting for metadata"
+
 private fun cardLine(d: Detail): String {
     val item = d.item
+    if (item.awaitingMetadata) return "$WAITING_FOR_METADATA · ${d.peers} ${if (d.peers == 1) "peer" else "peers"}"
     val base = "${formatBytes(item.doneBytes)} of ${formatBytes(item.totalBytes)} · ${percent(item)}%"
     return if (item.kind == DownloadKind.Torrent) {
         "$base · ${d.peers} ${if (d.peers == 1) "peer" else "peers"}"

@@ -1,6 +1,7 @@
 package dev.anydm.engine.http
 
 import dev.anydm.engine.torrent.PieceSet
+import dev.anydm.engine.torrent.TorrentFile
 
 fun interface Clock {
     fun nowMs(): Long
@@ -97,6 +98,17 @@ sealed interface EngineEvent {
         val partId: String? = null,
         /** A torrent's verified pieces as the run starts with them. */
         val pieces: PieceSet? = null,
+    ) : EngineEvent
+
+    /**
+     * A magnet job has fetched and checked its metadata and saved it as the `.torrent` copy (the job's `torrentPath`): the real name,
+     * total size and files of the torrent. Comes before `Started`, and only for a job that had no copy when it began.
+     */
+    data class Metadata(
+        override val id: String,
+        val name: String,
+        val total: Long,
+        val files: List<TorrentFile>,
     ) : EngineEvent
 
     data class Progress(

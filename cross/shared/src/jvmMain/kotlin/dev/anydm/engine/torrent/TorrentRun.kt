@@ -108,6 +108,8 @@ internal class TorrentRun(
     private val meta: TorrentMeta,
     private val store: TorrentStore,
     have: PieceSet,
+    /** Trackers that heard `started` for this job already (while its metadata was fetched): its first announce to them has no event. */
+    private val startedTrackers: Set<String> = emptySet(),
 ) {
     private val layout = Layout(meta)
     private val picker = Picker(layout, have, env.random)
@@ -260,6 +262,7 @@ internal class TorrentRun(
             { verified.doneBytes(meta) },
             random,
             timing,
+            startedTrackers,
         ) { report ->
             when (report) {
                 is AnnounceReport.Peers -> inbox.send(RunMsg.Tracker(report.addrs, null))

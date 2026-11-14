@@ -64,7 +64,9 @@ import dev.anydm.engine.http.doneOf
 import dev.anydm.engine.http.finishedOver
 import dev.anydm.engine.http.sanitize
 import dev.anydm.engine.http.uniqueName
+import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.TorrentResult
+import dev.anydm.engine.torrent.parseMagnet
 import dev.anydm.engine.torrent.readTorrent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -381,6 +383,13 @@ fun HomeScreen(
                     if (fresh) saveNow.tryEmit(Unit)
                 }
 
+                // A magnet row's metadata arrived and the engine wrote the `.torrent` copy: the row gets its real name, size and files,
+                // and they go to disk now, so a restart does not show a row that is waiting for what the copy already holds.
+                is EngineEvent.Metadata -> {
+                    applyQueue(metadataArrived(q, e.id, e.name, e.total, e.files))
+                    saveNow.tryEmit(Unit)
+                }
+
                 is EngineEvent.Progress -> {
                     if (q.list.any { it.id == e.id && it.status == DownloadStatus.Downloading }) {
                         speedHistory[e.id] = (speedHistory[e.id].orEmpty() + e.bytesPerSec).takeLast(SPEED_HISTORY)
@@ -441,8 +450,9 @@ fun HomeScreen(
                 applyQueue(addDownload(liveQueue(), item, limits.concurrency))
             }
         }
-        // A new `.torrent`: a row with its info hash already there is selected instead (R4); else the app keeps a copy of the file
-        // (R2) and the row is added. The disk is read and written on IO; the rows are read here.
+        // A new `.torrent` or magnet: a row with its info hash already there is selected instead (R4); else the app keeps a copy of
+        // the file (R2) and the row is added. A magnet has no file: the engine fetches the metadata and writes the copy itself.
+        // The disk is read and written on IO; the rows are read here.
         LaunchedEffect(downloadEnv) {
             for (add in torrentAdds) {
                 snapshotFlow { downloadsLoaded }.first { it }
@@ -455,7 +465,7 @@ fun HomeScreen(
                 }
                 pendingHashes.add(hex)
                 try {
-                    if (!keepTorrentCopy(files.loader, downloadEnv.torrentFiles, add.preview)) {
+                    if (add.preview.magnet == null && !keepTorrentCopy(files.loader, downloadEnv.torrentFiles, add.preview)) {
                         notice = Notice(TORRENT_NOT_SAVED, SETTINGS_NOTICE_MS)
                         continue
                     }
@@ -622,7 +632,9 @@ fun HomeScreen(
                     withContext(Dispatchers.IO) {
                         when (val r = stores.downloads.load()) {
                             is JsonLoad.Loaded -> {
-                                JsonLoad.Loaded(restoredRows(r.value, downloadEnv.disk, defaultFolder(files.home)))
+                                JsonLoad.Loaded(
+                                    restoredRows(r.value, downloadEnv.disk, defaultFolder(files.home), downloadEnv.torrentFiles),
+                                )
                             }
 
                             JsonLoad.Missing -> {
@@ -1241,14 +1253,9 @@ fun HomeScreen(
                     networks.filter { it.enabled },
                     onCancel = { dialogOpen = false },
                     onDownload = { preview, ticked, folder, connections ->
-                        if (preview is Preview.Direct) {
-                            adds.trySend(NewLink(preview, ticked, folder, connections))
-                        } else if (preview is Preview.Torrent && preview.locked) {
-                            torrentAdds.trySend(NewTorrent(preview, folder))
-                        } else {
-                            // A magnet row is simulated: no file, no name to settle.
-                            val item = newDownloadItem(preview, ticked, ids.next(downloads), folder)
-                            applyQueue(addDownload(liveQueue(), item, limits.concurrency))
+                        when (preview) {
+                            is Preview.Direct -> adds.trySend(NewLink(preview, ticked, folder, connections))
+                            is Preview.Torrent -> torrentAdds.trySend(NewTorrent(preview, folder))
                         }
                         saveFolder = folder
                         filter = Filter.All
@@ -1330,7 +1337,7 @@ private class NewLink(
     val connections: Int,
 )
 
-/** A `.torrent` the user pressed Download on, until its row is added. */
+/** A `.torrent` or magnet the user pressed Download on, until its row is added. */
 private class NewTorrent(
     val preview: Preview.Torrent,
     val folder: String,
@@ -1389,13 +1396,13 @@ private suspend fun awaitedProbe(
 private fun fold(name: String): String = name.lowercase(Locale.ROOT)
 
 /** The names other real downloads in [folder] hold, folded: their final name and their `.part`. */
-private fun takenNames(
+internal fun takenNames(
     rows: List<DownloadItem>,
     folder: String,
     home: String,
 ): Set<String> =
     rows
-        .filter { it.url != null && (it.folder ?: defaultFolder(home)) == folder }
+        .filter { it.kind == DownloadKind.Direct && it.url != null && (it.folder ?: defaultFolder(home)) == folder }
         .flatMap { listOf(fold(it.name), fold("${it.name}.part")) }
         .toSet()
 
@@ -1464,11 +1471,10 @@ internal fun restoredRows(
     file: DownloadsFile,
     disk: DiskIo,
     defaultFolder: String,
+    copies: TorrentFileStore = NoTorrentFiles,
 ): List<DownloadItem> =
     fromDownloadsFile(file).map { item ->
-        // A torrent row with no info hash has nothing the torrent engine could run from: resuming it says so (NFR6). A magnet row made
-        // since magnet rows carry a mark is a simulation and stays one; one saved before the mark cannot be told from an old torrent row.
-        if (item.kind == DownloadKind.Torrent && item.infoHash == null && !item.simulated) return@map item.copy(noCopy = true)
+        if (item.kind == DownloadKind.Torrent) return@map restoredTorrent(item, copies)
         if (item.kind != DownloadKind.Direct || item.url == null || item.status == DownloadStatus.Finished) return@map item
         val size =
             try {
@@ -1494,3 +1500,55 @@ internal fun restoredRows(
             else -> item.copy(doneBytes = size ?: 0L)
         }
     }
+
+/**
+ * A saved torrent row. One from a build that simulated magnets (no info hash) was never downloading anything: with its magnet link
+ * it becomes a real magnet row at 0, waiting for its metadata (R13); an old magnet row kept no link, so there is nothing to fetch
+ * from, and it says so when resumed like any torrent row from before torrents were real (NFR6) but at 0. A magnet row waiting for
+ * its metadata whose `.torrent` copy is there after all (the app ended between the copy and the save) takes its total and files
+ * from the copy, and its name too unless it has run (its files then have the name it shows).
+ */
+private fun restoredTorrent(
+    item: DownloadItem,
+    copies: TorrentFileStore,
+): DownloadItem {
+    if (item.infoHash == null) {
+        val link = item.url?.let { (parseMagnet(it) as? MagnetResult.Ok)?.link }
+        val old = item.copy(simulated = false, status = DownloadStatus.Paused, error = null)
+        return when {
+            link != null -> {
+                old.copy(
+                    infoHash = link.infoHashHex,
+                    doneBytes = 0,
+                    pieces = null,
+                    files = null,
+                    totalBytes = UNKNOWN_SIZE,
+                    noCopy = false,
+                )
+            }
+
+            item.simulated -> {
+                // nothing of the simulation is kept: it would show "0 of <made-up size>" and a made-up file list
+                old.copy(doneBytes = 0, totalBytes = UNKNOWN_SIZE, files = null, noCopy = true)
+            }
+
+            else -> {
+                item.copy(noCopy = true)
+            }
+        }
+    }
+    if (!item.lacksFiles) return item
+    val meta =
+        try {
+            copies.read(item.infoHash)?.let(::metaOf)?.takeIf { it.infoHashHex == item.infoHash }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return item
+    return item.copy(
+        name = if (item.pieces == null) meta.name else item.name,
+        totalBytes = meta.files.sumOf { it.size },
+        files = meta.files.map { SampleFile(it.path, it.size) },
+    )
+}

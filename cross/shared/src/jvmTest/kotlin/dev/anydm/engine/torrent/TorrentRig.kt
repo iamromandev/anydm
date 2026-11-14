@@ -60,6 +60,32 @@ internal class TestTorrent(
         doneBytes: Long = 0,
     ) = TorrentJob(id, torrentFile.toString(), folder.toString(), name, pieces, peerId, peers, doneBytes)
 
+    /** Where the copy of a magnet job is saved: no file is there until the engine has fetched the metadata. */
+    val magnetCopy: Path = dir.resolve("copies").resolve("$name-$seed.torrent")
+
+    /** The job of a magnet link for this torrent: [magnetCopy] is missing, so the engine fetches the metadata from the peers first. */
+    fun magnetJob(
+        id: String = "1",
+        peers: List<PeerAddr> = emptyList(),
+        folder: Path,
+        pieces: PieceSet? = null,
+        name: String = meta.name,
+        peerId: ByteArray = Rig.PEER_ID,
+        doneBytes: Long = 0,
+        trackers: List<String> = emptyList(),
+        copy: Path = magnetCopy,
+    ) = TorrentJob(
+        id,
+        copy.toString(),
+        folder.toString(),
+        name,
+        pieces,
+        peerId,
+        peers,
+        doneBytes,
+        MagnetLink(meta.infoHash, meta.name, trackers),
+    )
+
     /** Every file of the torrent is under [folder]/[root] with exactly the right bytes (SHA-256), and no `.part` is left. */
     fun assertDownloaded(
         folder: Path,

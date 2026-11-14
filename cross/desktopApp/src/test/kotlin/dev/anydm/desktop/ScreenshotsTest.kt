@@ -212,7 +212,7 @@ class ScreenshotsTest {
     fun captureDialog() {
         val direct = "https://example.com/files/archive.zip"
         val streams = "http://127.0.0.1:8765/Project.zip"
-        val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8"
+        val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337"
         for ((theme, dark) in listOf("dark" to true, "light" to false)) {
             shot("dialog-direct-$theme-1280x800", populatedSample(), dark, 1280, 800, direct)
             shot("dialog-magnet-$theme-1280x800", populatedSample(), dark, 1280, 800, magnet)
@@ -353,7 +353,7 @@ class ScreenshotsTest {
 
     @Test
     fun captureNetworkSettings() {
-        val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8"
+        val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337"
         val base = populatedSample()
         val withProxy =
             base.copy(
@@ -586,6 +586,51 @@ class ScreenshotsTest {
                     waitForIdle()
                     onNodeWithTag("chevron-1").performClick()
                     onNodeWithTag("detail-map").performScrollTo()
+                }
+            }
+        }
+    }
+
+    /** Real magnets: the dialog before the metadata is known, its two refusals, and a row (and its detail) fetching the metadata. */
+    @Test
+    fun captureMagnets() {
+        val hex = "08ada5a7a6183aae1e09d831df6748d566095a10"
+        val tracker = "tr=udp%3A%2F%2Ftracker.example%3A1337&tr=https%3A%2F%2Ft2.example%2Fannounce"
+        val magnet = "magnet:?xt=urn:btih:$hex&dn=Sintel&$tracker"
+        val fetching =
+            DownloadItem(
+                "9",
+                "Sintel",
+                UNKNOWN_SIZE,
+                0,
+                0,
+                DownloadStatus.Downloading,
+                DownloadKind.Torrent,
+                url = magnet,
+                infoHash = hex,
+            )
+        val state = populatedSample().copy(downloads = listOf(fetching) + populatedSample().downloads)
+        for ((theme, dark) in listOf("dark" to true, "light" to false)) {
+            for ((w, h) in listOf(1280 to 800, 900 to 600)) {
+                val size = "$theme-${w}x$h"
+                shot("torrent-magnet-dialog-$size", populatedSample(), dark, w, h, magnet)
+                shot("torrent-magnet-invalid-$size", populatedSample(), dark, w, h, "magnet:?dn=Sintel&$tracker")
+                shot("torrent-magnet-no-trackers-$size", populatedSample(), dark, w, h, "magnet:?xt=urn:btih:$hex&dn=Sintel")
+                val feed = FakeTorrentEngine()
+                shot("torrent-magnet-fetching-$size", state, dark, w, h, env = DownloadEnv.inert().copy(torrents = feed)) {
+                    waitForIdle()
+                    feed.emit(EngineEvent.Progress("9", 0, null, 0, peers = 3))
+                    mainClock.advanceTimeByFrame()
+                    waitForIdle()
+                }
+                val feed2 = FakeTorrentEngine()
+                shot("torrent-magnet-detail-$size", state, dark, w, h, env = DownloadEnv.inert().copy(torrents = feed2)) {
+                    waitForIdle()
+                    feed2.emit(EngineEvent.Progress("9", 0, null, 0, peers = 3))
+                    mainClock.advanceTimeByFrame()
+                    waitForIdle()
+                    onNodeWithTag("chevron-9").performClick()
+                    waitForIdle()
                 }
             }
         }

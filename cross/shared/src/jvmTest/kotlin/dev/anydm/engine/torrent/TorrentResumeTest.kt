@@ -330,4 +330,41 @@ class TorrentResumeTest {
         big.assertDownloaded(rig.save)
         assertContentEquals(big.data, Files.readAllBytes(rig.save.resolve("f.bin")))
     }
+
+    // AC10: after its metadata a magnet job is a `.torrent` job: a stop and a resume re-check the pieces and fetch none of them again
+    @Test
+    fun aMagnetJobResumesLikeATorrentAfterItsMetadataWasFetched() {
+        val big = rig.torrent(listOf("f.bin" to 3_000_000), pieceLength = 32 * KB, single = true, name = "f.bin", seed = 9)
+        val script = PeerScript(serveMetadata = big.built.info, bytesPerSec = 400_000)
+        val swarm = rig.swarm(big, script, script)
+        val engine = rig.engine()
+        engine.start(big.magnetJob(peers = swarm.addrs, folder = rig.save))
+        rig.await("some blocks") { swarm.peers.sumOf { it.answers } >= 60 }
+        engine.stop("1")
+        runBlocking { engine.join("1") }
+        val pieces = assertNotNull(rig.awaitStopped().pieces)
+        assertTrue(pieces.count > 0)
+        assertTrue(Files.isRegularFile(big.magnetCopy), "the copy stays: a resume needs no metadata")
+        rig.await("the peers to let go") { swarm.peers.all { it.open == 0 } }
+        val metadataAsked = swarm.peers.sumOf { it.metadataRequests.size }
+        val requestsBefore = swarm.peers.map { it.requests.size }
+
+        engine.start(big.magnetJob(peers = swarm.addrs, folder = rig.save, pieces = pieces))
+        assertIs<EngineEvent.Finished>(rig.awaitTerminal())
+        assertEquals(1, rig.eventsOf().count { it is EngineEvent.Metadata }, "the metadata is told once, by the first run")
+        val checked =
+            rig
+                .eventsOf()
+                .filterIsInstance<EngineEvent.Started>()
+                .last()
+                .pieces
+        assertEquals(pieces, checked, "the pieces that held are the ones it had")
+        assertEquals(metadataAsked, swarm.peers.sumOf { it.metadataRequests.size }, "no metadata was asked for again")
+        // none of the verified pieces was requested in the second run: what each peer was asked for since is outside `pieces`
+        val later = swarm.peers.flatMapIndexed { i, p -> p.requests.drop(requestsBefore[i]).map { it.piece } }
+        assertTrue(later.none { pieces.has(it) }, "a verified piece was asked for again")
+        assertEquals(big.meta.pieceCount - pieces.count, later.toSet().size, "exactly the missing pieces were fetched, once each")
+        big.assertDownloaded(rig.save)
+        assertContentEquals(big.data, Files.readAllBytes(rig.save.resolve("f.bin")))
+    }
 }

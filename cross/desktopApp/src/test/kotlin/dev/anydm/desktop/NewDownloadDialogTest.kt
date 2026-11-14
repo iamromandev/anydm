@@ -40,7 +40,9 @@ import kotlin.test.Test
 
 @OptIn(ExperimentalTestApi::class)
 class NewDownloadDialogTest {
-    private val magnet = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8"
+    private val magnet =
+        "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337&tr=https%3A%2F%2Ft2.example%2Fannounce"
+    private val unknownSize = "Unknown until metadata arrives"
     private val unknownNote = "size unknown · Uses one connection. This server doesn't support parallel downloads."
 
     private fun ComposeUiTest.home(
@@ -160,36 +162,68 @@ class NewDownloadDialogTest {
         }
 
     @Test
-    fun magnetShowsTreeAndTicksUpdateSummary() =
+    fun aMagnetShowsItsDnNameAnUnknownSizeAndNoFileTree() =
         runComposeUiTest {
             home()
             open(magnet)
             onNodeWithTag("preview-name").assertTextEquals("Sintel")
             onNodeWithTag("preview-badge").assertTextEquals("DIR")
-            onNodeWithTag("preview-detail").assertTextEquals("11 files · 123.3 MB")
-            onNodeWithTag("folder-toggle").assertIsOn()
-            onNodeWithTag("file-Sintel.mp4").assertIsOn()
+            onNodeWithTag("preview-detail").assertTextEquals(unknownSize)
+            onNodeWithTag("torrent-tree").assertDoesNotExist()
+            onNodeWithTag("folder-toggle").assertDoesNotExist()
+            onNodeWithTag("file-Sintel.mp4").assertDoesNotExist()
+            onNodeWithTag("torrent-hint").assertDoesNotExist()
+            onNodeWithTag("magnet-error").assertDoesNotExist()
             onNodeWithTag("streams-auto").assertDoesNotExist()
-            onNodeWithTag("file-Sintel.mp4").performClick()
-            onNodeWithTag("file-Sintel.mp4").assertIsOff()
-            onNodeWithTag("folder-toggle").assertIsOff()
-            onNodeWithTag("preview-detail").assertTextEquals("10 files · 15.1 KB")
             onNodeWithTag("download").assertIsEnabled()
         }
 
     @Test
-    fun folderToggleUnticksAllThenTicksAll() =
+    fun aMagnetWithoutDnShowsTheHashInHexAsItsName() =
         runComposeUiTest {
             home()
-            open(magnet)
-            onNodeWithTag("folder-toggle").performClick()
-            onNodeWithTag("file-Sintel.mp4").assertIsOff()
-            onNodeWithTag("preview-detail").assertTextEquals("0 files · 0 B")
-            onNodeWithTag("download").assertIsNotEnabled()
-            onNodeWithTag("folder-toggle").performClick()
-            onNodeWithTag("file-Sintel.mp4").assertIsOn()
-            onNodeWithTag("preview-detail").assertTextEquals("11 files · 123.3 MB")
-            onNodeWithTag("download").assertIsEnabled()
+            open("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&tr=udp%3A%2F%2Ftracker.example%3A1337")
+            onNodeWithTag("preview-name").assertTextEquals("08ada5a7a6183aae1e09d831df6748d566095a10")
+        }
+
+    @Test
+    fun aMagnetWithoutAValidHashSaysSoAndCannotBeDownloaded() =
+        runComposeUiTest {
+            home()
+            for (bad in listOf("magnet:?dn=x", "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d56609a1&tr=udp%3A%2F%2Ft.example%3A1")) {
+                open(bad)
+                onNodeWithTag("magnet-error").assertTextEquals("Not a valid magnet link")
+                onNodeWithTag("preview-name").assertDoesNotExist()
+                onNodeWithTag("download").assertIsNotEnabled()
+                onNodeWithTag("cancel").performClick()
+            }
+        }
+
+    @Test
+    fun aMagnetWithNoUsableTrackerSaysSoAndCannotBeDownloaded() =
+        runComposeUiTest {
+            home()
+            for (bad in listOf(
+                "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel",
+                "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&tr=wss%3A%2F%2Ft.example",
+            )) {
+                open(bad)
+                onNodeWithTag("magnet-error").assertTextEquals("This magnet has no trackers")
+                onNodeWithTag("preview-name").assertDoesNotExist()
+                onNodeWithTag("download").assertIsNotEnabled()
+                onNodeWithTag("cancel").performClick()
+            }
+        }
+
+    @Test
+    fun theMagnetErrorGoesWhenTheTextBecomesAUsableLink() =
+        runComposeUiTest {
+            home()
+            open("magnet:?dn=x")
+            onNodeWithTag("magnet-error").assertIsDisplayed()
+            onNodeWithTag("url-field").performTextReplacement(magnet)
+            onNodeWithTag("magnet-error").assertDoesNotExist()
+            onNodeWithTag("preview-name").assertTextEquals("Sintel")
         }
 
     @Test
@@ -244,13 +278,14 @@ class NewDownloadDialogTest {
         }
 
     @Test
-    fun magnetDownloadAddsOneRowNamedSintel() =
+    fun magnetDownloadAddsOneRowNamedByItsDnThatIsFetchingMetadata() =
         runComposeUiTest {
             home(emptySample())
             open(magnet)
             onNodeWithTag("download").performClick()
             onNodeWithText("DOWNLOADING 1").assertIsDisplayed()
             onNodeWithText("Sintel").assertIsDisplayed()
+            onNodeWithTag("speed-1").assertTextEquals("Fetching metadata…")
         }
 
     @Test
@@ -268,7 +303,7 @@ class NewDownloadDialogTest {
         runComposeUiTest {
             home(clipboard = magnet)
             paste()
-            onNodeWithTag("preview-detail").assertTextEquals("11 files · 123.3 MB")
+            onNodeWithTag("preview-detail").assertTextEquals(unknownSize)
         }
 
     @Test
@@ -334,7 +369,7 @@ class NewDownloadDialogTest {
         runComposeUiTest {
             home()
             open(magnet)
-            onNodeWithTag("file-Sintel.mp4").performClick()
+            onNodeWithTag("save-change").performClick()
             onRoot().performKeyInput { pressKey(Key.Escape) }
             dialogGone()
         }
@@ -435,7 +470,7 @@ class NewDownloadDialogTest {
             val prober = answering("x", 1, true)
             home(prober = prober)
             open(magnet)
-            onNodeWithTag("preview-detail").assertTextEquals("11 files · 123.3 MB")
+            onNodeWithTag("preview-detail").assertTextEquals(unknownSize)
             Thread.sleep(100)
             mainClock.advanceTimeBy(1_000)
             check(prober.probed.isEmpty())

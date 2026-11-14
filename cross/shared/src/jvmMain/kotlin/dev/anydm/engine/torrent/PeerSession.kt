@@ -152,7 +152,7 @@ internal class PeerSession(
     }
 
     private suspend fun readLoop(conn: PeerConn): Nothing {
-        val decoder = WireDecoder(layout = layout)
+        val decoder = WireDecoder(layout = layout, extensions = false)
         val state = PeerProtocolState()
         val buf = ByteArray(READ_CHUNK)
         while (true) {

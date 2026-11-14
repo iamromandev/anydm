@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -224,5 +225,23 @@ class BencodeTest {
         val src = "d4:info3:abce".encodeToByteArray()
         val range = assertIs<DecodeResult.Ok>(decodeBencode(src)).infoRange
         assertEquals("3:abc", range?.let { src.copyOfRange(it.first, it.last + 1).decodeToString() })
+    }
+
+    @Test
+    fun aPrefixIsTheFirstValueAndHowManyBytesItTook() {
+        val src = "d1:ai1eeTRAILING".encodeToByteArray()
+        val p = assertNotNull(decodeBencodePrefix(src))
+        assertEquals(BDict(mapOf("a" to BInt(1))), p.value)
+        assertEquals(8, p.length)
+        assertEquals(BInt(5), assertNotNull(decodeBencodePrefix("i5e".encodeToByteArray())).value)
+    }
+
+    @Test
+    fun aPrefixThatIsNotAWholeValueIsNull() {
+        assertNull(decodeBencodePrefix(ByteArray(0)))
+        assertNull(decodeBencodePrefix("d1:ai1e".encodeToByteArray()))
+        assertNull(decodeBencodePrefix("xyz".encodeToByteArray()))
+        assertNull(decodeBencodePrefix("d1:ad1:bd1:ci1eeee".encodeToByteArray(), maxDepth = 2))
+        assertNull(decodeBencodePrefix("li1ei2ei3ee".encodeToByteArray(), maxNodes = 3))
     }
 }

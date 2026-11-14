@@ -82,6 +82,8 @@ private class FakeLoader(
 private const val HOME = "/home/test"
 
 private val tr = listOf(listOf("http://tracker.test/announce"))
+private const val MAGNET_LINK =
+    "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.example%3A1337"
 
 @OptIn(ExperimentalTestApi::class)
 class FilesTest {
@@ -218,12 +220,14 @@ class FilesTest {
         }
 
     @Test
-    fun aMagnetStillShowsTheSimulatedTreeWithTickableBoxesAndNoHint() =
+    fun aMagnetShowsNoTreeAndNoHintBeforeItsMetadataIsKnown() =
         runComposeUiTest {
             home()
             openDialog()
-            onNodeWithTag("url-field").performTextInput("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d8")
-            onNodeWithTag("file-Sintel.mp4").assertIsEnabled()
+            onNodeWithTag("url-field").performTextInput(MAGNET_LINK)
+            onNodeWithTag("preview-name").assertTextEquals("Sintel")
+            onNodeWithTag("torrent-tree").assertDoesNotExist()
+            onNodeWithTag("file-Sintel.mp4").assertDoesNotExist()
             onNodeWithTag("torrent-hint").assertDoesNotExist()
         }
 
@@ -708,12 +712,11 @@ class FilesTest {
         }
 
     @Test
-    fun aMagnetStillTicksItsOwnSampleFiles() =
+    fun aMagnetCanBeDownloadedWithNoFileToTick() =
         runComposeUiTest {
             home()
             openDialog()
-            onNodeWithTag("url-field").performTextInput("magnet:?xt=urn:btih:abc")
-            onNodeWithTag("file-Sintel.mp4").assertIsOn()
+            onNodeWithTag("url-field").performTextInput(MAGNET_LINK)
             onNodeWithTag("download").assertIsEnabled()
         }
 
@@ -780,9 +783,9 @@ class FilesTest {
     fun aDroppedMagnetOpensNewDownloadFilledIn() =
         runComposeUiTest {
             home()
-            dropText("magnet:?xt=urn:btih:abc&dn=Sintel")
+            dropText(MAGNET_LINK)
             onNodeWithTag("new-download-dialog").assertIsDisplayed()
-            onNodeWithTag("url-field").assertTextEquals("magnet:?xt=urn:btih:abc&dn=Sintel")
+            onNodeWithTag("url-field").assertTextEquals(MAGNET_LINK)
             onNodeWithTag("preview-name").assertTextEquals("Sintel")
             onNodeWithTag("notice").assertDoesNotExist()
         }

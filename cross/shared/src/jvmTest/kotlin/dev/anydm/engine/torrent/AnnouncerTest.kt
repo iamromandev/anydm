@@ -98,6 +98,7 @@ class AnnouncerTest {
         random: Random = Random(1),
         farewellMs: Long = 2_000,
         client: TrackerClient = trackers,
+        alreadyStarted: Set<String> = emptySet(),
     ) = Announcer(
         client,
         clock,
@@ -108,6 +109,7 @@ class AnnouncerTest {
         downloaded = { done },
         random = random,
         timing = AnnounceTiming(tickMs = 5, farewellMs = farewellMs),
+        alreadyStarted = alreadyStarted,
         report = { reports.add(it) },
     )
 
@@ -143,6 +145,27 @@ class AnnouncerTest {
         assertEquals(250L, call.downloaded)
         assertEquals(750L, call.left)
         assertEquals(peers, assertIs<AnnounceReport.Peers>(reports.single()).addrs)
+    }
+
+    @Test
+    fun aTrackerThatHeardStartedFromAnEarlierAnnouncerOfTheJobIsNotToldAgain() {
+        trackers.answer = { url, _ -> if (url == "a") ok(found = none) else ok() }
+        val a = announcer(listOf(listOf("a"), listOf("b")), alreadyStarted = setOf("a"))
+        start(a)
+        await("a report") { reports.size == 1 }
+        assertEquals(listOf("a", "b"), trackers.urls())
+        assertEquals(null, trackers.calls[0].event, "a had heard it")
+        assertEquals(AnnounceEvent.Started, trackers.calls[1].event, "b had not")
+        assertEquals(setOf("a", "b"), a.startedTrackers())
+    }
+
+    @Test
+    fun theTrackersThatHeardStartedAreTheOnesThatAnsweredARequestWithIt() {
+        trackers.answer = { url, _ -> if (url == "b") ok() else null }
+        val a = announcer(listOf(listOf("a"), listOf("b")))
+        start(a)
+        await("a report") { reports.size == 1 }
+        assertEquals(setOf("b"), a.startedTrackers(), "a never answered")
     }
 
     @Test

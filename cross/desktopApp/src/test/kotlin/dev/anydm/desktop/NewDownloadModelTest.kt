@@ -1,6 +1,7 @@
 package dev.anydm.desktop
 
 import dev.anydm.engine.http.ProbeResult
+import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.TorrentFile
 import dev.anydm.engine.torrent.TorrentMeta
 import kotlin.test.Test
@@ -14,6 +15,13 @@ class NewDownloadModelTest {
     private fun direct(raw: String) = assertIs<Preview.Direct>(parsePreview(raw))
 
     private val all = sintelFiles.map { it.name }.toSet()
+
+    private val magnetHex = "08ada5a7a6183aae1e09d831df6748d566095a10"
+    private val trackers = "&tr=udp%3A%2F%2Ftracker.example%3A1337&tr=https%3A%2F%2Ft2.example%2Fannounce"
+    private val magnetText = "magnet:?xt=urn:btih:$magnetHex&dn=Sintel$trackers"
+    private val bareMagnet = "magnet:?xt=urn:btih:$magnetHex$trackers"
+
+    private fun magnet(raw: String = magnetText) = assertIs<Preview.Torrent>(parsePreview(raw))
 
     @Test
     fun plainLinkIsDirectWithOneConnection() {
@@ -86,7 +94,7 @@ class NewDownloadModelTest {
 
     @Test
     fun magnetDnDecodesPlusAsSpace() {
-        assertEquals("My Movie", assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:a&dn=My+Movie")).name)
+        assertEquals("My Movie", magnet("magnet:?xt=urn:btih:$magnetHex&dn=My+Movie$trackers").name)
     }
 
     @Test
@@ -120,14 +128,69 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun magnetIsTorrentNamedSintelOrDn() {
-        val a = assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc123"))
+    fun aMagnetPreviewIsATorrentNamedByDnOrItsHashWithNoFilesAndAnUnknownSize() {
+        val a = magnet()
         assertEquals("Sintel", a.name)
+        assertEquals(magnetHex, a.infoHash)
+        assertEquals(magnetHex, a.magnet?.infoHashHex)
+        assertEquals(listOf("udp://tracker.example:1337", "https://t2.example/announce"), a.magnet?.trackers)
         assertEquals("DIR", a.badge)
         assertFalse(a.parallel)
-        assertEquals(11, a.files.size)
-        val b = assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc&dn=My%20Movie&tr=x"))
-        assertEquals("My Movie", b.name)
+        assertEquals(emptyList(), a.files, "no sample tree for a magnet")
+        assertEquals(magnetHex, magnet(bareMagnet).name, "without dn the hash in hex is the name")
+        assertEquals("My Movie", magnet("magnet:?xt=urn:btih:$magnetHex&dn=My%20Movie$trackers").name)
+    }
+
+    @Test
+    fun aMagnetsDetailSaysTheSizeAndFilesAreUnknownUntilTheMetadataArrives() {
+        assertEquals("Unknown until metadata arrives", previewDetail(magnet(), emptySet()))
+    }
+
+    @Test
+    fun aMagnetNameIsShownCleanedOfControlAndDirectionCharacters() {
+        assertEquals("evilgpj.exe", magnet("magnet:?xt=urn:btih:$magnetHex&dn=evil%E2%80%AEgpj.exe$trackers").name)
+        assertEquals(255, magnet("magnet:?xt=urn:btih:$magnetHex&dn=${"a".repeat(400)}$trackers").name.length)
+    }
+
+    @Test
+    fun aMagnetThatIsNotUsableHasNoPreviewButAReasonForTheDialog() {
+        for (raw in listOf(
+            "magnet:?dn=x",
+            "magnet:?xt=urn:btih:${magnetHex.drop(1)}$trackers",
+            "magnet:xt=urn:btih:$magnetHex",
+            "MAGNET:",
+        )) {
+            assertNull(parsePreview(raw), raw)
+            assertEquals("Not a valid magnet link", magnetProblem(raw), raw)
+        }
+        for (raw in listOf("magnet:?xt=urn:btih:$magnetHex", "magnet:?xt=urn:btih:$magnetHex&tr=wss%3A%2F%2Ft.example")) {
+            assertNull(parsePreview(raw), raw)
+            assertEquals("This magnet has no trackers", magnetProblem(raw), raw)
+        }
+        assertNull(magnetProblem(magnetText))
+        assertNull(magnetProblem("https://x.test/a.zip"))
+        assertNull(magnetProblem("hello"))
+    }
+
+    @Test
+    fun theLinkAMagnetRowSavesReadsBackAsTheSameMagnet() {
+        val link = magnet().magnet!!
+        val url = magnetUrl(link)
+        assertEquals(
+            MagnetResult.Ok(link),
+            dev.anydm.engine.torrent
+                .parseMagnet(url),
+        )
+        val odd =
+            dev.anydm.engine.torrent.parseMagnet(
+                "magnet:?xt=urn:btih:$magnetHex&dn=A%26B+%C3%A9%20c&tr=http%3A%2F%2Ft.example%2Fa%3Fx%3D1%26y%3D2",
+            )
+        val oddLink = (odd as MagnetResult.Ok).link
+        assertEquals(
+            MagnetResult.Ok(oddLink),
+            dev.anydm.engine.torrent
+                .parseMagnet(magnetUrl(oddLink)),
+        )
     }
 
     @Test
@@ -165,9 +228,6 @@ class NewDownloadModelTest {
         assertEquals("400.0 MB · Resumable · 1 connection", ready(400L * 1024 * 1024, true, 1))
         assertEquals("size unknown · Resumable", ready(null, true))
         assertEquals("1.0 KB · Uses one connection. This server doesn't support parallel downloads.", ready(1024, false))
-        val t = parsePreview("magnet:?xt=urn:btih:abc")!!
-        assertEquals("11 files · 123.3 MB", previewDetail(t, all))
-        assertEquals("1 file · 1.5 KB", previewDetail(t, setOf(sintelFiles.last().name)))
     }
 
     @Test
@@ -201,7 +261,7 @@ class NewDownloadModelTest {
 
     @Test
     fun aTorrentRowHasNoConnectionsToChoose() {
-        assertEquals(1, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1", null, 8).connections)
+        assertEquals(1, newDownloadItem(magnet(), all, "1", null, 8).connections)
     }
 
     @Test
@@ -211,9 +271,9 @@ class NewDownloadModelTest {
         val probed = probedPreview(direct("https://x.test/a.zip"), ProbeState.Ready(ProbeResult("b.zip", 5000, true)))
         val r = newDownloadItem(probed, all, "10", "/data")
         assertEquals(listOf("b.zip", 5000L, "/data"), listOf(r.name, r.totalBytes, r.folder))
-        val t = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all - "Sintel.mp4", "11")
+        val t = newDownloadItem(magnet(), emptySet(), "11")
         assertEquals("Sintel", t.name)
-        assertEquals(torrentSummary(sintelFiles, all - "Sintel.mp4").second, t.totalBytes)
+        assertEquals(UNKNOWN_SIZE, t.totalBytes)
     }
 
     private fun loaded(
@@ -236,7 +296,7 @@ class NewDownloadModelTest {
         assertEquals("FILE", previewOf(loaded("README", "README" to 5L, single = true)).badge)
         assertEquals("DIR", previewOf(loaded("Show", "a.mkv" to 1L, "b.mkv" to 1L)).badge)
         assertEquals("DIR", previewOf(loaded("Show", "Season 1/a.mkv" to 1L)).badge)
-        assertEquals("DIR", assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc")).badge)
+        assertEquals("DIR", magnet().badge)
     }
 
     @Test
@@ -249,14 +309,14 @@ class NewDownloadModelTest {
     fun initialTickedComesFromThePreviewsOwnFiles() {
         val real = previewOf(loaded("Show", "Season 1/E01.mkv" to 30L, "notes.txt" to 0L))
         assertEquals(setOf("Season 1/E01.mkv", "notes.txt"), initialTicked(real))
-        assertEquals(all, initialTicked(parsePreview("magnet:?xt=urn:btih:abc")))
+        assertEquals(emptySet(), initialTicked(magnet()))
         assertEquals(emptySet(), initialTicked(parsePreview("https://x.test/a.zip")))
         assertEquals(emptySet(), initialTicked(null))
     }
 
     @Test
     fun torrentPreviewsBecomeTorrentItemsAndDirectOnesStayDirect() {
-        val t = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1")
+        val t = newDownloadItem(magnet(), emptySet(), "1")
         assertEquals(DownloadKind.Torrent, t.kind)
         assertEquals(DownloadKind.Torrent, newDownloadItem(previewOf(loaded("a", "a" to 1L)), setOf("a"), "2").kind)
         assertEquals(DownloadKind.Direct, newDownloadItem(direct("https://x.test/a.zip"), all, "3").kind)
@@ -271,10 +331,31 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun aMagnetsSimulatedTreeStillTakesTheTicks() {
-        val item = newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all - "Sintel.mp4", "1")
-        assertEquals(torrentSummary(sintelFiles, all - "Sintel.mp4").second, item.totalBytes)
-        assertEquals(sintelFiles.filter { it.name != "Sintel.mp4" }, item.files)
+    fun aMagnetRowIsARealTorrentRowWaitingForItsMetadata() {
+        val item = newDownloadItem(magnet(), emptySet(), "4", "/data")
+        assertEquals(
+            listOf<Any?>("Sintel", UNKNOWN_SIZE, 0L, 0L, DownloadKind.Torrent, "/data", magnetHex, null, null, false, false),
+            listOf(
+                item.name,
+                item.totalBytes,
+                item.doneBytes,
+                item.bytesPerSec,
+                item.kind,
+                item.folder,
+                item.infoHash,
+                item.files,
+                item.pieces,
+                item.simulated,
+                item.noCopy,
+            ),
+        )
+        assertEquals(DownloadStatus.Downloading, item.status)
+        assertTrue(item.awaitingMetadata)
+        assertEquals(
+            MagnetResult.Ok(magnet().magnet!!),
+            dev.anydm.engine.torrent
+                .parseMagnet(checkNotNull(item.url)),
+        )
     }
 
     private val hash = ByteArray(20) { (it + 1).toByte() }
@@ -288,7 +369,7 @@ class NewDownloadModelTest {
         val meta = TorrentMeta("Show", listOf(TorrentFile("a", 1)), infoHash = hash)
         val p = previewOf(LoadedTorrent("show.torrent", meta, path))
         assertEquals(listOf<Any?>(hex, path, true), listOf(p.infoHash, p.source, p.locked))
-        assertEquals(false, assertIs<Preview.Torrent>(parsePreview("magnet:?xt=urn:btih:abc")).locked)
+        assertEquals(true, magnet().locked, "a magnet is a real torrent too")
     }
 
     @Test
@@ -299,8 +380,8 @@ class NewDownloadModelTest {
             listOf<Any?>(hex, 0L, DownloadKind.Torrent, "/data", null),
             listOf(item.infoHash, item.bytesPerSec, item.kind, item.folder, item.pieces),
         )
-        assertNull(newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "2").infoHash)
-        assertEquals(2L * 1024 * 1024, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "2").bytesPerSec)
+        assertEquals(magnetHex, newDownloadItem(magnet(), emptySet(), "2").infoHash)
+        assertEquals(0L, newDownloadItem(magnet(), emptySet(), "2").bytesPerSec)
     }
 
     @Test
@@ -312,8 +393,8 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun aMagnetItemKeepsTheSintelTreeItShowedAndDirectItemsHaveNoFiles() {
-        assertEquals(sintelFiles, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1").files)
+    fun aMagnetItemHasNoFilesUntilTheMetadataArrivesAndDirectItemsNever() {
+        assertNull(newDownloadItem(magnet(), emptySet(), "1").files)
         assertNull(newDownloadItem(direct("https://x.test/a.zip"), all, "2").files)
     }
 
@@ -331,9 +412,8 @@ class NewDownloadModelTest {
     }
 
     @Test
-    fun aMagnetRowIsMarkedSimulatedAndNoOtherRowIs() {
-        val all = initialTicked(parsePreview("magnet:?xt=urn:btih:abc"))
-        assertEquals(true, newDownloadItem(parsePreview("magnet:?xt=urn:btih:abc")!!, all, "1").simulated)
+    fun noNewRowIsMarkedSimulated() {
+        assertEquals(false, newDownloadItem(magnet(), emptySet(), "1").simulated)
         assertEquals(false, newDownloadItem(parsePreview("https://x.test/a.zip")!!, emptySet(), "2").simulated)
         val real = Preview.Torrent("Show", listOf(SampleFile("a", 5)), false, "ab".repeat(20), null)
         assertEquals(false, newDownloadItem(real, emptySet(), "3").simulated)

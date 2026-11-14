@@ -71,6 +71,41 @@ class BulkModelTest {
         assertEquals(listOf(MenuAction.Resume, MenuAction.Remove), menuActions(listOf(paused), emptyList()))
     }
 
+    // review m1: a real torrent has files in its folder however it was added; a magnet row has none until its metadata arrived
+    private val hash = "ab".repeat(20)
+    private val magnetUrl = "magnet:?xt=urn:btih:$hash"
+
+    private fun torrent(
+        status: DownloadStatus,
+        url: String?,
+        files: List<SampleFile>? = listOf(SampleFile("a", 1)),
+        infoHash: String? = hash,
+    ) = DownloadItem("7", "t", 100, 10, 0, status, DownloadKind.Torrent, files = files, url = url, infoHash = infoHash)
+
+    @Test
+    fun aRealTorrentRowOffersShowInFolderWhateverHowItWasAdded() {
+        for (url in listOf(null, magnetUrl)) {
+            val menu = menuActions(listOf(torrent(DownloadStatus.Downloading, url)), emptyList())
+            assertTrue(MenuAction.ShowInFolder in menu, "url $url: $menu")
+        }
+    }
+
+    @Test
+    fun aMagnetRowAwaitingItsMetadataNeverOffersShowInFolder() {
+        for (status in listOf(DownloadStatus.Downloading, DownloadStatus.Paused, DownloadStatus.Failed, DownloadStatus.Queued)) {
+            val menu = menuActions(listOf(torrent(status, magnetUrl, files = null)), emptyList())
+            assertFalse(MenuAction.ShowInFolder in menu, "$status: $menu")
+        }
+    }
+
+    @Test
+    fun aDemoTorrentRowAndADirectLinkKeepTheirShowInFolderRules() {
+        assertFalse(MenuAction.ShowInFolder in menuActions(listOf(torrent(DownloadStatus.Downloading, null, null, null)), emptyList()))
+        val link = item("5", DownloadStatus.Downloading).copy(url = "https://x.test/a.zip")
+        assertTrue(MenuAction.ShowInFolder in menuActions(listOf(link), emptyList()))
+        assertFalse(MenuAction.ShowInFolder in menuActions(listOf(down), emptyList()))
+    }
+
     private val q1 = item("q1", DownloadStatus.Queued)
     private val q2 = item("q2", DownloadStatus.Queued)
     private val q3 = item("q3", DownloadStatus.Queued)

@@ -4,6 +4,12 @@ private const val MB = 1024L * 1024
 private const val GB = 1024L * MB
 private val WIFI_SPEED = (7.1 * MB).toLong()
 
+/** The demo detail row's file tree (see [detailSample]); no real row or magnet shows it. */
+val sintelFiles: List<SampleFile> =
+    listOf(SampleFile("Sintel.mp4", 129_280_000L)) +
+        listOf("en", "de", "es", "fr", "it", "nl", "pl", "pt", "ru", "tr")
+            .mapIndexed { i, lang -> SampleFile("Sintel.$lang.srt", 1536L + i * 2) }
+
 val sampleUsage = mapOf("wifi" to (200.1 * MB).toLong(), "usb" to GB * 3 / 2)
 
 fun populatedSample() =

@@ -20,9 +20,9 @@ data class DownloadItem(
     val kind: DownloadKind = DownloadKind.Direct,
     /** Absolute save folder; null means the default (`<home>/Downloads`). */
     val folder: String? = null,
-    /** A torrent's files (the ticked ones); null shows the Sintel sample. */
+    /** A torrent's files; null for a magnet row until its metadata arrives (and for demo rows, which show the Sintel sample). */
     val files: List<SampleFile>? = null,
-    /** The http(s) link of a real download; null for torrent rows and samples, which never move. */
+    /** The http(s) link of a real download, or a magnet row's magnet link; null for a `.torrent` row and demo rows. */
     val url: String? = null,
     /** Why a Failed row failed. */
     val error: String? = null,
@@ -36,7 +36,7 @@ data class DownloadItem(
     val partId: String? = null,
     /** Connections open right now; not saved. */
     val liveConnections: Int = 0,
-    /** A real torrent's info hash (40 lowercase hex); null for a link, a magnet and a row from before torrents were real. */
+    /** A real torrent's info hash (40 lowercase hex), also a magnet's; null for a link and a row from before torrents were real. */
     val infoHash: String? = null,
     /**
      * A real torrent's verified pieces: what the engine last said, written to disk and checked. Null until the torrent first
@@ -48,8 +48,8 @@ data class DownloadItem(
     /** A real torrent's pieces with a block asked for that are not verified yet; not saved. */
     val inFlight: Set<Int> = emptySet(),
     /**
-     * A magnet row made by this build: it is a simulation (no engine runs it), and says so in `downloads.json` so that after a restart
-     * it still pauses and resumes as one. A torrent row with no info hash and no such mark was saved before torrents were real.
+     * A magnet row made by an earlier build, which simulated magnets. Nothing makes one now: it is only read from `downloads.json`,
+     * and then turned into a real magnet row or into one that cannot resume (see [restoredRows]).
      */
     val simulated: Boolean = false,
     /**
@@ -85,8 +85,20 @@ fun filtered(
         Filter.Finished -> state.downloads.filter { it.status == DownloadStatus.Finished }
     }
 
-/** The files a torrent row shows: its own, or the Sintel sample for sample rows. */
-fun DownloadItem.fileList(): List<SampleFile> = files ?: sintelFiles
+/** The files a torrent row shows: its own (none yet for a magnet row waiting for its metadata), or the Sintel sample for demo rows. */
+fun DownloadItem.fileList(): List<SampleFile> = files ?: if (infoHash != null) emptyList() else sintelFiles
+
+/**
+ * A magnet row whose metadata has not arrived: a real torrent row made from a magnet link, with no files yet. The metadata gives it
+ * its files (and a restart that finds the `.torrent` copy already written takes them from it), so "no files" is the same as "no copy".
+ * A row that has pieces or is Finished is not waiting: its files are on disk, whatever its file list says.
+ */
+val DownloadItem.awaitingMetadata: Boolean
+    get() = lacksFiles && pieces == null && status != DownloadStatus.Finished
+
+/** A magnet row that was never told its files; [awaitingMetadata] adds that it has not run either. */
+internal val DownloadItem.lacksFiles: Boolean
+    get() = kind == DownloadKind.Torrent && infoHash != null && files == null && url?.startsWith("magnet:", ignoreCase = true) == true
 
 fun fileCount(n: Int): String = "$n ${if (n == 1) "file" else "files"}"
 

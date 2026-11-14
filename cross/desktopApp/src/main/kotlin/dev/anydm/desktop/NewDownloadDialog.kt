@@ -225,7 +225,10 @@ fun NewDownloadDialog(
     LaunchedEffect(initialTorrentPath) { initialTorrentPath?.let { load(it) } }
     // Open .torrent… from the menu or Mod+O: the picker opens at once; a cancel leaves the dialog empty.
     LaunchedEffect(Unit) { if (openPickerOnStart) files.picker.pickTorrent()?.let(::load) }
-    val valid = preview != null && (preview !is Preview.Torrent || ticked.isNotEmpty())
+    // A magnet has no files to tick yet; a `.torrent` needs at least one ticked.
+    val valid = preview != null && (preview !is Preview.Torrent || preview.magnet != null || ticked.isNotEmpty())
+    // A pasted magnet the app cannot use says why; the text of a `.torrent` that was read is not looked at.
+    val magnetError = if (torrent == null) magnetProblem(text) else null
 
     BoxWithConstraints(
         Modifier
@@ -289,6 +292,9 @@ fun NewDownloadDialog(
                 }
                 torrentError?.let { reason -> TorrentError(reason) }
                 refusal?.let { text -> TorrentRefused(text) }
+                magnetError?.let { reason ->
+                    Text(reason, color = c.danger, fontSize = 13.sp, modifier = Modifier.testTag("magnet-error"))
+                }
                 if (preview != null) {
                     PreviewBlock(preview, ticked, probe, chosen)
                     if (startsAfter != null) {
@@ -300,7 +306,8 @@ fun NewDownloadDialog(
                             modifier = Modifier.testTag("queue-hint"),
                         )
                     }
-                    if (preview is Preview.Torrent) {
+                    // A magnet has no tree until its metadata arrives (R14): nothing is shown in its place.
+                    if (preview is Preview.Torrent && preview.magnet == null) {
                         TorrentTree(preview, ticked, Modifier.weight(1f, fill = false), preview.locked) { ticked = it }
                         if (preview.locked) {
                             Text(
