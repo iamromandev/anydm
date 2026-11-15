@@ -525,6 +525,14 @@ class QueueModelTest {
     }
 
     @Test
+    fun startedStoresTheStreamedMarkAndASegmentedStartClearsIt() {
+        val streamed = started(state(1), EngineEvent.Started("d1", "x.zip", 100, null, null, 25, streamed = true))
+        assertEquals(true, streamed.list.single().streamed)
+        val segmented = started(streamed, EngineEvent.Started("d1", "x.zip", 100, null, null, 25, spans))
+        assertEquals(false, segmented.list.single().streamed)
+    }
+
+    @Test
     fun progressedStoresTheSpansAndTheLiveConnections() {
         val row = progressed(state(1), "d1", 25, 100, 7, spans, 3).list.single()
         assertEquals(spans, row.spans)

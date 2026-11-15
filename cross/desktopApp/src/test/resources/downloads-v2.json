@@ -1,0 +1,5 @@
+{"version":2,"downloads":[
+{"id":"1","url":"https://x.test/a.zip","name":"a.zip","folder":"/abs","total":1500,"done":900,"status":"Paused","etag":"\"e\"","kind":"Direct","connections":8},
+{"id":"2","url":"https://x.test/b.zip","name":"b.zip","folder":"/abs","total":100,"done":40,"status":"Downloading","kind":"Direct","connections":4,"ranges":[{"start":0,"end":49,"done":40},{"start":50,"end":99,"done":0}],"partId":"p1"},
+{"id":"3","url":"https://x.test/c.zip","name":"c.zip","folder":"/abs","total":100,"done":100,"status":"Finished","kind":"Direct"}
+]}

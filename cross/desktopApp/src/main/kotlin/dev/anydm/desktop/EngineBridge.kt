@@ -100,6 +100,7 @@ fun jobOf(
         item.connections,
         item.spans,
         item.partId,
+        item.streamed,
     )
 
 /** Stops for rows that were Downloading and no longer are (or are gone), then starts for rows that now are Downloading and were not. */

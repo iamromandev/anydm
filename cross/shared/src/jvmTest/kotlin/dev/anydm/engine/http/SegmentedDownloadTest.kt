@@ -311,6 +311,36 @@ class SegmentedDownloadTest {
         assertNull(gets("/file").first().headers["range"], "a start from zero asks for no range")
     }
 
+    @Test
+    fun aStreamedRowOnSeveralConnectionsResumesFromItsPartialFile() {
+        val size = 900 * 1024
+        Files.write(dir.resolve("f.bin.part"), TestServer.expected(size).copyOf(300_000))
+        engine().start(job("/file?size=$size", total = size.toLong()).copy(done = 300_000, streamed = true))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertEquals("bytes=300000-", gets("/file").first().headers["range"])
+    }
+
+    @Test
+    fun aStreamedRowWhosePartialFileHasTheLengthOfASegmentedOneStartsOver() {
+        val size = 900 * 1024
+        Files.write(dir.resolve("f.bin.part"), ByteArray(size + TRAILER_BYTES))
+        engine().start(job("/file?size=$size", total = size.toLong()).copy(done = 0, streamed = true))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertNull(gets("/file").first().headers["range"])
+    }
+
+    @Test
+    fun aStreamedRowWhosePartialFileIsLargerThanItsTotalStartsOver() {
+        val size = 900 * 1024
+        Files.write(dir.resolve("f.bin.part"), ByteArray(size + 1000))
+        engine().start(job("/file?size=$size", total = size.toLong()).copy(done = 0, streamed = true))
+        assertEquals(EngineEvent.Finished("1", size.toLong()), awaitTerminal())
+        assertFileIs(size)
+        assertNull(gets("/file").first().headers["range"])
+    }
+
     // AC3
     @Test
     fun fasterConnectionsSplitTheRemainderOfASlowRange() {

@@ -63,6 +63,7 @@ import dev.anydm.engine.http.TRAILER_BYTES
 import dev.anydm.engine.http.doneOf
 import dev.anydm.engine.http.finishedOver
 import dev.anydm.engine.http.sanitize
+import dev.anydm.engine.http.streamedFits
 import dev.anydm.engine.http.uniqueName
 import dev.anydm.engine.torrent.MagnetResult
 import dev.anydm.engine.torrent.TorrentResult
@@ -378,7 +379,9 @@ fun HomeScreen(
                     // Fresh ranges, or another `.part` file than the row's: the ranges and their identity go to disk now, not with
                     // the next tick. Until they do, what is saved belongs to a file that may be gone.
                     // A torrent that starts says the pieces that held and the name its files got: the same, and a resume trusts both.
-                    val fresh = e.spans != null || e.pieces != null || q.list.firstOrNull { it.id == e.id }?.partId != e.partId
+                    // A change of the streamed mark counts too: it is what lets a restart trust the `.part` file's size.
+                    val row = q.list.firstOrNull { it.id == e.id }
+                    val fresh = e.spans != null || e.pieces != null || row?.partId != e.partId || row?.streamed != e.streamed
                     applyQueue(started(q, e))
                     if (fresh) saveNow.tryEmit(Unit)
                 }
@@ -1300,8 +1303,8 @@ private const val SETTINGS_NOTICE_MS = 6_000L
 private const val SAVE_DEBOUNCE_MS = 500L
 private const val DOWNLOADS_SAVE_MS = 1_000L
 
-/** How often the progress of a segmented download's ranges is offered for a save while it runs. */
-private const val DOWNLOADS_PROGRESS_SAVE_MS = 5_000L
+/** How often the progress of a segmented download's ranges (or a torrent's pieces) is offered for a save while it runs: a hard kill loses about this much. */
+private const val DOWNLOADS_PROGRESS_SAVE_MS = 2_000L
 private const val DOWNLOADS_RESET = "Downloads couldn't be read and were reset"
 private const val DOWNLOADS_NOT_SAVED = "Downloads couldn't be saved; they will not be restored after you quit"
 private const val SETTINGS_RESET = "Settings couldn't be read and were reset"
@@ -1465,7 +1468,8 @@ private fun partFits(
  * gone); a segmented one's is the sum of its saved ranges, since its `.part` is full size from the start (a file that is missing,
  * or not the length the ranges were made for, or ranges without an identity: back to zero). Ranges that are all finished over a file
  * of exactly the total are a finished download waiting for its rename: they stay, with the total as done.
- * A row on several connections without ranges has nothing trustworthy on disk, so it shows zero.
+ * A row on several connections without ranges shows zero unless it is marked `streamed` (one stream wrote its `.part` file) and the
+ * file is not longer than the total: then the file's size is what is done. A row on one connection always takes the file's size.
  */
 internal fun restoredRows(
     file: DownloadsFile,
@@ -1495,7 +1499,12 @@ internal fun restoredRows(
 
             spans != null -> item.copy(doneBytes = doneOf(spans))
 
-            item.connections > 1 -> item.copy(doneBytes = 0L)
+            // Ran on one stream (several connections set): the file's size is what is done, unless it is longer than the total: a
+            // segmented run pre-sized it (a crash between that run's start and the save that clears the mark).
+            item.connections > 1 && item.streamed && streamedFits(size, item.totalBytes.takeIf { it != UNKNOWN_SIZE }) ->
+                item.copy(doneBytes = size ?: 0L)
+
+            item.connections > 1 -> item.copy(doneBytes = 0L, streamed = false)
 
             else -> item.copy(doneBytes = size ?: 0L)
         }

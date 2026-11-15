@@ -37,6 +37,28 @@ class DownloadsFileTest {
     ) = DownloadDto(id, url, name, folder, 10, done, DownloadStatus.Paused, null, null, null, kind, null)
 
     @Test
+    fun theStreamedMarkIsSavedAndComesBack() {
+        val rows = listOf(row("1").copy(connections = 8, streamed = true), row("2").copy(connections = 8))
+        val saved = toDownloadsFile(rows)
+        assertEquals(listOf(true, false), saved.downloads.map { it.streamed })
+        val json = downloadsJson.encodeToString(DownloadsFile.serializer(), saved)
+        assertEquals(rows, fromDownloadsFile(downloadsJson.decodeFromString(DownloadsFile.serializer(), json)))
+    }
+
+    @Test
+    fun aVersionTwoFileFromTheCurrentBuildLoadsWithEveryRowAsBefore() {
+        val text = checkNotNull(javaClass.getResource("/downloads-v2.json")).readText()
+        val rows = fromDownloadsFile(downloadsJson.decodeFromString(DownloadsFile.serializer(), text))
+        assertEquals(listOf("1", "2", "3"), rows.map { it.id })
+        assertEquals(listOf(false, false, false), rows.map { it.streamed })
+        assertEquals(listOf(DownloadStatus.Paused, DownloadStatus.Paused, DownloadStatus.Finished), rows.map { it.status })
+        assertEquals(listOf(900L, 40L, 100L), rows.map { it.doneBytes })
+        assertEquals(8, rows[0].connections)
+        assertEquals(listOf(Span(0, 49, 40), Span(50, 99, 0)), rows[1].spans)
+        assertEquals("p1", rows[1].partId)
+    }
+
+    @Test
     fun aListRoundTripsInOrder() {
         val rows = listOf(row("2", DownloadStatus.Failed).copy(error = "HTTP 404"), row("1", DownloadStatus.Finished, 100))
         assertEquals(rows, fromDownloadsFile(toDownloadsFile(rows)))

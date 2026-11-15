@@ -302,26 +302,58 @@ class DownloadsPersistenceTest {
         }
 
     @Test
-    fun rangeProgressIsSavedWithinFiveSecondsAndNotOnEveryReport() =
+    fun rangeProgressIsSavedWithinTwoSecondsAndNotOnEveryReport() =
         runComposeUiTest {
             val s = Session()
             home(s)
             startSegmented(s)
             mainClock.advanceTimeBy(1_100)
             pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
-            val before = downloads.saves.size
             var latest = halves
-            repeat(40) {
-                latest = listOf(Span(0, 499, 5L + it), Span(500, 999, 3L + it))
-                s.engine.emit(EngineEvent.Progress("1", 8L + 2 * it, 1000, 2L * 1024 * 1024, latest, 2, "AA"))
-                mainClock.advanceTimeBy(20)
+            var n = 0
+            val report = {
+                n++
+                latest = listOf(Span(0, 499, 5L + n), Span(500, 999, 3L + n))
+                s.engine.emit(EngineEvent.Progress("1", 8L + 2 * n, 1000, 2L * 1024 * 1024, latest, 2, "AA"))
+                mainClock.advanceTimeBy(80)
             }
+            val before = downloads.saves.size
+            repeat(25) { report() }
             await("the last progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
-            mainClock.advanceTimeBy(2_500)
-            Thread.sleep(100)
-            assertEquals(before, downloads.saves.size, "range progress alone must not be saved every second")
-            mainClock.advanceTimeBy(3_000) // more than five seconds since the last save
+            // The first write of the progress: the ticker offered it, the sampling wrote it.
+            var guardSteps = 0
+            while (downloads.saves.size == before) {
+                check(++guardSteps < 100) { "the progress was not saved within the ticker interval" }
+                report()
+                Thread.sleep(5)
+            }
+            // From there, reports keep coming for six seconds: the ticker offers the progress once per two seconds, so the file is
+            // written at most once per two-second window, not once per report or per sampling.
+            val start = mainClock.currentTime
+            val written = downloads.saves.size
+            repeat(75) { report() }
+            Thread.sleep(200)
+            val windows = Math.ceilDiv(mainClock.currentTime - start, 2_000L)
+            val writes = downloads.saves.size - written
+            assertTrue(writes in 1..windows.toInt(), "$writes progress writes in $windows windows of two seconds")
+            mainClock.advanceTimeBy(3_000)
             pollReal("the range progress") { last().single().ranges == ranges(latest) }
+        }
+
+    @Test
+    fun noProgressIsSavedWhileNoSegmentedRowRuns() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            startSegmented(s)
+            mainClock.advanceTimeBy(1_100)
+            pollReal("the ranges") { downloads.saves.isNotEmpty() && last().singleOrNull()?.ranges != null }
+            onNodeWithTag("pause-1").performClick()
+            await("the paused save") { last().single().status == DownloadStatus.Paused }
+            val before = downloads.saves.size
+            mainClock.advanceTimeBy(13_000)
+            Thread.sleep(100)
+            assertEquals(before, downloads.saves.size, "nothing runs: nothing is written")
         }
 
     /** Segmented and running, with sixty percent of the ranges and the token AA saved (the ticker's save is the last one). */
@@ -377,7 +409,7 @@ class DownloadsPersistenceTest {
             }
             await("the last progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
             repeat(3) {
-                // well past the five seconds of the ticker, and its save interval
+                // well past the two seconds of the ticker, and its save interval
                 mainClock.advanceTimeBy(3_000)
                 Thread.sleep(100)
             }
@@ -402,6 +434,25 @@ class DownloadsPersistenceTest {
         }
 
     @Test
+    fun aSegmentedRowKilledWithoutTheExitFlushComesBackWithWhatItHadTwoSecondsBefore() =
+        runComposeUiTest {
+            disk.put(part.toString(), 1000 + TRAILER_BYTES)
+            val s = Session()
+            home(s)
+            runningWithSavedProgress(s)
+            val newer = listOf(Span(0, 499, 350), Span(500, 999, 350))
+            s.engine.emit(EngineEvent.Progress("1", 700, 1000, 2L * 1024 * 1024, newer, 2, "AA"))
+            await("the progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            // two seconds for the ticker plus the one-second sampling after it; then the kill: nothing flushes
+            mainClock.advanceTimeBy(2_000)
+            mainClock.advanceTimeBy(1_000)
+            runCatching { pollReal("the progress save") { last().single().ranges == ranges(newer) } }
+            val restarted = restoredRows(downloads.saves.last(), disk, folder).single()
+            assertEquals(ranges(newer), restarted.spans?.let { ranges(it) }, "the last save holds the progress of two seconds ago")
+            assertEquals(700L, restarted.doneBytes)
+        }
+
+    @Test
     fun theExitFlushWritesTheLatestRanges() =
         runComposeUiTest {
             val s = Session()
@@ -416,11 +467,30 @@ class DownloadsPersistenceTest {
             assertEquals(ranges(latest), last().single().ranges)
         }
 
+    // AC6: the exit path is the Home screen's own wiring (Session) and the app's exit flush, not the writer on its own
+    @Test
+    fun theExitFlushWritesTheProgressOfARunningRowThatTheSamplingHasNotSavedYet() =
+        runComposeUiTest {
+            val s = Session()
+            home(s)
+            add("https://x.test/a.zip")
+            await("start") { s.engine.starts.isNotEmpty() }
+            s.engine.emit(EngineEvent.Started("1", "a.zip", 1000, null, null, 0))
+            await("the save of the start") { downloads.saves.isNotEmpty() && last().single().total == 1000L }
+            s.engine.emit(EngineEvent.Progress("1", 412, 1000, 2L * 1024 * 1024))
+            await("the progress") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            assertTrue(last().single().done < 412, "the sampling has not fired: the progress is not saved yet")
+            s.stores.flush()
+            assertEquals(412L, last().single().done)
+            assertEquals(DownloadStatus.Downloading, last().single().status)
+        }
+
     private fun saved(
         connections: Int,
         spans: List<Span>?,
         done: Long = 7,
         partId: String? = "AA",
+        streamed: Boolean = false,
     ) = DownloadsFile(
         downloads =
             listOf(
@@ -435,6 +505,7 @@ class DownloadsPersistenceTest {
                     connections = connections,
                     ranges = spans?.let { ranges(it) },
                     partId = partId,
+                    streamed = streamed,
                 ),
             ),
     )
@@ -498,6 +569,27 @@ class DownloadsPersistenceTest {
     fun aRestoredRowOnSeveralConnectionsWithoutRangesShowsZeroWhateverThePartFileHolds() {
         disk.put(part.toString(), 1000)
         assertEquals(0L, restoredRows(saved(4, null), disk, folder).single().doneBytes)
+    }
+
+    @Test
+    fun aRestoredStreamedRowTakesThePartFileSizeWhenItDoesNotExceedTheTotal() {
+        for (size in listOf(410, 1000)) {
+            disk.put(part.toString(), size)
+            val row = restoredRows(saved(4, null, streamed = true), disk, folder).single()
+            assertEquals(size.toLong(), row.doneBytes, "size $size")
+            assertEquals(true, row.streamed, "size $size")
+        }
+    }
+
+    // The pre-sized file of a segmented restart over a changed server file is longer than the old total: its gaps are not trusted
+    @Test
+    fun aRestoredStreamedRowWhosePartFileIsLargerThanTheSavedTotalStartsOver() {
+        for (size in listOf(1001, 1000 + TRAILER_BYTES, 1000 + TRAILER_BYTES + 5)) {
+            disk.put(part.toString(), size)
+            val row = restoredRows(saved(4, null, streamed = true), disk, folder).single()
+            assertEquals(0L, row.doneBytes, "size $size")
+            assertEquals(false, row.streamed, "size $size")
+        }
     }
 
     @Test

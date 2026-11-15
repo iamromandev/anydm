@@ -181,6 +181,7 @@ fun started(
             doneBytes = e.done,
             spans = e.spans,
             partId = e.partId,
+            streamed = e.streamed,
             liveConnections = 1, // the first response is open
             // A torrent says the pieces that held the re-check; the row's claim is replaced by it, never kept past it.
             pieces = e.pieces ?: it.pieces,

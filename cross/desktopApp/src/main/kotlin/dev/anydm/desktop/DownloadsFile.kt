@@ -66,6 +66,11 @@ data class DownloadDto(
     val ranges: List<RangeDto>? = null,
     /** The identity of the `.part` file the [ranges] belong to; a row with ranges and none has ranges that are not trusted. */
     val partId: String? = null,
+    /**
+     * The `.part` file was written by one stream: saved for every stream run, but only read for a row on several connections (a
+     * restart trusts the file's size); a row on one connection always does.
+     */
+    val streamed: Boolean = false,
     /** A real torrent's info hash, 40 lowercase hex digits; a row from before torrents were real has none. */
     val infoHash: String? = null,
     /** A real torrent's verified pieces, a bitfield in base64 ([PieceSet.toBase64]); none until it first starts. */
@@ -96,6 +101,7 @@ fun toDownloadsFile(list: List<DownloadItem>): DownloadsFile =
                     it.connections,
                     it.spans?.map { r -> RangeDto(r.start, r.end, r.done) },
                     it.partId,
+                    it.streamed,
                     it.infoHash,
                     it.pieces?.toBase64(),
                     it.pieces?.size,
@@ -131,6 +137,7 @@ fun fromDownloadsFile(file: DownloadsFile): List<DownloadItem> =
             connections = it.connections.coerceIn(1, MAX_CONNECTIONS),
             spans = it.ranges?.map { r -> Span(r.start, r.end, r.done) },
             partId = it.partId,
+            streamed = it.streamed,
             infoHash = it.infoHash,
             pieces = claimOf(it),
             simulated = it.sim,
