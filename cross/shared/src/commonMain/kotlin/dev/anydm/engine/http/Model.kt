@@ -80,7 +80,22 @@ data class JobSpec(
     val spans: List<Span>? = null,
     /** The identity of the `.part` file the [spans] belong to; ranges without it (or with another one) are not trusted. */
     val partId: String? = null,
+    /**
+     * The row's `.part` was written by one stream (saved across restarts); its size is what is done. Set for every stream run, but
+     * only read for a row on several connections: a row on one connection always takes its `.part` size.
+     */
+    val streamed: Boolean = false,
 )
+
+/**
+ * Whether a `.part` of [size] bytes can be one stream's partial file for a download of [total] bytes (null: not known): it exists,
+ * and when the total is known it is not longer than it. A longer file is a segmented run's, pre-sized with its identity trailer
+ * and maybe full of gaps (or the server's file changed since): its size says nothing.
+ */
+fun streamedFits(
+    size: Long?,
+    total: Long?,
+): Boolean = size != null && (total == null || size <= total)
 
 sealed interface EngineEvent {
     val id: String
@@ -98,6 +113,11 @@ sealed interface EngineEvent {
         val partId: String? = null,
         /** A torrent's verified pieces as the run starts with them. */
         val pieces: PieceSet? = null,
+        /**
+         * True from every run on the one-stream path (whatever the row's connections), never from a segmented one: the `.part` is a
+         * sequential partial. Only a row on several connections reads it, to trust the file's size after a restart.
+         */
+        val streamed: Boolean = false,
     ) : EngineEvent
 
     /**

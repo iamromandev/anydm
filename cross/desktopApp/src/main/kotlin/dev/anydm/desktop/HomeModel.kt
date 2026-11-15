@@ -34,6 +34,11 @@ data class DownloadItem(
     val spans: List<Span>? = null,
     /** The identity of the `.part` file the [spans] were written for; ranges without it are not trusted on a resume. */
     val partId: String? = null,
+    /**
+     * The `.part` file was written by one stream: set for every stream run, but only read for a row on several connections (a restart
+     * trusts the file's size as what is done); a row on one connection always does.
+     */
+    val streamed: Boolean = false,
     /** Connections open right now; not saved. */
     val liveConnections: Int = 0,
     /** A real torrent's info hash (40 lowercase hex), also a magnet's; null for a link and a row from before torrents were real. */

@@ -20,6 +20,18 @@ class AppStoresDownloadsTest {
     }
 
     @Test
+    fun flushWritesTheProgressOfARunningRowThatChangedAfterTheLastSave() {
+        val store = InMemoryDownloadsStore()
+        val s = AppStores(InMemorySettingsStore(), InMemorySecretStore(), 2_000, store)
+        val running = DownloadDto("1", "https://x.test/a", "a", null, 1000, 0, DownloadStatus.Downloading, connections = 4)
+        s.saveDownloads(s.downloadsChanged(DownloadsFile(downloads = listOf(running))))
+        val later = DownloadsFile(downloads = listOf(running.copy(done = 640, ranges = listOf(RangeDto(0, 999, 640)), partId = "AA")))
+        s.downloadsChanged(later) // the sampling has not fired yet
+        s.flush()
+        assertEquals(later, store.saves.last())
+    }
+
+    @Test
     fun aDownloadsChangeAlreadySavedIsNotWrittenAgainByFlush() {
         val store = InMemoryDownloadsStore()
         val s = AppStores(InMemorySettingsStore(), InMemorySecretStore(), 2_000, store)

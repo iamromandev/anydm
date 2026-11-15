@@ -350,7 +350,14 @@ class DownloadEngine(
         // Ranges that were not accepted (they do not fit the file, or the file is not there as they left it) are just as untrusted.
         val noRanges = job.spans.isNullOrEmpty()
         val untrusted =
-            known != null && ((!noRanges && resume == null) || (noRanges && job.connections > 1 && job.id !in streamed))
+            known != null &&
+                (
+                    (!noRanges && resume == null) ||
+                        (
+                            noRanges && job.connections > 1 && job.id !in streamed &&
+                                !(job.streamed && streamedFits(sizeOf(known.second, job.done), job.total))
+                        )
+                )
         // What is really in the part file is the truth: a stopped predecessor may have written past what the job spec says.
         val start =
             if (known == null) {
@@ -441,7 +448,7 @@ class DownloadEngine(
                     held = false // the run has the probe's permit now, and releases it
                     return segmented(job, live, folder, name, part, plan, null, true, open, etag, modified)
                 }
-                bus.emit(EngineEvent.Started(job.id, name, live.total, etag, modified, done))
+                bus.emit(EngineEvent.Started(job.id, name, live.total, etag, modified, done, streamed = true))
 
                 val out =
                     try {

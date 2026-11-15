@@ -36,11 +36,18 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** A server in memory that takes ranges. Bodies stop serving when [limit] bytes have gone out, until the limit is raised. */
-private class RangeServer(
+/**
+ * A server in memory that takes ranges. Bodies stop serving when [limit] bytes have gone out, until the limit is raised.
+ * With [ranges] off it ignores `Range` and answers 200 with the whole file; with [reportsLength] off that answer has no length.
+ */
+internal class RangeServer(
     val data: ByteArray,
 ) : HttpTransport {
     val requests = CopyOnWriteArrayList<String>()
+
+    @Volatile var ranges = true
+
+    @Volatile var reportsLength = true
 
     @Volatile var limit = Long.MAX_VALUE
     private var served = 0L
@@ -63,8 +70,9 @@ private class RangeServer(
         val range = headers["Range"]
         requests.add(range ?: "none")
         val size = data.size.toLong()
-        if (range == null) {
-            return HttpOpen(200, mapOf("content-length" to listOf("$size"), "etag" to listOf("\"v1\"")), url, body(0, size - 1))
+        if (range == null || !ranges) {
+            val headersOut = mapOf("etag" to listOf("\"v1\"")) + if (reportsLength) mapOf("content-length" to listOf("$size")) else emptyMap()
+            return HttpOpen(200, headersOut, url, body(0, size - 1))
         }
         val (from, to) = range.removePrefix("bytes=").split('-')
         val a = from.toLong()

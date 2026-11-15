@@ -358,6 +358,26 @@ class TorrentDownloadsTest {
         }
 
     @Test
+    fun theVerifiedPiecesOfARunningTorrentAreSavedWithinTheProgressInterval() =
+        runComposeUiTest {
+            picked.bytes[show] = bytes
+            home()
+            addTorrent()
+            await("start") { torrents.starts.isNotEmpty() }
+            torrents.emit(EngineEvent.Started("1", "Show", total, null, null, 0, pieces = set()))
+            await("the save of the start") { downloads.saves.isNotEmpty() && last().singleOrNull()?.pieces != null }
+            torrents.emit(EngineEvent.Progress("1", doneOf(firstTen), total, 2L * 1024 * 1024, pieces = firstTen))
+            await("speed") { runCatching { onNodeWithTag("speed-1").assertTextEquals("2.0 MB/s") }.isSuccess }
+            // two seconds for the ticker plus the one-second sampling after it
+            mainClock.advanceTimeBy(3_000)
+            val end = System.nanoTime() + 3_000_000_000L
+            while (last().single().pieces != firstTen.toBase64()) {
+                check(System.nanoTime() < end) { "the pieces were not saved while the torrent ran" }
+                Thread.sleep(5)
+            }
+        }
+
+    @Test
     fun theStoppedEventsPiecesAreSavedAtOnce() =
         runComposeUiTest {
             picked.bytes[show] = bytes
@@ -371,6 +391,25 @@ class TorrentDownloadsTest {
             torrents.emit(EngineEvent.Stopped("1", doneOf(more), pieces = more))
             await("the save with the pieces") { last().single().pieces == more.toBase64() }
             assertEquals(doneOf(more), last().single().done)
+        }
+
+    @Test
+    fun noProgressIsSavedWhileNoTorrentRuns() =
+        runComposeUiTest {
+            picked.bytes[show] = bytes
+            home()
+            addTorrent()
+            await("start") { torrents.starts.isNotEmpty() }
+            torrents.emit(EngineEvent.Started("1", "Show", total, null, null, 0, pieces = set()))
+            onNodeWithTag("pause-1").performClick()
+            await("stop") { "1" in torrents.stops }
+            val more = set(*IntArray(20) { it })
+            torrents.emit(EngineEvent.Stopped("1", doneOf(more), pieces = more))
+            await("the save with the pieces") { last().single().pieces == more.toBase64() }
+            val before = downloads.saves.size
+            mainClock.advanceTimeBy(13_000)
+            Thread.sleep(100)
+            assertEquals(before, downloads.saves.size, "nothing runs: nothing is written")
         }
 
     /** One session that ran a torrent to ten pieces and paused it, then (after the block) a new one on the same stores. */
