@@ -128,9 +128,20 @@ class StreamedResumeTest {
             onNodeWithTag("pause-1").performClick()
             await("the row saved as streamed") {
                 downloads.saves.isNotEmpty() &&
-                    downloads.saves.last().downloads.singleOrNull()?.let { it.streamed && it.status == DownloadStatus.Paused } == true
+                    downloads.saves
+                        .last()
+                        .downloads
+                        .singleOrNull()
+                        ?.let { it.streamed && it.status == DownloadStatus.Paused } == true
             }
-            assertEquals(8, downloads.saves.last().downloads.single().connections)
+            assertEquals(
+                8,
+                downloads.saves
+                    .last()
+                    .downloads
+                    .single()
+                    .connections,
+            )
         }
         server.requests.clear()
         server.limit = Long.MAX_VALUE
@@ -141,7 +152,9 @@ class StreamedResumeTest {
             val s = Session(saved)
             home(s)
             await("the restored row") { shown("row-1") }
-            onNodeWithText("${partSize * 100L / total}% · ${formatBytes(partSize.toLong())} of ${formatBytes(total.toLong())}").assertIsDisplayed()
+            onNodeWithText(
+                "${partSize * 100L / total}% · ${formatBytes(partSize.toLong())} of ${formatBytes(total.toLong())}",
+            ).assertIsDisplayed()
             onNodeWithTag("pause-1").performClick()
             await("the download to finish") { disk.files[final]?.contentEquals(data) == true }
         }
@@ -171,9 +184,17 @@ class StreamedResumeTest {
             onNodeWithTag("pause-1").performClick()
             await("the row saved as streamed") {
                 downloads.saves.isNotEmpty() &&
-                    downloads.saves.last().downloads.singleOrNull()?.let { it.streamed && it.status == DownloadStatus.Paused } == true
+                    downloads.saves
+                        .last()
+                        .downloads
+                        .singleOrNull()
+                        ?.let { it.streamed && it.status == DownloadStatus.Paused } == true
             }
-            val saved = downloads.saves.last().downloads.single()
+            val saved =
+                downloads.saves
+                    .last()
+                    .downloads
+                    .single()
             assertEquals(8, saved.connections)
             assertEquals(if (reportsLength) total.toLong() else null, saved.total)
         }
