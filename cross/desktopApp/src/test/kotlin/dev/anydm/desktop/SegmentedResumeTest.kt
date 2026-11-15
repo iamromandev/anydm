@@ -71,7 +71,8 @@ internal class RangeServer(
         requests.add(range ?: "none")
         val size = data.size.toLong()
         if (range == null || !ranges) {
-            val headersOut = mapOf("etag" to listOf("\"v1\"")) + if (reportsLength) mapOf("content-length" to listOf("$size")) else emptyMap()
+            val headersOut =
+                mapOf("etag" to listOf("\"v1\"")) + if (reportsLength) mapOf("content-length" to listOf("$size")) else emptyMap()
             return HttpOpen(200, headersOut, url, body(0, size - 1))
         }
         val (from, to) = range.removePrefix("bytes=").split('-')

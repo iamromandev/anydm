@@ -1492,21 +1492,32 @@ internal fun restoredRows(
         when {
             // A download that was finished when its rename failed (or the app ended): the file is cut to the total, without its identity,
             // and the ranges are all finished. The engine goes straight to the rename (it checks the same).
-            spans != null && size == item.totalBytes && finishedOver(spans, item.totalBytes) -> item.copy(doneBytes = item.totalBytes)
+            spans != null && size == item.totalBytes && finishedOver(spans, item.totalBytes) -> {
+                item.copy(doneBytes = item.totalBytes)
+            }
 
             // The file is `total + TRAILER_BYTES` long, and its identity is the one the ranges were saved with (the engine reads that).
-            spans != null && !partFits(spans, item.partId, size) -> item.copy(doneBytes = 0L, spans = null, partId = null)
+            spans != null && !partFits(spans, item.partId, size) -> {
+                item.copy(doneBytes = 0L, spans = null, partId = null)
+            }
 
-            spans != null -> item.copy(doneBytes = doneOf(spans))
+            spans != null -> {
+                item.copy(doneBytes = doneOf(spans))
+            }
 
             // Ran on one stream (several connections set): the file's size is what is done, unless it is longer than the total: a
             // segmented run pre-sized it (a crash between that run's start and the save that clears the mark).
-            item.connections > 1 && item.streamed && streamedFits(size, item.totalBytes.takeIf { it != UNKNOWN_SIZE }) ->
+            item.connections > 1 && item.streamed && streamedFits(size, item.totalBytes.takeIf { it != UNKNOWN_SIZE }) -> {
                 item.copy(doneBytes = size ?: 0L)
+            }
 
-            item.connections > 1 -> item.copy(doneBytes = 0L, streamed = false)
+            item.connections > 1 -> {
+                item.copy(doneBytes = 0L, streamed = false)
+            }
 
-            else -> item.copy(doneBytes = size ?: 0L)
+            else -> {
+                item.copy(doneBytes = size ?: 0L)
+            }
         }
     }
 
