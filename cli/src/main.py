@@ -4,6 +4,7 @@ import typer
 
 from src.command.doctor import doctor
 from src.command.get import get
+from src.command.tui import tui
 
 app = typer.Typer(
     name="anydm",
@@ -13,6 +14,7 @@ app = typer.Typer(
 )
 app.command()(get)
 app.command()(doctor)
+app.command()(tui)
 
 
 def _version(value: bool) -> None:

@@ -1,12 +1,12 @@
 import asyncio
-import os
 import sys
 from enum import StrEnum
 from pathlib import Path
 
 import typer
 
-from src.core.errors import AnydmError, PartialDownload, UsageError
+from src.core.errors import AnydmError, PartialDownload
+from src.core.paths import writable_dir
 
 INTERRUPTED = 130
 
@@ -16,16 +16,6 @@ class KindOption(StrEnum):
     HTTP = "http"
     MEDIA = "media"
     TORRENT = "torrent"
-
-
-def _writable_dir(path: Path) -> Path:
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        raise UsageError(f"cannot use output folder {path}: {e.strerror}") from e
-    if not os.access(path, os.W_OK | os.X_OK):
-        raise UsageError(f"cannot write to output folder {path}")
-    return path.resolve()
 
 
 def _fail(message: str, code: int) -> typer.Exit:
@@ -60,7 +50,7 @@ def get(
         try:
             settings = get_settings(download_dir=output, connections=connections)
             resolved = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))
-            dest = _writable_dir(settings.download_dir)
+            dest = writable_dir(settings.download_dir)
             job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure)
             paths = asyncio.run(engine_for(resolved).run(job, reporter))
         except KeyboardInterrupt:

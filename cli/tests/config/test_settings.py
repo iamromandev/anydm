@@ -15,6 +15,7 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("ANYDM_CONNECTIONS", raising=False)
     monkeypatch.delenv("ANYDM_DOWNLOAD_DIR", raising=False)
+    monkeypatch.delenv("ANYDM_MAX_ACTIVE", raising=False)
     return tmp_path
 
 
@@ -84,3 +85,18 @@ def test_download_dir_expands_home(monkeypatch: pytest.MonkeyPatch, _isolated: P
     monkeypatch.setenv("ANYDM_DOWNLOAD_DIR", "~/dl")
     assert get_settings().download_dir == _isolated / "home" / "dl"
     assert get_settings(download_dir=Path("~/x")).download_dir == _isolated / "home" / "x"
+
+
+def test_max_active_defaults_to_3_and_reads_env_and_config(_isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert get_settings().max_active == 3
+    _write_config(_isolated, "max_active = 5\n")
+    assert get_settings().max_active == 5
+    monkeypatch.setenv("ANYDM_MAX_ACTIVE", "2")
+    assert get_settings().max_active == 2
+
+
+@pytest.mark.parametrize("value", ["0", "11", "many"])
+def test_invalid_max_active_names_the_field(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_MAX_ACTIVE", value)
+    with pytest.raises(UsageError, match="max_active"):
+        get_settings()

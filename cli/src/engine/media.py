@@ -10,6 +10,11 @@ from src.engine import Job
 
 OUTTMPL = "%(title)s [%(id)s].%(ext)s"
 SOCKET_TIMEOUT = 20
+CANCEL_WAIT = 0.75  # how long a cancelled run() waits for yt-dlp's thread to stop: Ctrl-C must stay prompt
+RESTART_WAIT = 10.0  # how long a new run waits for the previous thread of the same job to stop
+
+_live: dict[tuple[str, Path], threading.Thread] = {}  # jobs whose yt-dlp thread is still running
+_live_lock = threading.Lock()
 
 
 def _collect(info: dict[str, Any]) -> list[str]:
@@ -61,10 +66,14 @@ class MediaEngine:
         # A daemon thread that is not joined: a blocked yt-dlp (extraction, ffmpeg, a stalled socket)
         # must not hold up Ctrl-C the way the default executor does at loop shutdown.
         loop = asyncio.get_running_loop()
+        key = (job.source, job.dest_dir)
+        await self._previous_run_stopped(key)
         fut: asyncio.Future[list[Path]] = loop.create_future()
+        ended = asyncio.Event()
         stop = threading.Event()
 
         def deliver(result: list[Path] | None, exc: BaseException | None) -> None:
+            ended.set()
             if fut.done():
                 return
             if exc is not None:
@@ -77,15 +86,36 @@ class MediaEngine:
                 result, exc = self._download(job, report, stop), None
             except BaseException as e:
                 result, exc = None, e
+            with _live_lock:
+                _live.pop(key, None)
             with contextlib.suppress(RuntimeError):  # loop already closed after a cancel
                 loop.call_soon_threadsafe(deliver, result, exc)
 
-        threading.Thread(target=work, daemon=True, name="anydm-media").start()
+        thread = threading.Thread(target=work, daemon=True, name="anydm-media")
+        with _live_lock:
+            _live[key] = thread
+        thread.start()
         try:
             return await fut
         except asyncio.CancelledError:
             stop.set()
+            # Give the thread a moment to see `stop`, so a retry does not race it on the same .part file.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(ended.wait(), CANCEL_WAIT)
             raise
+
+    @staticmethod
+    async def _previous_run_stopped(key: tuple[str, Path]) -> None:
+        """A cancelled run can leave its thread alive past CANCEL_WAIT; never start a second one beside it."""
+        with _live_lock:
+            old = _live.get(key)
+        if old is None or not old.is_alive():
+            return
+        deadline = asyncio.get_running_loop().time() + RESTART_WAIT
+        while old.is_alive():
+            if asyncio.get_running_loop().time() > deadline:
+                raise DownloadError("the previous attempt is still stopping; try again in a moment")
+            await asyncio.sleep(0.05)
 
     def _download(self, job: Job, report: Reporter, stop: threading.Event) -> list[Path]:
         import yt_dlp  # lazy: keeps --help fast

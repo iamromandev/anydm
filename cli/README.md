@@ -3,6 +3,28 @@
 `anydm get <url | magnet | file.torrent>` downloads the source and prints the saved paths. Run `make help` for the
 development commands.
 
+## Queue (TUI)
+
+`anydm tui` opens a full-screen queue of HTTP, media and torrent downloads (needs a terminal of at least 80x24). Add
+links, watch live progress, and cancel, retry or remove each download. It uses the same engines and the same partial
+files as `anydm get`, so a download stopped in one can be resumed by the other.
+
+| Key | Action |
+|---|---|
+| `a` | Add a link and a folder (default: `download_dir`) |
+| `c` | Cancel the selected download (partial data is kept) |
+| `r` | Retry a failed or cancelled download; it resumes |
+| `d` | Remove a row from the list (never deletes files) |
+| `o` | Open the folder of a finished download |
+| `y` | Copy the path of a finished download |
+| `q` / Ctrl-C | Quit; asks first while downloads run, then stops them and keeps their partial data |
+| Up / Down | Move the selection |
+
+At most `max_active` downloads run at once (1 to 10, default 3; `ANYDM_MAX_ACTIVE`, `.env` or `max_active` in
+config.toml). The rest wait as `queued`. The queue is kept only while the app is open: nothing is saved between runs
+and torrents are not seeded. Copying the path uses the terminal clipboard (OSC 52), which not every terminal supports,
+so the path is also shown in a notification.
+
 ## Torrents
 
 `anydm get file.torrent` (a URL of a .torrent file, or a `magnet:` link) uses a built-in, pure-Python BitTorrent

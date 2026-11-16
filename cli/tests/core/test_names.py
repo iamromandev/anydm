@@ -59,3 +59,10 @@ def test_clean_name_also_strips_c1_controls_and_bidi_overrides(raw: str, expecte
 
 def test_clean_name_keeps_ordinary_non_ascii_text() -> None:
     assert clean_name("Fête 映画 مرحبا.mkv") == "Fête 映画 مرحبا.mkv"
+
+
+def test_clean_display_strips_controls_and_bidi_and_collapses_whitespace() -> None:
+    from src.core.names import clean_display
+
+    assert clean_display("a\x1b[31mred\x07‮  evil⁦\n\tname") == "a[31mred evil name"
+    assert clean_display("  ") == ""
