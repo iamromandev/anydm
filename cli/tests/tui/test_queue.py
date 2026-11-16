@@ -14,6 +14,7 @@ class FakeEngine:
 
     def __init__(self) -> None:
         self.started: list[str] = []
+        self.jobs: list[Job] = []
         self.gates: dict[str, asyncio.Event] = {}
         self.outcome: dict[str, BaseException] = {}
 
@@ -22,6 +23,7 @@ class FakeEngine:
 
     async def run(self, job: Job, report: Reporter) -> list[Path]:
         self.started.append(job.source)
+        self.jobs.append(job)
         report.update(Progress(done=5, total=10, speed=1.0, name="n\x1b[31m‮ame"))
         await self.gate(job.source).wait()
         if job.source in self.outcome:
@@ -295,3 +297,108 @@ async def test_progress_from_an_old_run_is_ignored_after_a_retry(tmp_path: Path)
     assert (item.progress.name, item.progress.done) == ("new", 5)
     assert item.notice is None
     await q.shutdown()
+
+
+SECRET = "s3cr3t-session-value-7f3a"
+MEDIA = "https://media.example/watch?v=abc"
+
+
+def make_with_cookies(tmp_path: Path, cookies: Path) -> tuple[Queue, FakeEngine]:
+    fake = FakeEngine()
+    q = Queue(
+        Settings(download_dir=tmp_path / "dl", cookies_file=cookies), 3, lambda: None, engine_for=lambda kind: fake
+    )
+    return q, fake
+
+
+def cookie_file(folder: Path, text: str | None = None, mode: int = 0o600) -> Path:
+    f = folder / "cookies.txt"
+    f.write_text(text or f"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t2000000000\tsid\t{SECRET}\n")
+    f.chmod(mode)
+    return f
+
+
+async def test_a_media_row_gets_the_cookies_setting_and_http_and_torrent_rows_do_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: url == MEDIA)
+    cookies = cookie_file(tmp_path)
+    q, fake = make_with_cookies(tmp_path, cookies)
+    q.add(MEDIA, None)
+    q.add("http://h/a.bin", None)
+    q.add("magnet:?xt=urn:btih:" + "a" * 40, None)
+    await settle()
+    by_source = {j.source: j.cookies for j in fake.jobs}
+    assert by_source[MEDIA] == cookies.resolve()
+    assert by_source["http://h/a.bin"] is None
+    assert by_source["magnet:?xt=urn:btih:" + "a" * 40] is None
+
+
+async def test_without_the_setting_no_row_gets_cookies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: True)
+    q, fake, _ = make(tmp_path)
+    q.add(MEDIA, None)
+    await settle()
+    assert [j.cookies for j in fake.jobs] == [None]
+
+
+async def test_a_bad_cookies_file_fails_the_row_with_the_message_and_never_starts_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.tui.app import render_row
+
+    monkeypatch.setattr("src.engine._media_cached", lambda url: True)
+    bad = cookie_file(tmp_path, text=f"{SECRET}: not a cookies file\n")
+    q, fake = make_with_cookies(tmp_path, bad)
+    item = q.add(MEDIA, None)
+    await settle()
+    assert item.state is State.FAILED
+    assert item.error is not None and "not a Netscape cookies file" in item.error and str(bad.resolve()) in item.error
+    assert fake.started == []
+    assert SECRET not in " ".join(render_row(item))
+
+
+async def test_a_missing_cookies_file_fails_the_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: True)
+    q, fake = make_with_cookies(tmp_path, tmp_path / "gone.txt")
+    item = q.add(MEDIA, None)
+    await settle()
+    assert item.state is State.FAILED
+    assert item.error is not None and "gone.txt" in item.error
+    assert fake.started == []
+
+
+async def test_a_cookies_file_others_can_read_shows_the_warning_on_the_row_and_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: True)
+    q, fake = make_with_cookies(tmp_path, cookie_file(tmp_path, mode=0o644))
+    item = q.add(MEDIA, None)
+    await settle()
+    assert item.state is State.RUNNING
+    assert item.notice is not None and "chmod 600" in item.notice
+    assert SECRET not in item.notice
+    assert len(fake.started) == 1
+
+
+@pytest.mark.parametrize("source", ["http://h/a.bin", "magnet:?xt=urn:btih:" + "a" * 40])
+async def test_a_missing_cookies_file_does_not_fail_an_http_or_torrent_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: False)
+    q, fake = make_with_cookies(tmp_path, tmp_path / "gone.txt")
+    item = q.add(source, None)
+    await settle()
+    assert item.state is State.RUNNING
+    assert item.error is None and len(fake.started) == 1
+
+
+async def test_a_readable_by_others_cookies_file_shows_no_warning_on_an_http_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.engine._media_cached", lambda url: False)
+    q, _ = make_with_cookies(tmp_path, cookie_file(tmp_path, mode=0o644))
+    item = q.add("http://h/a.bin", None)
+    await settle()
+    assert item.state is State.RUNNING
+    assert item.notice is None

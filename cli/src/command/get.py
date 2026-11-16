@@ -33,9 +33,11 @@ def get(
     seed: bool = typer.Option(False, "--seed", help="Keep seeding after a torrent finishes"),
     quiet: bool = typer.Option(False, "--quiet", help="No progress output"),
     insecure: bool = typer.Option(False, "--insecure", help="Do not verify TLS certificates"),
+    cookies: Path | None = typer.Option(None, "--cookies", help="Netscape cookies file for media that needs a login"),
 ) -> None:
     """Download SOURCE and print the saved paths."""
     from src.config.settings import get_settings  # lazy: keeps --help fast
+    from src.core.cookies import check_cookies
     from src.core.progress import NoticeReporter, NullReporter, Reporter, RichReporter
     from src.engine import Job, Kind, engine_for, resolve, take_notices
 
@@ -48,12 +50,19 @@ def get(
         reporter = NoticeReporter()  # no progress bar off a terminal, but notices still matter
     try:
         try:
-            settings = get_settings(download_dir=output, connections=connections)
-            resolved = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))
+            settings = get_settings(download_dir=output, connections=connections, cookies_file=cookies)
+            resolved = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))  # never given cookies
             for note in take_notices():  # e.g. media detection skipped because Docker is missing
                 reporter.notice(note)
+            use: Path | None = None
+            if resolved is Kind.MEDIA and settings.cookies_file is not None:
+                # only media reads the cookies, so only a media job is stopped by a bad file or warns about its mode
+                checked = check_cookies(settings.cookies_file)
+                if checked.warning:
+                    reporter.notice(checked.warning)
+                use = checked.path
             dest = writable_dir(settings.download_dir)
-            job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure)
+            job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure, use)
             paths = asyncio.run(engine_for(resolved).run(job, reporter))
         except KeyboardInterrupt:
             raise _fail("interrupted; partial data kept so the next run can resume", INTERRUPTED) from None

@@ -15,6 +15,7 @@ class Request:
     method: str
     path: str
     range: str | None
+    cookie: str | None = None
 
 
 @dataclass
@@ -52,7 +53,7 @@ def _handler(srv: FileServer) -> type[BaseHTTPRequestHandler]:
 
         def _serve(self, send_body: bool) -> None:
             rng = self.headers.get("Range")
-            srv.log.append(Request(self.command, self.path, rng))
+            srv.log.append(Request(self.command, self.path, rng, self.headers.get("Cookie")))
             path = self.path.split("?")[0]
             if path in srv.redirects:
                 self.send_response(302)

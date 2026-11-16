@@ -15,7 +15,7 @@ from textual.widgets import Input
 
 from tests.conftest import FakeDocker
 
-HELLO = {"type": "hello", "protocol": 1}
+HELLO = {"type": "hello", "protocol": 2}
 URL = "https://www.youtube.com/watch?v="
 
 

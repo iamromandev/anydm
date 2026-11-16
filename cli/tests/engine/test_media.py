@@ -411,3 +411,187 @@ async def test_a_416_for_a_part_file_of_another_size_is_still_an_error(
         await MediaEngine().run(job(tmp_path), Collect())
     assert (tmp_path / "v [abc].mp4.part").exists()
     assert len(calls) == 1
+
+
+SECRET = "s3cr3t-session-value-7f3a"
+COOKIES_TEXT = f"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t2000000000\tsid\t{SECRET}\n"
+
+
+@pytest.fixture
+def cookie_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A cookies file of the user, and a temp folder of its own that the private copies go to."""
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(scratch))
+    f = tmp_path / "cookies.txt"
+    f.write_text(COOKIES_TEXT)
+    f.chmod(0o644)
+    return f
+
+
+def _scratch(tmp_path: Path) -> list[Path]:
+    return list((tmp_path / "tmp").glob("anydm-cookies-*"))
+
+
+class SeesCookies(FakeYDL):
+    """Records what yt-dlp is given as its cookie file while it runs."""
+
+    seen: ClassVar[dict[str, Any]] = {}
+
+    def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+        path = Path(self.opts["cookiefile"])
+        SeesCookies.seen = {"path": path, "text": path.read_text(), "mode": path.stat().st_mode & 0o777}
+        return super().extract_info(url, download)
+
+
+async def test_no_cookies_means_no_cookiefile_option(fake, tmp_path: Path) -> None:
+    fake.info = one(tmp_path)
+    await MediaEngine().run(job(tmp_path), Collect())
+    assert "cookiefile" not in fake.opts
+
+
+async def test_yt_dlp_gets_a_private_copy_of_the_cookies_that_is_removed_afterwards(
+    fake, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cookie_file: Path
+) -> None:
+    fake.info = one(tmp_path)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", SeesCookies)
+    await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())
+    seen = SeesCookies.seen
+    assert seen["path"] != cookie_file
+    assert seen["path"].parent == tmp_path / "tmp"
+    assert seen["text"] == COOKIES_TEXT
+    assert seen["mode"] == 0o600
+    assert not seen["path"].exists()
+    assert _scratch(tmp_path) == []
+    assert cookie_file.read_text() == COOKIES_TEXT
+
+
+async def test_the_copy_is_removed_when_yt_dlp_fails(fake, tmp_path: Path, cookie_file: Path) -> None:
+    fake.error = yt_dlp.utils.DownloadError("boom")
+    with pytest.raises(DownloadError):
+        await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())
+    assert _scratch(tmp_path) == []
+
+
+async def test_the_copy_is_removed_after_a_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cookie_file: Path
+) -> None:
+    started = threading.Event()
+
+    class Waiting(FakeYDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            started.set()
+            while True:
+                time.sleep(0.01)
+                self.opts["progress_hooks"][0]({"status": "downloading"})
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", Waiting)
+    task = asyncio.create_task(MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect()))
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    assert len(_scratch(tmp_path)) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(100):  # the thread ends a moment after run() returns
+        if not _scratch(tmp_path):
+            break
+        await asyncio.sleep(0.02)
+    assert _scratch(tmp_path) == []
+
+
+async def test_a_cookies_file_that_vanished_is_a_download_error_without_content(
+    fake, tmp_path: Path, cookie_file: Path
+) -> None:
+    cookie_file.unlink()
+    with pytest.raises(DownloadError, match="cookies") as e:
+        await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())
+    assert SECRET not in str(e.value)
+
+
+LOGIN_MSG = "ERROR: [vimeo] 123: Sign in to confirm your age. Use --cookies-from-browser or --cookies for the authentication"
+
+
+def test_a_login_error_without_cookies_points_at_the_cookies_flag() -> None:
+    from src.engine.media import _map_error
+
+    err = _map_error(yt_dlp.utils.DownloadError(LOGIN_MSG))
+    assert "Sign in to confirm your age" in str(err)
+    assert str(err).endswith("; this site needs a login: pass --cookies FILE (see README)")
+
+
+def test_a_login_error_with_cookies_says_they_may_be_expired() -> None:
+    from src.engine.media import _map_error
+
+    err = _map_error(yt_dlp.utils.DownloadError(LOGIN_MSG), cookies=Path("c.txt"))
+    assert str(err).endswith("; the cookies may be expired: export them again")
+    assert "pass --cookies" not in str(err)
+
+
+@pytest.mark.parametrize("msg", ["Private video. Sign in if you've been granted access", "members-only content",
+                                 "This video is age-restricted", "Please log in", "login required"])
+def test_the_other_login_wordings_get_the_hint_too(msg: str) -> None:
+    from src.engine.media import _map_error
+
+    assert "--cookies FILE" in str(_map_error(yt_dlp.utils.DownloadError(msg)))
+
+
+@pytest.mark.parametrize("msg", [
+    "HTTP Error 404: Not Found for https://example.com/login.mp4",
+    "Unable to download webpage: https://example.com/blog/login-page.html (404)",
+    "unable to read cookies.sqlite",
+    "Unsupported URL: https://example.com/catalog/author/x",
+])
+def test_an_error_that_only_mentions_a_word_like_login_in_a_url_gets_no_hint(msg: str) -> None:
+    from src.engine.media import _map_error
+
+    assert "--cookies" not in str(_map_error(yt_dlp.utils.DownloadError(msg)))
+
+
+@pytest.mark.parametrize("msg", ["Sign in to confirm you're not a bot", "Login required", "This is a Private video",
+                                 "Members-only content", "Age-restricted video", "Authentication required"])
+def test_the_login_phrases_get_the_hint(msg: str) -> None:
+    from src.engine.media import _map_error
+
+    assert "--cookies FILE" in str(_map_error(yt_dlp.utils.DownloadError(msg)))
+
+
+def test_a_cookie_load_error_says_the_file_could_not_be_parsed_without_a_login_hint(tmp_path: Path) -> None:
+    from src.engine.media import _map_error
+    from yt_dlp.cookies import CookieLoadError
+
+    path = tmp_path / "c.txt"
+    err = _map_error(CookieLoadError("failed to load cookies"), cookies=path)
+    assert str(err) == f"cookies file could not be parsed: {path}"
+
+
+def test_a_cookie_load_error_inside_the_image_does_not_name_the_containers_private_copy() -> None:
+    from src.engine.media import _map_error
+    from yt_dlp.cookies import CookieLoadError
+
+    err = _map_error(CookieLoadError("failed to load cookies"), in_image=True, cookies=Path("/tmp/anydm-cookies-x.txt"))
+    assert str(err) == "cookies file could not be parsed"
+
+
+async def test_a_cookie_load_error_from_yt_dlp_names_the_users_file(fake, tmp_path: Path, cookie_file: Path) -> None:
+    from yt_dlp.cookies import CookieLoadError
+
+    fake.error = CookieLoadError("failed to load cookies")
+    with pytest.raises(DownloadError) as e:
+        await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())
+    assert str(e.value) == f"cookies file could not be parsed: {cookie_file}"
+
+
+def test_an_error_that_is_not_about_a_login_gets_no_hint() -> None:
+    from src.engine.media import _map_error
+
+    err = _map_error(yt_dlp.utils.DownloadError("ERROR: Unsupported URL"), cookies=Path("c.txt"))
+    assert str(err) == "Unsupported URL"
+
+
+async def test_a_login_error_from_yt_dlp_gets_the_hint_matching_the_job(fake, tmp_path: Path, cookie_file: Path) -> None:
+    fake.error = yt_dlp.utils.DownloadError(LOGIN_MSG)
+    with pytest.raises(DownloadError, match=r"pass --cookies FILE"):
+        await MediaEngine().run(job(tmp_path), Collect())
+    with pytest.raises(DownloadError, match="may be expired"):
+        await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())

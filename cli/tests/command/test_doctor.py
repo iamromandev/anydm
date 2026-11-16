@@ -88,3 +88,70 @@ def test_doctor_with_an_invalid_media_image_is_a_usage_error(
     assert result.exit_code == 2
     assert "media_image" in result.stderr
     assert fake_docker.calls() == []
+
+
+SECRET = "s3cr3t-session-value-7f3a"
+
+
+@pytest.fixture
+def cookies_env(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("ANYDM_COOKIES_FILE", raising=False)
+
+
+def cookie_file(tmp_path, text: str | None = None, mode: int = 0o600):
+    f = tmp_path / "cookies.txt"
+    f.write_text(text or f"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t2000000000\tsid\t{SECRET}\n")
+    f.chmod(mode)
+    return f
+
+
+def test_doctor_says_when_no_cookies_are_set(cookies_env: None) -> None:
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "cookies: not set" in result.stdout
+
+
+def test_doctor_reports_a_valid_cookies_file_by_path_and_never_its_content(
+    cookies_env: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = cookie_file(tmp_path)
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(f))
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert f"cookies: ok ({f.resolve()})" in result.stdout.replace("\n", "")
+    assert SECRET not in result.stdout + result.stderr
+    assert "warning" not in result.stdout
+
+
+def test_doctor_warns_about_a_cookies_file_others_can_read(
+    cookies_env: None, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(cookie_file(tmp_path, mode=0o644)))
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "cookies: ok" in result.stdout
+    assert "chmod 600" in " ".join(result.stdout.split())
+
+
+@pytest.mark.parametrize("what", ["missing", "format"])
+def test_doctor_reports_an_invalid_cookies_file_without_content_and_exits_zero(
+    cookies_env: None, tmp_path, monkeypatch: pytest.MonkeyPatch, what: str
+) -> None:
+    f = tmp_path / "gone.txt" if what == "missing" else cookie_file(tmp_path, text=f"{SECRET} nope\n")
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(f))
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "cookies: invalid (" in result.stdout
+    assert f.name in result.stdout.replace("\n", "")
+    assert SECRET not in result.stdout + result.stderr
+
+
+def test_doctor_reads_the_cookies_setting_from_config_toml(cookies_env: None, tmp_path) -> None:
+    f = cookie_file(tmp_path)
+    folder = tmp_path / "xdg" / "anydm"
+    folder.mkdir(parents=True)
+    (folder / "config.toml").write_text(f'cookies_file = "{f}"\n')
+    result = runner.invoke(app, ["doctor"])
+    assert "cookies: ok" in result.stdout

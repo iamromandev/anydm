@@ -24,6 +24,7 @@ def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("ANYDM_CONNECTIONS", raising=False)
     monkeypatch.delenv("ANYDM_DOWNLOAD_DIR", raising=False)
+    monkeypatch.delenv("ANYDM_COOKIES_FILE", raising=False)
 
 
 def test_quiet_success_prints_only_absolute_paths_on_stdout(serve, tmp_path: Path) -> None:
@@ -186,7 +187,7 @@ def test_second_interrupt_during_cleanup_still_exits_130(serve, monkeypatch: pyt
 
 
 YOUTUBE = "https://www.youtube.com/watch?v=abc"
-HELLO = {"type": "hello", "protocol": 1}
+HELLO = {"type": "hello", "protocol": 2}
 
 
 @pytest.fixture
@@ -293,3 +294,189 @@ def test_a_dotenv_in_the_current_folder_cannot_choose_the_docker_command(
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     runner.invoke(app, ["get", YOUTUBE, "--kind", "media", "-o", str(tmp_path / "o")])
     assert not marker.exists()
+
+
+SECRET = "s3cr3t-session-value-7f3a"
+TARGET = "/run/anydm/cookies.txt"
+
+
+def cookie_file(folder: Path, name: str = "cookies.txt", mode: int = 0o600) -> Path:
+    f = folder / name
+    f.write_text(f"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t2000000000\tsid\t{SECRET}\n")
+    f.chmod(mode)
+    return f
+
+
+def download_call(docker) -> list[str]:
+    [call] = [c for c in docker.calls() if c[0] == "run" and "download" in c]
+    return call
+
+
+def cookie_mounts(call: list[str]) -> list[str]:
+    return [call[i + 1] for i, a in enumerate(call) if a == "--mount"]
+
+
+def test_cookies_flag_mounts_the_file_for_the_media_container_and_not_for_the_check(
+    container_media, tmp_path: Path
+) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path)
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet", "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    call = download_call(container_media)
+    assert cookie_mounts(call) == [f"type=bind,src={cookies.resolve()},dst={TARGET},readonly"]
+    assert call[-1] == "--cookies"
+    [check] = [c for c in container_media.calls() if c[0] == "run" and "check" in c]
+    assert "--mount" not in check and "--cookies" not in check
+
+
+def test_cookies_setting_from_env_is_used_and_the_flag_beats_it(
+    container_media, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    from_env = cookie_file(tmp_path, "env.txt")
+    from_flag = cookie_file(tmp_path, "flag.txt")
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(from_env))
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 0, result.stderr
+    assert f"src={from_env.resolve()}," in cookie_mounts(download_call(container_media))[0]
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet", "--cookies", str(from_flag)])
+    assert result.exit_code == 0, result.stderr
+    last = [c for c in container_media.calls() if c[0] == "run" and "download" in c][-1]
+    assert f"src={from_flag.resolve()}," in cookie_mounts(last)[0]
+
+
+def test_cookies_setting_from_config_toml_is_used(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path)
+    folder = tmp_path / "xdg" / "anydm"
+    folder.mkdir(parents=True)
+    (folder / "config.toml").write_text(f'cookies_file = "{cookies}"\n')
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 0, result.stderr
+    assert f"src={cookies.resolve()}," in cookie_mounts(download_call(container_media))[0]
+
+
+def test_cookies_file_in_a_dotenv_is_ignored(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path)
+    (tmp_path / ".env").write_text(f"ANYDM_COOKIES_FILE={cookies}\n")
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 0, result.stderr
+    assert cookie_mounts(download_call(container_media)) == []
+
+
+def _bad_files(tmp_path: Path) -> dict[str, Path]:
+    not_netscape = tmp_path / "json.txt"
+    not_netscape.write_text(f'{{"sid": "{SECRET}"}}\n')
+    big = tmp_path / "big.txt"
+    big.write_text("# Netscape HTTP Cookie File\n")
+    os.truncate(big, 10 * 1024 * 1024 + 1)
+    one_bad_line = tmp_path / "badline.txt"  # what yt-dlp would print, raw, on its stderr
+    one_bad_line.write_text(cookie_file(tmp_path).read_text() + f"oops {SECRET}\n")
+    return {
+        "missing": tmp_path / "missing.txt", "directory": tmp_path, "format": not_netscape, "big": big,
+        "badline": one_bad_line,
+    }
+
+
+@pytest.mark.parametrize("which", ["missing", "directory", "format", "big", "badline"])
+def test_a_bad_cookies_file_exits_2_naming_the_path_before_any_media_download(
+    container_media, tmp_path: Path, which: str
+) -> None:
+    bad = _bad_files(tmp_path)[which]
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--cookies", str(bad)])
+    assert result.exit_code == 2
+    assert bad.name in result.stderr or which == "directory"
+    assert SECRET not in result.stderr + result.stdout
+    assert [c for c in container_media.calls() if "download" in c] == []
+
+
+def test_a_bad_line_in_the_cookies_file_is_never_printed_in_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(engine, "_has_local_yt_dlp", lambda: True)
+    bad = _bad_files(tmp_path)["badline"]
+    result = runner.invoke(app, ["get", YOUTUBE, "--kind", "media", "-o", str(tmp_path / "o"), "--cookies", str(bad)])
+    captured = capsys.readouterr()
+    assert result.exit_code == 2
+    assert SECRET not in result.stdout + result.stderr + captured.out + captured.err
+
+
+def test_a_bad_cookies_file_from_the_setting_exits_2_too(
+    container_media, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(tmp_path / "missing.txt"))
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o")])
+    assert result.exit_code == 2
+    assert "missing.txt" in result.stderr
+    assert [c for c in container_media.calls() if "download" in c] == []
+
+
+def test_a_file_others_can_read_gives_one_warning_and_the_download_goes_on(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path, mode=0o644)
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr.count("cookies file ") == 1
+    assert "chmod 600" in " ".join(result.stderr.split())
+
+
+def test_the_warning_is_silenced_by_quiet(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path, mode=0o644)
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet", "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr == ""
+
+
+def test_a_private_file_gives_no_warning(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path)
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    assert "cookies file" not in result.stderr
+
+
+def test_no_cookie_value_reaches_stdout_stderr_the_docker_log_or_the_output_folder(
+    container_media, tmp_path: Path
+) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/v.mp4"]}])
+    cookies = cookie_file(tmp_path, mode=0o644)
+    out = tmp_path / "o"
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(out), "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    assert SECRET not in result.stdout + result.stderr
+    assert SECRET not in container_media.log.read_text()
+    assert [f for f in out.iterdir() if SECRET in f.read_text(errors="replace")] == []
+
+
+def test_a_cookies_file_is_ignored_for_a_plain_http_download(serve, tmp_path: Path) -> None:
+    srv = serve(b"abc")
+    cookies = cookie_file(tmp_path)
+    result = runner.invoke(app, ["get", srv.url(), "-o", str(tmp_path / "o"), "--quiet", "--cookies", str(cookies)])
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr == ""
+    assert (tmp_path / "o" / "file.bin").read_bytes() == b"abc"
+    assert [r.cookie for r in srv.log] != [] and all(r.cookie is None for r in srv.log)
+
+
+def test_a_missing_cookies_file_does_not_affect_an_http_download(
+    serve, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    srv = serve(b"abc")
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(tmp_path / "missing.txt"))
+    result = runner.invoke(app, ["get", srv.url(), "-o", str(tmp_path / "o")])
+    assert result.exit_code == 0, result.stderr
+    assert "cookies" not in result.stderr
+    assert (tmp_path / "o" / "file.bin").read_bytes() == b"abc"
+
+
+def test_a_readable_by_others_cookies_file_gives_no_warning_for_an_http_download(
+    serve, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    srv = serve(b"abc")
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", str(cookie_file(tmp_path, mode=0o644)))
+    result = runner.invoke(app, ["get", srv.url(), "-o", str(tmp_path / "o")])
+    assert result.exit_code == 0, result.stderr
+    assert "cookies" not in result.stderr

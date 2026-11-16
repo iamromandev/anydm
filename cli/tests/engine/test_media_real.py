@@ -1,5 +1,6 @@
 """MediaEngine against the real yt-dlp, a local fixture extractor and a local HTTP server. No network."""
 
+import hashlib
 import os
 import signal
 import subprocess
@@ -22,6 +23,7 @@ from yt_dlp.globals import extractors as extractor_registry
 
 CLI_DIR = Path(__file__).parents[2]
 TITLES: dict[str, str] = {}
+SESSION = "4c1f9e0b27d3"  # the cookie value the /login/ pages of the fixture server want
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -32,6 +34,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.flush()
             time.sleep(60)
+            return
+        if self.path.startswith("/login") and f"sid={SESSION}" not in (self.headers.get("Cookie") or ""):
+            self.send_error(403, "Login required")  # the reason phrase is what yt-dlp prints
             return
         if self.path.startswith("/missing"):
             self.send_error(404)
@@ -160,3 +165,40 @@ def test_sigint_against_stalled_server_exits_130_quickly(tmp_path: Path, base: s
     proc.communicate(timeout=10)
     assert proc.returncode == 130
     assert time.monotonic() - t < 2
+
+
+def cookies_for_the_fixture(tmp_path: Path) -> Path:
+    f = tmp_path / "cookies.txt"
+    f.write_text(f"# Netscape HTTP Cookie File\n127.0.0.1\tFALSE\t/\tFALSE\t2000000000\tsid\t{SESSION}\n")
+    f.chmod(0o600)
+    return f
+
+
+async def test_media_behind_a_login_downloads_with_cookies_and_leaves_the_file_and_tmp_alone(
+    tmp_path: Path, base: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(scratch))
+    cookies = cookies_for_the_fixture(tmp_path)
+    before = hashlib.sha256(cookies.read_bytes()).digest()
+    dest = tmp_path / "out"
+    dest.mkdir()
+    paths = await MediaEngine().run(job(dest, f"{base}/login/v.mp4", cookies=cookies), NullReporter())
+    assert [p.read_bytes() for p in paths] == [b"hello"]
+    assert hashlib.sha256(cookies.read_bytes()).digest() == before
+    assert list(scratch.glob("anydm-cookies-*")) == []
+    assert [p.name for p in dest.iterdir() if "cookies" in p.name] == []
+
+
+async def test_media_behind_a_login_fails_without_cookies(tmp_path: Path, base: str) -> None:
+    with pytest.raises(DownloadError, match="403") as e:
+        await MediaEngine().run(job(tmp_path, f"{base}/login/v.mp4"), NullReporter())
+    assert "pass --cookies FILE" in str(e.value)
+
+
+async def test_a_login_failure_with_cookies_says_they_may_be_expired(tmp_path: Path, base: str) -> None:
+    stale = tmp_path / "cookies.txt"
+    stale.write_text("# Netscape HTTP Cookie File\n127.0.0.1\tFALSE\t/\tFALSE\t2000000000\tsid\tstale\n")
+    with pytest.raises(DownloadError, match="may be expired"):
+        await MediaEngine().run(job(tmp_path / "o", f"{base}/login/v.mp4", cookies=stale), NullReporter())

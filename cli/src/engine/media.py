@@ -1,11 +1,14 @@
 import asyncio
+import atexit
 import contextlib
 import re
 import threading
 from pathlib import Path
 from typing import Any
 
+from src.core.cookies import LOGIN_HINT_EXPIRED, LOGIN_HINT_NO_COOKIES, copy_private
 from src.core.errors import DownloadError, PartialDownload
+from src.core.names import clean_display
 from src.core.paths import inside
 from src.core.progress import Progress, Reporter
 from src.engine import Job
@@ -17,6 +20,23 @@ RESTART_WAIT = 10.0  # how long a new run waits for the previous thread of the s
 
 _live: dict[tuple[str, Path], threading.Thread] = {}  # jobs whose yt-dlp thread is still running
 _live_lock = threading.Lock()
+# yt-dlp's wordings for "this needs an account": whole phrases, so a URL like /login.mp4 or a word like
+# "cookies" in another error does not look like one
+_LOGIN = re.compile(
+    r"\b(?:sign in to confirm|(?:log ?in|sign ?in) (?:is )?required|please (?:log|sign) ?in|private video"
+    r"|members[- ]only|age[- ]restricted|authentication)\b",
+    re.IGNORECASE,
+)
+_copies: set[Path] = set()  # private cookie copies that exist right now
+
+
+def _forget_copies() -> None:
+    """At exit: a yt-dlp thread that was still blocked then never reached its `finally`."""
+    for copy in list(_copies):
+        copy.unlink(missing_ok=True)
+
+
+atexit.register(_forget_copies)
 
 
 def _collect(info: dict[str, Any]) -> list[str]:
@@ -55,10 +75,19 @@ def _adopt_complete_part(e: Exception, targets: list[str]) -> bool:
     return False
 
 
-def _map_error(e: Exception, in_image: bool = False) -> DownloadError:
+def _map_error(e: Exception, in_image: bool = False, cookies: Path | None = None) -> DownloadError:
+    """`cookies` is the cookies file the job used, if any. Inside the image it is the container's private copy, so
+    it is not named."""
+    from yt_dlp.cookies import CookieLoadError
+
     msg = str(e).removeprefix("ERROR: ")
+    if isinstance(e, CookieLoadError):  # its own text is just "failed to load cookies"
+        where = "" if in_image or cookies is None else f": {clean_display(str(cookies))}"
+        return DownloadError(f"cookies file could not be parsed{where}")
     if ("ffmpeg" in msg.lower() or "ffprobe" in msg.lower()) and not in_image:  # the image always has ffmpeg
         return DownloadError(f"{msg}; ffmpeg is needed to merge formats, run `anydm doctor` to check your setup")
+    if _LOGIN.search(msg):
+        return DownloadError(f"{msg}; {LOGIN_HINT_EXPIRED if cookies is not None else LOGIN_HINT_NO_COOKIES}")
     return DownloadError(msg)
 
 
@@ -191,22 +220,36 @@ class MediaEngine:
             opts["ignoreerrors"] = "only_download"
         if job.format:
             opts["format"] = job.format
-        for attempt in (1, 2):
+        copy: Path | None = None
+        if job.cookies is not None:
+            # yt-dlp saves its cookie jar back to `cookiefile` on close, so it gets a copy: the user's file is never written
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl_ref[:] = [ydl]
-                    info = ydl.extract_info(job.source, download=True)
-                break
-            except DownloadCancelled:
-                raise KeyboardInterrupt from None
-            except DownloadError:
-                raise
-            except YoutubeDLError as e:
-                if attempt == 1 and _adopt_complete_part(e, targets):
-                    continue
-                raise _map_error(e, self._in_image) from e
+                copy = copy_private(job.cookies)
             except OSError as e:
-                raise DownloadError(str(e.strerror or e)) from e
+                raise DownloadError(f"cannot read the cookies file: {e.strerror or type(e).__name__}") from e
+            _copies.add(copy)
+            opts["cookiefile"] = str(copy)
+        try:
+            for attempt in (1, 2):
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl_ref[:] = [ydl]
+                        info = ydl.extract_info(job.source, download=True)
+                    break
+                except DownloadCancelled:
+                    raise KeyboardInterrupt from None
+                except DownloadError:
+                    raise
+                except YoutubeDLError as e:
+                    if attempt == 1 and _adopt_complete_part(e, targets):
+                        continue
+                    raise _map_error(e, self._in_image, job.cookies) from e
+                except OSError as e:
+                    raise DownloadError(str(e.strerror or e)) from e
+        finally:
+            if copy is not None:
+                copy.unlink(missing_ok=True)
+                _copies.discard(copy)
         if not info:
             raise DownloadError("yt-dlp returned no information for this URL")
         paths: list[Path] = []

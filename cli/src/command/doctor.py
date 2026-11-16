@@ -9,6 +9,29 @@ def _line(name: str, found: bool, detail: str) -> str:
     return f"{name}: {'ok' if found else 'missing'} ({detail})"
 
 
+def _cookies_line() -> None:
+    """Whether a cookies file is set and usable. Names the path, never reads out the file."""
+    from src.config.settings import get_settings  # lazy: keeps --help fast
+    from src.core.cookies import check_cookies
+
+    try:
+        path = get_settings().cookies_file
+    except UsageError as e:
+        typer.echo(f"cookies: unknown ({e})")
+        return
+    if path is None:
+        typer.echo("cookies: not set")
+        return
+    try:
+        checked = check_cookies(path)
+    except UsageError as e:
+        typer.echo(f"cookies: invalid ({e})")
+        return
+    typer.echo(f"cookies: ok ({checked.path})")
+    if checked.warning:
+        typer.echo(f"warning: {checked.warning}")
+
+
 def doctor() -> None:
     """Check the tools anydm can use. Makes no network requests."""
     from src.engine import _docker_runner, _has_local_yt_dlp  # lazy: keeps --help fast
@@ -34,4 +57,5 @@ def doctor() -> None:
         ]
     for name, found, detail in checks:
         typer.echo(_line(name, found, detail))
+    _cookies_line()
     typer.echo("torrent: built-in (pure Python client, .torrent and magnet)")

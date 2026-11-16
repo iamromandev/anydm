@@ -15,7 +15,7 @@ from tests.engine.test_media import Collect
 
 IMAGE = "anydm-media:0.0.1"
 URL = "https://www.youtube.com/watch?v=abc"
-HELLO = {"type": "hello", "protocol": 1}
+HELLO = {"type": "hello", "protocol": 2}
 
 
 def job(dest: Path, **kw: Any) -> Job:
@@ -58,14 +58,14 @@ async def test_command_line_is_locked_down(fake_docker: FakeDocker, tmp_path: Pa
     assert "--privileged" not in call
     i = call.index(IMAGE)
     assert call[i - 1] == "--"
-    assert call[i:] == [IMAGE, "download", "--protocol", "1", f"--url={URL}", "--format=bv*+ba", "--playlist",
+    assert call[i:] == [IMAGE, "download", "--protocol", "2", f"--url={URL}", "--format=bv*+ba", "--playlist",
                         "--insecure"]
 
 
 async def test_defaults_send_no_optional_flags(fake_docker: FakeDocker, tmp_path: Path) -> None:
     fake_docker.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/a.mp4"]}])
     await engine().run(job(tmp_path), Collect())
-    assert run_call(fake_docker)[-4:] == ["download", "--protocol", "1", f"--url={URL}"]
+    assert run_call(fake_docker)[-4:] == ["download", "--protocol", "2", f"--url={URL}"]
 
 
 async def test_an_error_line_is_a_download_error(fake_docker: FakeDocker, tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ async def test_a_symlink_escaping_the_folder_is_refused(fake_docker: FakeDocker,
 
 
 async def test_a_different_protocol_asks_for_an_update(fake_docker: FakeDocker, tmp_path: Path) -> None:
-    fake_docker.set(lines=[{"type": "hello", "protocol": 2}, {"type": "done", "paths": ["/downloads/a.mp4"]}])
+    fake_docker.set(lines=[{"type": "hello", "protocol": 1}, {"type": "done", "paths": ["/downloads/a.mp4"]}])
     with pytest.raises(DownloadError, match="update the media image"):
         await engine().run(job(tmp_path), Collect())
 
@@ -287,3 +287,73 @@ async def test_as_root_the_download_is_refused_before_any_container_starts(
     with pytest.raises(DownloadError, match="root"):
         await engine().run(job(tmp_path), Collect())
     assert "run" not in fake_docker.commands()
+
+
+SECRET = "s3cr3t-session-value-7f3a"
+TARGET = "/run/anydm/cookies.txt"
+
+
+@pytest.fixture
+def cookies(tmp_path: Path) -> Path:
+    f = tmp_path / "cookies.txt"
+    f.write_text(f"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t2000000000\tsid\t{SECRET}\n")
+    return f
+
+
+async def test_a_job_with_cookies_mounts_the_file_read_only_and_says_so(
+    fake_docker: FakeDocker, tmp_path: Path, cookies: Path
+) -> None:
+    fake_docker.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/a.mp4"]}])
+    out = tmp_path / "out"
+    out.mkdir()
+    await engine().run(job(out, cookies=cookies), Collect())
+    call = run_call(fake_docker)
+    mounts = [call[i + 1] for i, a in enumerate(call) if a == "--mount"]
+    assert mounts == [f"type=bind,src={cookies},dst={TARGET},readonly"]
+    assert not TARGET.startswith("/downloads")
+    assert call.count("-v") == 1  # the output folder
+    i = call.index(IMAGE)
+    assert call[i:] == [IMAGE, "download", "--protocol", "2", f"--url={URL}", "--cookies"]
+
+
+async def test_no_cookie_value_is_in_the_docker_command_line_or_the_log(
+    fake_docker: FakeDocker, tmp_path: Path, cookies: Path
+) -> None:
+    fake_docker.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/a.mp4"]}])
+    await engine().run(job(tmp_path, cookies=cookies), Collect())
+    assert SECRET not in fake_docker.log.read_text()
+
+
+async def test_without_cookies_there_is_no_mount_and_no_flag(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    fake_docker.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/a.mp4"]}])
+    await engine().run(job(tmp_path), Collect())
+    call = run_call(fake_docker)
+    assert "--mount" not in call
+    assert "--cookies" not in call
+
+
+async def test_a_cookies_path_with_a_comma_fails_before_any_container_starts(
+    fake_docker: FakeDocker, tmp_path: Path
+) -> None:
+    bad = tmp_path / "a,b.txt"
+    bad.write_text("x")
+    with pytest.raises(DownloadError, match="cookies"):
+        await engine().run(job(tmp_path, cookies=bad), Collect())
+    assert [c for c in fake_docker.calls() if c[0] == "run"] == []
+
+
+async def test_a_login_error_from_the_container_is_shown_as_it_came(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    msg = "Sign in to confirm your age; this site needs a login: pass --cookies FILE (see README)"
+    fake_docker.set(lines=[HELLO, {"type": "error", "message": msg, "partial": []}], exit=1)
+    with pytest.raises(DownloadError) as e:
+        await engine().run(job(tmp_path), Collect())
+    assert str(e.value) == msg
+
+
+def test_the_check_container_never_gets_the_cookies(fake_docker: FakeDocker, cookies: Path) -> None:
+    # the check has no way to be given them: `supported` takes only the URL
+    DockerRunner(os.environ["ANYDM_DOCKER"], IMAGE).supported(URL)
+    [call] = [c for c in fake_docker.calls() if c[0] == "run"]
+    assert "--mount" not in call
+    assert "--cookies" not in call
+    assert SECRET not in fake_docker.log.read_text()
