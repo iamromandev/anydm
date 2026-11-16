@@ -13,8 +13,12 @@ anydm/
 │   └── makefile
 ├── ui/           # Bun workspace
 │   └── apps/web/ # React 19 + Vite SPA
+├── cli/          # Standalone `anydm` command-line downloader (Python 3.15, uv)
+│   ├── src/
+│   ├── tests/
+│   └── makefile
 ├── docs/
-└── makefile      # delegates to api/makefile and ui/package.json
+└── makefile      # delegates to api/makefile, ui/package.json and cli/makefile
 ```
 
 **Planned:** `apps/mobile`. A native desktop client is in progress in [`cross/`](cross/README.md), a Kotlin Multiplatform project that talks to the API. Torrent streaming and on-demand transcoding have since shipped; see [docs/architecture.md](docs/architecture.md).

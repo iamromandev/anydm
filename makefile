@@ -12,6 +12,7 @@
 API := api
 UI := ui
 CROSS := cross
+CLI := cli
 BUN := bun
 UI_PORT := 3030
 
@@ -20,10 +21,11 @@ UI_PORT := 3030
 	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
 	api-migrate api-seed api-install api-export api-clean-all api-clean-volumes api-clean-host \
 	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format \
-	cross-check cross-test cross-run cross-package
+	cross-check cross-test cross-run cross-package \
+	cli-install cli-check cli-test cli-run
 
 ## both stacks
-check: api-check ui-check cross-check # Lint + typecheck all three stacks
+check: api-check ui-check cross-check cli-check # Lint + typecheck all four stacks
 
 seed: api-seed # Seed the built-in search sources and categories: adds any that are missing, never overwrites
 
@@ -129,6 +131,19 @@ cross-run: # Open the desktop app
 
 cross-package: # Build the desktop app's installer (dmg / msi / deb) for this OS
 	cd $(CROSS) && ./gradlew :desktopApp:packageDistributionForCurrentOS
+
+## cli — delegates to cli/makefile
+cli-install: # Install CLI dependencies
+	$(MAKE) -C $(CLI) install
+
+cli-check: # Lint + typecheck the CLI
+	$(MAKE) -C $(CLI) check
+
+cli-test: # Run the CLI unit tests
+	$(MAKE) -C $(CLI) test
+
+cli-run: # Run the CLI, e.g. make cli-run ARGS="get https://example.com/a.bin"
+	$(MAKE) -C $(CLI) run
 
 # help
 help:
