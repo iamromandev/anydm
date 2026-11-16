@@ -1,0 +1,17 @@
+### cache ###
+__pycache__
+.pytest_cache
+.ruff_cache
+.venv
+
+### generated ###
+**/*.lock
+**/*.pyc
+
+### project ###
+.env
+.env.**
+downloads
+
+### allow ###
+!.env.example

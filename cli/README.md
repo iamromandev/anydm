@@ -82,3 +82,18 @@ client with no extra dependencies.
 - Tracker, DHT and peer input is treated as hostile: addresses are validated, message sizes and counts are capped,
   peers that sit on requests are dropped, peers that send a bad piece or bad metadata are banned, DHT replies must match the query we sent, and tracker URLs (which often
   hold a private passkey) never appear in messages.
+
+## Docker
+
+The image bundles ffmpeg and Deno, so `anydm doctor` is all green and YouTube works without installing anything on the host.
+
+```bash
+make build-prod TAG=anydm-cli:latest
+docker run --rm -v ~/Downloads:/downloads anydm-cli:latest get "https://youtu.be/jNQXAC9IVRw"
+docker run --rm -it -v ~/Downloads:/downloads anydm-cli:latest tui
+docker run --rm -p 6881:6881 -v ~/Downloads:/downloads anydm-cli:latest get "magnet:?xt=..." --seed
+```
+
+- It runs as a non-root user (uid 10001). On Linux, pass `--user $(id -u):$(id -g)` so saved files are yours.
+- Partial downloads and resume records live in the mounted folder, so a later run resumes.
+- For working on the CLI, `make build` and `make docker-run ARGS="get URL"` use the `local` stage with this checkout mounted, saving into `./downloads` (or `ANYDM_HOST_DOWNLOAD_DIR`).
