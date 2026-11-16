@@ -1,0 +1,23 @@
+target-version = "py315"
+line-length = 120
+src = ["src"]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific
+]
+ignore = [
+    "E501",   # line length (handled by line-length)
+]
+
+[lint.per-file-ignores]
+# Typer declares options via default callables.
+"src/command/**/*.py" = ["B008"]
+"src/main.py" = ["B008"]

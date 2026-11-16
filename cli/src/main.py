@@ -1,0 +1,36 @@
+import importlib.metadata
+
+import typer
+
+from src.command.doctor import doctor
+from src.command.get import get
+
+app = typer.Typer(
+    name="anydm",
+    help="AnyDM command-line downloader.",
+    no_args_is_help=True,
+    pretty_exceptions_show_locals=False,  # a traceback must never print local variables: URLs, passkeys, peer ids
+)
+app.command()(get)
+app.command()(doctor)
+
+
+def _version(value: bool) -> None:
+    if value:
+        typer.echo(importlib.metadata.version("anydm-cli"))
+        raise typer.Exit()
+
+
+@app.callback()
+def root(
+    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True, help="Print the version"),
+) -> None:
+    """AnyDM command-line downloader."""
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()

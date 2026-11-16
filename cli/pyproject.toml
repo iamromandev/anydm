@@ -1,0 +1,42 @@
+[project]
+name = "anydm-cli"
+version = "0.0.1"
+description = "AnyDM command-line downloader"
+requires-python = "==3.15.0"
+dependencies = [
+    "typer==0.29.1",
+    "httpx==0.28.1",
+    "pydantic-settings==2.12.0",
+    "rich==15.0.0",
+    "yt-dlp[default]==2026.10.26",
+]
+
+[project.scripts]
+anydm = "src.main:main"
+
+[dependency-groups]
+dev = [
+    "ruff==0.17.0",
+    "ty==0.0.86",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not slow and not torrent and not live'"
+markers = [
+    "slow: benchmarks and kill tests (make test-all)",
+    "torrent: needs a torrent backend (make test-all)",
+    "live: needs the internet (opt-in)",
+]
