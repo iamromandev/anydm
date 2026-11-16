@@ -1,0 +1,23 @@
+services:
+  cli:
+    hostname: cli-anydm
+    container_name: cli-anydm
+    build:
+      context: .
+      dockerfile: dockerfile
+      target: local
+      args:
+        ENV: local
+        WORK_DIR: /workdir
+        INSTALL_DIR: /opt/install
+        DOWNLOAD_DIR: /downloads
+    # Interactive, so `anydm tui` gets a terminal.
+    stdin_open: true
+    tty: true
+    ports:
+      # Torrent seeding (`--seed`).
+      - "6881:6881"
+    volumes:
+      - .:/workdir
+      - ${ANYDM_HOST_DOWNLOAD_DIR:-./downloads}:/downloads
+    command: ["--help"]

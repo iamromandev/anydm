@@ -15,3 +15,6 @@ __pycache__
 ### allow ###
 !.env.example
 
+
+### docker ###
+downloads

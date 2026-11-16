@@ -1,0 +1,122 @@
+### base image ###
+ARG PYTHON_VERSION=3.15.0
+# Deno runs YouTube's player JavaScript for yt-dlp. A release tag rather than latest; bump deliberately.
+ARG DENO_VERSION=2.5.6
+
+FROM denoland/deno:bin-$DENO_VERSION AS deno
+
+FROM python:$PYTHON_VERSION-slim AS base
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG DOWNLOAD_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+ENV PYTHONUNBUFFERED=true
+ENV PYTHONFAULTHANDLER=true
+ENV PYTHONDONTWRITEBYTECODE=true
+ENV PYTHONHASHSEED=random
+
+ENV VENV_PATH="$INSTALL_DIR/.venv"
+ENV PATH="$VENV_PATH/bin:$PATH"
+ENV ANYDM_DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+# Runtime tools `anydm doctor` checks for: ffmpeg merges media formats, deno for full YouTube support.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=deno /deno /usr/local/bin/deno
+
+
+FROM base AS builder
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG DOWNLOAD_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+RUN pip install --upgrade pip
+RUN pip install uv
+
+WORKDIR $INSTALL_DIR
+COPY pyproject.toml $INSTALL_DIR
+COPY src $INSTALL_DIR/src
+
+RUN uv venv
+RUN uv pip install -r $INSTALL_DIR/pyproject.toml
+# The package itself too, so `anydm` is on PATH and `anydm --version` finds its metadata.
+RUN uv pip install --no-deps $INSTALL_DIR
+
+
+### local image ###
+# For working on the CLI: docker-compose.yml mounts the checkout at WORK_DIR, and `python -m src.main` run there
+# picks up the mounted src before the installed copy.
+FROM base AS local
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG DOWNLOAD_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+WORKDIR $WORK_DIR
+
+COPY --from=builder $INSTALL_DIR $INSTALL_DIR
+COPY . $WORK_DIR
+
+ENTRYPOINT ["python", "-m", "src.main"]
+
+
+### prod image ###
+# Build with the target and the same build args the builder stage needs (it has no defaults):
+#   docker buildx build --platform linux/arm64 --target prod \
+#     --build-arg ENV=prod --build-arg WORK_DIR=/workdir --build-arg INSTALL_DIR=/opt/install \
+#     --build-arg DOWNLOAD_DIR=/downloads -t <repository>:<tag> cli
+# Built on the shared base stage, with the installed CLI copied from builder: no tests, docs or developer .env.
+# It runs as a non-root user and saves into DOWNLOAD_DIR, which is meant to be a mounted volume:
+#   docker run --rm -v ~/Downloads:/downloads <image> get URL
+#   docker run --rm -it -v ~/Downloads:/downloads <image> tui
+#   docker run --rm -p 6881:6881 -v ~/Downloads:/downloads <image> get MAGNET --seed
+FROM base AS prod
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG DOWNLOAD_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin user \
+    && mkdir -p $DOWNLOAD_DIR \
+    && chown user:user $DOWNLOAD_DIR
+
+WORKDIR $WORK_DIR
+
+COPY --from=builder $INSTALL_DIR $INSTALL_DIR
+
+USER user
+
+VOLUME $DOWNLOAD_DIR
+
+# Torrent seeding (`--seed`) listens here; publish it with -p 6881:6881 so peers can connect.
+EXPOSE 6881
+
+ENTRYPOINT ["anydm"]
+CMD ["--help"]
