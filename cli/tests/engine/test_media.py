@@ -286,3 +286,73 @@ def test_cli_get_media_prints_paths(fake, tmp_path: Path, monkeypatch: pytest.Mo
 @pytest.mark.live
 def test_live_extractor_matches_real_site() -> None:
     assert engine._media_supported(URL)
+
+
+class SlowToStop(FakeYDL):
+    """First call: calls the progress hook until it raises, then takes `cleanup` seconds to wind down."""
+
+    calls = 0
+    cleanup = 0.3
+    dest = Path()
+    live = 0
+    peak = 0
+    ended = threading.Event()
+    lock = threading.Lock()
+
+    def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+        cls = SlowToStop
+        with cls.lock:
+            cls.calls += 1
+            first = cls.calls == 1
+            cls.live += 1
+            cls.peak = max(cls.peak, cls.live)
+        try:
+            if not first:
+                return one(cls.dest)
+            while True:
+                time.sleep(0.02)
+                try:
+                    self.opts["progress_hooks"][0]({"status": "downloading", "downloaded_bytes": 1})
+                except yt_dlp.utils.DownloadCancelled:
+                    time.sleep(cls.cleanup)
+                    raise
+        finally:
+            with cls.lock:
+                cls.live -= 1
+            if first:
+                cls.ended.set()
+
+
+@pytest.fixture
+def slow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> type[SlowToStop]:
+    SlowToStop.calls, SlowToStop.live, SlowToStop.peak, SlowToStop.cleanup = 0, 0, 0, 0.3
+    SlowToStop.ended = threading.Event()
+    SlowToStop.dest = tmp_path
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", SlowToStop)
+    return SlowToStop
+
+
+async def test_cancel_waits_for_the_worker_thread_to_finish(slow, tmp_path: Path) -> None:
+    task = asyncio.create_task(MediaEngine().run(job(tmp_path), Collect()))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert slow.ended.is_set(), "run() returned while yt-dlp was still writing"
+
+
+async def test_retry_during_a_slow_cancel_never_runs_two_threads_at_once(
+    slow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("src.engine.media.CANCEL_WAIT", 0.1)
+    slow.cleanup = 0.6  # longer than the bounded wait
+    first = asyncio.create_task(MediaEngine().run(job(tmp_path), Collect()))
+    await asyncio.sleep(0.2)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not slow.ended.is_set()  # the bounded wait gave up
+    paths = await MediaEngine().run(job(tmp_path), Collect())  # the retry
+    assert paths
+    assert slow.peak == 1
+    assert slow.ended.is_set()

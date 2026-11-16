@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     download_dir: Annotated[Path, Field(default_factory=lambda: Path.home() / "Downloads")]
     connections: Annotated[int, Field(default=4, ge=1, le=16)]
+    max_active: Annotated[int, Field(default=3, ge=1, le=10)]
 
     @field_validator("download_dir")
     @classmethod

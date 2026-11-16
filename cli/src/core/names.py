@@ -2,6 +2,8 @@ import re
 
 # C0 and C1 controls, and the bidi overrides and isolates that make a name read differently from how it is spelled
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+# controls that are whitespace become a space so words do not run together; the rest are dropped
+_CONTROL_SPACE = re.compile(r"[\t\n\r\v\f\x85]")
 _NAME_MAX = 255
 # room for the longest derived name: `name.part.json.tmp` (14 bytes) and a ` (999)` counter (6 bytes)
 _MAX_BYTES = _NAME_MAX - 14 - 6
@@ -26,3 +28,8 @@ def clean_name(raw: str, fallback: str = "download") -> str:
     if name.endswith(_RESERVED_ENDINGS):
         name += "_"
     return name
+
+
+def clean_display(raw: str) -> str:
+    """Text for the screen from untrusted input: no control or bidi characters, whitespace collapsed."""
+    return " ".join(_CONTROL.sub("", _CONTROL_SPACE.sub(" ", raw)).split())
