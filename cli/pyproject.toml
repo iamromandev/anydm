@@ -9,14 +9,17 @@ dependencies = [
     "pydantic-settings==2.12.0",
     "rich==15.0.0",
     "textual==8.2.8",
-    "yt-dlp[default]==2026.10.26",
 ]
+
+[project.optional-dependencies]
+media = ["yt-dlp[default]==2026.10.26"]
 
 [project.scripts]
 anydm = "src.main:main"
 
 [dependency-groups]
 dev = [
+    "anydm-cli[media]",
     "ruff==0.17.0",
     "ty==0.0.86",
     "pytest==9.1.1",
@@ -35,9 +38,10 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-m 'not slow and not torrent and not live'"
+addopts = "-m 'not slow and not torrent and not live and not docker'"
 markers = [
     "slow: benchmarks and kill tests (make test-all)",
     "torrent: needs a torrent backend (make test-all)",
     "live: needs the internet (opt-in)",
+    "docker: needs a running Docker daemon and the media image (make test-docker)",
 ]

@@ -356,3 +356,58 @@ async def test_retry_during_a_slow_cancel_never_runs_two_threads_at_once(
     assert paths
     assert slow.peak == 1
     assert slow.ended.is_set()
+
+
+class _Http416(Exception):
+    """What yt-dlp's DownloadError wraps for a server that answers 416 to a resume at the end of the file."""
+
+    status = 416
+
+    def __init__(self, total: int) -> None:
+        super().__init__("HTTP Error 416: Range Not Satisfiable")
+        self.response = type("R", (), {"headers": {"Content-Range": f"bytes */{total}"}})()
+
+
+def _answers_416_once(monkeypatch: pytest.MonkeyPatch, dest: Path, total: int) -> list[int]:
+    """yt-dlp that finds the target's .part and is told 416 the first time, then finds the finished file."""
+    calls: list[int] = []
+
+    class YDL(FakeYDL):
+        def prepare_filename(self, info: dict[str, Any]) -> str:
+            return str(dest / "v [abc].mp4")
+
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            calls.append(1)
+            self.opts["match_filter"]({"id": "abc"})
+            if len(calls) == 1:
+                cause = _Http416(total)
+                raise yt_dlp.utils.DownloadError("unable to download video data: 416", exc_info=(type(cause), cause, None))
+            assert (dest / "v [abc].mp4").read_bytes() == b"x" * total  # the complete .part became the file
+            return one(dest)
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
+    return calls
+
+
+async def test_a_complete_part_file_that_the_server_answers_416_for_is_adopted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ctrl-C after the last byte but before the rename leaves a complete .part; a standard server answers 416 to the
+    resume, which yt-dlp does not handle on its own. The run that follows must still finish."""
+    (tmp_path / "v [abc].mp4.part").write_bytes(b"x" * 100)
+    calls = _answers_416_once(monkeypatch, tmp_path, 100)
+    paths = await MediaEngine().run(job(tmp_path), Collect())
+    assert paths == [tmp_path / "v [abc].mp4"]
+    assert not (tmp_path / "v [abc].mp4.part").exists()
+    assert len(calls) == 2
+
+
+async def test_a_416_for_a_part_file_of_another_size_is_still_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "v [abc].mp4.part").write_bytes(b"x" * 99)
+    calls = _answers_416_once(monkeypatch, tmp_path, 100)
+    with pytest.raises(DownloadError, match="416"):
+        await MediaEngine().run(job(tmp_path), Collect())
+    assert (tmp_path / "v [abc].mp4.part").exists()
+    assert len(calls) == 1

@@ -1,4 +1,11 @@
 ### base image ###
+# What is pinned and what is not (for the images built from this file):
+#   pinned:     the Python version (tag), the Deno version (tag), yt-dlp and the other direct dependencies
+#               (exact versions in pyproject.toml).
+#   not pinned: the base image digest (the python and deno tags can be rebuilt by their publishers), ffmpeg (the
+#               Debian package current at build time), pip and uv (installed at their latest), and the dependencies
+#               of the direct dependencies (resolved when the image is built; uv.lock is not used here).
+# A rebuild at another time can therefore differ in those; pin them by digest or lock file to freeze them.
 ARG PYTHON_VERSION=3.15.0
 # Deno runs YouTube's player JavaScript for yt-dlp. A release tag rather than latest; bump deliberately.
 ARG DENO_VERSION=2.5.6
@@ -53,7 +60,10 @@ COPY pyproject.toml $INSTALL_DIR
 COPY src $INSTALL_DIR/src
 
 RUN uv venv
-RUN uv pip install -r $INSTALL_DIR/pyproject.toml
+# The media extra (yt-dlp) goes in for both the prod and media targets; the bare CLI has no yt-dlp.
+# Bytecode is compiled now: PYTHONDONTWRITEBYTECODE is set, so a throwaway container could never cache it, and
+# yt-dlp's ~1000 extractor modules would be compiled again on every `docker run` (about 1 s).
+RUN uv pip install --compile-bytecode -r $INSTALL_DIR/pyproject.toml --extra media
 # The package itself too, so `anydm` is on PATH and `anydm --version` finds its metadata.
 RUN uv pip install --no-deps $INSTALL_DIR
 
@@ -120,3 +130,37 @@ EXPOSE 6881
 
 ENTRYPOINT ["anydm"]
 CMD ["--help"]
+
+
+### media image ###
+# What anydm starts (`docker run --rm`) for media downloads and media detection when yt-dlp is not installed on the
+# host. Build it with `make build-media` (tag anydm-media:<version>, or MEDIA_IMAGE=<ref>). anydm passes --user and
+# mounts only the output folder at /downloads; the entrypoint prints JSON lines for anydm to read.
+# The working directory is /tmp, not the mounted folder, and PYTHONSAFEPATH keeps the current directory off
+# sys.path: a random.py or src/ in the folder a user downloads into must never shadow the runner's modules.
+FROM base AS media
+
+ARG ENV
+ARG WORK_DIR
+ARG INSTALL_DIR
+ARG DOWNLOAD_DIR
+
+ENV ENV=$ENV
+ENV WORK_DIR=$WORK_DIR
+ENV INSTALL_DIR=$INSTALL_DIR
+ENV DOWNLOAD_DIR=$DOWNLOAD_DIR
+
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin user \
+    && mkdir -p $DOWNLOAD_DIR \
+    && chown user:user $DOWNLOAD_DIR
+
+COPY --from=builder $INSTALL_DIR $INSTALL_DIR
+
+USER user
+
+# The runner is the installed package's own module. It gets the download folder as an absolute path, so the working
+# directory is a scratch one that nothing from outside is mounted on.
+WORKDIR /tmp
+ENV PYTHONSAFEPATH=1
+
+ENTRYPOINT ["python", "-m", "src.engine.media_runner"]

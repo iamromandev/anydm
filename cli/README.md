@@ -83,6 +83,52 @@ client with no extra dependencies.
   peers that sit on requests are dropped, peers that send a bad piece or bad metadata are banned, DHT replies must match the query we sent, and tracker URLs (which often
   hold a private passkey) never appear in messages.
 
+## Media downloads and Docker
+
+Media links (YouTube and the other sites yt-dlp knows) are downloaded by yt-dlp. A plain `uv tool install ./cli` does
+not install yt-dlp, so on that install `anydm` runs yt-dlp, ffmpeg and Deno in a short-lived `docker run --rm`
+container from the anydm media image, one per media link and one per link it has to classify. Nothing else is
+installed on the host, and Docker is needed only for media. HTTP and torrent downloads never use it.
+
+```bash
+make build-media                      # builds anydm-media:<version> (the default image) from cli/dockerfile
+anydm get "https://youtu.be/jNQXAC9IVRw" -o ~/Downloads
+```
+
+- **Image:** `ANYDM_MEDIA_IMAGE` (or `media_image` in config.toml) names it; the default is the local tag
+  `anydm-media:<version>` that `make build-media` builds. If a registry image is missing it is pulled on first use,
+  with a notice. A local-only name is never pulled: build it first. The value must look like an image reference
+  (letters, digits and `. _ / : @ -`, not starting with `-`); anything else is a usage error (exit 2).
+- **Docker command:** `ANYDM_DOCKER` (or `docker`) is the command to run, `docker` by default; anything that accepts
+  the same arguments, such as `podman`, may work but is untested.
+- **Where these two settings come from:** only the real environment and `config.toml`, never the `.env` file in the
+  current folder (which can come from a download); `.env` still works for the other settings.
+- **What the container gets:** the URL, the format and the playlist flag. Only the output folder is mounted, at
+  `/downloads`; it runs as your uid and gid with no extra capabilities, and none of your environment is passed.
+  Paths it reports are checked to lie inside the output folder. The image runs from `/tmp` with Python's
+  `PYTHONSAFEPATH` set, so files in your output folder (a `random.py`, a `src/`) are never imported.
+- **Root:** `anydm` refuses to start media containers when it runs as root (uid 0): the container would be root with
+  a host folder mounted. Run it as a normal user. (Media detection then reports "skipped" and a plain link goes over
+  HTTP; `--kind media` exits 1.)
+- **Without Docker:** a plain link is downloaded over HTTP, with a notice that media detection was skipped, and
+  `--kind media` fails with "media downloads need Docker; see anydm doctor". `anydm doctor` shows whether Docker and
+  the image are there (it never pulls or uses the network).
+- **In-process yt-dlp:** `uv tool install "./cli[media]"` (or the CLI image below) installs yt-dlp locally. Then media
+  runs in-process, as before, with no container, and needs ffmpeg and Deno on the host.
+- **Ctrl-C and the TUI:** Ctrl-C, cancelling a row or quitting stops and removes the container within 2 s and keeps
+  the partial files. Containers carry labels with the starting process's id and start time; one whose process is gone
+  (or whose pid now belongs to another process) is removed on the next media run, before any media check or download.
+  This assumes the Docker daemon runs on the same machine as `anydm`. A media check also stops itself after 50 s. To
+  clean up by hand: `docker rm -f $(docker ps -aq --filter label=anydm=media)`
+- **Pinned and not pinned:** the image pins the Python and Deno versions (tags), and yt-dlp and the other direct
+  dependencies (exact versions in `pyproject.toml`). It does not pin the base image digests, ffmpeg (the Debian
+  package current when you build), pip and uv (latest at build time) or the dependencies of the direct dependencies
+  (resolved at build time; `uv.lock` is not used for the image). Two builds made at different times can differ in
+  those.
+- **Folders:** on Docker Desktop the output folder must be shared with Docker (`/Users` is by default).
+- **Tests:** `make test-docker` builds the image and runs the tests that need a Docker daemon (macOS with Docker
+  Desktop). `make test` and `make test-all` never need Docker.
+
 ## Docker
 
 The image bundles ffmpeg and Deno, so `anydm doctor` is all green and YouTube works without installing anything on the host.

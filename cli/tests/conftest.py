@@ -1,9 +1,11 @@
+import json
 import re
 import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -138,3 +140,43 @@ def no_real_dht(monkeypatch: pytest.MonkeyPatch) -> None:
     """No test may reach the real DHT bootstrap nodes: with an empty list the DHT is off. Tests that want a
     DHT point this at a fake network on 127.0.0.1."""
     monkeypatch.setenv("ANYDM_DHT_BOOTSTRAP", "")
+
+
+FAKE_DOCKER = Path(__file__).parent / "fixtures" / "fake_docker.py"
+
+
+class FakeDocker:
+    """The fake `docker` command: configure with `.set(...)`, read what it was asked with `.calls()`."""
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.script = tmp_path / "fake_docker.json"
+        self.log = tmp_path / "fake_docker.log"
+        self._cfg: dict[str, object] = {"log": str(self.log)}
+        monkeypatch.setenv("FAKE_DOCKER_SCRIPT", str(self.script))
+        monkeypatch.setenv("ANYDM_DOCKER", str(FAKE_DOCKER))
+        self.set()
+
+    def set(self, **cfg: object) -> None:
+        self._cfg.update(cfg)
+        self.script.write_text(json.dumps(self._cfg))
+
+    def calls(self) -> list[list[str]]:
+        if not self.log.exists():
+            return []
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def commands(self) -> list[str]:
+        return [c[0] for c in self.calls() if c]
+
+    def marked(self, what: str) -> list[str]:
+        """Container names that got `kill` (what="killed") or `rm -f` (what="removed")."""
+        return [p.name.removeprefix(f"{self.log.name}.{what}.") for p in self.log.parent.glob(f"{self.log.name}.{what}.*")]
+
+
+@pytest.fixture
+def fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDocker]:
+    from src import engine
+
+    engine._docker_runner.cache_clear()  # the runner remembers availability and answers per process
+    yield FakeDocker(tmp_path, monkeypatch)
+    engine._docker_runner.cache_clear()

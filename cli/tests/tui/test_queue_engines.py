@@ -195,7 +195,7 @@ def media_fixture(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             self._ies = {"Fixture": FixtureIE, **self._ies}
 
     monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
-    monkeypatch.setattr(queue_module, "resolve", lambda source, forced: Kind.MEDIA)  # the fixture is not a URL
+    monkeypatch.setattr(queue_module, "resolve", lambda source, forced, **kw: Kind.MEDIA)  # the fixture is not a URL
     yield
     srv.shutdown()
 

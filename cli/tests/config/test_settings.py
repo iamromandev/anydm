@@ -100,3 +100,59 @@ def test_invalid_max_active_names_the_field(value: str, monkeypatch: pytest.Monk
     monkeypatch.setenv("ANYDM_MAX_ACTIVE", value)
     with pytest.raises(UsageError, match="max_active"):
         get_settings()
+
+
+def test_media_image_and_docker_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANYDM_MEDIA_IMAGE", raising=False)
+    monkeypatch.delenv("ANYDM_DOCKER", raising=False)
+    s = get_settings()
+    assert s.media_image == "anydm-media:0.0.1"
+    assert s.docker == "docker"
+
+
+def test_media_image_and_docker_come_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_MEDIA_IMAGE", "ghcr.io/x/anydm-media:1")
+    monkeypatch.setenv("ANYDM_DOCKER", "/opt/bin/podman")
+    s = get_settings()
+    assert s.media_image == "ghcr.io/x/anydm-media:1"
+    assert s.docker == "/opt/bin/podman"
+
+
+def test_dotenv_never_sets_the_docker_command_or_the_media_image(
+    _isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANYDM_MEDIA_IMAGE", raising=False)
+    monkeypatch.delenv("ANYDM_DOCKER", raising=False)
+    Path(".env").write_text("ANYDM_DOCKER=/tmp/evil\nANYDM_MEDIA_IMAGE=evil:1\nANYDM_CONNECTIONS=6\n")
+    s = get_settings()
+    assert s.docker == "docker"
+    assert s.media_image == "anydm-media:0.0.1"
+    assert s.connections == 6  # .env still works for the other settings
+
+
+def test_media_image_and_docker_come_from_config_toml(_isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANYDM_MEDIA_IMAGE", raising=False)
+    monkeypatch.delenv("ANYDM_DOCKER", raising=False)
+    _write_config(_isolated, 'media_image = "ghcr.io/x/anydm-media:2"\ndocker = "podman"\n')
+    s = get_settings()
+    assert (s.media_image, s.docker) == ("ghcr.io/x/anydm-media:2", "podman")
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["-v/x:/y", "--privileged", "a b", "a;b", "", "$(id)", "x\ny", "UPPER/ok:1 ", "a" * 300],
+)
+def test_an_invalid_media_image_is_a_usage_error(image: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_MEDIA_IMAGE", image)
+    with pytest.raises(UsageError, match="media_image"):
+        get_settings()
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["anydm-media:0.0.1", "ghcr.io/iamromandev/anydm-media:1", "localhost:5000/a/b_c.d-e:tag",
+     "ghcr.io/x/y@sha256:" + "a" * 64, "ghcr.io/x/y:1@sha256:" + "b" * 64],
+)
+def test_valid_media_image_references_are_accepted(image: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_MEDIA_IMAGE", image)
+    assert get_settings().media_image == image

@@ -4,7 +4,7 @@ UV := uv
 UVX := $(UV)x
 
 # phony targets
-.PHONY: install check check-ci test test-all run tool-install tool-uninstall build build-prod docker-run down help
+.PHONY: install check check-ci test test-all test-docker build-media run tool-install tool-uninstall build build-prod docker-run down help
 
 # python tools (uv)
 install: # Install all dependencies
@@ -23,8 +23,12 @@ check-ci: # Run lint + type checks without fixing anything. For CI.
 test: # Run the unit test suite (skips slow, torrent and live tests)
 	$(UV) run pytest
 
-test-all: # Run every test except the live ones, slow and torrent included
-	$(UV) run pytest -m "not live"
+test-all: # Run every test except the live and Docker ones, slow and torrent included
+	$(UV) run pytest -m "not live and not docker"
+
+test-docker: # Run the tests that need a Docker daemon (builds the media image first)
+	$(MAKE) build-media
+	$(UV) run pytest -m docker
 
 run: # Run the CLI, e.g. make run ARGS="get https://example.com/a.bin"
 	$(UV) run anydm $(ARGS)
@@ -46,6 +50,15 @@ build-prod: # Build the prod image, e.g. make build-prod TAG=<repository>:<tag>
 	docker buildx build --platform linux/arm64 --target prod \
 		--build-arg ENV=prod --build-arg WORK_DIR=/workdir --build-arg INSTALL_DIR=/opt/install \
 		--build-arg DOWNLOAD_DIR=/downloads -t $(TAG) --load .
+
+# Read only when a target needs it, and "latest" when the package is not installed (matches the CLI's own default).
+VERSION = $(or $(shell $(UV) run --no-sync python -c "import importlib.metadata as m; print(m.version('anydm-cli'))" 2>/dev/null),latest)
+MEDIA_IMAGE ?= anydm-media:$(VERSION)
+
+build-media: # Build the media image anydm starts for media downloads (default tag anydm-media:<version>)
+	docker build --target media \
+		--build-arg ENV=prod --build-arg WORK_DIR=/workdir --build-arg INSTALL_DIR=/opt/install \
+		--build-arg DOWNLOAD_DIR=/downloads -t $(MEDIA_IMAGE) .
 
 docker-run: # Run the CLI in the local image, e.g. make docker-run ARGS="get URL" (saves to ./downloads)
 	$(DOCKER_COMPOSE) run --rm --service-ports cli $(ARGS)

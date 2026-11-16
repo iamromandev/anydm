@@ -1,10 +1,12 @@
 import asyncio
 import contextlib
+import re
 import threading
 from pathlib import Path
 from typing import Any
 
 from src.core.errors import DownloadError, PartialDownload
+from src.core.paths import inside
 from src.core.progress import Progress, Reporter
 from src.engine import Job
 
@@ -25,18 +27,37 @@ def _collect(info: dict[str, Any]) -> list[str]:
     return found
 
 
-def _inside(dest: Path, raw: str) -> Path:
-    base = dest.resolve()
-    path = Path(raw)
-    resolved = (path if path.is_absolute() else base / path).resolve()
-    if not resolved.is_relative_to(base):
-        raise DownloadError(f"refusing to use {raw!r}: it is outside the output folder")
-    return base / resolved.relative_to(base)
+def _complete_length(e: Exception) -> int | None:
+    """N from the `Content-Range: bytes */N` of the HTTP 416 that a yt-dlp error wraps, else None."""
+    cause = (getattr(e, "exc_info", None) or (None, None, None))[1]
+    if getattr(cause, "status", None) != 416:
+        return None
+    headers = getattr(getattr(cause, "response", None), "headers", None)
+    found = re.fullmatch(r"bytes \*/(\d+)", str(headers.get("Content-Range") or "")) if headers else None
+    return int(found.group(1)) if found else None
 
 
-def _map_error(e: Exception) -> DownloadError:
+def _adopt_complete_part(e: Exception, targets: list[str]) -> bool:
+    """A run stopped after the last byte but before yt-dlp renamed the .part file leaves it complete, and a server
+    answers the resume with 416 (yt-dlp then fails instead of finishing). When the 416 says the size is exactly that
+    of a target's .part file, make it the file and report True so the download is run again (it finds the file)."""
+    length = _complete_length(e)
+    if length is None:
+        return False
+    for target in targets:
+        part, final = Path(f"{target}.part"), Path(target)
+        try:
+            if part.is_file() and part.stat().st_size == length and not final.exists():
+                part.rename(final)
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _map_error(e: Exception, in_image: bool = False) -> DownloadError:
     msg = str(e).removeprefix("ERROR: ")
-    if "ffmpeg" in msg.lower() or "ffprobe" in msg.lower():
+    if ("ffmpeg" in msg.lower() or "ffprobe" in msg.lower()) and not in_image:  # the image always has ffmpeg
         return DownloadError(f"{msg}; ffmpeg is needed to merge formats, run `anydm doctor` to check your setup")
     return DownloadError(msg)
 
@@ -62,6 +83,9 @@ class _Logger:
 
 
 class MediaEngine:
+    def __init__(self, *, in_image: bool = False) -> None:
+        self._in_image = in_image  # inside the media image: ffmpeg is always there, so no `anydm doctor` hint
+
     async def run(self, job: Job, report: Reporter) -> list[Path]:
         # A daemon thread that is not joined: a blocked yt-dlp (extraction, ffmpeg, a stalled socket)
         # must not hold up Ctrl-C the way the default executor does at loop shutdown.
@@ -135,12 +159,15 @@ class MediaEngine:
 
         logger = _Logger(report)
         ydl_ref: list[Any] = []
+        targets: list[str] = []  # where each video is saved, for _adopt_complete_part
 
         def match_filter(info: dict[str, Any], *, incomplete: bool = False) -> str | None:
             if stop.is_set():
                 raise DownloadCancelled
             if not incomplete and ydl_ref and info.get("_type", "video") == "video":
-                _inside(job.dest_dir, ydl_ref[0].prepare_filename(info))  # before anything is written
+                target = ydl_ref[0].prepare_filename(info)
+                inside(job.dest_dir, target)  # before anything is written
+                targets.append(target)
             return None
 
         opts: dict[str, Any] = {
@@ -164,23 +191,27 @@ class MediaEngine:
             opts["ignoreerrors"] = "only_download"
         if job.format:
             opts["format"] = job.format
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl_ref.append(ydl)
-                info = ydl.extract_info(job.source, download=True)
-        except DownloadCancelled:
-            raise KeyboardInterrupt from None
-        except DownloadError:
-            raise
-        except YoutubeDLError as e:
-            raise _map_error(e) from e
-        except OSError as e:
-            raise DownloadError(str(e.strerror or e)) from e
+        for attempt in (1, 2):
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl_ref[:] = [ydl]
+                    info = ydl.extract_info(job.source, download=True)
+                break
+            except DownloadCancelled:
+                raise KeyboardInterrupt from None
+            except DownloadError:
+                raise
+            except YoutubeDLError as e:
+                if attempt == 1 and _adopt_complete_part(e, targets):
+                    continue
+                raise _map_error(e, self._in_image) from e
+            except OSError as e:
+                raise DownloadError(str(e.strerror or e)) from e
         if not info:
             raise DownloadError("yt-dlp returned no information for this URL")
         paths: list[Path] = []
         for raw in _collect(info):
-            p = _inside(job.dest_dir, raw)
+            p = inside(job.dest_dir, raw)
             if p not in paths:
                 paths.append(p)
         failures = list(logger.errors) if job.playlist else []
