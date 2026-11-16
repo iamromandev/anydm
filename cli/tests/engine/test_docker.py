@@ -133,7 +133,7 @@ def test_supported_passes_the_url_as_one_argument_after_the_image(runner: Docker
     url = "https://a/x; rm -rf / $(id)"
     runner.supported(url)
     [call] = [c for c in fake_docker.calls() if c[0] == "run"]
-    assert call[-5:] == [IMAGE, "check", "--protocol", "1", f"--url={url}"]
+    assert call[-5:] == [IMAGE, "check", "--protocol", "2", f"--url={url}"]
     assert call[call.index(IMAGE) - 1] == "--"
 
 
@@ -184,6 +184,51 @@ def test_as_root_no_container_is_started(runner: DockerRunner, monkeypatch: pyte
     monkeypatch.setattr(os, "getuid", lambda: 0)
     with pytest.raises(DockerUnavailable, match="root"):
         runner.base_args(tmp_path)
+
+
+COOKIES_TARGET = "/run/anydm/cookies.txt"
+
+
+def mounts(args: list[str]) -> list[str]:
+    return [args[i + 1] for i, a in enumerate(args) if a == "--mount"]
+
+
+def test_the_protocol_is_2() -> None:
+    assert docker.PROTOCOL == 2
+    assert docker.COOKIES_MOUNT == COOKIES_TARGET
+
+
+def test_cookies_are_mounted_read_only_outside_the_output_folder(runner: DockerRunner, tmp_path: Path) -> None:
+    cookies = tmp_path / "c.txt"
+    args = runner.base_args(tmp_path, cookies)
+    assert mounts(args) == [f"type=bind,src={cookies},dst={COOKIES_TARGET},readonly"]
+    assert args.count("-v") == 1  # the output folder is the only other mount
+    assert args[args.index("-v") + 1] == f"{tmp_path}:/downloads"
+    assert args[-1] == "--"
+
+
+def test_cookies_can_be_the_only_mount(runner: DockerRunner, tmp_path: Path) -> None:
+    args = runner.base_args(None, tmp_path / "c.txt")
+    assert "-v" not in args
+    assert len(mounts(args)) == 1
+
+
+def test_no_cookies_means_no_mount(runner: DockerRunner, tmp_path: Path) -> None:
+    assert mounts(runner.base_args(tmp_path)) == []
+    assert mounts(runner.base_args(tmp_path, None)) == []
+
+
+def test_a_cookies_path_with_a_colon_or_spaces_is_fine_with_mount(runner: DockerRunner, tmp_path: Path) -> None:
+    cookies = tmp_path / "my cookies: 1.txt"
+    assert mounts(runner.base_args(None, cookies)) == [f"type=bind,src={cookies},dst={COOKIES_TARGET},readonly"]
+
+
+@pytest.mark.parametrize("name", ["a,b.txt", "x,readonly=false.txt", "new\nline.txt", 'q"uote.txt', "del\x7f.txt"])
+def test_a_cookies_path_that_would_break_the_mount_option_is_refused(
+    runner: DockerRunner, tmp_path: Path, name: str
+) -> None:
+    with pytest.raises(DownloadError, match="cookies"):
+        runner.base_args(None, tmp_path / name)
 
 
 def test_base_args_without_a_folder_mount_nothing(runner: DockerRunner) -> None:
@@ -336,7 +381,7 @@ def test_a_check_that_times_out_has_its_container_removed(
     assert ["rm", "-f", call[call.index("--name") + 1]] in fake_docker.calls()
 
 
-@pytest.mark.parametrize("lines", [[{"type": "hello", "protocol": 2}, {"type": "supported", "value": True}],
+@pytest.mark.parametrize("lines", [[{"type": "hello", "protocol": 1}, {"type": "supported", "value": True}],
                                    [{"type": "supported", "value": True}]])
 def test_a_protocol_mismatch_is_a_plain_error_not_a_skipped_check(
     runner: DockerRunner, fake_docker: FakeDocker, lines: list[object]

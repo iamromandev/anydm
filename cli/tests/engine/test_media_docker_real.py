@@ -31,6 +31,7 @@ CLI_DIR = Path(__file__).parents[2]
 IMAGE = os.environ.get("ANYDM_MEDIA_IMAGE", default_media_image())
 PIN = "2026.10.26"
 BODY = os.urandom(600_000)
+SESSION = "5e0d7b3a91c4"  # the cookie value that the "login" pages of the fixture server want
 LAUNCH = "import src.engine as e; e._has_local_yt_dlp = lambda: False; from src.main import main; main()"
 
 
@@ -42,6 +43,11 @@ class Media(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        if "login" in self.path and f"sid={SESSION}" not in (self.headers.get("Cookie") or ""):
+            self.send_response(403, "Login required")  # the reason phrase is what yt-dlp prints
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path.startswith("/feed.xml"):
             host = self.headers["Host"]
             items = "".join(
@@ -182,9 +188,9 @@ async def test_files_in_the_output_folder_cannot_hijack_the_runner(
     assert runner.supported(f"{host}/a.bin") is False
 
 
-def start_cli(dest: Path, url: str, home: Path) -> subprocess.Popen[str]:
+def start_cli(dest: Path, url: str, home: Path, *extra: str) -> subprocess.Popen[str]:
     return subprocess.Popen(
-        [sys.executable, "-c", LAUNCH, "get", url, "--kind", "media", "-o", str(dest), "--quiet"],
+        [sys.executable, "-c", LAUNCH, "get", url, "--kind", "media", "-o", str(dest), "--quiet", *extra],
         cwd=CLI_DIR, env={**os.environ, "HOME": str(home)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
 
@@ -321,3 +327,78 @@ async def test_ten_random_interrupts_leave_no_container_and_the_file_still_compl
     Media.slow = False
     [path] = await engine(runner).run(job(dest, f"{host}/big.mp4"), NullReporter())
     assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(BODY).digest()
+
+
+def cookie_file(folder: Path) -> Path:
+    f = folder / "cookies.txt"
+    f.write_text(f"# Netscape HTTP Cookie File\nhost.docker.internal\tFALSE\t/\tFALSE\t2000000000\tsid\t{SESSION}\n")
+    f.chmod(0o600)
+    return f
+
+
+def sha(path: Path) -> bytes:
+    return hashlib.sha256(path.read_bytes()).digest()
+
+
+async def test_a_login_page_downloads_with_cookies_and_leaves_the_file_and_the_folder_clean(
+    runner: DockerRunner, host: str, tmp_path: Path
+) -> None:
+    cookies = cookie_file(tmp_path)
+    before = sha(cookies)
+    dest = tmp_path / "out"
+    [path] = await engine(runner).run(job(dest, f"{host}/login.mp4", cookies=cookies), NullReporter())
+    assert path.read_bytes() == b"hello"
+    assert sha(cookies) == before
+    assert [f.name for f in dest.iterdir() if "cookies" in f.name or SESSION in f.read_text(errors="replace")] == []
+
+
+async def test_a_login_page_without_cookies_fails_with_the_hint(
+    runner: DockerRunner, host: str, tmp_path: Path
+) -> None:
+    with pytest.raises(DownloadError, match="--cookies") as e:
+        await engine(runner).run(job(tmp_path, f"{host}/login.mp4"), NullReporter())
+    assert "pass --cookies FILE" in str(e.value)
+
+
+async def test_stale_cookies_fail_with_the_expired_hint_and_the_file_is_unchanged(
+    runner: DockerRunner, host: str, tmp_path: Path
+) -> None:
+    cookies = tmp_path / "stale.txt"
+    cookies.write_text("# Netscape HTTP Cookie File\nhost.docker.internal\tFALSE\t/\tFALSE\t2000000000\tsid\told\n")
+    before = sha(cookies)
+    with pytest.raises(DownloadError, match="may be expired"):
+        await engine(runner).run(job(tmp_path / "o", f"{host}/login.mp4", cookies=cookies), NullReporter())
+    assert sha(cookies) == before
+
+
+async def test_the_container_cannot_write_to_the_cookies_file(runner: DockerRunner, tmp_path: Path) -> None:
+    """The mount is read-only: even a process that tries gets an error, and the file stays as it was."""
+    cookies = cookie_file(tmp_path)
+    before = sha(cookies)
+    args = runner.base_args(None, cookies)
+    done = subprocess.run(
+        ["docker", *args[:-1], "--entrypoint", "sh", "--", IMAGE, "-c", "echo x >> /run/anydm/cookies.txt"],
+        capture_output=True, text=True,
+    )
+    assert done.returncode != 0
+    assert sha(cookies) == before
+
+
+@pytest.mark.slow
+async def test_sigint_with_cookies_keeps_the_file_unchanged_and_a_rerun_finishes(
+    runner: DockerRunner, host: str, tmp_path: Path
+) -> None:
+    Media.slow = True
+    cookies = cookie_file(tmp_path)
+    before = sha(cookies)
+    dest = tmp_path / "out"
+    proc = start_cli(dest, f"{host}/big-login.mp4", tmp_path / "home", "--cookies", str(cookies))
+    wait_for_partial(dest, proc)
+    interrupt(proc)
+    assert proc.returncode == 130
+    assert leftovers() == []
+    assert sha(cookies) == before
+    Media.slow = False
+    [path] = await engine(runner).run(job(dest, f"{host}/big-login.mp4", cookies=cookies), NullReporter())
+    assert sha(path) == hashlib.sha256(BODY).digest()
+    assert sha(cookies) == before

@@ -16,6 +16,7 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("ANYDM_CONNECTIONS", raising=False)
     monkeypatch.delenv("ANYDM_DOWNLOAD_DIR", raising=False)
     monkeypatch.delenv("ANYDM_MAX_ACTIVE", raising=False)
+    monkeypatch.delenv("ANYDM_COOKIES_FILE", raising=False)
     return tmp_path
 
 
@@ -156,3 +157,35 @@ def test_an_invalid_media_image_is_a_usage_error(image: str, monkeypatch: pytest
 def test_valid_media_image_references_are_accepted(image: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANYDM_MEDIA_IMAGE", image)
     assert get_settings().media_image == image
+
+
+def test_cookies_file_is_not_set_by_default() -> None:
+    assert get_settings().cookies_file is None
+
+
+def test_cookies_file_order_flag_over_env_over_config_and_dotenv_is_ignored(
+    _isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Path(".env").write_text("ANYDM_COOKIES_FILE=/from/dotenv.txt\n")
+    assert get_settings().cookies_file is None
+    _write_config(_isolated, 'cookies_file = "/from/config.txt"\n')
+    assert get_settings().cookies_file == Path("/from/config.txt")
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", "/from/env.txt")
+    assert get_settings().cookies_file == Path("/from/env.txt")
+    assert get_settings(cookies_file=Path("/from/flag.txt")).cookies_file == Path("/from/flag.txt")
+
+
+def test_cookies_file_expands_home(_isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", "~/c.txt")
+    assert get_settings().cookies_file == _isolated / "home" / "c.txt"
+    assert get_settings(cookies_file=Path("~/d.txt")).cookies_file == _isolated / "home" / "d.txt"
+
+
+def test_an_empty_cookies_file_env_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANYDM_COOKIES_FILE", "")
+    assert get_settings().cookies_file is None
+
+
+def test_an_empty_cookies_file_in_config_toml_counts_as_unset(_isolated: Path) -> None:
+    _write_config(_isolated, 'cookies_file = ""\n')
+    assert get_settings().cookies_file is None

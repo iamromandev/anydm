@@ -101,12 +101,13 @@ anydm get "https://youtu.be/jNQXAC9IVRw" -o ~/Downloads
   (letters, digits and `. _ / : @ -`, not starting with `-`); anything else is a usage error (exit 2).
 - **Docker command:** `ANYDM_DOCKER` (or `docker`) is the command to run, `docker` by default; anything that accepts
   the same arguments, such as `podman`, may work but is untested.
-- **Where these two settings come from:** only the real environment and `config.toml`, never the `.env` file in the
+- **Where these settings come from:** `ANYDM_DOCKER`, `ANYDM_MEDIA_IMAGE` and `ANYDM_COOKIES_FILE` (and their
+  `config.toml` keys) are read only from the real environment and `config.toml`, never from the `.env` file in the
   current folder (which can come from a download); `.env` still works for the other settings.
-- **What the container gets:** the URL, the format and the playlist flag. Only the output folder is mounted, at
-  `/downloads`; it runs as your uid and gid with no extra capabilities, and none of your environment is passed.
-  Paths it reports are checked to lie inside the output folder. The image runs from `/tmp` with Python's
-  `PYTHONSAFEPATH` set, so files in your output folder (a `random.py`, a `src/`) are never imported.
+- **What the container gets:** the URL, the format and the playlist flag (and, only when you give one, your cookies
+  file, read-only: see below). The output folder is mounted at `/downloads`; it runs as your uid and gid with no extra
+  capabilities, and none of your environment is passed. Paths it reports are checked to lie inside the output folder.
+  The image runs from `/tmp` with Python's `PYTHONSAFEPATH` set, so files in your output folder (a `random.py`, a `src/`) are never imported.
 - **Root:** `anydm` refuses to start media containers when it runs as root (uid 0): the container would be root with
   a host folder mounted. Run it as a normal user. (Media detection then reports "skipped" and a plain link goes over
   HTTP; `--kind media` exits 1.)
@@ -128,6 +129,47 @@ anydm get "https://youtu.be/jNQXAC9IVRw" -o ~/Downloads
 - **Folders:** on Docker Desktop the output folder must be shared with Docker (`/Users` is by default).
 - **Tests:** `make test-docker` builds the image and runs the tests that need a Docker daemon (macOS with Docker
   Desktop). `make test` and `make test-all` never need Docker.
+
+## Media that needs a login (cookies)
+
+Some media (Vimeo, age-restricted or members-only YouTube, and similar) can only be downloaded when you are logged in.
+Give `anydm` a cookies file exported from your browser in the Netscape `cookies.txt` format.
+
+1. Log in to the site in your browser, then export its cookies with a browser extension that writes `cookies.txt`
+   ("Get cookies.txt LOCALLY" or similar). Export only the site you need.
+2. Keep the file private: `chmod 600 ~/cookies.txt`. A file that others can read gives a warning (not with `--quiet`).
+3. Use it:
+
+```bash
+anydm get --cookies ~/cookies.txt "https://vimeo.com/123456789"
+```
+
+To use it every time, set `cookies_file = "~/cookies.txt"` in `config.toml`, or `ANYDM_COOKIES_FILE=~/cookies.txt` in
+the environment. `--cookies` beats the environment, which beats `config.toml`. The setting is never read from `.env`.
+`anydm tui` uses the setting for every media row. `anydm doctor` shows whether it is set and usable (path and status,
+never the contents).
+
+- **Checked first:** before a media download starts the file must exist, be a regular file you can read, be at most
+  10 MB and look like Netscape format: a `# Netscape HTTP Cookie File` or `# HTTP Cookie File` first line, or a line
+  of 7 tab-separated fields, and every other line a comment, a blank line or such an entry (an empty or numeric expiry),
+  as yt-dlp reads it (yt-dlp prints a line it rejects, so a bad line is refused here instead). Otherwise `anydm get`
+  exits 2 naming the path, and a TUI row is `failed`.
+- **Only media:** HTTP and torrent downloads ignore the file: it is not checked, never warned about and never sent.
+- **Your file is never changed.** yt-dlp saves its cookies back to the file it is given, so it gets a private (0600)
+  copy that is removed afterwards. In the container the file is mounted read-only at `/run/anydm/cookies.txt` (the only
+  extra mount, never inside the output folder), and the copy lives in the container's own `/tmp`. The media check
+  that tells a media link from a plain one never gets the cookies.
+- **Secrets stay secret:** cookie values are never put in messages, logs, the docker command line, the container's
+  output or the output folder; only the path is shown. A path containing `,`, `"` or a control character cannot be
+  mounted and is refused.
+- **Stopped abruptly:** the private copy is removed when a download ends, fails or is stopped with Ctrl-C. A run
+  killed with SIGTERM or SIGKILL (outside Docker) cannot clean up and leaves the 0600 copy `anydm-cookies-*.txt` in the
+  temporary folder; delete it by hand. In the container the copy dies with the container.
+- **Errors:** when a site asks for a login and you gave no cookies, the error ends with "this site needs a login: pass
+  `--cookies FILE`"; when you did, it says the cookies may be expired and to export them again.
+- **Protocol 2:** cookies need a newer media image. After upgrading run `make build-media`; an old image makes `anydm`
+  say "update the media image".
+- **Not supported:** reading cookies from a browser, usernames and passwords, a file per site.
 
 ## Docker
 

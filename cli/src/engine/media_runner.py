@@ -15,13 +15,15 @@ from pathlib import Path
 from typing import TextIO
 
 from src import engine
+from src.core.cookies import copy_private
 from src.core.errors import DownloadError, PartialDownload
 from src.core.progress import Progress
 from src.engine import Job
 from src.engine.media import MediaEngine
 
-PROTOCOL = 1
+PROTOCOL = 2
 DOWNLOADS = Path("/downloads")  # where the host mounts the output folder
+COOKIES_MOUNT = Path("/run/anydm/cookies.txt")  # where the host mounts the cookies file, read-only (docker.COOKIES_MOUNT)
 PROGRESS_INTERVAL = 0.1  # seconds between progress lines
 CHECK_LIFETIME = 50  # seconds a `check` may live; the host waits longer (docker.CHECK_TIMEOUT) and then removes it
 
@@ -69,6 +71,7 @@ def _parser() -> argparse.ArgumentParser:
             cmd.add_argument("--format")
             cmd.add_argument("--playlist", action="store_true")
             cmd.add_argument("--insecure", action="store_true")
+            cmd.add_argument("--cookies", action="store_true")  # the file is at COOKIES_MOUNT
     return parser
 
 
@@ -85,8 +88,17 @@ def run(argv: list[str], out: TextIO) -> int:
     if args.command == "check":
         reporter.emit(type="supported", value=engine._local_media_supported(args.url))
         return 0
-    job = Job(args.url, DOWNLOADS, 1, args.format, args.playlist, False, args.insecure)
+    copy: Path | None = None
     try:
+        if args.cookies:
+            # a copy of the read-only mount in this container's own /tmp, never in the output folder
+            if not COOKIES_MOUNT.is_file():
+                raise DownloadError("cookies mount missing")
+            try:
+                copy = copy_private(COOKIES_MOUNT)
+            except OSError as e:
+                raise DownloadError(f"cannot read the cookies mount: {e.strerror or type(e).__name__}") from e
+        job = Job(args.url, DOWNLOADS, 1, args.format, args.playlist, False, args.insecure, copy)
         paths = asyncio.run(MediaEngine(in_image=True).run(job, reporter))
     except KeyboardInterrupt:
         return 130
@@ -99,6 +111,9 @@ def run(argv: list[str], out: TextIO) -> int:
     except Exception as e:  # never print a traceback: it can carry credentials
         reporter.emit(type="error", message=f"internal error: {type(e).__name__}", partial=[])
         return 1
+    finally:
+        if copy is not None:
+            copy.unlink(missing_ok=True)
     reporter.emit(type="done", paths=[str(p) for p in paths])
     return 0
 

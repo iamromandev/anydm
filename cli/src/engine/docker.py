@@ -18,7 +18,7 @@ from src.core.errors import DownloadError
 from src.core.names import clean_display
 from src.core.progress import Reporter
 
-PROTOCOL = 1
+PROTOCOL = 2
 LABEL = "anydm"  # label key; the value is "media"
 # Who started a container: a random token for this process, plus its pid and start time (the pair that tells a live
 # process from a dead one whose pid was reused). Not the hostname: that changes with the network on a laptop.
@@ -26,6 +26,7 @@ TOKEN_LABEL = "anydm.token"
 PID_LABEL = "anydm.pid"
 START_LABEL = "anydm.started"
 MOUNT = "/downloads"  # where the output folder appears inside the container
+COOKIES_MOUNT = "/run/anydm/cookies.txt"  # where the cookies file appears there (read-only), outside MOUNT
 CHECK_TIMEOUT = 60.0  # a classification container: start, import yt-dlp, answer
 PULL_TIMEOUT = 600.0  # a first-run pull inside a classification
 CHECK_LIFETIME = 50  # seconds; the container's own watchdog ends a check before the host gives up (see media_runner)
@@ -235,10 +236,11 @@ class DockerRunner:
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             self._run("rm", "-f", name, timeout=10)
 
-    def base_args(self, dest: Path | None) -> list[str]:
+    def base_args(self, dest: Path | None, cookies: Path | None = None) -> list[str]:
         """`docker run` options for one throwaway container: the caller's uid and gid, a minimal environment, and
-        at most one mount (the output folder). The last element is `--`, so the image that the caller appends
-        is never read as an option; the image's own arguments follow it."""
+        at most two mounts (the output folder, and the cookies file read-only at COOKIES_MOUNT). The last element
+        is `--`, so the image that the caller appends is never read as an option; the image's own arguments
+        follow it."""
         uid = os.getuid()
         if uid == 0:
             # The container would run as the host's root with a host folder mounted, and write root-owned files.
@@ -260,6 +262,14 @@ class DockerRunner:
             if ":" in str(dest):
                 raise DownloadError(f"cannot mount {dest} into Docker: the folder name contains ':'")
             args += ["-v", f"{dest}:{MOUNT}"]
+        if cookies is not None:
+            # --mount, not -v: a ':' in the path is fine, but ',' separates its options (and would let a name add some)
+            if any(c in str(cookies) for c in ',"') or any(c < " " or c == "\x7f" for c in str(cookies)):
+                raise DownloadError(
+                    f"cannot mount the cookies file {clean_display(str(cookies))} into Docker: "
+                    "its path contains ',' or '\"' or a control character"
+                )
+            args += ["--mount", f"type=bind,src={cookies},dst={COOKIES_MOUNT},readonly"]
         return [*args, "--"]
 
     def reap_once(self) -> None:

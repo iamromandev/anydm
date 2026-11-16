@@ -277,3 +277,26 @@ async def test_long_server_name_still_fits_every_derived_file(serve, tmp_path: P
     srv = serve(make_data(MIB), disposition=f'attachment; filename="{"x" * 300}.bin"')
     [path] = await download(srv.url(), tmp_path)
     assert path.read_bytes() == srv.data
+
+
+class Untouchable:
+    """A stand-in for a cookies path that fails the test as soon as anything looks at it."""
+
+    def __getattribute__(self, name: str) -> object:
+        raise AssertionError(f"the engine touched job.cookies.{name}")
+
+
+async def test_a_job_with_cookies_sends_no_cookie_header_and_never_reads_them(serve, tmp_path: Path) -> None:
+    srv = serve(b"abc")
+    cookie_job = Job(srv.url(), tmp_path, 2, None, False, False, False, Untouchable())  # ty: ignore[invalid-argument-type]
+    [path] = await HttpEngine().run(cookie_job, NullReporter())
+    assert path.read_bytes() == b"abc"
+    assert srv.log and all(r.cookie is None for r in srv.log)
+
+
+def test_the_torrent_engine_has_no_code_that_reads_cookies() -> None:
+    import src.engine.torrent as torrent
+
+    sources = list(Path(torrent.__file__).parent.rglob("*.py"))
+    assert sources
+    assert [p.name for p in sources if "cookies" in p.read_text()] == []

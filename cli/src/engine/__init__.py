@@ -26,6 +26,7 @@ class Job:
     playlist: bool
     seed: bool
     insecure: bool
+    cookies: Path | None = None  # media only: a checked Netscape cookies file; HTTP and torrent engines never read it
 
 
 class Engine(Protocol):

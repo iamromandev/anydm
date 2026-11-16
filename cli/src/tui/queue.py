@@ -6,6 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from src.config.settings import Settings
+from src.core.cookies import check_cookies
 from src.core.errors import AnydmError, PartialDownload
 from src.core.names import clean_display
 from src.core.paths import writable_dir
@@ -170,8 +171,16 @@ class Queue:
 
     async def _run(self, item: Item) -> list[Path]:
         dest = writable_dir(item.dest)  # at start, so an unwritable folder fails the row before any request
-        job = Job(item.source, dest, self._settings.connections, None, False, False, False)
-        return await self._engine_for(item.kind).run(job, ItemReporter(item, self._on_change))
+        report = ItemReporter(item, self._on_change)
+        cookies: Path | None = None
+        if item.kind is Kind.MEDIA and self._settings.cookies_file is not None:
+            # only media reads them: an HTTP or torrent job never gets them, nor is it failed by a bad file
+            checked = check_cookies(self._settings.cookies_file)  # a UsageError fails the row with its message
+            cookies = checked.path
+            if checked.warning:
+                report.notice(checked.warning)
+        job = Job(item.source, dest, self._settings.connections, None, False, False, False, cookies)
+        return await self._engine_for(item.kind).run(job, report)
 
     def _finished(self, item: Item, task: asyncio.Task[list[Path]]) -> None:
         if self._tasks.get(item.id) is task:

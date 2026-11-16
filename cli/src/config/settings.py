@@ -26,8 +26,9 @@ def config_path() -> Path:
 # [host[:port]/]path[:tag][@digest]: starts with a letter or digit (never '-', so it cannot be read as a docker
 # option), then only the characters an image reference can contain.
 _IMAGE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}")
-# Settings the current folder's .env must not set: they decide which program and image anydm runs.
-_NOT_FROM_DOTENV = ("docker", "media_image")
+# Settings the current folder's .env must not set: they decide which program and image anydm runs, and which
+# file of secrets it sends to a site.
+_NOT_FROM_DOTENV = ("docker", "media_image", "cookies_file")
 
 
 class _DotEnv(DotEnvSettingsSource):
@@ -56,11 +57,17 @@ class Settings(BaseSettings):
     max_active: Annotated[int, Field(default=3, ge=1, le=10)]
     media_image: Annotated[str, Field(default_factory=default_media_image, min_length=1)]
     docker: Annotated[str, Field(default="docker", min_length=1)]
+    cookies_file: Path | None = None
 
-    @field_validator("download_dir")
+    @field_validator("cookies_file", mode="before")
     @classmethod
-    def _expand_home(cls, v: Path) -> Path:
-        return v.expanduser()
+    def _empty_is_unset(cls, v: Any) -> Any:
+        return None if isinstance(v, str) and not v.strip() else v  # `ANYDM_COOKIES_FILE=` would be the folder "."
+
+    @field_validator("download_dir", "cookies_file")
+    @classmethod
+    def _expand_home(cls, v: Path | None) -> Path | None:
+        return v.expanduser() if v is not None else None
 
     @field_validator("media_image")
     @classmethod

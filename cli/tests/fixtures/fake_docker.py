@@ -76,7 +76,7 @@ elif cmd == "run":
             for line in cfg["check_lines"]:
                 print(line if isinstance(line, str) else json.dumps(line), flush=True)
         else:
-            print(json.dumps({"type": "hello", "protocol": 1}), flush=True)
+            print(json.dumps({"type": "hello", "protocol": 2}), flush=True)
             print(json.dumps({"type": "supported", "value": cfg.get("check", False)}), flush=True)
         if cfg.get("check_stderr"):
             print(cfg["check_stderr"], file=sys.stderr, flush=True)

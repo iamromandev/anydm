@@ -57,7 +57,7 @@ class DockerMediaEngine:
             raise DownloadError("media downloads need Docker; see anydm doctor")
         await runner.ensure_image(report)
         await in_thread(runner.reap_once)
-        args = runner.base_args(job.dest_dir)
+        args = runner.base_args(job.dest_dir, job.cookies)
         name = args[args.index("--name") + 1]
         # --url=X and --format=X, never "--url X": a value that starts with "-" must not be read as an option.
         cmd = [*args, runner.image, "download", "--protocol", str(PROTOCOL), f"--url={job.source}"]
@@ -67,6 +67,8 @@ class DockerMediaEngine:
             cmd.append("--playlist")
         if job.insecure:
             cmd.append("--insecure")
+        if job.cookies is not None:
+            cmd.append("--cookies")  # the file itself is mounted, never passed on the command line
         proc = await asyncio.create_subprocess_exec(
             runner.docker, *cmd,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
