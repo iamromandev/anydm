@@ -37,7 +37,7 @@ def get(
     """Download SOURCE and print the saved paths."""
     from src.config.settings import get_settings  # lazy: keeps --help fast
     from src.core.progress import NoticeReporter, NullReporter, Reporter, RichReporter
-    from src.engine import Job, Kind, engine_for, resolve
+    from src.engine import Job, Kind, engine_for, resolve, take_notices
 
     reporter: Reporter
     if quiet:
@@ -50,6 +50,8 @@ def get(
         try:
             settings = get_settings(download_dir=output, connections=connections)
             resolved = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))
+            for note in take_notices():  # e.g. media detection skipped because Docker is missing
+                reporter.notice(note)
             dest = writable_dir(settings.download_dir)
             job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure)
             paths = asyncio.run(engine_for(resolved).run(job, reporter))

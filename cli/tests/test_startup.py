@@ -5,7 +5,10 @@ import time
 from pathlib import Path
 
 CLI_DIR = Path(__file__).parents[1]
-HEAVY = ("yt_dlp", "libtorrent", "src.engine.torrent", "src.engine.http", "httpx", "textual", "src.tui")
+HEAVY = (
+    "yt_dlp", "libtorrent", "src.engine.torrent", "src.engine.http", "httpx", "textual", "src.tui",
+    "src.engine.docker", "src.engine.media_docker", "src.engine.media_runner",
+)
 
 
 def test_importing_main_does_not_load_heavy_backends() -> None:

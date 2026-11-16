@@ -14,9 +14,10 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Input, Label, Static
 
 from src.config.settings import Settings
-from src.core.errors import UsageError
+from src.core.errors import AnydmError
 from src.core.names import clean_display
 from src.engine import Engine, Kind, engine_for, resolve
+from src.engine.docker import in_thread
 from src.engine.http.probe import safe_url
 from src.tui import system
 from src.tui.queue import Item, Queue, State
@@ -100,7 +101,7 @@ class AddScreen(ModalScreen[tuple[str, Path] | None]):
     async def _submit(self) -> None:
         link = self.query_one("#link", Input).value.strip()
         folder = self.query_one("#folder", Input).value.strip()
-        error = await asyncio.to_thread(self._check, link)
+        error = await in_thread(self._check, link)  # a daemon thread: a media check cannot hold up quitting
         if error is None:
             error = self._add(link, Path(folder or str(self._default_dir)).expanduser())
         if error is None:
@@ -113,8 +114,8 @@ class AddScreen(ModalScreen[tuple[str, Path] | None]):
         if not link:
             return "enter a link"
         try:
-            resolve(link, None)  # off the UI thread: the first media check imports yt-dlp's extractors
-        except UsageError as e:
+            resolve(link, None)  # off the UI thread: a media check imports yt-dlp's extractors or starts a container
+        except AnydmError as e:  # a usage error, or a media image that needs an update
             return clean_display(str(e))
         return None
 
@@ -245,7 +246,7 @@ class AnydmApp(App[None]):
     def _add(self, link: str, dest: Path) -> str | None:
         try:
             self._queue.add(link, dest)
-        except UsageError as e:
+        except AnydmError as e:
             return clean_display(str(e))
         self._redraw()
         return None

@@ -183,3 +183,113 @@ def test_second_interrupt_during_cleanup_still_exits_130(serve, monkeypatch: pyt
     monkeypatch.setattr("src.core.progress.NoticeReporter.close", boom)
     result = runner.invoke(app, ["get", serve(b"x").url()])
     assert result.exit_code == 130
+
+
+YOUTUBE = "https://www.youtube.com/watch?v=abc"
+HELLO = {"type": "hello", "protocol": 1}
+
+
+@pytest.fixture
+def container_media(monkeypatch: pytest.MonkeyPatch, fake_docker) -> object:
+    """yt-dlp is not installed on the host: media goes through the fake docker."""
+    monkeypatch.setattr(engine, "_has_local_yt_dlp", lambda: False)
+    fake_docker.set(check=True)
+    return fake_docker
+
+
+def test_media_through_a_container_prints_the_host_paths(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[
+        HELLO,
+        {"type": "progress", "done": 1, "total": 2, "speed": 1.0, "name": "v.part"},
+        {"type": "done", "paths": ["/downloads/v [abc].mp4"]},
+    ])
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(out), "--quiet"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == f"{(out / 'v [abc].mp4').resolve()}\n"
+    [call] = [c for c in container_media.calls() if c[0] == "run" and "download" in c]
+    assert "--rm" in call and "--user" in call and call.count("-v") == 1
+    assert call[call.index("-v") + 1] == f"{out.resolve()}:/downloads"
+
+
+def test_an_error_line_from_the_container_exits_1(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "error", "message": "no such video", "partial": []}], exit=1)
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 1
+    assert "no such video" in result.stderr
+    assert result.stdout == ""
+
+
+def test_a_path_outside_the_folder_from_the_container_exits_1(container_media, tmp_path: Path) -> None:
+    container_media.set(lines=[HELLO, {"type": "done", "paths": ["/etc/passwd"]}])
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 1
+    assert "outside the output folder" in result.stderr
+    assert result.stdout == ""
+
+
+def test_without_docker_a_plain_url_downloads_over_http_with_a_notice(
+    monkeypatch: pytest.MonkeyPatch, fake_docker, serve, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(engine, "_has_local_yt_dlp", lambda: False)
+    fake_docker.set(version="fail")
+    srv = serve(b"abc")
+    result = runner.invoke(app, ["get", srv.url(), "-o", str(tmp_path / "o")])
+    assert result.exit_code == 0
+    assert (tmp_path / "o" / "file.bin").read_bytes() == b"abc"
+    assert "media detection skipped" in result.stderr and "Docker" in result.stderr
+
+
+def test_forced_media_without_docker_exits_1_naming_docker(
+    monkeypatch: pytest.MonkeyPatch, fake_docker, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(engine, "_has_local_yt_dlp", lambda: False)
+    fake_docker.set(version="fail")
+    result = runner.invoke(app, ["get", YOUTUBE, "--kind", "media", "-o", str(tmp_path / "o")])
+    assert result.exit_code == 1
+    assert "media downloads need Docker; see anydm doctor" in result.stderr
+
+
+def test_with_yt_dlp_installed_no_docker_command_runs(fake_docker, serve, tmp_path: Path) -> None:
+    srv = serve(b"abc")
+    result = runner.invoke(app, ["get", srv.url(), "-o", str(tmp_path / "o"), "--quiet"])
+    assert result.exit_code == 0
+    assert fake_docker.calls() == []
+
+
+def test_an_invalid_media_image_is_a_usage_error_and_runs_no_docker(
+    monkeypatch: pytest.MonkeyPatch, fake_docker, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ANYDM_MEDIA_IMAGE", "-v/x:/y")
+    result = runner.invoke(app, ["get", YOUTUBE, "-o", str(tmp_path / "o")])
+    assert result.exit_code == 2
+    assert "media_image" in result.stderr
+    assert fake_docker.calls() == []
+
+
+def test_a_protocol_mismatch_during_classification_exits_1_asking_for_an_update(
+    container_media, tmp_path: Path
+) -> None:
+    container_media.set(check_lines=[{"type": "hello", "protocol": 99}])
+    result = runner.invoke(app, ["get", "https://example.com/a.bin", "-o", str(tmp_path / "o")])
+    assert result.exit_code == 1
+    assert "update the media image" in result.stderr
+    assert not (tmp_path / "o" / "a.bin").exists()
+
+
+def test_a_dotenv_in_the_current_folder_cannot_choose_the_docker_command(
+    monkeypatch: pytest.MonkeyPatch, fake_docker, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(engine, "_has_local_yt_dlp", lambda: False)
+    evil = tmp_path / "evil"
+    marker = tmp_path / "ran"
+    evil.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    evil.chmod(0o755)
+    monkeypatch.delenv("ANYDM_DOCKER")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".env").write_text(f"ANYDM_DOCKER={evil}\n")
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    runner.invoke(app, ["get", YOUTUBE, "--kind", "media", "-o", str(tmp_path / "o")])
+    assert not marker.exists()

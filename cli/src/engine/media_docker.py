@@ -1,0 +1,229 @@
+"""Media downloads in a throwaway container: the host side of src.engine.media_runner."""
+
+import asyncio
+import contextlib
+import json
+import subprocess
+import time
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from src.core.errors import DownloadError, PartialDownload
+from src.core.names import clean_display
+from src.core.paths import inside
+from src.core.progress import Progress, Reporter
+from src.engine import Job
+from src.engine.docker import MOUNT, PROTOCOL, DockerRunner, in_thread, tail
+
+MAX_LINE = 1 << 20  # longer lines are dropped
+STOP_WAIT = 1.5  # R9: the container is stopped and removed within 2 s of a cancel; this is all of that budget
+STOP_RM_RESERVE = 0.5  # of STOP_WAIT, kept for `rm -f` when the container does not stop after the kill
+STOP_PAUSE = 0.05  # between tries of `rm -f` for a container that does not exist yet
+STOP_SYNC_WAIT = 1.0  # a cancel that arrives while stopping: the removal is finished synchronously, for this long
+STDERR_KEEP = 64 * 1024
+
+_SHARING_HINT = "; is the output folder shared with Docker? (Docker Desktop: Settings > Resources > File sharing)"
+
+
+def _host_path(dest: Path, raw: object) -> Path:
+    """A path the container reported (under /downloads) as a path inside `dest` on the host."""
+    text = raw if isinstance(raw, str) else ""
+    posix = PurePosixPath(text)
+    mount = PurePosixPath(MOUNT)
+    if not posix.is_absolute() or not posix.is_relative_to(mount) or posix == mount:
+        raise DownloadError(f"refusing to use {clean_display(text)!r}: it is outside the output folder")
+    try:
+        return inside(dest, str(PurePosixPath(*posix.relative_to(mount).parts)))
+    except (ValueError, RuntimeError) as e:  # a NUL byte, or a symlink loop
+        raise DownloadError(f"refusing to use {clean_display(text)!r}: it is not a usable path") from e
+
+
+def _host_paths(dest: Path, raw: object) -> list[Path]:
+    """The `paths` or `partial` list of a result line: a list of strings, each mapped by `_host_path`."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        raise DownloadError("the media container reported its files in a form this anydm does not understand")
+    return [_host_path(dest, p) for p in raw]
+
+
+class DockerMediaEngine:
+    def __init__(self, runner: DockerRunner) -> None:
+        self._runner = runner
+
+    async def run(self, job: Job, report: Reporter) -> list[Path]:
+        runner = self._runner
+        if not await in_thread(runner.available):
+            raise DownloadError("media downloads need Docker; see anydm doctor")
+        await runner.ensure_image(report)
+        await in_thread(runner.reap_once)
+        args = runner.base_args(job.dest_dir)
+        name = args[args.index("--name") + 1]
+        # --url=X and --format=X, never "--url X": a value that starts with "-" must not be read as an option.
+        cmd = [*args, runner.image, "download", "--protocol", str(PROTOCOL), f"--url={job.source}"]
+        if job.format:
+            cmd.append(f"--format={job.format}")
+        if job.playlist:
+            cmd.append("--playlist")
+        if job.insecure:
+            cmd.append("--insecure")
+        proc = await asyncio.create_subprocess_exec(
+            runner.docker, *cmd,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            limit=MAX_LINE,
+        )
+        stderr = bytearray()
+        drain = asyncio.create_task(self._drain(proc, stderr))
+        try:
+            outcome = await self._read(proc, report)
+            await proc.wait()
+            await drain
+        finally:
+            drain.cancel()
+            if proc.returncode is None:
+                await self._stopped(name, proc)
+        return self._result(outcome, job.dest_dir, proc.returncode or 0, bytes(stderr))
+
+    @staticmethod
+    async def _drain(proc: asyncio.subprocess.Process, sink: bytearray) -> None:
+        assert proc.stderr is not None
+        while chunk := await proc.stderr.read(4096):
+            sink += chunk
+            del sink[:-STDERR_KEEP]
+
+    async def _read(self, proc: asyncio.subprocess.Process, report: Reporter) -> dict[str, Any]:
+        """Feed the container's JSON lines to `report`; returns the `done` or `error` line (or {})."""
+        assert proc.stdout is not None
+        hello = False
+        outcome: dict[str, Any] = {}
+        while True:
+            try:
+                raw = await proc.stdout.readline()
+            except ValueError:  # a line over MAX_LINE: dropped
+                continue
+            if not raw:
+                break
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(line, dict):
+                continue
+            kind = line.get("type")
+            if kind == "hello":
+                if line.get("protocol") != PROTOCOL:
+                    raise DownloadError("update the media image: it speaks a different protocol than this anydm")
+                hello = True
+                continue
+            if not hello and kind in ("progress", "notice", "done", "error"):
+                raise DownloadError("update the media image: it did not say hello")
+            if kind == "progress":
+                self._progress(line, report)
+            elif kind == "notice" and isinstance(line.get("message"), str):
+                report.notice(line["message"])
+            elif kind in ("done", "error"):
+                outcome = line
+        outcome["_hello"] = hello
+        return outcome
+
+    @staticmethod
+    def _progress(line: dict[str, Any], report: Reporter) -> None:
+        done, total, speed, name = line.get("done"), line.get("total"), line.get("speed"), line.get("name")
+        if not isinstance(done, int | float) or isinstance(done, bool):
+            return
+        if total is not None and (not isinstance(total, int | float) or isinstance(total, bool)):
+            return
+        report.update(Progress(int(done), int(total) if total is not None else None,
+                               float(speed) if isinstance(speed, int | float) else 0.0,
+                               name=name if isinstance(name, str) else None))
+
+    @staticmethod
+    def _result(outcome: dict[str, Any], dest: Path, code: int, stderr: bytes) -> list[Path]:
+        text = tail(stderr.decode(errors="replace"))
+        kind = outcome.get("type")
+        if kind not in ("done", "error"):
+            if code == 0:
+                raise DownloadError("update the media image: it finished without a result"
+                                    if not outcome.get("_hello") else "the media container returned no result")
+            hint = _SHARING_HINT if "mount" in text.lower() or "not shared" in text.lower() else ""
+            raise DownloadError(f"media container exited with {code}: {text or 'no output'}{hint}")
+        if kind == "done":
+            paths = _host_paths(dest, outcome.get("paths"))
+            if not paths:
+                raise DownloadError("yt-dlp finished but reported no downloaded files")
+            return paths
+        message = clean_display(str(outcome.get("message") or "the media container failed"))
+        partial = _host_paths(dest, outcome.get("partial"))
+        if partial:
+            raise PartialDownload(message, partial)
+        raise DownloadError(message)
+
+    async def _stopped(self, name: str, proc: asyncio.subprocess.Process) -> None:
+        """`_stop` that a second cancel (another Ctrl-C, the loop closing) cannot cut short: it runs as a task of its
+        own that this awaits through a shield, and when this is cancelled anyway the removal is finished here,
+        synchronously."""
+        task = asyncio.ensure_future(self._stop(name, proc))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._remove_now(name)
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise
+
+    def _remove_now(self, name: str) -> None:
+        """`docker rm -f` without the event loop, for up to STOP_SYNC_WAIT (the container may not exist yet)."""
+        deadline = time.monotonic() + STOP_SYNC_WAIT
+        while (left := deadline - time.monotonic()) > 0:
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                done = subprocess.run(
+                    [self._runner.docker, "rm", "-f", name], capture_output=True, timeout=left,
+                    stdin=subprocess.DEVNULL,
+                )
+                if done.returncode == 0:
+                    return
+            time.sleep(STOP_PAUSE)
+
+    async def _stop(self, name: str, proc: asyncio.subprocess.Process) -> None:
+        """Cancel: stop the container and remove it, all within STOP_WAIT.
+
+        `kill` can fail because the container does not exist yet (docker run was only just started): then go
+        straight to `rm -f`, and keep trying while the `docker run` client lives. After the container is gone the
+        client is killed, not waited for."""
+        docker = self._runner.docker
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + STOP_WAIT
+
+        def left() -> float:
+            return max(0.0, deadline - loop.time())
+
+        if await self._quick(docker, "kill", "--signal", "INT", name, timeout=min(0.4, left())):
+            # yt-dlp gets the interrupt and stops by itself, keeping the partial file
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), max(0.0, left() - STOP_RM_RESERVE))
+        while left() > 0:  # at least one `rm -f`, even when the client already exited: --rm may still be at work
+            if await self._quick(docker, "rm", "-f", name, timeout=left()) or proc.returncode is not None:
+                break
+            await asyncio.sleep(min(STOP_PAUSE, left()))
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), left())
+
+    @staticmethod
+    async def _quick(*cmd: str, timeout: float) -> bool:
+        """Run a short command; True when it exits 0 within `timeout`."""
+        try:
+            p = await asyncio.create_subprocess_exec(
+                *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            return False
+        try:
+            return await asyncio.wait_for(p.wait(), timeout) == 0
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                p.kill()
+            return False

@@ -10,7 +10,7 @@ from src.core.errors import AnydmError, PartialDownload
 from src.core.names import clean_display
 from src.core.paths import writable_dir
 from src.core.progress import Progress
-from src.engine import Engine, Job, Kind, engine_for, resolve
+from src.engine import Engine, Job, Kind, engine_for, resolve, take_notices
 
 
 class State(StrEnum):
@@ -96,8 +96,14 @@ class Queue:
         return any(i.state in (State.QUEUED, *_ACTIVE) for i in self._items)
 
     def add(self, source: str, dest: Path | None) -> Item:
-        kind = resolve(source, None)  # raises UsageError for a link `anydm get` would reject
+        # Runs on the event loop, so it only reads what is known: the add dialog already resolved the link on a
+        # worker thread (that is where a media check may start a container). Raises UsageError for a link
+        # `anydm get` would reject.
+        kind = resolve(source, None, cached_only=True)
         item = Item(self._next_id, source, dest or self._settings.download_dir, kind)
+        notes = take_notices()  # e.g. media detection skipped because Docker is missing
+        if notes:
+            item.notice = clean_display(notes[0])
         self._next_id += 1
         self._items.append(item)
         self._pump()
@@ -130,9 +136,12 @@ class Queue:
         self._items.remove(item)
         self._on_change()
 
-    async def shutdown(self, timeout: float = 1.5) -> None:
+    async def shutdown(self, timeout: float = 1.8) -> None:
         """Cancel everything and wait for the tasks. Every call shares the deadline of the first one, so
-        calling it twice on the way out (quit, then unmount) never waits more than `timeout` in total."""
+        calling it twice on the way out (quit, then unmount) never waits more than `timeout` in total.
+
+        The default leaves room under the 2 s quit limit for a container's stop and removal (DockerMediaEngine
+        finishes that within 1.5 s of the cancel), so the limit does not cut a cleanup off."""
         loop = asyncio.get_running_loop()
         if self._deadline is None:
             self._deadline = loop.time() + timeout
