@@ -543,4 +543,3 @@ def _owner_running(pid: int, started: str) -> bool:
     return not (started and now and now != started)
 
 
-DockerRunner = PluginRunner  # the name the media code and its tests used

@@ -1,4 +1,4 @@
-"""DockerMediaEngine against real Docker, the local media image (`make build-media`) and a local HTTP server.
+"""PluginEngine against real Docker, the local media image (`make build-media`) and a local HTTP server.
 
 The container reaches the server at host.docker.internal, which Docker Desktop provides (macOS only here)."""
 
@@ -21,9 +21,9 @@ from src.config.settings import default_media_image
 from src.core.errors import DownloadError
 from src.core.progress import NullReporter
 from src.engine import Job
-from src.engine.docker import DockerRunner, process_start
 from src.engine.media import MediaEngine
-from src.engine.media_docker import DockerMediaEngine
+from src.plugin.engine import PluginEngine
+from src.plugin.runner import PluginRunner, process_start
 
 pytestmark = pytest.mark.docker
 
@@ -92,8 +92,8 @@ class Media(BaseHTTPRequestHandler):
 
 
 @pytest.fixture(scope="module")
-def runner() -> DockerRunner:
-    r = DockerRunner("docker", IMAGE)
+def runner() -> PluginRunner:
+    r = PluginRunner("docker", IMAGE)
     if not r.available():
         pytest.skip("no Docker daemon")
     if sys.platform != "darwin":
@@ -104,7 +104,7 @@ def runner() -> DockerRunner:
 
 
 @pytest.fixture
-def host(runner: DockerRunner) -> Iterator[str]:
+def host(runner: PluginRunner) -> Iterator[str]:
     """Base URL of the fixture server as the container sees it."""
     srv = ThreadingHTTPServer(("0.0.0.0", 0), Media)
     srv.daemon_threads = True
@@ -134,11 +134,11 @@ def job(dest: Path, source: str, **kw: object) -> Job:
     return Job(**{**base, **kw})  # ty: ignore[invalid-argument-type]
 
 
-def engine(runner: DockerRunner) -> DockerMediaEngine:
-    return DockerMediaEngine(runner)
+def engine(runner: PluginRunner) -> PluginEngine:
+    return PluginEngine(runner)
 
 
-def test_image_runs_as_non_root_with_the_pinned_yt_dlp(runner: DockerRunner) -> None:
+def test_image_runs_as_non_root_with_the_pinned_yt_dlp(runner: PluginRunner) -> None:
     uid = subprocess.run(["docker", "run", "--rm", "--entrypoint", "id", IMAGE, "-u"],
                          capture_output=True, text=True, check=True).stdout.strip()
     version = subprocess.run(["docker", "run", "--rm", "--entrypoint", "yt-dlp", IMAGE, "--version"],
@@ -147,25 +147,25 @@ def test_image_runs_as_non_root_with_the_pinned_yt_dlp(runner: DockerRunner) -> 
     assert version == PIN
 
 
-def test_check_tells_a_media_site_from_a_plain_file(runner: DockerRunner, host: str) -> None:
+def test_check_tells_a_media_site_from_a_plain_file(runner: PluginRunner, host: str) -> None:
     assert runner.supported("https://www.youtube.com/watch?v=jNQXAC9IVRw") is True
     assert runner.supported(f"{host}/a.bin") is False
 
 
-async def test_download_is_owned_by_the_caller(runner: DockerRunner, host: str, tmp_path: Path) -> None:
+async def test_download_is_owned_by_the_caller(runner: PluginRunner, host: str, tmp_path: Path) -> None:
     paths = await engine(runner).run(job(tmp_path, f"{host}/video.mp4"), NullReporter())
     [path] = paths
     assert path.read_bytes() == b"hello"
     assert path.stat().st_uid == os.getuid()
 
 
-async def test_format_reaches_yt_dlp(runner: DockerRunner, host: str, tmp_path: Path) -> None:
+async def test_format_reaches_yt_dlp(runner: PluginRunner, host: str, tmp_path: Path) -> None:
     with pytest.raises(DownloadError, match="format"):
         await engine(runner).run(job(tmp_path, f"{host}/video.mp4", format="no-such-format"), NullReporter())
 
 
 async def test_a_playlist_gives_one_file_without_the_flag_and_every_item_with_it(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     one = await engine(runner).run(job(tmp_path / "one", f"{host}/feed.xml"), NullReporter())
     every = await engine(runner).run(job(tmp_path / "all", f"{host}/feed.xml", playlist=True), NullReporter())
@@ -174,7 +174,7 @@ async def test_a_playlist_gives_one_file_without_the_flag_and_every_item_with_it
 
 
 async def test_files_in_the_output_folder_cannot_hijack_the_runner(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     """A random.py or src/ in the folder anydm saves into must not be imported by the container."""
     dest = tmp_path / "out"
@@ -212,7 +212,7 @@ def interrupt(proc: subprocess.Popen[str]) -> float:
 
 @pytest.mark.slow
 async def test_sigint_stops_the_container_in_time_keeps_the_partial_file_and_a_rerun_finishes(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     Media.slow = True
     dest = tmp_path / "out"
@@ -237,7 +237,7 @@ def labelled(pid: int, started: str, token: str) -> str:
     return out.stdout.strip()
 
 
-def test_a_stale_container_is_removed_and_a_live_one_kept(runner: DockerRunner) -> None:
+def test_a_stale_container_is_removed_and_a_live_one_kept(runner: PluginRunner) -> None:
     gone = subprocess.Popen([sys.executable, "-c", "pass"])
     gone.wait()
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -258,7 +258,7 @@ def test_a_stale_container_is_removed_and_a_live_one_kept(runner: DockerRunner) 
 
 @pytest.mark.slow
 def test_check_and_download_start_add_little_over_the_in_process_path(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     import asyncio
 
@@ -282,7 +282,7 @@ def test_check_and_download_start_add_little_over_the_in_process_path(
 
 @pytest.mark.parametrize("delay", [0.1, 0.2, 0.3, 0.4])
 async def test_a_cancel_right_after_the_start_takes_under_2_seconds_and_leaves_no_container(
-    runner: DockerRunner, host: str, tmp_path: Path, delay: float
+    runner: PluginRunner, host: str, tmp_path: Path, delay: float
 ) -> None:
     """Early in its life the container may not exist yet: `docker kill` fails, so `rm -f` has to take over."""
     import asyncio
@@ -300,7 +300,7 @@ async def test_a_cancel_right_after_the_start_takes_under_2_seconds_and_leaves_n
 
 @pytest.mark.slow
 async def test_ten_random_interrupts_leave_no_container_and_the_file_still_completes(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     Media.slow = True
     dest = tmp_path / "out"
@@ -341,7 +341,7 @@ def sha(path: Path) -> bytes:
 
 
 async def test_a_login_page_downloads_with_cookies_and_leaves_the_file_and_the_folder_clean(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     cookies = cookie_file(tmp_path)
     before = sha(cookies)
@@ -353,7 +353,7 @@ async def test_a_login_page_downloads_with_cookies_and_leaves_the_file_and_the_f
 
 
 async def test_a_login_page_without_cookies_fails_with_the_hint(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     with pytest.raises(DownloadError, match="--cookies") as e:
         await engine(runner).run(job(tmp_path, f"{host}/login.mp4"), NullReporter())
@@ -361,7 +361,7 @@ async def test_a_login_page_without_cookies_fails_with_the_hint(
 
 
 async def test_stale_cookies_fail_with_the_expired_hint_and_the_file_is_unchanged(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     cookies = tmp_path / "stale.txt"
     cookies.write_text("# Netscape HTTP Cookie File\nhost.docker.internal\tFALSE\t/\tFALSE\t2000000000\tsid\told\n")
@@ -371,7 +371,7 @@ async def test_stale_cookies_fail_with_the_expired_hint_and_the_file_is_unchange
     assert sha(cookies) == before
 
 
-async def test_the_container_cannot_write_to_the_cookies_file(runner: DockerRunner, tmp_path: Path) -> None:
+async def test_the_container_cannot_write_to_the_cookies_file(runner: PluginRunner, tmp_path: Path) -> None:
     """The mount is read-only: even a process that tries gets an error, and the file stays as it was."""
     cookies = cookie_file(tmp_path)
     before = sha(cookies)
@@ -386,7 +386,7 @@ async def test_the_container_cannot_write_to_the_cookies_file(runner: DockerRunn
 
 @pytest.mark.slow
 async def test_sigint_with_cookies_keeps_the_file_unchanged_and_a_rerun_finishes(
-    runner: DockerRunner, host: str, tmp_path: Path
+    runner: PluginRunner, host: str, tmp_path: Path
 ) -> None:
     Media.slow = True
     cookies = cookie_file(tmp_path)

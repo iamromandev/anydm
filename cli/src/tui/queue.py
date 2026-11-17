@@ -141,7 +141,7 @@ class Queue:
         """Cancel everything and wait for the tasks. Every call shares the deadline of the first one, so
         calling it twice on the way out (quit, then unmount) never waits more than `timeout` in total.
 
-        The default leaves room under the 2 s quit limit for a container's stop and removal (DockerMediaEngine
+        The default leaves room under the 2 s quit limit for a container's stop and removal (PluginEngine
         finishes that within 1.5 s of the cancel), so the limit does not cut a cleanup off."""
         loop = asyncio.get_running_loop()
         if self._deadline is None:

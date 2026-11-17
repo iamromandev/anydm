@@ -7,7 +7,7 @@ from pathlib import Path
 CLI_DIR = Path(__file__).parents[1]
 HEAVY = (
     "yt_dlp", "libtorrent", "src.engine.torrent", "src.engine.http", "httpx", "textual", "src.tui",
-    "src.engine.docker", "src.engine.media_docker", "src.engine.media_runner",
+    "src.plugin.runner", "src.plugin.engine", "src.engine.media_runner",
 )
 
 
