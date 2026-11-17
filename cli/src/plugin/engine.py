@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import math
 import subprocess
 import threading
 import time
@@ -62,6 +63,13 @@ class _Notes:
     def notice(self, msg: str) -> None:
         if self._notice is not None:
             self._notice(msg)
+
+
+def _count(value: Any, kind: type = int) -> Any:
+    """A finite, non-negative number from a plugin's field as `kind`, or None for anything else."""
+    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+        return None
+    return kind(max(value, 0))
 
 
 class PluginEngine:
@@ -195,13 +203,10 @@ class PluginEngine:
     @staticmethod
     def _progress(line: dict[str, Any], report: Reporter) -> None:
         done, total, speed, name = line.get("done"), line.get("total"), line.get("speed"), line.get("name")
-        if not isinstance(done, int | float) or isinstance(done, bool):
+        done, total = _count(done), _count(total)
+        if done is None:
             return
-        if total is not None and (not isinstance(total, int | float) or isinstance(total, bool)):
-            return
-        report.update(Progress(int(done), int(total) if total is not None else None,
-                               float(speed) if isinstance(speed, int | float) else 0.0,
-                               name=clean_text(name) or None))
+        report.update(Progress(done, total, _count(speed, float) or 0.0, name=clean_text(name) or None))
 
     def _result(self, outcome: dict[str, Any], dest: Path, code: int, stderr: bytes) -> list[Path]:
         text = tail(stderr.decode(errors="replace"))
@@ -295,4 +300,3 @@ class PluginEngine:
             return False
 
 
-DockerMediaEngine = PluginEngine  # the name the media code and its tests used

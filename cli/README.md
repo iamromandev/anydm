@@ -167,9 +167,33 @@ never the contents).
   temporary folder; delete it by hand. In the container the copy dies with the container.
 - **Errors:** when a site asks for a login and you gave no cookies, the error ends with "this site needs a login: pass
   `--cookies FILE`"; when you did, it says the cookies may be expired and to export them again.
-- **Protocol 2:** cookies need a newer media image. After upgrading run `make build-media`; an old image makes `anydm`
-  say "update the media image".
+- **Protocol 3:** the media image speaks protocol 3 (cookies arrived in protocol 2; protocol 3 adds the plugin commands
+  `manifest` and `info`). After upgrading run `make build-media`; an older image makes `anydm` say "update the media
+  image".
 - **Not supported:** reading cookies from a browser, usernames and passwords, a file per site.
+
+## Plugins and `anydm info`
+
+Media is the built-in plugin. Other sites are handled by plugins: Docker images, in any language, that speak a small
+JSON-lines contract. A link is offered to each installed plugin in order (the first to say yes handles it), then to
+media, then it is a plain HTTP download. A plugin runs in a throwaway container with no network unless you approved it.
+The contract, with every line type and the sandbox rules, is in [docs/plugins.md](docs/plugins.md); a working Go
+example is in `plugins/example` (`make build-example-plugin`).
+
+```bash
+anydm plugin add ghcr.io/acme/anydm-pixiv:1.2   # pulls, pins the digest, shows the permissions and asks
+anydm plugin list [--json]                       # routing order; media is last, as built-in
+anydm plugin order pixiv acme-video              # change the order (media stays last)
+anydm plugin remove pixiv [--image]              # --image also runs `docker rmi` on the pinned image
+anydm get --plugin pixiv URL                     # use one plugin, without asking the others
+anydm info URL [--json] [--plugin NAME]          # title, size and formats, without downloading
+```
+
+- **Permissions:** `network` and `cookies`, approved at `add` and kept in `plugins.toml` beside `config.toml` (mode 0600).
+  `--yes` skips the question but never approves a new permission for a plugin that is already installed.
+- **Pinned:** a plugin always runs from the digest saved at `add`; a tag alone is refused.
+- **`check` and `manifest` never get the network**, whatever was approved.
+- `anydm doctor` lists the installed plugins, whether their image is present and their permissions.
 
 ## Docker
 

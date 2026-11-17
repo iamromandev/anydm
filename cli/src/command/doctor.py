@@ -3,6 +3,7 @@ import shutil
 import typer
 
 from src.core.errors import UsageError
+from src.core.names import clean_display
 
 
 def _line(name: str, found: bool, detail: str) -> str:
@@ -32,6 +33,30 @@ def _cookies_line() -> None:
         typer.echo(f"warning: {checked.warning}")
 
 
+def _plugin_lines() -> None:
+    """One line per installed plugin: its pinned image, whether that image is here, the approved permissions. Asks
+    docker only `version` and `image inspect`: nothing is run or pulled."""
+    from src.engine import _docker_runner  # lazy: keeps --help fast
+    from src.plugin import state
+
+    try:
+        plugins = state.load()
+        if not plugins:
+            return
+        runner = _docker_runner()
+    except UsageError as e:  # a corrupt plugins.toml, or an invalid ANYDM_MEDIA_IMAGE
+        typer.echo(f"plugins: invalid ({e})")
+        return
+    up = runner.available()
+    for plugin in plugins:
+        perms = ", ".join(sorted(plugin.permissions, key=("network", "cookies").index)) or "no permissions"
+        detail = f"{clean_display(plugin.image)}; {perms}"
+        if not up:
+            typer.echo(f"plugin {plugin.name}: unknown (docker not running) ({detail})")
+            continue
+        typer.echo(_line(f"plugin {plugin.name}", runner.image_present(plugin.image), detail))
+
+
 def doctor() -> None:
     """Check the tools anydm can use. Makes no network requests."""
     from src.engine import _docker_runner, _has_local_yt_dlp  # lazy: keeps --help fast
@@ -58,4 +83,5 @@ def doctor() -> None:
     for name, found, detail in checks:
         typer.echo(_line(name, found, detail))
     _cookies_line()
+    _plugin_lines()
     typer.echo("torrent: built-in (pure Python client, .torrent and magnet)")

@@ -155,3 +155,57 @@ def test_doctor_reads_the_cookies_setting_from_config_toml(cookies_env: None, tm
     (folder / "config.toml").write_text(f'cookies_file = "{f}"\n')
     result = runner.invoke(app, ["doctor"])
     assert "cookies: ok" in result.stdout
+
+
+PIXIV = "example/pixiv@sha256:" + "d" * 64
+ACME = "example/acme@sha256:" + "e" * 64
+
+
+def _install(*plugins: tuple[str, str, frozenset[str]]) -> None:
+    from src.plugin import state
+    from src.plugin.model import Plugin
+
+    state.save([Plugin(n, image, "1.0", frozenset({"check", "download"}), perms) for n, image, perms in plugins])
+
+
+def test_doctor_lists_each_plugin_with_its_image_status_and_permissions(fake_docker) -> None:
+    _install(("pixiv", PIXIV, frozenset({"network", "cookies"})), ("acme", ACME, frozenset()))
+    fake_docker.set(plugins={ACME: {"present": False}})
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert f"plugin pixiv: ok ({PIXIV}; network, cookies)" in result.stdout
+    assert f"plugin acme: missing ({ACME}; no permissions)" in result.stdout
+    assert result.stdout.index("plugin pixiv") < result.stdout.index("plugin acme")
+
+
+def test_doctor_runs_and_pulls_nothing_for_plugins(fake_docker) -> None:
+    _install(("pixiv", PIXIV, frozenset({"network"})))
+    runner.invoke(app, ["doctor"])
+    assert "run" not in fake_docker.commands()
+    assert "pull" not in fake_docker.commands()
+
+
+def test_doctor_reports_plugin_images_as_unknown_without_docker(fake_docker) -> None:
+    _install(("pixiv", PIXIV, frozenset({"network"})))
+    fake_docker.set(version="fail")
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "plugin pixiv: unknown (docker not running)" in result.stdout
+    assert fake_docker.commands() == ["version"]
+
+
+def test_doctor_with_no_plugins_prints_no_plugin_lines(fake_docker) -> None:
+    result = runner.invoke(app, ["doctor"])
+    assert "plugin " not in result.stdout
+    assert fake_docker.calls() == []
+
+
+def test_doctor_names_a_corrupt_plugin_file_and_exits_zero(fake_docker) -> None:
+    from src.plugin import state
+
+    state.state_path().parent.mkdir(parents=True, exist_ok=True)
+    state.state_path().write_text("not [ toml")
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "plugins: invalid" in result.stdout
+    assert "plugins.toml" in result.stdout

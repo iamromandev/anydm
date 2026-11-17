@@ -110,7 +110,7 @@ def test_a_missing_ffmpeg_inside_the_image_does_not_point_at_anydm_doctor(fake: 
 
 
 def test_a_check_starts_a_watchdog_that_ends_it_before_the_host_gives_up(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine import docker
+    from src.plugin import runner as docker
 
     started: list[float] = []
     monkeypatch.setattr(media_runner, "start_watchdog", lambda seconds, on_expire=None: started.append(seconds))
@@ -242,7 +242,7 @@ def test_the_check_command_does_not_take_cookies() -> None:
 
 
 def test_the_runner_and_the_host_agree_on_where_the_cookies_are_mounted() -> None:
-    from src.engine import docker
+    from src.plugin import runner as docker
 
     assert str(media_runner.COOKIES_MOUNT) == docker.COOKIES_MOUNT
 

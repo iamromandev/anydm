@@ -40,8 +40,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-m 'not slow and not torrent and not live and not docker'"
 markers = [
-    "slow: benchmarks and kill tests (make test-all)",
+    "slow: benchmarks and kill tests (make test-all; slow docker ones: make test-docker-slow)",
     "torrent: needs a torrent backend (make test-all)",
     "live: needs the internet (opt-in)",
-    "docker: needs a running Docker daemon and the media image (make test-docker)",
+    "docker: needs a running Docker daemon and the media image (make test-docker, or test-docker-slow if also slow)",
 ]

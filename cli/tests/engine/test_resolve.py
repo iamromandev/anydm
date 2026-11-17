@@ -117,9 +117,9 @@ def test_forced_media_without_docker_is_an_error_naming_docker(no_local_yt_dlp: 
 
 
 def test_engine_for_media_is_the_container_engine_without_yt_dlp(no_local_yt_dlp: None, fake_docker: FakeDocker) -> None:
-    from src.engine.media_docker import DockerMediaEngine
+    from src.plugin.engine import PluginEngine
 
-    assert isinstance(engine.engine_for(Kind.MEDIA), DockerMediaEngine)
+    assert isinstance(engine.engine_for(Kind.MEDIA), PluginEngine)
 
 
 def test_with_yt_dlp_the_in_process_engine_is_used_and_docker_is_not_touched(fake_docker: FakeDocker) -> None:

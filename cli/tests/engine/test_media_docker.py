@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from src.core.errors import DownloadError, PartialDownload
 from src.engine import Job
-from src.engine.docker import DockerRunner
-from src.engine.media_docker import DockerMediaEngine
+from src.plugin.engine import PluginEngine
+from src.plugin.runner import PluginRunner
 
 from tests.conftest import FakeDocker
 from tests.engine.test_media import Collect
@@ -24,8 +24,8 @@ def job(dest: Path, **kw: Any) -> Job:
     return Job(**{**base, **kw})
 
 
-def engine() -> DockerMediaEngine:
-    return DockerMediaEngine(DockerRunner(os.environ["ANYDM_DOCKER"], IMAGE))
+def engine() -> PluginEngine:
+    return PluginEngine(PluginRunner(os.environ["ANYDM_DOCKER"], IMAGE))
 
 
 def run_call(fake_docker: FakeDocker) -> list[str]:
@@ -352,7 +352,7 @@ async def test_a_login_error_from_the_container_is_shown_as_it_came(fake_docker:
 
 def test_the_check_container_never_gets_the_cookies(fake_docker: FakeDocker, cookies: Path) -> None:
     # the check has no way to be given them: `supported` takes only the URL
-    DockerRunner(os.environ["ANYDM_DOCKER"], IMAGE).supported(URL)
+    PluginRunner(os.environ["ANYDM_DOCKER"], IMAGE).supported(URL)
     [call] = [c for c in fake_docker.calls() if c[0] == "run"]
     assert "--mount" not in call
     assert "--cookies" not in call

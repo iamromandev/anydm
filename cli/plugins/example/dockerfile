@@ -1,0 +1,13 @@
+# The example anydm plugin: a static Go binary in an empty image, running as a non-root user.
+# Build with `make build-example-plugin` (from cli/), or: docker build -t anydm-example:latest plugins/example
+FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS build
+RUN apk add --no-cache ca-certificates
+WORKDIR /src
+COPY go.mod main.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /example .
+
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /example /example
+USER 65532:65532
+ENTRYPOINT ["/example"]
