@@ -1,7 +1,7 @@
-"""Entrypoint of the anydm media image: `python -m src.engine.media_runner check|download ...`.
+"""Entrypoint of the anydm media image: `python -m src.engine.media_runner manifest|check|download|info ...`.
 
 Runs inside the container, never on the host (it needs yt-dlp). Prints one JSON object per line on stdout for
-DockerMediaEngine to read; the reports of the existing MediaEngine become those lines."""
+PluginEngine to read (the contract is src.plugin.contract); the reports of the existing MediaEngine become those lines."""
 
 import argparse
 import asyncio
@@ -20,8 +20,8 @@ from src.core.errors import DownloadError, PartialDownload
 from src.core.progress import Progress
 from src.engine import Job
 from src.engine.media import MediaEngine
+from src.plugin.contract import PROTOCOL
 
-PROTOCOL = 2
 DOWNLOADS = Path("/downloads")  # where the host mounts the output folder
 COOKIES_MOUNT = Path("/run/anydm/cookies.txt")  # where the host mounts the cookies file, read-only (docker.COOKIES_MOUNT)
 PROGRESS_INTERVAL = 0.1  # seconds between progress lines
@@ -63,16 +63,28 @@ def start_watchdog(seconds: float, on_expire: Callable[[], None] | None = None) 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="media_runner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("check", "download"):
+    for name in ("manifest", "check", "download", "info"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--protocol", type=int, required=True)
+        if name == "manifest":
+            continue
         cmd.add_argument("--url", required=True)
-        if name == "download":
+        if name in ("download", "info"):
             cmd.add_argument("--format")
             cmd.add_argument("--playlist", action="store_true")
-            cmd.add_argument("--insecure", action="store_true")
             cmd.add_argument("--cookies", action="store_true")  # the file is at COOKIES_MOUNT
+        if name == "download":
+            cmd.add_argument("--insecure", action="store_true")
     return parser
+
+
+def _version() -> str:
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version("anydm-cli")
+    except importlib.metadata.PackageNotFoundError:
+        return "latest"
 
 
 def run(argv: list[str], out: TextIO) -> int:
@@ -85,6 +97,10 @@ def run(argv: list[str], out: TextIO) -> int:
     if args.protocol != PROTOCOL:
         print(f"unsupported protocol {args.protocol}", file=sys.stderr)
         return 2
+    if args.command == "manifest":
+        reporter.emit(type="manifest", name="media", version=_version(), capabilities=["check", "download", "info"],
+                      permissions=["network", "cookies"], description="Video and audio sites, through yt-dlp")
+        return 0
     if args.command == "check":
         reporter.emit(type="supported", value=engine._local_media_supported(args.url))
         return 0
@@ -98,7 +114,10 @@ def run(argv: list[str], out: TextIO) -> int:
                 copy = copy_private(COOKIES_MOUNT)
             except OSError as e:
                 raise DownloadError(f"cannot read the cookies mount: {e.strerror or type(e).__name__}") from e
-        job = Job(args.url, DOWNLOADS, 1, args.format, args.playlist, False, args.insecure, copy)
+        job = Job(args.url, DOWNLOADS, 1, args.format, args.playlist, False, getattr(args, "insecure", False), copy)
+        if args.command == "info":
+            reporter.emit(type="info", **MediaEngine(in_image=True).info_fields(job))
+            return 0
         paths = asyncio.run(MediaEngine(in_image=True).run(job, reporter))
     except KeyboardInterrupt:
         return 130

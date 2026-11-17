@@ -51,11 +51,11 @@ def get(
     try:
         try:
             settings = get_settings(download_dir=output, connections=connections, cookies_file=cookies)
-            resolved = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))  # never given cookies
+            route = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))  # never given cookies
             for note in take_notices():  # e.g. media detection skipped because Docker is missing
                 reporter.notice(note)
             use: Path | None = None
-            if resolved is Kind.MEDIA and settings.cookies_file is not None:
+            if route.kind is Kind.MEDIA and settings.cookies_file is not None:
                 # only media reads the cookies, so only a media job is stopped by a bad file or warns about its mode
                 checked = check_cookies(settings.cookies_file)
                 if checked.warning:
@@ -63,7 +63,7 @@ def get(
                 use = checked.path
             dest = writable_dir(settings.download_dir)
             job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure, use)
-            paths = asyncio.run(engine_for(resolved).run(job, reporter))
+            paths = asyncio.run(engine_for(route).run(job, reporter))
         except KeyboardInterrupt:
             raise _fail("interrupted; partial data kept so the next run can resume", INTERRUPTED) from None
         except PartialDownload as e:

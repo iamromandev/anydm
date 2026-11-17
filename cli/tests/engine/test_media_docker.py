@@ -15,7 +15,7 @@ from tests.engine.test_media import Collect
 
 IMAGE = "anydm-media:0.0.1"
 URL = "https://www.youtube.com/watch?v=abc"
-HELLO = {"type": "hello", "protocol": 2}
+HELLO = {"type": "hello", "protocol": 3}
 
 
 def job(dest: Path, **kw: Any) -> Job:
@@ -58,14 +58,14 @@ async def test_command_line_is_locked_down(fake_docker: FakeDocker, tmp_path: Pa
     assert "--privileged" not in call
     i = call.index(IMAGE)
     assert call[i - 1] == "--"
-    assert call[i:] == [IMAGE, "download", "--protocol", "2", f"--url={URL}", "--format=bv*+ba", "--playlist",
+    assert call[i:] == [IMAGE, "download", "--protocol", "3", f"--url={URL}", "--format=bv*+ba", "--playlist",
                         "--insecure"]
 
 
 async def test_defaults_send_no_optional_flags(fake_docker: FakeDocker, tmp_path: Path) -> None:
     fake_docker.set(lines=[HELLO, {"type": "done", "paths": ["/downloads/a.mp4"]}])
     await engine().run(job(tmp_path), Collect())
-    assert run_call(fake_docker)[-4:] == ["download", "--protocol", "2", f"--url={URL}"]
+    assert run_call(fake_docker)[-4:] == ["download", "--protocol", "3", f"--url={URL}"]
 
 
 async def test_an_error_line_is_a_download_error(fake_docker: FakeDocker, tmp_path: Path) -> None:
@@ -313,7 +313,7 @@ async def test_a_job_with_cookies_mounts_the_file_read_only_and_says_so(
     assert not TARGET.startswith("/downloads")
     assert call.count("-v") == 1  # the output folder
     i = call.index(IMAGE)
-    assert call[i:] == [IMAGE, "download", "--protocol", "2", f"--url={URL}", "--cookies"]
+    assert call[i:] == [IMAGE, "download", "--protocol", "3", f"--url={URL}", "--cookies"]
 
 
 async def test_no_cookie_value_is_in_the_docker_command_line_or_the_log(

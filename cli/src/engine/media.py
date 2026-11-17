@@ -1,6 +1,8 @@
 import asyncio
 import atexit
 import contextlib
+import itertools
+import math
 import re
 import threading
 from pathlib import Path
@@ -12,6 +14,7 @@ from src.core.names import clean_display
 from src.core.paths import inside
 from src.core.progress import Progress, Reporter
 from src.engine import Job
+from src.plugin.contract import Info, parse_info
 
 OUTTMPL = "%(title)s [%(id)s].%(ext)s"
 SOCKET_TIMEOUT = 20
@@ -111,9 +114,86 @@ class _Logger:
         self.errors.append(str(msg).removeprefix("ERROR: "))
 
 
+class _Silent:
+    """A yt-dlp logger for a lookup: nothing is printed and nothing is a notice."""
+
+    def debug(self, msg: str) -> None:
+        pass
+
+    info = warning = error = debug
+
+
+INFO_ENTRIES = 500  # entries of a playlist an info line lists, at most
+INFO_FORMATS = 500
+
+
+def _info_fields(info: dict[str, Any]) -> dict[str, Any]:
+    """What an `info` line says about yt-dlp's `info` dict: title, size, formats and playlist entries."""
+    size = info.get("filesize") or info.get("filesize_approx")  # yt-dlp may give a float
+    if isinstance(size, bool) or not isinstance(size, int | float) or not math.isfinite(size) or size < 0:
+        size = None
+    return {
+        "title": info.get("title"),
+        "size": int(size) if size is not None else None,
+        "formats": [
+            {"id": str(f["format_id"]), "ext": f.get("ext"), "note": f.get("format_note")}
+            for f in (info.get("formats") or [])[:INFO_FORMATS] if isinstance(f, dict) and f.get("format_id")
+        ],
+        "items": [
+            {"title": e.get("title"), "url": e.get("webpage_url") or e.get("url")}
+            for e in itertools.islice(info.get("entries") or (), INFO_ENTRIES) if isinstance(e, dict)
+        ],
+    }
+
+
 class MediaEngine:
     def __init__(self, *, in_image: bool = False) -> None:
         self._in_image = in_image  # inside the media image: ffmpeg is always there, so no `anydm doctor` hint
+
+    async def info(self, job: Job) -> Info:
+        """What yt-dlp knows about `job.source`, without downloading it (on a thread that is not joined, like run)."""
+        from src.plugin.runner import in_thread  # lazy: the runner is only needed here
+
+        return parse_info(await in_thread(self.info_fields, job))
+
+    def info_fields(self, job: Job) -> dict[str, Any]:
+        """`extract_info(download=False)` with the options `run` uses (format, playlist, cookies copy), as the
+        fields of an `info` line. Blocks. Raises DownloadError."""
+        import yt_dlp  # lazy: keeps --help fast
+        from yt_dlp.utils import YoutubeDLError
+
+        opts: dict[str, Any] = {
+            "noplaylist": not job.playlist, "quiet": True, "noprogress": True, "socket_timeout": SOCKET_TIMEOUT,
+            "nocheckcertificate": job.insecure, "logger": _Silent(),
+        }
+        if not job.playlist:
+            opts["playlist_items"] = "1"
+        else:
+            opts["ignoreerrors"] = "only_download"
+        if job.format:
+            opts["format"] = job.format
+        copy: Path | None = None
+        if job.cookies is not None:
+            try:
+                copy = copy_private(job.cookies)  # yt-dlp writes its jar back: it gets a copy, never the user's file
+            except OSError as e:
+                raise DownloadError(f"cannot read the cookies file: {e.strerror or type(e).__name__}") from e
+            _copies.add(copy)
+            opts["cookiefile"] = str(copy)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(job.source, download=False)
+        except YoutubeDLError as e:
+            raise _map_error(e, self._in_image, job.cookies) from e
+        except OSError as e:
+            raise DownloadError(str(e.strerror or e)) from e
+        finally:
+            if copy is not None:
+                copy.unlink(missing_ok=True)
+                _copies.discard(copy)
+        if not info:
+            raise DownloadError("yt-dlp returned no information for this URL")
+        return _info_fields(info)
 
     async def run(self, job: Job, report: Reporter) -> list[Path]:
         # A daemon thread that is not joined: a blocked yt-dlp (extraction, ffmpeg, a stalled socket)

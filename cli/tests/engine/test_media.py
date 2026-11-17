@@ -73,8 +73,8 @@ def one(dest: Path, name: str = "v [abc].mp4") -> dict[str, Any]:
 
 
 def test_resolver_real_extractors_no_network() -> None:
-    assert resolve(URL, None) is Kind.MEDIA
-    assert resolve("https://example.com/files/a.iso", None) is Kind.HTTP
+    assert resolve(URL, None).kind is Kind.MEDIA
+    assert resolve("https://example.com/files/a.iso", None).kind is Kind.HTTP
 
 
 def test_engine_for_media() -> None:
@@ -595,3 +595,55 @@ async def test_a_login_error_from_yt_dlp_gets_the_hint_matching_the_job(fake, tm
         await MediaEngine().run(job(tmp_path), Collect())
     with pytest.raises(DownloadError, match="may be expired"):
         await MediaEngine().run(job(tmp_path, cookies=cookie_file), Collect())
+
+
+async def test_info_asks_yt_dlp_without_downloading_and_parses_the_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[bool] = []
+
+    class InfoOnly(FakeYDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            seen.append(download)
+            return {"title": "T\x1b", "filesize": 7, "formats": [{"format_id": "1", "ext": "mp4"}],
+                    "entries": [{"title": "e", "webpage_url": "https://x/e"}]}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", InfoOnly)
+    info = await MediaEngine().info(job(tmp_path))
+    assert seen == [False]
+    assert (info.title, info.size) == ("T", 7)
+    assert [(f.id, f.ext) for f in info.formats] == [("1", "mp4")]
+    assert [(i.title, i.url) for i in info.items] == [("e", "https://x/e")]
+
+
+async def test_info_maps_a_yt_dlp_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Broken(FakeYDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            raise yt_dlp.utils.DownloadError("ERROR: Unsupported URL")
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", Broken)
+    with pytest.raises(DownloadError, match=r"^Unsupported URL$"):
+        await MediaEngine().info(job(tmp_path))
+
+
+@pytest.mark.parametrize("raw,want", [(12.0, 12), (12.7, 12), (5, 5), (True, None), ("9", None), (-3.0, None), (float("nan"), None)])
+def test_info_size_accepts_a_float_filesize(raw: object, want: int | None) -> None:
+    from src.engine.media import _info_fields
+
+    assert _info_fields({"filesize": raw})["size"] == want
+    assert _info_fields({"filesize_approx": raw})["size"] == want
+
+
+def test_info_items_come_from_a_generator_without_materialising_it() -> None:
+    from src.engine.media import INFO_ENTRIES, _info_fields
+
+    pulled = 0
+
+    def entries() -> Any:
+        nonlocal pulled
+        while True:
+            pulled += 1
+            yield {"title": "t", "url": "u"}
+
+    assert len(_info_fields({"entries": entries()})["items"]) == INFO_ENTRIES
+    assert pulled <= INFO_ENTRIES + 1

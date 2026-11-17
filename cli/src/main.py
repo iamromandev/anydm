@@ -4,6 +4,7 @@ import typer
 
 from src.command.doctor import doctor
 from src.command.get import get
+from src.command.info import info
 from src.command.tui import tui
 
 app = typer.Typer(
@@ -13,6 +14,7 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,  # a traceback must never print local variables: URLs, passkeys, peer ids
 )
 app.command()(get)
+app.command()(info)
 app.command()(doctor)
 app.command()(tui)
 
