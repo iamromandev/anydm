@@ -36,8 +36,11 @@ class BadJson(ContractError):
 
 
 def clean_text(v: object) -> str:
-    """Untrusted text for the screen: no control or bidi characters, at most MAX_FIELD characters. Non-text is ''."""
-    return clean_display(v)[:MAX_FIELD] if isinstance(v, str) else ""
+    """Untrusted text for the screen: no control or bidi characters, no lone surrogates (the text can always be
+    encoded as UTF-8, for the state file), at most MAX_FIELD characters. Non-text is ''."""
+    if not isinstance(v, str):
+        return ""
+    return clean_display(v.encode("utf-8", "ignore").decode("utf-8"))[:MAX_FIELD]
 
 
 @dataclass(frozen=True)

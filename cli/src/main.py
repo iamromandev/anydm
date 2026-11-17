@@ -5,6 +5,7 @@ import typer
 from src.command.doctor import doctor
 from src.command.get import get
 from src.command.info import info
+from src.command.plugin import app as plugin_app
 from src.command.tui import tui
 
 app = typer.Typer(
@@ -17,6 +18,7 @@ app.command()(get)
 app.command()(info)
 app.command()(doctor)
 app.command()(tui)
+app.add_typer(plugin_app, name="plugin")
 
 
 def _version(value: bool) -> None:

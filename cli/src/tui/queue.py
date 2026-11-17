@@ -11,7 +11,7 @@ from src.core.errors import AnydmError, PartialDownload
 from src.core.names import clean_display
 from src.core.paths import writable_dir
 from src.core.progress import Progress
-from src.engine import Engine, Job, Kind, Route, engine_for, resolve, take_notices
+from src.engine import Engine, Job, Route, cookies_skipped, engine_for, resolve, route_takes_cookies, take_notices
 
 
 class State(StrEnum):
@@ -96,11 +96,11 @@ class Queue:
     def busy(self) -> bool:
         return any(i.state in (State.QUEUED, *_ACTIVE) for i in self._items)
 
-    def add(self, source: str, dest: Path | None) -> Item:
+    def add(self, source: str, dest: Path | None, plugin: str | None = None) -> Item:
         # Runs on the event loop, so it only reads what is known: the add dialog already resolved the link on a
-        # worker thread (that is where a media check may start a container). Raises UsageError for a link
-        # `anydm get` would reject.
-        route = resolve(source, None, cached_only=True)
+        # worker thread (that is where a check may start a container). Raises UsageError for a link `anydm get`
+        # would reject, or a plugin it would not find.
+        route = resolve(source, None, plugin=plugin, cached_only=True)
         item = Item(self._next_id, source, dest or self._settings.download_dir, route)
         notes = take_notices()  # e.g. media detection skipped because Docker is missing
         if notes:
@@ -173,12 +173,15 @@ class Queue:
         dest = writable_dir(item.dest)  # at start, so an unwritable folder fails the row before any request
         report = ItemReporter(item, self._on_change)
         cookies: Path | None = None
-        if item.route.kind is Kind.MEDIA and self._settings.cookies_file is not None:
-            # only media reads them: an HTTP or torrent job never gets them, nor is it failed by a bad file
+        if self._settings.cookies_file is not None and route_takes_cookies(item.route):
+            # only media and plugins with the cookies permission read them: an HTTP or torrent job never gets
+            # them, nor is it failed by a bad file
             checked = check_cookies(self._settings.cookies_file)  # a UsageError fails the row with its message
             cookies = checked.path
             if checked.warning:
                 report.notice(checked.warning)
+        elif self._settings.cookies_file is not None and (skipped := cookies_skipped(item.route)):
+            report.notice(skipped)
         job = Job(item.source, dest, self._settings.connections, None, False, False, False, cookies)
         return await self._engine_for(item.route).run(job, report)
 

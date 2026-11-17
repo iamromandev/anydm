@@ -15,7 +15,7 @@ from src.core.paths import inside
 from src.core.progress import Progress, Reporter
 from src.engine import Job
 from src.plugin.contract import MAX_LINE, PROTOCOL, BadJson, Info, LineReader, LineTooLong, clean_text, parse_info
-from src.plugin.model import Plugin, media_image_plugin
+from src.plugin.model import Plugin, media_image_plugin, missing_capability
 from src.plugin.runner import MOUNT, PluginRunner, in_thread, tail
 
 INFO_TIMEOUT = 120.0  # an `info` container: start, look the link up, answer
@@ -82,7 +82,7 @@ class PluginEngine:
         has no `info`."""
         runner, plugin = self._runner, self._plugin
         if "info" not in plugin.capabilities:
-            raise DownloadError(f"{self._who} cannot show information")
+            raise missing_capability(plugin.name, "info")
         if not await in_thread(runner.available):
             raise DownloadError("plugin lookups need Docker; see anydm doctor")
         await runner.ensure_image(_Notes(notice), plugin.image)
@@ -112,8 +112,11 @@ class PluginEngine:
     async def run(self, job: Job, report: Reporter) -> list[Path]:
         runner = self._runner
         plugin = self._plugin
+        if "download" not in plugin.capabilities:
+            raise missing_capability(plugin.name, "download")
         if not await in_thread(runner.available):
-            raise DownloadError("media downloads need Docker; see anydm doctor")
+            raise DownloadError("media downloads need Docker; see anydm doctor" if plugin.builtin
+                                else f"plugin {plugin.name} needs Docker; see anydm doctor")
         await runner.ensure_image(report, plugin.image)
         await in_thread(runner.reap_once)
         args = runner.plugin_args(plugin, "download", job.dest_dir, job.cookies)

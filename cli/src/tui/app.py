@@ -84,7 +84,7 @@ class Table(DataTable[Text]):
 class AddScreen(ModalScreen[tuple[str, Path] | None]):
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, default_dir: Path, add: Callable[[str, Path], str | None]) -> None:
+    def __init__(self, default_dir: Path, add: Callable[[str, Path, str | None], str | None]) -> None:
         super().__init__()
         self._default_dir = default_dir
         self._add = add
@@ -95,26 +95,30 @@ class AddScreen(ModalScreen[tuple[str, Path] | None]):
             yield Input(id="link", placeholder="https://...")
             yield Label("Folder")
             yield Input(str(self._default_dir), id="folder")
+            yield Label("Plugin (optional: name of an installed plugin, or media)")
+            yield Input(id="plugin", placeholder="ask the installed plugins")
             yield Label("", id="add-error", markup=False)
 
     @on(Input.Submitted)
     async def _submit(self) -> None:
         link = self.query_one("#link", Input).value.strip()
         folder = self.query_one("#folder", Input).value.strip()
-        error = await in_thread(self._check, link)  # a daemon thread: a media check cannot hold up quitting
+        plugin = self.query_one("#plugin", Input).value.strip() or None
+        error = await in_thread(self._check, link, plugin)  # a daemon thread: a check cannot hold up quitting
         if error is None:
-            error = self._add(link, Path(folder or str(self._default_dir)).expanduser())
+            error = self._add(link, Path(folder or str(self._default_dir)).expanduser(), plugin)
         if error is None:
             self.dismiss(None)
         else:
             self.query_one("#add-error", Label).update(error)
 
     @staticmethod
-    def _check(link: str) -> str | None:
+    def _check(link: str, plugin: str | None) -> str | None:
         if not link:
             return "enter a link"
         try:
-            resolve(link, None)  # off the UI thread: a media check imports yt-dlp's extractors or starts a container
+            # off the UI thread: a check imports yt-dlp's extractors or starts a container
+            resolve(link, None, plugin=plugin)
         except AnydmError as e:  # a usage error, or a media image that needs an update
             return clean_display(str(e))
         return None
@@ -243,9 +247,9 @@ class AnydmApp(App[None]):
     def action_add(self) -> None:
         self.push_screen(AddScreen(self._settings.download_dir, self._add))
 
-    def _add(self, link: str, dest: Path) -> str | None:
+    def _add(self, link: str, dest: Path, plugin: str | None = None) -> str | None:
         try:
-            self._queue.add(link, dest)
+            self._queue.add(link, dest, plugin)
         except AnydmError as e:
             return clean_display(str(e))
         self._redraw()

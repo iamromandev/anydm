@@ -143,6 +143,15 @@ def no_real_dht(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANYDM_DHT_BOOTSTRAP", "")
 
 
+@pytest.fixture(autouse=True)
+def _own_config_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """No test may read or write the real ~/.config/anydm (config.toml, plugins.toml). A test that wants a config
+    folder of its own sets XDG_CONFIG_HOME again. Not the test's `monkeypatch`: some tests call its `undo()`."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
+        yield
+
+
 FAKE_DOCKER = Path(__file__).parent / "fixtures" / "fake_docker.py"
 
 
