@@ -229,3 +229,164 @@ def test_call_removes_the_container_when_cancelled(runner: PluginRunner, fake_do
     with pytest.raises(DownloadError, match="cancel"):
         runner.call(plugin(), "info", URL, 20, cancel=cancel)
     assert removed_after(fake_docker)
+
+
+DIGEST = "ghcr.io/acme/p@sha256:" + "a" * 64
+OTHER = "ghcr.io/acme/p@sha256:" + "b" * 64
+
+
+def test_digest_of_finds_a_digest_for_a_registry_with_a_port(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    digest = "localhost:5000/p@sha256:" + "d" * 64
+    fake_docker.set(inspect=f'["{digest}"] sha256:' + "c" * 64)
+    assert runner.digest_of(digest) == digest
+    assert runner.digest_of("localhost:5000/p:1") == digest
+    assert runner.digest_of("localhost:5000/p") == digest
+
+
+def test_only_a_registry_digest_can_be_pulled() -> None:
+    from src.plugin.runner import pullable
+
+    assert pullable(DIGEST) and pullable("alpine@sha256:" + "a" * 64) and pullable("ghcr.io/x/p:1")
+    assert not pullable("sha256:" + "a" * 64) and not pullable("local-plugin:1")
+
+
+@pytest.mark.parametrize("image", [
+    "localhost:5000/x:tag", "localhost:5000/x", "registry.local:5000/team/x:1", "acme/x:1",
+    "localhost:5000/x@sha256:" + "a" * 64,
+])
+def test_a_name_with_a_registry_or_a_port_can_be_pulled(image: str) -> None:
+    from src.plugin.runner import local_ref, pullable
+
+    assert pullable(image) and not local_ref(image)
+
+
+@pytest.mark.parametrize("image", ["x:tag", "x", "anydm-media:0.0.1", "sha256:" + "a" * 64])
+def test_a_single_name_cannot_be_pulled(image: str) -> None:
+    from src.plugin.runner import local_ref, pullable
+
+    assert local_ref(image) and not pullable(image)
+
+
+def test_a_local_image_that_does_not_carry_its_pinned_digest_is_refused(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    fake_docker.set(plugins={DIGEST: {"inspect": f'["{OTHER}"] sha256:' + "c" * 64}})
+    with pytest.raises(DownloadError, match="does not match"):
+        runner.ensure_plugin_image(DIGEST, None)
+    assert "pull" not in fake_docker.commands()
+
+
+def test_a_local_image_that_carries_its_pinned_digest_is_used_without_a_pull(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    fake_docker.set(plugins={DIGEST: {"inspect": f'["{DIGEST}"] sha256:' + "c" * 64}})
+    runner.ensure_plugin_image(DIGEST, None)
+    assert "pull" not in fake_docker.commands()
+
+
+async def test_ensure_image_refuses_a_local_image_that_does_not_carry_its_pinned_digest(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    from tests.engine.test_media import Collect
+
+    fake_docker.set(plugins={DIGEST: {"inspect": f'["{OTHER}"] sha256:' + "c" * 64}})
+    with pytest.raises(DownloadError, match="does not match"):
+        await runner.ensure_image(Collect(), DIGEST)
+
+
+async def test_ensure_image_takes_a_local_image_id_as_it_is(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    from tests.engine.test_media import Collect
+
+    image_id = "sha256:" + "c" * 64
+    fake_docker.set(plugins={image_id: {"inspect": f"[] {image_id}"}})
+    await runner.ensure_image(Collect(), image_id)
+    assert "pull" not in fake_docker.commands()
+
+
+def test_pull_image_pulls_with_a_notice(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    fake_docker.set(plugins={DIGEST: {"present": False, "inspect": f'["{DIGEST}"] sha256:' + "c" * 64}})
+    notes: list[str] = []
+    runner.pull_image(DIGEST, notes.append)
+    assert ["pull", "--", DIGEST] in fake_docker.calls()
+    assert len(notes) == 1 and DIGEST in notes[0]
+    assert runner.image_present(DIGEST)
+
+
+def test_pull_image_reports_the_reference_and_the_reason(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    fake_docker.set(pull="fail")
+    with pytest.raises(DownloadError, match=r"cannot pull ghcr.io/x/p:1.*pull access denied"):
+        runner.pull_image("ghcr.io/x/p:1", None)
+
+
+def test_pull_image_does_not_trust_a_digest_that_does_not_match(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    fake_docker.set(plugins={DIGEST: {"present": False, "pulled_inspect": f'["{OTHER}"] sha256:' + "c" * 64}})
+    with pytest.raises(DownloadError, match="does not match"):
+        runner.pull_image(DIGEST, None)
+
+
+async def test_ensure_image_pulls_a_missing_pinned_plugin_by_its_digest_with_a_notice(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    from tests.engine.test_media import Collect
+
+    fake_docker.set(plugins={DIGEST: {"present": False, "pulled_inspect": f'["{DIGEST}"] sha256:' + "c" * 64}})
+    report = Collect()
+    await runner.ensure_image(report, DIGEST)
+    assert ["pull", "--", DIGEST] in fake_docker.calls()
+    assert any(DIGEST in n for n in report.notices)
+
+
+async def test_ensure_image_fails_on_a_pulled_digest_that_does_not_match(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    from tests.engine.test_media import Collect
+
+    fake_docker.set(plugins={DIGEST: {"present": False, "pulled_inspect": f'["{OTHER}"] sha256:' + "c" * 64}})
+    with pytest.raises(DownloadError, match="does not match"):
+        await runner.ensure_image(Collect(), DIGEST)
+
+
+async def test_a_missing_local_only_plugin_image_says_to_add_the_plugin_again(
+    runner: PluginRunner, fake_docker: FakeDocker
+) -> None:
+    from tests.engine.test_media import Collect
+
+    image_id = "sha256:" + "c" * 64
+    fake_docker.set(plugins={image_id: {"present": False}})
+    with pytest.raises(DownloadError, match=r"not found.*anydm plugin add"):
+        await runner.ensure_image(Collect(), image_id)
+    assert "pull" not in fake_docker.commands()
+
+
+def test_remove_image_runs_rmi_on_the_reference(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    runner.remove_image(DIGEST)
+    assert ["rmi", "--", DIGEST] in fake_docker.calls()
+
+
+def test_remove_image_reports_a_failure(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    fake_docker.set(rmi="fail")
+    with pytest.raises(DownloadError, match=r"cannot remove.*conflict"):
+        runner.remove_image(DIGEST)
+
+
+def test_the_memo_is_per_runner_and_per_name(runner: PluginRunner) -> None:
+    runner.memo("a")["k"] = 1
+    assert runner.memo("a") == {"k": 1} and runner.memo("b") == {}
+
+
+def test_ensure_plugin_image_pulls_only_what_is_missing(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    fake_docker.set(plugins={DIGEST: {"present": False, "pulled_inspect": f'["{DIGEST}"] sha256:' + "c" * 64},
+                             OTHER: {}})
+    notes: list[str] = []
+    runner.ensure_plugin_image(OTHER, notes.append)
+    assert notes == [] and "pull" not in fake_docker.commands()
+    runner.ensure_plugin_image(DIGEST, notes.append)
+    assert ["pull", "--", DIGEST] in fake_docker.calls() and len(notes) == 1
+
+
+def test_ensure_plugin_image_does_not_pull_a_local_id(runner: PluginRunner, fake_docker: FakeDocker) -> None:
+    image_id = "sha256:" + "c" * 64
+    fake_docker.set(plugins={image_id: {"present": False}})
+    with pytest.raises(DownloadError, match="anydm plugin add"):
+        runner.ensure_plugin_image(image_id, None)
+    assert "pull" not in fake_docker.commands()

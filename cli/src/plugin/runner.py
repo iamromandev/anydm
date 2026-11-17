@@ -45,8 +45,15 @@ class DockerUnavailable(DownloadError):
 
 
 def local_ref(image: str) -> bool:
-    """True when the reference names no registry (no '/' before the first ':'), so it can only be built locally."""
-    return "/" not in image.split(":", 1)[0]
+    """True when the reference is a single name (no '/'), so it names no registry and can only be built locally.
+    A registry with a port (`localhost:5000/x:tag`) has a '/', and a tag never does."""
+    return "/" not in image.split("@", 1)[0]
+
+
+def pullable(image: str) -> bool:
+    """True when `docker pull` can fetch `image`: a digest reference (`repo@sha256:...`) or one that names a registry.
+    A bare image id, or a tag that was only built here, cannot be pulled."""
+    return "@" in image or not local_ref(image)
 
 
 def tail(text: str) -> str:
@@ -154,24 +161,100 @@ class PluginRunner:
             digests = json.loads(listed)
         except ValueError:
             digests = []
-        repo = ref.split("@", 1)[0].rsplit(":", 1)[0] if ":" in ref.split("/")[-1] else ref.split("@", 1)[0]
+        base = ref.split("@", 1)[0]  # the registry may have a port ("host:5000/p"), so only the last part can hold a tag
+        repo = base.rsplit(":", 1)[0] if ":" in base.split("/")[-1] else base
         for d in digests if isinstance(digests, list) else []:
             if isinstance(d, str) and d.partition("@")[0] == repo:
                 return d
         return image_id or None
 
+    def memo(self, name: str) -> dict[Any, Any]:
+        """A dict that lives as long as this runner does: what a caller has learned and need not ask again."""
+        return self._cache.setdefault(name, {})
+
+    def _pin_status(self, image: str) -> bool | None:
+        """None when `image` is not in the local store; else False when it is a `repo@sha256:...` reference and the
+        local image does not carry that digest, and True when it does (or when it is not such a reference)."""
+        pinned = "@sha256:" in image
+        try:
+            done = self._run(
+                "image", "inspect", "--format", "{{json .RepoDigests}} {{.Id}}", "--", image, timeout=10
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if done.returncode != 0:
+            return None
+        if not pinned:
+            return True
+        want = image.partition("@")[2]
+        try:
+            digests = json.loads(done.stdout.strip().rpartition(" ")[0])
+        except ValueError:
+            return False
+        return isinstance(digests, list) and any(isinstance(d, str) and d.partition("@")[2] == want for d in digests)
+
+    def _pin_matches(self, image: str) -> bool:
+        """True when `image` is here and, for a `repo@sha256:...` reference, carries that digest."""
+        return self._pin_status(image) is True
+
+    def _present_pinned(self, image: str) -> bool:
+        """True when the plugin image is here and is the pinned one; False when it is missing. Raises DownloadError
+        for a local image that does not carry its pinned digest: it is never run."""
+        status = self._pin_status(image)
+        if status is False:
+            raise self._mismatch(image)
+        return status is True
+
+    @staticmethod
+    def _mismatch(image: str) -> DownloadError:
+        return DownloadError(f"image {image} does not match its pinned digest; it was not used")
+
+    def pull_image(self, image: str, notice: Callable[[str], None] | None) -> None:
+        """`docker pull` of `image`, saying so through `notice` first (a pull can take minutes). For a digest
+        reference the pulled image must carry that digest. Raises DownloadError naming the reference."""
+        if notice is not None:
+            notice(f"pulling {image} (first run)")
+        try:
+            pulled = self._run("pull", "--", image, timeout=PULL_TIMEOUT)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise DownloadError(f"cannot pull {image}: {type(e).__name__}") from e
+        if pulled.returncode != 0:
+            raise DownloadError(f"cannot pull {image}: {tail(pulled.stderr)}")
+        if not self._pin_matches(image):
+            raise self._mismatch(image)
+
+    def ensure_plugin_image(self, image: str, notice: Callable[[str], None] | None) -> None:
+        """`image` (a plugin's pinned reference) is here: pulled by that exact reference when it is not, and only
+        when it can be pulled. A local image is checked against its pin first. For callers on a thread;
+        `ensure_image` is the one for the event loop."""
+        if self._present_pinned(image):
+            return
+        if not pullable(image):
+            raise self._missing_local(image)
+        self.pull_image(image, notice)
+
+    def remove_image(self, image: str) -> None:
+        """`docker rmi` of `image`. Raises DownloadError with docker's reason when it fails."""
+        try:
+            done = self._run("rmi", "--", image, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise DownloadError(f"cannot remove image {image}: {type(e).__name__}") from e
+        if done.returncode != 0:
+            raise DownloadError(f"cannot remove image {image}: {tail(done.stderr)}")
+
     def _missing_local(self, image: str | None = None) -> DownloadError:
         image = image or self.image
         if image != self.image:
-            return DownloadError(f"plugin image {image} not found")
+            return DownloadError(f"plugin image {image} not found; add the plugin again with `anydm plugin add`")
         return DownloadError(f"media image {image} not found; run `make build-media` or set ANYDM_MEDIA_IMAGE")
 
     async def ensure_image(self, report: Reporter, image: str | None = None) -> None:
         """Make sure `image` (default: the media image) is here, pulling it when it names a registry."""
         image = image or self.image
-        if await in_thread(self.image_present, image):
+        of_plugin = image != self.image  # a plugin is pinned: pulled by that exact digest, and checked once pulled
+        if await in_thread(self._present_pinned if of_plugin else self.image_present, image):
             return
-        if local_ref(image):
+        if not pullable(image) if of_plugin else local_ref(image):
             raise self._missing_local(image)
         report.notice(f"pulling {image} (first run)")
         proc = await asyncio.create_subprocess_exec(
@@ -186,6 +269,8 @@ class PluginRunner:
             raise
         if proc.returncode != 0:
             raise DownloadError(f"cannot pull {image}: {tail(err.decode(errors='replace'))}")
+        if of_plugin and not await in_thread(self._pin_matches, image):
+            raise self._mismatch(image)
 
     def cached_supported(self, url: str) -> bool | None:
         """The answer `supported` already gave for `url` (False when it failed), or None when it was never asked.

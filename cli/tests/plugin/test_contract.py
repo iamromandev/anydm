@@ -64,6 +64,12 @@ def test_clean_text_removes_controls_and_bidi_and_caps_the_length() -> None:
     assert len(clean_text("x" * 5000)) == MAX_FIELD
 
 
+def test_clean_text_drops_lone_surrogates_so_the_result_can_be_written_as_utf8() -> None:
+    cleaned = clean_text("1.0\ud800 x\udfff y")
+    assert cleaned == "1.0 x y"
+    cleaned.encode("utf-8")  # does not raise
+
+
 @pytest.mark.parametrize("value", [None, 3, ["a"], {"a": 1}, b"x"])
 def test_clean_text_of_a_non_string_is_empty(value: object) -> None:
     assert clean_text(value) == ""

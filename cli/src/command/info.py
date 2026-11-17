@@ -62,29 +62,35 @@ def info(
     url: str = typer.Argument(..., help="URL to look up"),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
     cookies: Path | None = typer.Option(None, "--cookies", help="Netscape cookies file for media that needs a login"),
+    plugin: str | None = typer.Option(None, "--plugin", help="Use this installed plugin, without asking the others"),
 ) -> None:
     """Show what URL is (title, size, formats) without downloading it."""
     from src.config.settings import get_settings  # lazy: keeps --help fast
     from src.core.cookies import check_cookies
     from src.core.progress import NoticeReporter
-    from src.engine import Kind, media_info, resolve, take_notices
+    from src.engine import Kind, cookies_skipped, media_info, plugin_info, resolve, route_takes_cookies, take_notices
 
     reporter = NoticeReporter()
     try:
         settings = get_settings(cookies_file=cookies)
-        route = resolve(url, None)  # never given cookies
+        route = resolve(url, None, plugin=plugin, need="info")
         for note in take_notices():  # e.g. media detection skipped because Docker is missing
             reporter.notice(note)
         if route.kind is Kind.TORRENT:
             raise UsageError("info does not look into torrents; use `anydm get`")
-        if route.kind is Kind.MEDIA:
+        if route.kind in (Kind.MEDIA, Kind.PLUGIN):
             use: Path | None = None
-            if settings.cookies_file is not None:  # only a media lookup reads them
+            if settings.cookies_file is not None and route_takes_cookies(route):  # only these read them
                 checked = check_cookies(settings.cookies_file)
                 if checked.warning:
                     reporter.notice(checked.warning)
                 use = checked.path
-            found = asyncio.run(media_info(url, use, reporter.notice))
+            elif settings.cookies_file is not None and (skipped := cookies_skipped(route)):
+                reporter.notice(skipped)
+            if route.kind is Kind.MEDIA:
+                found = asyncio.run(media_info(url, use, reporter.notice))
+            else:
+                found = asyncio.run(plugin_info(route.plugin or "", url, use, reporter.notice))
             fields = {"title": found.title, "size": found.size,
                       "formats": [{"id": f.id, "ext": f.ext, "note": f.note} for f in found.formats],
                       "items": [{"title": i.title, "url": i.url} for i in found.items]}

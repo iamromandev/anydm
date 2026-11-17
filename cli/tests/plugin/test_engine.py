@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from src.core.errors import DownloadError
+from src.core.errors import DownloadError, UsageError
 from src.engine import Job
 from src.plugin.engine import PluginEngine, _host_path
 from src.plugin.model import Plugin
@@ -146,9 +146,30 @@ async def test_info_without_an_info_line_fails(fake_docker: FakeDocker) -> None:
 
 
 async def test_a_plugin_without_info_is_not_run(fake_docker: FakeDocker) -> None:
-    with pytest.raises(DownloadError, match="cannot show information"):
+    with pytest.raises(UsageError, match="plugin quiet cannot show info"):
         await engine(NO_INFO).info(URL)
     assert fake_docker.calls() == []
+
+
+async def test_a_plugin_without_download_is_not_run(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    lookup = Plugin("lookup", "lookup-image:1", "1", frozenset({"check", "info"}), frozenset())
+    with pytest.raises(UsageError, match="plugin lookup cannot download") as e:
+        await engine(lookup).run(job(tmp_path), Collect())
+    assert e.value.exit_code == 2
+    assert fake_docker.calls() == []
+
+
+async def test_a_download_without_docker_names_the_plugin_not_media(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    fake_docker.set(version="fail")
+    with pytest.raises(DownloadError, match=r"plugin example needs Docker.*anydm doctor") as e:
+        await engine().run(job(tmp_path), Collect())
+    assert "media" not in str(e.value)
+
+
+async def test_a_media_download_without_docker_still_says_media(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    fake_docker.set(version="fail")
+    with pytest.raises(DownloadError, match="media downloads need Docker; see anydm doctor"):
+        await PluginEngine(PluginRunner(os.environ["ANYDM_DOCKER"], "anydm-media:0.0.1")).run(job(tmp_path), Collect())
 
 
 async def test_cancelling_info_removes_its_container(fake_docker: FakeDocker) -> None:
@@ -165,3 +186,58 @@ async def test_cancelling_info_removes_its_container(fake_docker: FakeDocker) ->
         await task
     [name] = [c[c.index("--name") + 1] for c in fake_docker.calls() if c[0] == "run"]
     assert name in fake_docker.marked("removed")
+
+
+PINNED = "ghcr.io/acme/p@sha256:" + "a" * 64
+WRONG = "ghcr.io/acme/p@sha256:" + "b" * 64
+PINNED_PLUGIN = Plugin("example", PINNED, "1", frozenset({"check", "download", "info"}), frozenset({"network"}))
+
+
+async def test_a_download_runs_the_pinned_reference_and_pulls_a_missing_image_by_that_digest(
+    fake_docker: FakeDocker, tmp_path: Path
+) -> None:
+    fake_docker.set(plugins={PINNED: {
+        "present": False, "pulled_inspect": f'["{PINNED}"] sha256:' + "c" * 64,
+        "lines": [HELLO, {"type": "done", "paths": ["/downloads/a.bin"]}],
+    }})
+    report = Collect()
+    await engine(PINNED_PLUGIN).run(job(tmp_path), report)
+    assert ["pull", "--", PINNED] in fake_docker.calls()
+    assert any(PINNED in n and "pulling" in n for n in report.notices)
+    assert fake_docker.commands().index("pull") < fake_docker.commands().index("run")
+    assert run_call(fake_docker)[run_call(fake_docker).index("--") + 1] == PINNED
+
+
+async def test_a_download_does_not_pull_an_image_that_is_here(fake_docker: FakeDocker, tmp_path: Path) -> None:
+    fake_docker.set(plugins={PINNED: {"lines": [HELLO, {"type": "done", "paths": ["/downloads/a.bin"]}]}})
+    await engine(PINNED_PLUGIN).run(job(tmp_path), Collect())
+    assert "pull" not in fake_docker.commands()
+
+
+async def test_a_pulled_image_with_another_digest_fails_the_download_before_it_runs(
+    fake_docker: FakeDocker, tmp_path: Path
+) -> None:
+    fake_docker.set(plugins={PINNED: {"present": False, "pulled_inspect": f'["{WRONG}"] sha256:' + "c" * 64}})
+    with pytest.raises(DownloadError, match="does not match"):
+        await engine(PINNED_PLUGIN).run(job(tmp_path), Collect())
+    assert "run" not in fake_docker.commands()
+
+
+async def test_info_pulls_a_missing_pinned_image_too(fake_docker: FakeDocker) -> None:
+    fake_docker.set(plugins={PINNED: {
+        "present": False, "pulled_inspect": f'["{PINNED}"] sha256:' + "c" * 64,
+        "info_lines": [HELLO, {"type": "info", "title": "T"}],
+    }})
+    notes: list[str] = []
+    assert (await engine(PINNED_PLUGIN).info(URL, notice=notes.append)).title == "T"
+    assert ["pull", "--", PINNED] in fake_docker.calls() and any("pulling" in n for n in notes)
+
+
+async def test_a_pinned_image_that_is_gone_and_cannot_be_pulled_says_to_add_the_plugin_again(
+    fake_docker: FakeDocker, tmp_path: Path
+) -> None:
+    image_id = "sha256:" + "c" * 64
+    gone = Plugin("example", image_id, "1", frozenset({"download"}), frozenset())
+    fake_docker.set(plugins={image_id: {"present": False}})
+    with pytest.raises(DownloadError, match=r"anydm plugin add"):
+        await engine(gone).run(job(tmp_path), Collect())

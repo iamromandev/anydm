@@ -34,12 +34,13 @@ def get(
     quiet: bool = typer.Option(False, "--quiet", help="No progress output"),
     insecure: bool = typer.Option(False, "--insecure", help="Do not verify TLS certificates"),
     cookies: Path | None = typer.Option(None, "--cookies", help="Netscape cookies file for media that needs a login"),
+    plugin: str | None = typer.Option(None, "--plugin", help="Use this installed plugin, without asking the others"),
 ) -> None:
     """Download SOURCE and print the saved paths."""
     from src.config.settings import get_settings  # lazy: keeps --help fast
     from src.core.cookies import check_cookies
     from src.core.progress import NoticeReporter, NullReporter, Reporter, RichReporter
-    from src.engine import Job, Kind, engine_for, resolve, take_notices
+    from src.engine import Job, Kind, cookies_skipped, engine_for, resolve, route_takes_cookies, take_notices
 
     reporter: Reporter
     if quiet:
@@ -51,16 +52,19 @@ def get(
     try:
         try:
             settings = get_settings(download_dir=output, connections=connections, cookies_file=cookies)
-            route = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value))  # never given cookies
+            route = resolve(source, None if kind is KindOption.AUTO else Kind(kind.value), plugin=plugin)
             for note in take_notices():  # e.g. media detection skipped because Docker is missing
                 reporter.notice(note)
             use: Path | None = None
-            if route.kind is Kind.MEDIA and settings.cookies_file is not None:
-                # only media reads the cookies, so only a media job is stopped by a bad file or warns about its mode
+            if settings.cookies_file is not None and route_takes_cookies(route):
+                # only media and plugins with the cookies permission read them: only such a job is stopped by a bad
+                # file or warns about its mode (a check, an HTTP or a torrent job never gets them)
                 checked = check_cookies(settings.cookies_file)
                 if checked.warning:
                     reporter.notice(checked.warning)
                 use = checked.path
+            elif settings.cookies_file is not None and (skipped := cookies_skipped(route)):
+                reporter.notice(skipped)  # silent with --quiet
             dest = writable_dir(settings.download_dir)
             job = Job(source, dest, settings.connections, fmt, playlist, seed, insecure, use)
             paths = asyncio.run(engine_for(route).run(job, reporter))
