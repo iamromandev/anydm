@@ -16,6 +16,8 @@
   hang       true: a `download` container keeps running until `kill` is called for its name
   ignore_kill  true: it keeps running even after `kill` (only `rm -f` ends it)
   start_delay  seconds before a `download` container exists; `kill` and `rm` for it fail ("No such container") until then
+  inspect    what `docker image inspect --format ...` prints (default: no digests and an id)
+  manifest_*, info_*  like check_*: lines, exit, stderr, hang for a `manifest` or an `info` container
   ps         lines `docker ps` prints
 """
 
@@ -51,6 +53,8 @@ if cmd == "version":
         sys.exit(1)
     print("27.0.0")
 elif cmd == "image":
+    if cfg.get("image", True) and "--format" in args:
+        print(cfg.get("inspect", "[] sha256:" + "0" * 64))
     sys.exit(0 if cfg.get("image", True) else 1)
 elif cmd == "pull":
     if cfg.get("pull", "ok") == "hang":
@@ -71,18 +75,21 @@ elif cmd == "run":
     if cfg.get("start_delay"):
         time.sleep(cfg["start_delay"])
     marker(name, "created").write_text("")
-    if "check" in args:
-        if cfg.get("check_lines") is not None:
-            for line in cfg["check_lines"]:
+    sub = args[args.index("--") + 2] if "--" in args and len(args) > args.index("--") + 2 else ""
+    if sub in ("check", "manifest", "info"):
+        if cfg.get(f"{sub}_lines") is not None:
+            for line in cfg[f"{sub}_lines"]:
                 print(line if isinstance(line, str) else json.dumps(line), flush=True)
-        else:
-            print(json.dumps({"type": "hello", "protocol": 2}), flush=True)
+        elif sub == "check":
+            print(json.dumps({"type": "hello", "protocol": 3}), flush=True)
             print(json.dumps({"type": "supported", "value": cfg.get("check", False)}), flush=True)
-        if cfg.get("check_stderr"):
-            print(cfg["check_stderr"], file=sys.stderr, flush=True)
-        while cfg.get("check_hang") and not marker(name, "removed").exists():
+        else:
+            print(json.dumps({"type": "hello", "protocol": 3}), flush=True)
+        if cfg.get(f"{sub}_stderr"):
+            print(cfg[f"{sub}_stderr"], file=sys.stderr, flush=True)
+        while cfg.get(f"{sub}_hang") and not marker(name, "removed").exists():
             time.sleep(0.02)
-        sys.exit(cfg.get("check_exit", 0))
+        sys.exit(cfg.get(f"{sub}_exit", 0))
     for line in cfg.get("lines", []):
         print(line if isinstance(line, str) else json.dumps(line), flush=True)
     if cfg.get("stderr"):

@@ -1,6 +1,7 @@
 import functools
 import importlib.util
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -9,12 +10,30 @@ from urllib.parse import urlsplit
 
 from src.core.errors import DownloadError, UsageError
 from src.core.progress import Reporter
+from src.plugin.contract import Info
 
 
 class Kind(StrEnum):
     HTTP = "http"
     MEDIA = "media"
     TORRENT = "torrent"
+    PLUGIN = "plugin"  # an installed plugin; MEDIA stays "the built-in media plugin"
+
+
+@dataclass(frozen=True)
+class Route:
+    """What `resolve` decided: the kind, and the plugin's name for MEDIA (always "media") and PLUGIN."""
+
+    kind: Kind
+    plugin: str | None = None
+
+    @property
+    def label(self) -> str:
+        """What a row or a message calls this route: the plugin's name, or the kind."""
+        return self.plugin or self.kind.value
+
+
+MEDIA_NAME = "media"
 
 
 @dataclass(frozen=True)
@@ -53,9 +72,9 @@ def _has_local_yt_dlp() -> bool:
 
 @functools.cache
 def _docker_runner() -> Any:
-    from src.engine.docker import DockerRunner  # lazy: keeps --help fast
+    from src.plugin.runner import PluginRunner  # lazy: keeps --help fast
 
-    return DockerRunner.from_settings()
+    return PluginRunner.from_settings()
 
 
 MAX_NOTICES = 20  # a long-running TUI that never takes them must not collect them without end
@@ -82,7 +101,7 @@ def _media_supported(url: str) -> bool:
     A media image that speaks another protocol is an error (DownloadError), not a reason to try HTTP."""
     if _has_local_yt_dlp():
         return _local_media_supported(url)
-    from src.engine.docker import DockerUnavailable  # lazy: keeps --help fast
+    from src.plugin.runner import DockerUnavailable  # lazy: keeps --help fast
 
     try:
         return _docker_runner().supported(url, _add_notice)
@@ -106,42 +125,68 @@ def _is_http(source: str) -> bool:
         return False
 
 
-def resolve(source: str, forced: Kind | None, *, cached_only: bool = False) -> Kind:
+def _route(kind: Kind) -> Route:
+    return Route(kind, MEDIA_NAME if kind is Kind.MEDIA else None)
+
+
+def resolve(source: str, forced: Kind | None, *, cached_only: bool = False) -> Route:
     """What kind of download `source` is. With `cached_only`, a media check that was not asked before is not run
     (so docker is never started): for callers on an event loop that already resolved the link on a thread."""
     if forced is Kind.HTTP and not _is_http(source):
         raise UsageError(f"{source!r} is not an http(s) URL with a host")
     if forced is not None:
-        return forced
+        return _route(forced)
     if source.lower().startswith("magnet:"):
-        return Kind.TORRENT
+        return _route(Kind.TORRENT)
     if source.endswith(".torrent") and Path(source).is_file():
-        return Kind.TORRENT
+        return _route(Kind.TORRENT)
     if _is_http(source):
         if urlsplit(source).path.endswith(".torrent"):
-            return Kind.TORRENT
+            return _route(Kind.TORRENT)
         if (_media_cached if cached_only else _media_supported)(source):
-            return Kind.MEDIA
-        return Kind.HTTP
+            return _route(Kind.MEDIA)
+        return _route(Kind.HTTP)
     raise UsageError(f"cannot tell what to do with {source!r}: expected a magnet, .torrent file or http(s) URL")
 
 
-def engine_for(kind: Kind) -> Engine:
+def media_engine() -> Engine:
+    """The built-in media plugin: yt-dlp in this process when it is installed, else a throwaway container."""
+    if _has_local_yt_dlp():
+        from src.engine.media import MediaEngine  # lazy: keeps --help fast
+
+        return MediaEngine()
+    from src.plugin.engine import PluginEngine  # lazy: keeps --help fast
+
+    runner = _docker_runner()
+    if not runner.available():
+        raise DownloadError("media downloads need Docker; see anydm doctor")
+    return PluginEngine(runner)
+
+
+async def media_info(url: str, cookies: Path | None = None, notice: Callable[[str], None] | None = None) -> Info:
+    """What the built-in media plugin says about `url` (yt-dlp in this process, else a throwaway container)."""
+    if _has_local_yt_dlp():
+        from src.engine.media import MediaEngine  # lazy: keeps --help fast
+
+        return await MediaEngine().info(Job(url, Path(), 1, None, False, False, False, cookies))
+    from src.plugin.engine import PluginEngine  # lazy: keeps --help fast
+
+    runner = _docker_runner()
+    if not runner.available():
+        raise DownloadError("media lookups need Docker; see anydm doctor")
+    return await PluginEngine(runner).info(url, cookies, notice=notice)
+
+
+def engine_for(route: Route | Kind) -> Engine:
+    kind, plugin = (route.kind, route.plugin) if isinstance(route, Route) else (route, None)
     if kind is Kind.HTTP:
         from src.engine.http.engine import HttpEngine  # lazy: keeps --help fast
 
         return HttpEngine()
-    if kind is Kind.MEDIA:
-        if _has_local_yt_dlp():
-            from src.engine.media import MediaEngine  # lazy: keeps --help fast
-
-            return MediaEngine()
-        from src.engine.media_docker import DockerMediaEngine  # lazy: keeps --help fast
-
-        runner = _docker_runner()
-        if not runner.available():
-            raise DownloadError("media downloads need Docker; see anydm doctor")
-        return DockerMediaEngine(runner)
+    if kind is Kind.MEDIA or (kind is Kind.PLUGIN and plugin == MEDIA_NAME):
+        return media_engine()
+    if kind is Kind.PLUGIN:
+        raise DownloadError(f"unknown plugin {plugin!r}")
     from src.engine.torrent import TorrentEngine  # lazy: keeps --help fast
 
     return TorrentEngine()

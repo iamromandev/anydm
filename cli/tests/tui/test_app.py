@@ -222,11 +222,11 @@ async def test_the_sigint_handler_is_removed_when_the_app_ends(tmp_path: Path) -
 def test_a_notice_is_shown_in_the_row_cleaned_and_cut() -> None:
     from pathlib import Path as P
 
-    from src.engine import Kind
+    from src.engine import Kind, Route
     from src.tui.app import render_row
     from src.tui.queue import Item
 
-    item = Item(1, "http://h/a", P("."), Kind.MEDIA, state=State.RUNNING)
+    item = Item(1, "http://h/a", P("."), Route(Kind.MEDIA, "media"), state=State.RUNNING)
     item.notice = "no ffmpeg\x1b[31m\u202e " + "x" * 200
     state = render_row(item)[2]
     assert state.startswith("running")
@@ -360,7 +360,7 @@ async def test_key_press_reacts_within_200_ms_and_rows_repaint_under_load(serve,
     app = AnydmApp(
         Settings(download_dir=tmp_path / "dl"),
         4,
-        lambda kind: engine_for(kind) if kind is Kind.HTTP else threaded,
+        lambda route: engine_for(route) if route.kind is Kind.HTTP else threaded,
     )
     async with app.run_test(size=(100, 30)) as pilot:
         app.queue.add(srv.url(), None)
@@ -392,3 +392,15 @@ async def test_key_press_reacts_within_200_ms_with_a_real_torrent_under_load(ser
             assert cells(app)[0][3] != ""
     finally:
         seeder.stop()
+
+
+def test_the_kind_column_shows_the_plugin_name_or_the_kind() -> None:
+    from pathlib import Path as P
+
+    from src.engine import Kind, Route
+    from src.tui.app import render_row
+    from src.tui.queue import Item
+
+    assert render_row(Item(1, "http://h/a", P("."), Route(Kind.MEDIA, "media")))[1] == "media"
+    assert render_row(Item(2, "http://h/a", P("."), Route(Kind.PLUGIN, "example")))[1] == "example"
+    assert render_row(Item(3, "http://h/a", P("."), Route(Kind.HTTP)))[1] == "http"

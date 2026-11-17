@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 import yt_dlp
 from src.config.settings import Settings
-from src.engine import Kind
+from src.engine import Kind, Route
 from src.tui import queue as queue_module
 from src.tui.queue import Item, Queue, State
 from yt_dlp.globals import extractors as extractor_registry
@@ -167,7 +167,7 @@ async def test_local_torrent_shows_phase_and_peers_finishes_and_does_not_seed(li
 
     q = make(tmp_path, watch)
     item: Item = q.add(str(torrent), tmp_path / "out")
-    assert item.kind is Kind.TORRENT
+    assert item.route.kind is Kind.TORRENT
     await until(lambda: item.state in (State.DONE, State.FAILED), 60)
     assert item.state is State.DONE, item.error
     assert phases
@@ -195,7 +195,7 @@ def media_fixture(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             self._ies = {"Fixture": FixtureIE, **self._ies}
 
     monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
-    monkeypatch.setattr(queue_module, "resolve", lambda source, forced, **kw: Kind.MEDIA)  # the fixture is not a URL
+    monkeypatch.setattr(queue_module, "resolve", lambda source, forced, **kw: Route(Kind.MEDIA, "media"))  # the fixture is not a URL
     yield
     srv.shutdown()
 

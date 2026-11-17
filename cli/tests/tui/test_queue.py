@@ -5,7 +5,7 @@ import pytest
 from src.config.settings import Settings
 from src.core.errors import DownloadError, PartialDownload, UsageError
 from src.core.progress import Progress, Reporter
-from src.engine import Job, Kind
+from src.engine import Job, Kind, Route
 from src.tui.queue import ItemReporter, Queue, State
 
 
@@ -185,7 +185,7 @@ async def test_shutdown_cancels_everything_and_leaves_no_tasks(tmp_path: Path) -
 def test_item_reporter_keeps_notice_and_last_name() -> None:
     from src.tui.queue import Item
 
-    item = Item(1, "s", Path("."), Kind.HTTP)
+    item = Item(1, "s", Path("."), Route(Kind.HTTP))
     r = ItemReporter(item, lambda: None)
     r.update(Progress(1, 2, 0.0, name="a.bin"))
     r.update(Progress(2, 2, 0.0))

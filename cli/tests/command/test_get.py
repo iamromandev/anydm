@@ -187,7 +187,7 @@ def test_second_interrupt_during_cleanup_still_exits_130(serve, monkeypatch: pyt
 
 
 YOUTUBE = "https://www.youtube.com/watch?v=abc"
-HELLO = {"type": "hello", "protocol": 2}
+HELLO = {"type": "hello", "protocol": 3}
 
 
 @pytest.fixture

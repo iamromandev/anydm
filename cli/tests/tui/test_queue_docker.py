@@ -15,7 +15,7 @@ from textual.widgets import Input
 
 from tests.conftest import FakeDocker
 
-HELLO = {"type": "hello", "protocol": 2}
+HELLO = {"type": "hello", "protocol": 3}
 URL = "https://www.youtube.com/watch?v="
 
 
@@ -90,7 +90,7 @@ async def test_quitting_stops_both_running_containers_within_2_seconds(docker: F
 async def test_adding_a_row_never_runs_docker_on_the_loop(docker: FakeDocker, tmp_path: Path) -> None:
     q = make(tmp_path)
     item = q.add(URL + "never-asked", None)  # nobody resolved it on a thread: only the cache is read
-    assert item.kind is Kind.HTTP
+    assert item.route.kind is Kind.HTTP
     assert "run" not in docker.commands() and "version" not in docker.commands()
     await q.shutdown()
 
@@ -103,7 +103,7 @@ async def test_a_notice_from_classification_lands_on_the_row_and_is_drained(
     docker.set(version="fail")
     q = make(tmp_path)
     item = await add(q, "https://example.com/a.bin")
-    assert item.kind is Kind.HTTP
+    assert item.route.kind is Kind.HTTP
     assert item.notice is not None and "media detection skipped" in item.notice
     assert engine.take_notices() == []
     await q.shutdown()

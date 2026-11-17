@@ -16,9 +16,9 @@ from textual.widgets import DataTable, Footer, Input, Label, Static
 from src.config.settings import Settings
 from src.core.errors import AnydmError
 from src.core.names import clean_display
-from src.engine import Engine, Kind, engine_for, resolve
-from src.engine.docker import in_thread
+from src.engine import Engine, Route, engine_for, resolve
 from src.engine.http.probe import safe_url
+from src.plugin.runner import in_thread
 from src.tui import system
 from src.tui.queue import Item, Queue, State
 
@@ -69,7 +69,7 @@ def render_row(item: Item) -> tuple[str, ...]:
             speed = f"{_size(p.speed)}/s"
         if p.peers is not None:
             peers = str(p.peers)
-    return (name, item.kind.value, state, size, pct, speed, eta, peers)
+    return (name, item.route.label, state, size, pct, speed, eta, peers)
 
 
 class Table(DataTable[Text]):
@@ -152,7 +152,7 @@ class AnydmApp(App[None]):
         self,
         settings: Settings,
         max_active: int,
-        engine_for: Callable[[Kind], Engine] = engine_for,
+        engine_for: Callable[[Route], Engine] = engine_for,
     ) -> None:
         super().__init__()
         self._settings = settings

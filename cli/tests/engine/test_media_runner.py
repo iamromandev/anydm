@@ -35,25 +35,25 @@ def run(*argv: str) -> tuple[int, list[dict[str, Any]]]:
 
 def test_check_says_hello_then_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(engine, "_local_media_supported", lambda url: "youtube" in url)
-    code, lines = run("check", "--protocol", "2", "--url", URL)
+    code, lines = run("check", "--protocol", "3", "--url", URL)
     assert code == 0
-    assert lines == [{"type": "hello", "protocol": 2}, {"type": "supported", "value": True}]
+    assert lines == [{"type": "hello", "protocol": 3}, {"type": "supported", "value": True}]
 
 
 def test_download_reports_progress_then_done_with_container_paths(tmp_path: Path, fake: type[FakeYDL]) -> None:
     fake.info = one(tmp_path)
     fake.hook_events = [{"status": "downloading", "downloaded_bytes": 5, "total_bytes": 10, "speed": 2.0,
                          "filename": str(tmp_path / "v.part")}]
-    code, lines = run("download", "--protocol", "2", "--url", URL)
+    code, lines = run("download", "--protocol", "3", "--url", URL)
     assert code == 0
-    assert lines[0] == {"type": "hello", "protocol": 2}
+    assert lines[0] == {"type": "hello", "protocol": 3}
     assert lines[1] == {"type": "progress", "done": 5, "total": 10, "speed": 2.0, "name": "v.part"}
     assert lines[-1] == {"type": "done", "paths": [str(tmp_path / "v [abc].mp4")]}
 
 
 def test_download_passes_format_playlist_and_insecure(tmp_path: Path, fake: type[FakeYDL]) -> None:
     fake.info = one(tmp_path)
-    run("download", "--protocol", "2", "--url", URL, "--format", "bv*", "--playlist", "--insecure")
+    run("download", "--protocol", "3", "--url", URL, "--format", "bv*", "--playlist", "--insecure")
     assert fake.opts["format"] == "bv*"
     assert fake.opts["noplaylist"] is False
     assert fake.opts["nocheckcertificate"] is True
@@ -61,7 +61,7 @@ def test_download_passes_format_playlist_and_insecure(tmp_path: Path, fake: type
 
 def test_a_download_error_is_an_error_line_and_exit_1(fake: type[FakeYDL]) -> None:
     fake.error = DownloadError("boom")
-    code, lines = run("download", "--protocol", "2", "--url", URL)
+    code, lines = run("download", "--protocol", "3", "--url", URL)
     assert code == 1
     assert lines[-1] == {"type": "error", "message": "boom", "partial": []}
 
@@ -71,7 +71,7 @@ def test_a_partial_download_lists_the_kept_paths(tmp_path: Path, monkeypatch: py
         raise PartialDownload("1 playlist entries failed", [tmp_path / "a.mp4"])
 
     monkeypatch.setattr(media_runner.MediaEngine, "run", partial)
-    code, lines = run("download", "--protocol", "2", "--url", URL)
+    code, lines = run("download", "--protocol", "3", "--url", URL)
     assert code == 1
     assert lines[-1] == {"type": "error", "message": "1 playlist entries failed", "partial": [str(tmp_path / "a.mp4")]}
 
@@ -81,7 +81,7 @@ def test_interrupt_exits_130_without_an_error_line(monkeypatch: pytest.MonkeyPat
         raise KeyboardInterrupt
 
     monkeypatch.setattr(media_runner.MediaEngine, "run", stop)
-    code, lines = run("download", "--protocol", "2", "--url", URL)
+    code, lines = run("download", "--protocol", "3", "--url", URL)
     assert code == 130
     assert [ln["type"] for ln in lines] == ["hello"]
 
@@ -89,21 +89,21 @@ def test_interrupt_exits_130_without_an_error_line(monkeypatch: pytest.MonkeyPat
 def test_an_unknown_protocol_is_refused() -> None:
     code, lines = run("download", "--protocol", "1", "--url", URL)
     assert code == 2
-    assert lines == [{"type": "hello", "protocol": 2}]
+    assert lines == [{"type": "hello", "protocol": 3}]
 
 
 def test_values_that_start_with_a_dash_are_taken_as_values_with_the_equals_form(
     tmp_path: Path, fake: type[FakeYDL]
 ) -> None:
     fake.info = one(tmp_path)
-    code, _ = run("download", "--protocol", "2", "--url=-oops", "--format=-best")
+    code, _ = run("download", "--protocol", "3", "--url=-oops", "--format=-best")
     assert code == 0
     assert fake.opts["format"] == "-best"
 
 
 def test_a_missing_ffmpeg_inside_the_image_does_not_point_at_anydm_doctor(fake: type[FakeYDL]) -> None:
     fake.error = yt_dlp.utils.DownloadError("ERROR: ffmpeg is not installed")
-    code, lines = run("download", "--protocol", "2", "--url", URL)
+    code, lines = run("download", "--protocol", "3", "--url", URL)
     assert code == 1
     assert "ffmpeg" in lines[-1]["message"]
     assert "anydm doctor" not in lines[-1]["message"]
@@ -115,7 +115,7 @@ def test_a_check_starts_a_watchdog_that_ends_it_before_the_host_gives_up(monkeyp
     started: list[float] = []
     monkeypatch.setattr(media_runner, "start_watchdog", lambda seconds, on_expire=None: started.append(seconds))
     monkeypatch.setattr(media_runner, "run", lambda argv, out: 0)
-    monkeypatch.setattr(sys, "argv", ["media_runner", "check", "--protocol", "2", "--url", URL])
+    monkeypatch.setattr(sys, "argv", ["media_runner", "check", "--protocol", "3", "--url", URL])
     with pytest.raises(SystemExit):
         media_runner.main()
     assert started == [media_runner.CHECK_LIFETIME]
@@ -127,7 +127,7 @@ def test_a_download_has_no_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
     started: list[float] = []
     monkeypatch.setattr(media_runner, "start_watchdog", lambda seconds, on_expire=None: started.append(seconds))
     monkeypatch.setattr(media_runner, "run", lambda argv, out: 0)
-    monkeypatch.setattr(sys, "argv", ["media_runner", "download", "--protocol", "2", "--url", URL])
+    monkeypatch.setattr(sys, "argv", ["media_runner", "download", "--protocol", "3", "--url", URL])
     with pytest.raises(SystemExit):
         media_runner.main()
     assert started == []
@@ -138,7 +138,7 @@ def test_running_a_check_never_arms_the_process_ending_watchdog(monkeypatch: pyt
     started: list[float] = []
     monkeypatch.setattr(media_runner, "start_watchdog", lambda seconds, on_expire=None: started.append(seconds))
     monkeypatch.setattr(engine, "_local_media_supported", lambda url: False)
-    run("check", "--protocol", "2", "--url", URL)
+    run("check", "--protocol", "3", "--url", URL)
     assert started == []
 
 
@@ -163,8 +163,8 @@ def mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return f
 
 
-def test_the_protocol_is_2() -> None:
-    assert media_runner.PROTOCOL == 2
+def test_the_protocol_is_3() -> None:
+    assert media_runner.PROTOCOL == 3
 
 
 def test_download_with_cookies_gives_yt_dlp_a_copy_and_removes_every_copy(
@@ -172,7 +172,7 @@ def test_download_with_cookies_gives_yt_dlp_a_copy_and_removes_every_copy(
 ) -> None:
     fake.info = one(tmp_path)
     monkeypatch.setattr(yt_dlp, "YoutubeDL", SeesCookies)
-    code, lines = run("download", "--protocol", "2", "--url", URL, "--cookies")
+    code, lines = run("download", "--protocol", "3", "--url", URL, "--cookies")
     assert code == 0
     assert SeesCookies.seen["text"] == COOKIES_TEXT
     assert SeesCookies.seen["path"] != mount
@@ -191,7 +191,7 @@ def test_the_job_carries_a_copy_in_tmp_not_the_mount(
         return [tmp_path / "v.mp4"]
 
     monkeypatch.setattr(media_runner.MediaEngine, "run", capture)
-    code, _ = run("download", "--protocol", "2", "--url", URL, "--cookies")
+    code, _ = run("download", "--protocol", "3", "--url", URL, "--cookies")
     assert code == 0
     [(path, text, mode)] = seen
     assert path != mount and path.parent == tmp_path / "tmp"
@@ -201,7 +201,7 @@ def test_the_job_carries_a_copy_in_tmp_not_the_mount(
 
 def test_a_download_without_the_flag_gets_no_cookies(tmp_path: Path, fake: type[FakeYDL], mount: Path) -> None:
     fake.info = one(tmp_path)
-    run("download", "--protocol", "2", "--url", URL)
+    run("download", "--protocol", "3", "--url", URL)
     assert "cookiefile" not in fake.opts
 
 
@@ -210,7 +210,7 @@ def test_no_cookie_value_reaches_the_json_lines_even_on_an_error(
 ) -> None:
     fake.error = yt_dlp.utils.DownloadError("ERROR: Sign in to confirm your age")
     out = io.StringIO()
-    code = media_runner.run(["download", "--protocol", "2", "--url", URL, "--cookies"], out)
+    code = media_runner.run(["download", "--protocol", "3", "--url", URL, "--cookies"], out)
     assert code == 1
     assert SECRET not in out.getvalue()
     assert "may be expired" in out.getvalue()
@@ -218,7 +218,7 @@ def test_no_cookie_value_reaches_the_json_lines_even_on_an_error(
 
 def test_a_missing_cookies_mount_is_an_error_line(tmp_path: Path, mount: Path) -> None:
     mount.unlink()
-    code, lines = run("download", "--protocol", "2", "--url", URL, "--cookies")
+    code, lines = run("download", "--protocol", "3", "--url", URL, "--cookies")
     assert code == 1
     assert lines[-1] == {"type": "error", "message": "cookies mount missing", "partial": []}
     assert list((tmp_path / "tmp").iterdir()) == []
@@ -231,13 +231,13 @@ def test_the_copy_is_removed_when_the_download_is_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(media_runner.MediaEngine, "run", stop)
-    code, _ = run("download", "--protocol", "2", "--url", URL, "--cookies")
+    code, _ = run("download", "--protocol", "3", "--url", URL, "--cookies")
     assert code == 130
     assert list((tmp_path / "tmp").iterdir()) == []
 
 
 def test_the_check_command_does_not_take_cookies() -> None:
-    code, _ = run("check", "--protocol", "2", "--url", URL, "--cookies")
+    code, _ = run("check", "--protocol", "3", "--url", URL, "--cookies")
     assert code == 2
 
 
@@ -245,3 +245,105 @@ def test_the_runner_and_the_host_agree_on_where_the_cookies_are_mounted() -> Non
     from src.engine import docker
 
     assert str(media_runner.COOKIES_MOUNT) == docker.COOKIES_MOUNT
+
+
+class InfoYDL(FakeYDL):
+    """A YoutubeDL that answers `extract_info(download=False)`."""
+
+    downloads: list[bool] = []  # noqa: RUF012
+
+    def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+        InfoYDL.downloads.append(download)
+        if InfoYDL.error:
+            raise InfoYDL.error
+        return InfoYDL.info
+
+
+@pytest.fixture
+def info_ydl(monkeypatch: pytest.MonkeyPatch) -> type[InfoYDL]:
+    InfoYDL.downloads, InfoYDL.info, InfoYDL.error = [], {}, None
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", InfoYDL)
+    return InfoYDL
+
+
+def test_manifest_says_hello_then_what_the_media_plugin_is() -> None:
+    code, lines = run("manifest", "--protocol", "3")
+    assert code == 0
+    assert lines[0] == {"type": "hello", "protocol": 3}
+    manifest = lines[1]
+    assert manifest["type"] == "manifest" and manifest["name"] == "media"
+    assert sorted(manifest["capabilities"]) == ["check", "download", "info"]
+    assert sorted(manifest["permissions"]) == ["cookies", "network"]
+    from src.plugin.contract import parse_manifest
+
+    parse_manifest({**manifest, "name": "other"})  # a manifest the host's own parser accepts
+
+
+def test_manifest_refuses_another_protocol() -> None:
+    code, lines = run("manifest", "--protocol", "2")
+    assert code == 2 and lines == [{"type": "hello", "protocol": 3}]
+
+
+def test_info_prints_the_title_size_formats_and_items(info_ydl: type[InfoYDL]) -> None:
+    info_ydl.info = {"title": "T", "filesize_approx": 99, "formats": [{"format_id": "18", "ext": "mp4", "format_note": "360p"}],
+                     "entries": [{"title": "e1", "webpage_url": "https://x/1"}, None, {"title": "e2", "url": "https://x/2"}]}
+    code, lines = run("info", "--protocol", "3", "--url", URL)
+    assert code == 0
+    assert info_ydl.downloads == [False]
+    assert lines[-1] == {"type": "info", "title": "T", "size": 99,
+                         "formats": [{"id": "18", "ext": "mp4", "note": "360p"}],
+                         "items": [{"title": "e1", "url": "https://x/1"}, {"title": "e2", "url": "https://x/2"}]}
+
+
+def test_info_prefers_the_exact_size(info_ydl: type[InfoYDL]) -> None:
+    info_ydl.info = {"title": "T", "filesize": 5, "filesize_approx": 99}
+    _, lines = run("info", "--protocol", "3", "--url", URL)
+    assert lines[-1]["size"] == 5 and lines[-1]["formats"] == [] and lines[-1]["items"] == []
+
+
+def test_info_passes_format_and_playlist_like_download(info_ydl: type[InfoYDL]) -> None:
+    info_ydl.info = {"title": "T"}
+    run("info", "--protocol", "3", "--url", URL, "--format", "bv*", "--playlist")
+    assert info_ydl.opts["format"] == "bv*" and info_ydl.opts["noplaylist"] is False
+    run("info", "--protocol", "3", "--url", URL)
+    assert info_ydl.opts["noplaylist"] is True and info_ydl.opts["playlist_items"] == "1"
+
+
+def test_info_error_is_an_error_line(info_ydl: type[InfoYDL]) -> None:
+    info_ydl.error = yt_dlp.utils.DownloadError("ERROR: Unsupported URL")
+    code, lines = run("info", "--protocol", "3", "--url", URL)
+    assert code == 1
+    assert lines[-1] == {"type": "error", "message": "Unsupported URL", "partial": []}
+
+
+def test_info_with_cookies_gives_yt_dlp_a_copy_and_removes_it(
+    info_ydl: type[InfoYDL], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mount = tmp_path / "mount.txt"
+    mount.write_text(COOKIES_TEXT)
+    monkeypatch.setattr(media_runner, "COOKIES_MOUNT", mount)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(scratch))
+    info_ydl.info = {"title": "T"}
+    code, lines = run("info", "--protocol", "3", "--url", URL, "--cookies")
+    assert code == 0
+    used = Path(info_ydl.opts["cookiefile"])
+    assert used != mount and used.parent == scratch
+    assert not used.exists() and list(scratch.iterdir()) == []
+    assert SECRET not in json.dumps(lines)
+
+
+def test_info_without_the_cookies_mount_is_an_error_line(info_ydl: type[InfoYDL]) -> None:
+    code, lines = run("info", "--protocol", "3", "--url", URL, "--cookies")
+    assert code == 1 and "cookies mount missing" in lines[-1]["message"]
+
+
+def test_info_has_no_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[float] = []
+    monkeypatch.setattr(media_runner, "start_watchdog", lambda seconds, on_expire=None: started.append(seconds))
+    monkeypatch.setattr(media_runner, "run", lambda argv, out: 0)
+    monkeypatch.setattr(sys, "argv", ["media_runner", "info", "--protocol", "3", "--url", URL])
+    with pytest.raises(SystemExit):
+        media_runner.main()
+    assert started == []

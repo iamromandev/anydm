@@ -11,7 +11,7 @@ from src.core.errors import AnydmError, PartialDownload
 from src.core.names import clean_display
 from src.core.paths import writable_dir
 from src.core.progress import Progress
-from src.engine import Engine, Job, Kind, engine_for, resolve, take_notices
+from src.engine import Engine, Job, Kind, Route, engine_for, resolve, take_notices
 
 
 class State(StrEnum):
@@ -31,7 +31,7 @@ class Item:
     id: int
     source: str
     dest: Path
-    kind: Kind
+    route: Route
     state: State = State.QUEUED
     progress: Progress | None = None
     notice: str | None = None
@@ -77,7 +77,7 @@ class Queue:
         settings: Settings,
         max_active: int,
         on_change: Callable[[], None],
-        engine_for: Callable[[Kind], Engine] = engine_for,
+        engine_for: Callable[[Route], Engine] = engine_for,
     ) -> None:
         self._settings = settings
         self._max_active = max_active
@@ -100,8 +100,8 @@ class Queue:
         # Runs on the event loop, so it only reads what is known: the add dialog already resolved the link on a
         # worker thread (that is where a media check may start a container). Raises UsageError for a link
         # `anydm get` would reject.
-        kind = resolve(source, None, cached_only=True)
-        item = Item(self._next_id, source, dest or self._settings.download_dir, kind)
+        route = resolve(source, None, cached_only=True)
+        item = Item(self._next_id, source, dest or self._settings.download_dir, route)
         notes = take_notices()  # e.g. media detection skipped because Docker is missing
         if notes:
             item.notice = clean_display(notes[0])
@@ -173,14 +173,14 @@ class Queue:
         dest = writable_dir(item.dest)  # at start, so an unwritable folder fails the row before any request
         report = ItemReporter(item, self._on_change)
         cookies: Path | None = None
-        if item.kind is Kind.MEDIA and self._settings.cookies_file is not None:
+        if item.route.kind is Kind.MEDIA and self._settings.cookies_file is not None:
             # only media reads them: an HTTP or torrent job never gets them, nor is it failed by a bad file
             checked = check_cookies(self._settings.cookies_file)  # a UsageError fails the row with its message
             cookies = checked.path
             if checked.warning:
                 report.notice(checked.warning)
         job = Job(item.source, dest, self._settings.connections, None, False, False, False, cookies)
-        return await self._engine_for(item.kind).run(job, report)
+        return await self._engine_for(item.route).run(job, report)
 
     def _finished(self, item: Item, task: asyncio.Task[list[Path]]) -> None:
         if self._tasks.get(item.id) is task:

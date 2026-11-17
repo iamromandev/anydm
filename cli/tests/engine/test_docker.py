@@ -133,7 +133,7 @@ def test_supported_passes_the_url_as_one_argument_after_the_image(runner: Docker
     url = "https://a/x; rm -rf / $(id)"
     runner.supported(url)
     [call] = [c for c in fake_docker.calls() if c[0] == "run"]
-    assert call[-5:] == [IMAGE, "check", "--protocol", "2", f"--url={url}"]
+    assert call[-5:] == [IMAGE, "check", "--protocol", "3", f"--url={url}"]
     assert call[call.index(IMAGE) - 1] == "--"
 
 
@@ -159,7 +159,7 @@ def test_containers_are_labelled_with_the_token_pid_and_start_time_not_the_hostn
     assert labels[TOKEN_LABEL] == PROCESS_TOKEN
     assert labels[PID_LABEL] == str(os.getpid())
     assert labels[START_LABEL] == own_start()
-    assert set(labels) == {"anydm", TOKEN_LABEL, PID_LABEL, START_LABEL}
+    assert set(labels) == {"anydm", "anydm.plugin", TOKEN_LABEL, PID_LABEL, START_LABEL}
 
 
 def test_the_token_differs_between_processes() -> None:
@@ -193,8 +193,8 @@ def mounts(args: list[str]) -> list[str]:
     return [args[i + 1] for i, a in enumerate(args) if a == "--mount"]
 
 
-def test_the_protocol_is_2() -> None:
-    assert docker.PROTOCOL == 2
+def test_the_protocol_is_3() -> None:
+    assert docker.PROTOCOL == 3
     assert docker.COOKIES_MOUNT == COOKIES_TARGET
 
 
@@ -248,7 +248,7 @@ def test_a_folder_with_a_colon_is_refused(runner: DockerRunner, tmp_path: Path) 
 
 
 def row(cid: str, pid: object, started: str, token: str = "someone-else") -> str:
-    return "\t".join([cid, str(pid), started, token])
+    return "\t".join([cid, str(pid), started, token, "media"])
 
 
 def labelled(fake_docker: FakeDocker, *lines: str) -> None:
@@ -264,7 +264,7 @@ def test_reap_removes_a_container_whose_parent_is_dead(runner: DockerRunner, fak
     runner.reap_stale()
     assert ["rm", "-f", "dead1"] in fake_docker.calls()
     [ps] = [c for c in fake_docker.calls() if c[0] == "ps"]
-    assert ps[ps.index("--filter") + 1] == "label=anydm=media"
+    assert ps[ps.index("--filter") + 1] == "label=anydm"  # media and plugin containers both carry the key
 
 
 def test_reap_keeps_a_container_whose_parent_is_alive_with_the_same_start(
