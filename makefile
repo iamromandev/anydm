@@ -7,7 +7,7 @@
 # forwards command-line overrides through MAKEFLAGS. Run `make -C api help` for
 # the API's own targets.
 #
-# The migrate and seed targets run inside the API container: bring it up with
+# The migrate target runs inside the API container: bring it up with
 # `make api-up` first.
 API := api
 UI := ui
@@ -17,17 +17,15 @@ BUN := bun
 UI_PORT := 3030
 
 # phony targets
-.PHONY: check seed down restart clean-volumes help \
+.PHONY: check down restart clean-volumes help \
 	api-check api-test api-test-all api-test-live api-run api-up api-down api-build api-restart api-ps api-logs \
-	api-migrate api-seed api-install api-export api-clean-all api-clean-volumes api-clean-host \
+	api-migrate api-install api-export api-clean-all api-clean-volumes api-clean-host \
 	ui-install ui-dev ui-down ui-restart ui-build ui-check ui-test ui-format \
 	cross-check cross-test cross-run cross-package \
 	cli-install cli-check cli-test cli-run
 
 ## both stacks
 check: api-check ui-check cross-check cli-check # Lint + typecheck all four stacks
-
-seed: api-seed # Seed the built-in search sources and categories: adds any that are missing, never overwrites
 
 down: api-down ui-down # Stop both stacks: remove the API containers, kill the UI dev server
 
@@ -69,11 +67,8 @@ api-ps: # List the API containers
 api-logs: # Follow the API container logs
 	$(MAKE) -C $(API) logs
 
-api-migrate: # Run database migrations, then seed the built-in search sources and categories
+api-migrate: # Run database migrations
 	$(MAKE) -C $(API) migrate
-
-api-seed: # Seed the built-in search sources and categories: adds any that are missing, never overwrites (run api-migrate first)
-	$(MAKE) -C $(API) seed
 
 api-install: # Install API dependencies
 	$(MAKE) -C $(API) install

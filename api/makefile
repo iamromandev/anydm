@@ -7,7 +7,7 @@ SERVER_CONTAINER := server-anydm-api
 TEST_DB := anydm_test
 
 # phony targets
-.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate seed db-reset help
+.PHONY: clean-host clean-volumes clean-all ps build up stop down restart install install-dev check test test-all test-live run export add logs migrate db-reset help
 
 ## operation
 # system cleanup
@@ -84,13 +84,8 @@ add: # Stage all changes
 	git add .
 
 # database scripts
-migrate: # Run database migrations, then seed the built-in search sources and categories
+migrate: # Run database migrations
 	docker exec $(SERVER_CONTAINER) python -m scripts.migrate
-	$(MAKE) seed
-
-seed: # Seed the built-in search sources and categories: adds any that are missing, never overwrites (needs migrate first)
-	docker exec $(SERVER_CONTAINER) python -m scripts.seed_sources
-	docker exec $(SERVER_CONTAINER) python -m scripts.seed_categories
 
 db-reset: # DESTROYS every download row: drop and recreate the dev database, then migrate
 	docker exec db-anydm-api sh -c 'psql -U "$$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$$POSTGRES_DB\" WITH (FORCE)" -c "CREATE DATABASE \"$$POSTGRES_DB\""'
